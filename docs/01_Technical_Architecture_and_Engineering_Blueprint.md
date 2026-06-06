@@ -1,6 +1,6 @@
 # Technical Architecture & Engineering Blueprint
 
-*A declarative YAML-to-CSX integration testing platform for distributed .NET systems (engine on .NET 8 LTS, builds against .NET 9 and 10)*
+*A declarative YAML-to-CSX integration testing platform for distributed .NET systems (engine on .NET 8 LTS)*
 
 *Technical Architecture*
 
@@ -37,8 +37,8 @@ This blueprint has been progressively validated against working code through a s
 
 | Spike | What it covered | What it retired | What it corrected |
 |---|---|---|---|
-| Spike 1 | End-to-end vertical slice: one YAML → one container → one Roslyn-compiled step → one verdict, on .NET 10 / Aspire 13.x. | The risks that Aspire's programmatic builder would not behave as the architecture assumed, and that Roslyn scripting would lag the .NET 10 language version. | The illustrative AppHost code in §4.1 (headless mode requires DisableDashboard, and endpoints resolve through the IResourceBuilder returned by AddContainer/AddProject, not through app.GetEndpoint(name, scheme)). |
-| Spike 2 | Provider contract and fragment composition: two providers (http.rest and db-assert.postgres) composed into one Roslyn script, on .NET 10 / Aspire 13.3.5 / Npgsql 10.0.2. | The risks that the provider contract would not survive contact with real code, that fragment composition would produce string-splicing landmines, and that the database-resource lifecycle could not be relied upon. | The CsxFragment composition contract (§13.3.1) now records the no-using-var constraint and the C# 11 $$"""…""" raw-string emit-template idiom; the worked Postgres provider (§13.10) shows the IResourceWithConnectionString cast and the sanitised-identifier pattern; §4.3 distinguishes server-level from database-level health gating. |
+| Spike 1 | End-to-end vertical slice: one YAML → one container → one Roslyn-compiled step → one verdict, on .NET 8 LTS / Aspire 13.x. | The risks that Aspire's programmatic builder would not behave as the architecture assumed, and that Roslyn scripting would lag the .NET 8 LTS language version. | The illustrative AppHost code in §4.1 (headless mode requires DisableDashboard, and endpoints resolve through the IResourceBuilder returned by AddContainer/AddProject, not through app.GetEndpoint(name, scheme)). |
+| Spike 2 | Provider contract and fragment composition: two providers (http.rest and db-assert.postgres) composed into one Roslyn script, on .NET 8 LTS / Aspire 13.3.5 / Npgsql 10.0.2. | The risks that the provider contract would not survive contact with real code, that fragment composition would produce string-splicing landmines, and that the database-resource lifecycle could not be relied upon. | The CsxFragment composition contract (§13.3.1) now records the no-using-var constraint and the C# 11 $$"""…""" raw-string emit-template idiom; the worked Postgres provider (§13.10) shows the IResourceWithConnectionString cast and the sanitised-identifier pattern; §4.3 distinguishes server-level from database-level health gating. |
 
 Subsequent spikes are added to this table as they complete. The pattern is deliberate: the architecture is allowed to be aspirational at first, and is required to converge on what code actually does as evidence accumulates. A document that records its relationship to the code it describes is more trustworthy than a document that does not.
 
@@ -290,7 +290,7 @@ The compiler and runtime layer depends on a small number of external libraries w
 | Concern | Library and version | Why |
 |---|---|---|
 | Resilience policies (RETRY) | Polly v8 via Microsoft.Extensions.Resilience. | Polly v8's ResiliencePipeline is the modern API and is what every provider's RETRY emission targets. Polly v7 is incompatible and is not supported. |
-| JSON parsing and serialisation | System.Text.Json. | The .NET 10 default; consistent with Aspire and the rest of the platform's surface. Newtonsoft.Json is not used in engine code; customer DLLs that reference it work but the engine never returns Newtonsoft types to provider code. |
+| JSON parsing and serialisation | System.Text.Json. | The .NET 8 LTS default; consistent with Aspire and the rest of the platform's surface. Newtonsoft.Json is not used in engine code; customer DLLs that reference it work but the engine never returns Newtonsoft types to provider code. |
 | JSONPath extraction | JsonPath.Net (the JsonEverything family). | Built on System.Text.Json.Nodes; the de facto modern JSONPath implementation in the .NET ecosystem. The engine pins a specific version and exposes it through the global context rather than re-exporting the library publicly. |
 | XPath extraction | System.Xml.XPath. | Part of the framework; no external dependency. |
 | YAML parsing | YamlDotNet. | The de facto choice; stable and feature-complete for the DSL's grammar. |
@@ -299,7 +299,7 @@ The compiler and runtime layer depends on a small number of external libraries w
 
 *Table 5.1 — Library and version commitments at v1.0. The platform pins majors and selects minors to track upstream security patches; providers target the same majors so the engine's load context never serves two versions of the same package.*
 
-**.NET runtime baseline. **The platform targets .NET 8 (the current LTS) as the minimum runtime, builds and runs against .NET 9 and .NET 10 as those become current, and uses .NET 10 features only behind feature-detection guards rather than as required APIs. This stance matters because most adopter organisations are on the current LTS and will not move to a non-LTS version of .NET to adopt a testing tool. The architecture's earlier framing of “.NET 10 systems” referred to the target environment the platform can test against, not the minimum runtime the platform itself requires. The system under test may be on any .NET version that runs in a container; the platform's engine, CLI, and extension run on .NET 8+.
+**.NET runtime baseline. **The platform targets .NET 8 LTS as its runtime, because most adopter organisations are on the current LTS and will not move to a non-LTS version of .NET to adopt a testing tool. This is the runtime the platform itself requires, not a constraint on the system under test: the system under test may be on any .NET version that runs in a container, while the platform's engine, CLI, and extension run on .NET 8 LTS.
 
 **Aspire version stance. **Aspire's API surface is still moving across minor versions, and the platform team has been bitten by tracking previews. The platform pins to a known-stable Aspire minor version per engine release and follows Aspire forward at engine-minor cadence, not Aspire-minor cadence. Adopters therefore upgrade Aspire alongside the engine rather than independently of it. This trade-off buys adopters predictability at the cost of some Aspire-newer-feature availability, which is the right trade for a tool that must be stable enough to trust in CI.
 
@@ -377,7 +377,7 @@ The deep architectural difference in the enterprise tier is identity and access 
 
 # 8. Autonomous Agentic Automation
 
-The architecture described so far still assumes a human authors the YAML. The agentic layer relaxes that assumption, turning the platform from a declarative tool into a closed-loop quality system that can plan, generate, execute, and repair tests within defined boundaries. It is built on the Microsoft Agent Framework (MAF), the open-source multi-agent orchestration framework Microsoft positions as the production successor to Semantic Kernel. The framework targets .NET 8 and later (and other languages) rather than being .NET-10-exclusive, and parts of it are still maturing as of the time of writing; the architecture treats MAF as a stable enough host for the agent layer but acknowledges the implementation will track its evolution. The agentic layer is post-MVP and the team will validate MAF's then-current capability set before committing the layer's detailed design.
+The architecture described so far still assumes a human authors the YAML. The agentic layer relaxes that assumption, turning the platform from a declarative tool into a closed-loop quality system that can plan, generate, execute, and repair tests within defined boundaries. It is built on the Microsoft Agent Framework (MAF), the open-source multi-agent orchestration framework Microsoft positions as the production successor to Semantic Kernel. The framework targets .NET 8 and later (and other languages) rather than being tied to a single .NET version, and parts of it are still maturing as of the time of writing; the architecture treats MAF as a stable enough host for the agent layer but acknowledges the implementation will track its evolution. The agentic layer is post-MVP and the team will validate MAF's then-current capability set before committing the layer's detailed design.
 
 ## 8.1 The three-agent topology
 
@@ -1164,7 +1164,7 @@ A blueprint that lists only its strengths is not trustworthy. The risks below ar
 | Network partition produces false-positive failures. | Halt-and-reconnect on the client; TTL grace period on Ryuk; “inconclusive” verdict. | A long outage still ends the run; tunnel stability must be monitored. |
 | LAB consumption mis-metered, eroding margin. | Per-session consumption telemetry treated as a functional requirement. | Metering accuracy needs independent reconciliation against cloud-provider billing. |
 | Topological parity silently breaks as features are added. | Single typed contract between layers; same code path for local and remote endpoints. | Requires a parity test matrix that runs every suite on all three topologies. |
-| .NET 10 / Aspire / MAF are recent and still evolving. | Architecture isolates each behind a narrow internal interface. | Upstream breaking changes may force refactors; track preview releases closely. |
+| .NET 8 LTS / Aspire / MAF are recent and still evolving. | Architecture isolates each behind a narrow internal interface. | Upstream breaking changes may force refactors; track preview releases closely. |
 | Community provider quality varies, eroding user trust in the platform. | Three-tier model (Core, Verified, Community) with clear labelling; Verified status requires review and an integration test in the official matrix. | A poorly behaved Community provider can still damage the platform's reputation by association; the registry surfaces tier in error messages and documentation. |
 | A provider that handles credentials leaks them into logs or stack traces. | Engine-level log redaction; mandatory security checklist for the Verified tier covering credential lifetime, redaction, and TLS defaults. | A credential-handling Community provider is not gated on review; the trust model is documented and the install path makes the tier visible. |
 | Provider sprawl produces a catalogue users cannot navigate. | Curated index of Community providers; canonical dotted naming; the editor surfaces only registered providers in autocomplete. | Without active curation the index will accumulate stale or abandoned entries; an annual review is needed. |
@@ -1180,7 +1180,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 
 | Component | Role in the platform |
 |---|---|
-| .NET 8 LTS (minimum), .NET 9 and 10 (builds against) | The runtime baseline. The engine targets .NET 8 as the minimum so adopter organisations on the current LTS can use the platform without changing runtime; the platform builds and runs on .NET 9 and 10 as those become current. |
+| .NET 8 LTS | The runtime baseline. The engine targets .NET 8 LTS so adopter organisations on the current LTS can use the platform without changing runtime. |
 | .NET Aspire | Orchestrates the application topology; provides service discovery, health-gated startup, and connection-string resolution. |
 | DistributedApplication.CreateBuilder() | The programmatic Aspire builder API the engine uses to construct an AppHost from the YAML environment section. The headless runner passes DistributedApplicationOptions { DisableDashboard = true } because the dashboard requires environment variables that only the 'aspire run' tooling injects. AddContainer adds an image; AddProject(name, csprojPath) adds a project; AddPostgres / AddKafka / AddMongoDB / AddRedis / AddRabbitMQ / AddElasticsearch add typed managed resources. Each Add* call returns an IResourceBuilder that the runner retains so endpoints can be resolved through it (builder.GetEndpoint("http").Url) after StartAsync returns. |
 | Testcontainers | Manages the lifecycle of dependency containers; supplies the k6 load-injection module and the Ryuk reaper. |
