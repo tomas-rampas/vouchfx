@@ -214,7 +214,7 @@ Two of the seven engineers are assigned to the compiler and runtime because that
 
 ## 5.3 Skills and assumptions
 
-The plan assumes the team is fluent in modern C# and the .NET 10 ecosystem, comfortable with Docker and container orchestration, and that at least the tooling engineer has prior experience building VSCode extensions and working with the Language Server Protocol. It assumes access to a continuous-integration environment for the team's own pipeline and to a small number of pilot teams willing to adopt an early tool. Because .NET 10, .NET Aspire, and the surrounding libraries are recent and still evolving, the plan also assumes the team will track upstream preview releases actively rather than pinning to a single version and discovering breaking changes late. For Phase 5's porting examples, the plan assumes the delivery lead has — or can pair with someone with — working familiarity with the testing tools the porting examples target (Postman, k6, xUnit, SpecFlow); if no team member has this familiarity, a short consulting engagement with someone who does is a cheaper way to produce credible porting examples than self-teaching.
+The plan assumes the team is fluent in modern C# and the .NET 8 LTS ecosystem, comfortable with Docker and container orchestration, and that at least the tooling engineer has prior experience building VSCode extensions and working with the Language Server Protocol. It assumes access to a continuous-integration environment for the team's own pipeline and to a small number of pilot teams willing to adopt an early tool. Because .NET 8 LTS, .NET Aspire, and the surrounding libraries are recent and still evolving, the plan also assumes the team will track upstream preview releases actively rather than pinning to a single version and discovering breaking changes late. For Phase 5's porting examples, the plan assumes the delivery lead has — or can pair with someone with — working familiarity with the testing tools the porting examples target (Postman, k6, xUnit, SpecFlow); if no team member has this familiarity, a short consulting engagement with someone who does is a cheaper way to produce credible porting examples than self-teaching.
 
 ## 5.4 Capacities the seven-person team does not include
 
@@ -409,7 +409,7 @@ A new pilot user, on day one, must answer half a dozen practical questions befor
 | Concern | v1.0 commitment |
 |---|---|
 | Supported platforms | Windows 10/11, macOS 13+ (Apple Silicon and Intel), and Ubuntu/Debian-class Linux (kernel 5.10+). Other Linux distributions work but are not tested in CI. |
-| Required dependencies | Docker Desktop or Docker Engine 24+, .NET 10 SDK or runtime, and an MS-Windows or Unix-like terminal. VSCode 1.85+ for the extension. No other prerequisites at v1.0. |
+| Required dependencies | Docker Desktop or Docker Engine 24+, .NET 8 LTS SDK or runtime, and an MS-Windows or Unix-like terminal. VSCode 1.85+ for the extension. No other prerequisites at v1.0. |
 | Distribution channels | Primary: the dotnet global tool channel (dotnet tool install -g) for the CLI; the VSCode Marketplace for the extension. Secondary: a signed .msi for Windows, a notarised .pkg for macOS, and a .deb for Debian-family Linux, all attached to GitHub Releases. |
 | Licence | Apache 2.0 for the engine, the Provider SDK, and the six Core providers (the Indie tier). The licence is displayed at first-run and accepted implicitly by use; no click-through EULA at v1.0. |
 | Update model | Manual at v1.0: the user runs dotnet tool update or installs a new release. The tool checks for updates at most once per day and prints a one-line notice when one exists; it does not auto-update. Automatic update is a post-MVP enhancement. |
@@ -512,7 +512,7 @@ This register lists the risks most likely to threaten the MVP specifically — r
 |---|---|---|---|
 | The collectible-load-context memory model proves unreliable in practice. | Med / High | Front-loaded as the first task in phase 1; a permanent CI leak test thereafter. If it fails, the plan pauses for a design correction. | Compiler eng. |
 | Scope creep — cloud, agents, or SSO features pulled into the MVP. | High / High | An explicit, written scope boundary (section 3); the delivery lead empowered to defend it; deferred items visibly parked, not rejected. | Delivery lead |
-| .NET 10 / Aspire / language-server previews introduce breaking changes. | Med / Med | Track preview releases actively; isolate each dependency behind a narrow internal interface; budget contingency in phase 4. | Tech lead |
+| .NET 8 LTS / Aspire / language-server previews introduce breaking changes. | Med / Med | Track preview releases actively; isolate each dependency behind a narrow internal interface; budget contingency in phase 4. | Tech lead |
 | Embedded C# IntelliSense in YAML is harder than estimated. | Med / Med | Treat as the riskiest tooling task; if it slips, ship schema-only YAML support for v1 and add C# intelligence in a fast follow. | Tooling eng. |
 | Too few pilot teams, or pilots that do not exercise the tool seriously. | Med / High | Recruit the cohort during phase 3, before the tool is ready; over-recruit; define “serious use” in the success criteria up front. | Delivery lead |
 | Orchestration flakiness on diverse developer hardware undermines trust. | Med / High | Health gating and generous timeouts from phase 1; test on a range of machines during the pilot; classify environment errors distinctly. | Orchestration eng. |
@@ -546,7 +546,7 @@ This register lists the risks most likely to threaten the MVP specifically — r
 
 The MVP depends on a small number of things outside the team's direct control. Each is named here so that it can be tracked rather than assumed.
 
-- **.NET 10 and .NET Aspire. **The MVP is built on these and assumes they remain available and reasonably stable through the delivery window; preview-channel changes are tracked actively.
+- **.NET 8 LTS and .NET Aspire. **The MVP is built on these and assumes they remain available and reasonably stable through the delivery window; preview-channel changes are tracked actively.
 - **The .NET language server. **Embedded C# IntelliSense reuses existing .NET language tooling rather than reimplementing it; the MVP depends on that tooling being integrable into a VSCode extension.
 - **Docker on developer machines. **The local topology requires a working Docker installation on each pilot developer's machine.
 - **Pilot teams. **The evidence the MVP produces depends on recruiting willing pilot teams; this is treated as a phase-3 activity, not a phase-5 afterthought.

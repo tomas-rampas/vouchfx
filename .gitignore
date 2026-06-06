@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# .gitignore for the vouchfx .NET 8 LTS solution
+# Covers: .NET build output, Visual Studio / Rider / VS Code, NuGet, test
+# results, the (TypeScript) VS Code extension, local secrets, and OS cruft.
+# ---------------------------------------------------------------------------
+
+## .NET build output
+bin/
+obj/
+out/
+[Dd]ebug/
+[Rr]elease/
+[Bb]uilds/
+artifacts/
+publish/
+*.dll
+*.exe
+*.pdb
+project.lock.json
+project.fragment.lock.json
+
+## .NET tool / restore caches
+.dotnet/
+.packages/
+*.nuget.props
+*.nuget.targets
+
+## NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/build/
+
+## Test results & coverage
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coverletoutput
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+*.userosscache
+*.vspscc
+*.vssscc
+*_i.c
+*_p.c
+*_h.h
+
+## Rider / JetBrains
+.idea/
+*.sln.iml
+
+## Visual Studio Code (keep shared workspace config, ignore the rest)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+## VS Code extension (TypeScript / Node)
+node_modules/
+*.vsix
+dist/
+.eslintcache
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+## Roslyn / MSBuild
+*.binlog
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+## Local secrets & environment (the DSL resolves ${secret:file/...} from
+## git-ignored files by convention — never commit resolved credentials)
+*.secrets
+secrets.json
+secrets.local.*
+*.local.secrets
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+
+## Testcontainers / Docker scratch
+.testcontainers.properties
+
+## OS-generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+## Logs & temp
+*.log
+*.tmp
+*.swp
+*~
