@@ -108,7 +108,7 @@ Sprint 12 (3 weeks, pilot-heavy and non-code-dominated) are budgeted accordingly
 | D Integration/hardening | ○ | ○ | · | · | ○ | · | · | · | · | ○ | ● | ● |
 | E Pilot/feedback | · | · | · | · | · | ○ | ○ | ○ | · | ○ | · | ● |
 | F Provider SDK | ○ | ● | ● | ● | ○ | ● | ● | ● | · | ● | · | ○ |
-| G Reporting | ○ | ● | ● | ○ | ○ | · | ○ | ● | ● | ● | · | ○ |
+| G Reporting | ○ | ● | ● | ○ | ○ | · | ○ | ● | ● | ● | · | · |
 
 ## 7. Definition of Ready (a task may be started when…)
 

@@ -56,7 +56,7 @@ and governance artifacts are published; and the go/no-go assessment is written f
   - Three runnable porting examples published; the manual path is concrete, not daunting.
 
 #### S12-E-05 · Instrument & measure the success criteria
-- **Owner:** PD · **Estimate:** 1.5d · **Depends on:** S12-G-01 · **Spec:** MVP §4.2, §8.5.3, §8.5.4
+- **Owner:** PD · **Estimate:** 1.5d · **Depends on:** S10-G-04 · **Spec:** MVP §4.2, §8.5.3, §8.5.4
 - Collect time-to-first-test, flakiness, adoption, behavioural demand signal, and community-pathway
   viability by telemetry, retrospective, and observation; reconcile against the §4.2 targets.
 - **Acceptance:**
@@ -99,18 +99,9 @@ and governance artifacts are published; and the go/no-go assessment is written f
 - **Acceptance:**
   - The repo accepts external PRs; templates, rubric, and fixture are in place; triage budget scheduled.
 
-### Workstream G / telemetry — Measurement infrastructure
-
-#### S12-G-01 · Opt-in telemetry flow & pilot backend
-- **Owner:** PC · **Estimate:** 2d · **Depends on:** S09-G-02 · **Spec:** MVP §9.1 (telemetry row), §9.3
-- Ship the privacy-first opt-in telemetry: first-run notice, no collection until opted in, and the limited
-  metric set (run/scenario counts, verdict counts, step family/provider counts, startup time,
-  time-to-first-test, anonymous install id, versions). **Never** collects test contents, captured values,
-  secret references/values, SUT addresses, or image names; honours the per-file no-telemetry flag and the
-  production-run exclusion.
-- **Acceptance:**
-  - Nothing is collected pre-opt-in; the forbidden fields are provably never sent; data flows to the pilot
-    backend with 90-day retention; disabling deletes the install id within 30 days.
+> **Telemetry note:** the opt-in telemetry flow and pilot backend are built in **Phase 4** (task
+> `S10-G-04`) so they ship inside the v1.0 build the cohort runs. This sprint *uses* that telemetry to
+> measure (`S12-E-05`); it does not implement it.
 
 ## Exit criteria — Milestone M5 (MVP §8.5.4)
 

@@ -42,6 +42,18 @@ and GitLab CI templates run the suite and publish artifacts; and the documentati
 - **Acceptance:**
   - The report passes a WCAG 2.1 AA check; the `--no-decorations` mode works for screen readers.
 
+#### S10-G-04 · Opt-in telemetry flow & pilot backend
+- **Owner:** PC · **Estimate:** 2d · **Depends on:** S09-G-02 · **Spec:** MVP §9.1 (telemetry row — a Phase 4 release-manifest deliverable), §9.3, §8.5.3
+- Ship the privacy-first opt-in telemetry **in Phase 4** so it is present in the v1.0 build the pilot uses
+  to generate measurement data: first-run notice, no collection until opted in, and the limited metric set
+  (run/scenario counts, verdict counts, step family/provider counts, startup time, time-to-first-test,
+  anonymous install id, versions). **Never** collects test contents, captured values, secret
+  references/values, SUT addresses, or image names; honours the per-file no-telemetry flag and the
+  production-run exclusion.
+- **Acceptance:**
+  - Nothing is collected pre-opt-in; the forbidden fields are provably never sent; data flows to the pilot
+    backend with 90-day retention; disabling deletes the install id within 30 days.
+
 ### Workstream C / D — CI templates
 
 #### S10-C-01 · GitHub Actions reusable workflow
@@ -104,7 +116,8 @@ and GitLab CI templates run the suite and publish artifacts; and the documentati
 
 - The four verdicts render consistently everywhere; Test Explorer decorates failing YAML lines; an
   outside contributor's SDK dry-run is complete; a CI template runs the suite and publishes artifacts;
-  the documentation set is published and a fresh user reaches first-pass using only the docs.
+  the documentation set is published and a fresh user reaches first-pass using only the docs; and opt-in
+  telemetry is in the build and verified, ready for pilot measurement.
 
 ## Risks mitigated this sprint (MVP §10)
 
