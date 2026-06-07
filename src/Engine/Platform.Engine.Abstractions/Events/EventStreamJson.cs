@@ -60,13 +60,25 @@ public static class EventStreamJson
     ///     unexpectedly with extension-data keys.
     ///   </description></item>
     /// </list>
+    /// <para>
+    /// The instance is frozen via <see cref="JsonSerializerOptions.MakeReadOnly"/>
+    /// at construction time so that callers cannot mutate the shared options after
+    /// first use, which would silently corrupt serialisation across the process.
+    /// </para>
     /// </remarks>
-    public static readonly JsonSerializerOptions Options = new()
+    public static readonly JsonSerializerOptions Options = CreateOptions();
+
+    private static JsonSerializerOptions CreateOptions()
     {
-        WriteIndented = false,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new VerdictJsonConverter() },
-    };
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Converters = { new VerdictJsonConverter() },
+        };
+        options.MakeReadOnly(populateMissingResolver: true);
+        return options;
+    }
 
     /// <summary>
     /// Serialises <paramref name="envelope"/> to a compact single-line JSON

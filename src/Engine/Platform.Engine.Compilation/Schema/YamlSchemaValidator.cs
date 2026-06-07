@@ -62,10 +62,10 @@ public static class YamlSchemaValidator
                 new SchemaValidationError(string.Empty, "The document is empty or contains only whitespace."));
         }
 
-        JsonElement element;
+        JsonDocument doc;
         try
         {
-            element = ConvertYamlToJsonElement(yamlText);
+            doc = ConvertYamlToJsonDocument(yamlText);
         }
         catch (Exception ex)
         {
@@ -73,15 +73,18 @@ public static class YamlSchemaValidator
                 new SchemaValidationError(string.Empty, $"Failed to parse YAML: {ex.Message}"));
         }
 
-        var results = _schema.Evaluate(element, _options);
-
-        if (results.IsValid)
+        using (doc)
         {
-            return SchemaValidationResult.Valid;
-        }
+            var results = _schema.Evaluate(doc.RootElement, _options);
 
-        var errors = CollectErrors(results);
-        return new SchemaValidationResult(false, errors);
+            if (results.IsValid)
+            {
+                return SchemaValidationResult.Valid;
+            }
+
+            var errors = CollectErrors(results);
+            return new SchemaValidationResult(false, errors);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -113,12 +116,17 @@ public static class YamlSchemaValidator
     }
 
     /// <summary>
-    /// Converts a YAML document string to a <see cref="JsonElement"/> via
+    /// Converts a YAML document string to a <see cref="JsonDocument"/> via
     /// YamlDotNet's JSON-compatible serialisation bridge.
     /// </summary>
+    /// <remarks>
+    /// The caller is responsible for disposing the returned <see cref="JsonDocument"/>
+    /// to release its pooled UTF-8 buffer.  Evaluation of the root element must
+    /// occur inside the <c>using</c> scope.
+    /// </remarks>
     /// <param name="yamlText">The raw YAML text to convert.</param>
-    /// <returns>A <see cref="JsonElement"/> representing the parsed document.</returns>
-    private static JsonElement ConvertYamlToJsonElement(string yamlText)
+    /// <returns>A <see cref="JsonDocument"/> representing the parsed document.</returns>
+    private static JsonDocument ConvertYamlToJsonDocument(string yamlText)
     {
         // Step 1 — parse YAML to a plain object graph.
         var deserializer = new DeserializerBuilder()
@@ -144,8 +152,9 @@ public static class YamlSchemaValidator
 
         var json = jsonSerializer.Serialize(graph);
 
-        // Step 3 — parse the JSON string into a System.Text.Json JsonElement.
-        return JsonDocument.Parse(json).RootElement;
+        // Step 3 — parse the JSON string into a System.Text.Json JsonDocument.
+        // The caller must dispose the document to release its pooled UTF-8 buffer.
+        return JsonDocument.Parse(json);
     }
 
     /// <summary>
