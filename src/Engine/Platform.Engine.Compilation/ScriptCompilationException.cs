@@ -27,9 +27,9 @@ public sealed class ScriptCompilationException : Exception
     /// <see langword="null"/>.
     /// </param>
     public ScriptCompilationException(IReadOnlyList<Diagnostic> diagnostics)
-        : base(BuildMessage(diagnostics))
+        : base(BuildMessage(diagnostics ?? throw new ArgumentNullException(nameof(diagnostics))))
     {
-        Diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        Diagnostics = diagnostics;
     }
 
     private static string BuildMessage(IReadOnlyList<Diagnostic> diagnostics)

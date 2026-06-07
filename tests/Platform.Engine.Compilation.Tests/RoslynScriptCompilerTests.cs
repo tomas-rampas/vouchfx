@@ -511,6 +511,30 @@ public sealed class RoslynScriptCompilerTests
     }
 
     // -------------------------------------------------------------------------
+    // ScriptCompilationException — null-guard regression (Fix 1 / PR #126).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Passing <see langword="null"/> to the <see cref="ScriptCompilationException"/>
+    /// constructor must throw <see cref="ArgumentNullException"/> with
+    /// <see cref="ArgumentNullException.ParamName"/> equal to <c>"diagnostics"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Regression test for the ordering defect where the null-check fired inside
+    /// <c>BuildMessage</c> (via <c>diagnostics.Where(…)</c>) rather than before
+    /// <c>base(…)</c> was called, producing a <see cref="NullReferenceException"/>
+    /// instead of the intended <see cref="ArgumentNullException"/>.
+    /// </remarks>
+    [Fact]
+    public void ScriptCompilationException_NullDiagnostics_ThrowsArgumentNullException()
+    {
+        var ex = Assert.Throws<ArgumentNullException>(
+            () => new ScriptCompilationException(null!));
+
+        Assert.Equal("diagnostics", ex.ParamName);
+    }
+
+    // -------------------------------------------------------------------------
     // Private helper — synthetic assembly compilation for negative-control test.
     // -------------------------------------------------------------------------
 
