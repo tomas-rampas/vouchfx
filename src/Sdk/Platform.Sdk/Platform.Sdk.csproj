@@ -6,7 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
+
 
 </Project>

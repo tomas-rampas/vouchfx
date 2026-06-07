@@ -44,7 +44,7 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 - Three fields only: `RequiredUsings` (namespace strings, never inline `using` lines), `RequiredHelpers` (nested static classes prefixed with the provider id, e.g. `DbAssertPostgres_Helpers`), one brace-enclosed `StatementBlock`.
 - **`using var` is illegal in a Roslyn script body** (parse error, any language version). Use plain `var` + explicit `.Dispose()` in a `finally`.
 - Sanitise step ids before splicing: `CsxFragment.SanitiseId` (`-` → `_`). Emitted variable names may not contain hyphens.
-- Emit bodies as **C# 11 double-dollar raw strings** `$$"""…"""`: `{{ }}` = literal brace, `{id}` = interpolation hole. The single-dollar form inverts these and fails.
+- Emit bodies as **C# 11 double-dollar raw strings** `$$"""…"""`: a single `{`/`}` = literal brace (the CSX block's own braces pass through verbatim), `{{id}}` = interpolation hole. The single-dollar form inverts these (`{id}` interpolates, `{{` is the literal brace) and fails as soon as the body contains a CSX code block.
 - Cross-step state passes **only** through the `Vars` global; never assume variables declared by another provider.
 
 **Aspire (§4, §19).**
