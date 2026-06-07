@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.vouchfx.io/e2e/v1/root-language-schema.json",
+  "title": "E2E Integration Test",
+  "description": "Root schema for a vouchfx .e2e.yaml test file (language schema v1).",
+  "type": "object",
+  "required": ["steps"],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "variables": {
+      "description": "Constant values pre-loaded into the shared variable context before the first step runs.",
+      "type": "object"
+    },
+    "steps": {
+      "description": "The ordered list of actions and assertions that constitute the test.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "description": "Human-facing description of the test used in reporting and for suite filtering.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A short human-readable name for the test.",
+          "type": "string"
+        },
+        "owner": {
+          "description": "The team or individual responsible for this test; used by the runner's selection language.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Labels used to select subsets of tests during a CI run.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "description": "A longer explanation of what the test verifies.",
+          "type": "string"
+        },
+        "schemaVersion": {
+          "description": "The language schema version the file targets (e.g. v1).",
+          "type": "string"
+        }
+      }
+    },
+    "environment": {
+      "description": "Declares the infrastructure the test depends on — services under test and managed dependencies.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "services": {
+          "description": "The system-under-test services, each identified by a logical name and brought up via an image or csproj path.",
+          "type": "object"
+        },
+        "dependencies": {
+          "description": "Managed Aspire resources (databases, brokers, caches) that the engine provisions.",
+          "type": "object"
+        },
+        "seed": {
+          "description": "Initial state applied after the topology is healthy and before the first step executes.",
+          "type": "object"
+        },
+        "imageRegistry": {
+          "description": "An optional default OCI registry hostname that prefixes every un-prefixed image reference.",
+          "type": "string"
+        },
+        "imagePullPolicy": {
+          "description": "Controls when the container runtime pulls images: Always, Missing, or Never.",
+          "type": "string",
+          "enum": ["Always", "Missing", "Never"]
+        }
+      }
+    },
+    "step": {
+      "description": "A single typed step in the test sequence.",
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "description": "A unique identifier for the step within the file; used in reporting and failure messages.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The kind of step in dotted family.provider notation, e.g. http.rest or db-assert.postgres.",
+          "type": "string"
+        },
+        "description": {
+          "description": "A short human-readable explanation shown in test output.",
+          "type": "string"
+        },
+        "capture": {
+          "description": "A map of variable names to extractor expressions that write values from this step's result into the shared context.",
+          "type": "object"
+        },
+        "verifyMode": {
+          "description": "Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff.",
+          "type": "string",
+          "enum": ["IMMEDIATE", "RETRY"]
+        },
+        "timeout": {
+          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" }
+          ]
+        },
+        "continueOnFailure": {
+          "description": "When true, a failed assertion is recorded but does not abort the remaining steps. Defaults to false.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
