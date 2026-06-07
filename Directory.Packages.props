@@ -8,6 +8,7 @@
   </ItemGroup>
   <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
     <PackageVersion Include="Aspire.Hosting" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.2" />
