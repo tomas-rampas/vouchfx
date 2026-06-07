@@ -1,2 +1,2 @@
-// Placeholder — tests are added in subsequent tasks (S01-B-*, S01-F-*).
+// This file is intentionally left minimal. Tests are in the Events/ sub-folder.
 namespace Platform.Engine.Abstractions.Tests;
