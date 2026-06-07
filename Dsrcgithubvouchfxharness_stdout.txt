@@ -1,0 +1,1 @@
+{"iterations":5000,"baselineBytes":4483264,"postBytes":4484560,"netDeltaBytes":1296,"thresholdBytes":2000000,"passed":true,"collectibleBefore":0,"collectibleAfter":0,"contextReclaimed":true}
