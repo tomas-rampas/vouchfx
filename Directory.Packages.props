@@ -1,0 +1,35 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup Label="Roslyn scripting (memory model, §5)">
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
+  </ItemGroup>
+  <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
+    <PackageVersion Include="Aspire.Hosting" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.2" />
+  </ItemGroup>
+  <ItemGroup Label="Resilience (§5.7) — Polly v8">
+    <PackageVersion Include="Polly.Core" Version="8.6.6" />
+  </ItemGroup>
+  <ItemGroup Label="JSON / Schema / YAML (§5.7)">
+    <PackageVersion Include="JsonPath.Net" Version="3.0.2" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.2.1" />
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+  <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
+    <PackageVersion Include="Npgsql" Version="8.0.7" />
+    <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
+    <PackageVersion Include="MongoDB.Driver" Version="3.6.0" />
+    <PackageVersion Include="StackExchange.Redis" Version="2.8.58" />
+  </ItemGroup>
+  <ItemGroup Label="Test stack">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageVersion Include="xunit" Version="2.9.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+</Project>
