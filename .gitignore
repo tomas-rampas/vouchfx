@@ -110,3 +110,9 @@ desktop.ini
 *.tmp
 *.swp
 *~
+
+# Custom
+.claude/
+.serena/
+.vscode/
+.rider/
