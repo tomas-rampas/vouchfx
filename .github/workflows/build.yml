@@ -1,0 +1,182 @@
+# .github/workflows/build.yml — vouchfx CI pipeline skeleton
+#
+# Task: S01-D-02 — Engineering CI pipeline skeleton
+#
+# Jobs
+# ----
+#  build        Blocking gate: restore → build (0-warning) → format → unit tests.
+#               Docker-dependent Aspire integration tests are EXCLUDED via the
+#               `requires!=docker` trait filter; they land in the `integration`
+#               job once Aspire topology is wired (S01-A-*).
+#
+#  memory-leak  Non-blocking placeholder for the memory-leak regression harness
+#               (Platform.Engine.Compilation.MemoryHarness).  The harness body
+#               is implemented in S01-B-04; this job becomes BLOCKING in S02-D-01.
+#
+#  integration  Forward-looking stub for Docker-dependent Aspire spike tests
+#               (requires=docker trait).  Non-blocking until tests exist.
+#               ubuntu-latest runners include Docker out of the box.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
+  pull_request:
+    branches:
+      - main
+      - "feat/**"
+
+# Cancel in-progress runs for the same ref to avoid wasting runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO:             "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # Suppress the .NET first-run welcome message on every step.
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+# ── Blocking gate ─────────────────────────────────────────────────────────────
+jobs:
+  build:
+    name: Build & unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install the .NET 8 SDK.  The version spec "8.0.x" satisfies global.json
+      # (sdk.version = "8.0.400", rollForward = latestFeature) — the setup
+      # action will resolve the latest 8.0 feature band available on the runner.
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Restore NuGet packages using the lock file if present; otherwise resolve
+      # centrally-managed versions from Directory.Packages.props.
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      # Build in Release configuration.  Directory.Build.props sets
+      # TreatWarningsAsErrors=true, so a single Roslyn warning fails the build.
+      # --no-restore avoids a redundant network round-trip.
+      - name: Build (Release, 0-warning gate)
+        run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # Format gate: dotnet format re-runs the formatter and errors if any file
+      # would change.  This catches whitespace drift, import ordering, and any
+      # EditorConfig rule that the formatter enforces.
+      # --no-restore avoids a redundant restore pass.
+      - name: Format gate (dotnet format --verify-no-changes)
+        run: dotnet format vouchfx.sln --verify-no-changes --no-restore
+
+      # Run all unit tests in Release configuration.
+      # The  --filter "requires!=docker"  expression uses xUnit's trait filter
+      # syntax to EXCLUDE any test decorated with [Trait("requires","docker")].
+      # Aspire integration tests carry that trait; they run in the `integration`
+      # job instead.  Plain unit tests have no trait and run here.
+      # --collect:"XPlat Code Coverage" writes Cobertura XML via coverlet.
+      - name: Unit tests (requires!=docker)
+        run: >
+          dotnet test vouchfx.sln
+          -c Release
+          --no-build
+          --filter "requires!=docker"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults
+
+      # Upload coverage artefacts so they are available to coverage services
+      # (e.g. Codecov, SonarCloud) added in a later sprint.
+      - name: Upload coverage artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: TestResults/
+          retention-days: 7
+
+  # ── Memory-leak regression — non-blocking placeholder ────────────────────────
+  # This job becomes BLOCKING in Sprint 2, task S02-D-01, once the harness body
+  # is implemented (S01-B-04) and the memory threshold is calibrated.
+  memory-leak:
+    name: Memory-leak regression (placeholder — becomes blocking in S02-D-01)
+    runs-on: ubuntu-latest
+    # NON-BLOCKING: continue-on-error ensures a harness failure (or the current
+    # stub exit) never fails the overall workflow.  Remove this flag in S02-D-01.
+    continue-on-error: true
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      - name: Build (Release)
+        run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # Run the memory-leak regression harness.
+      # The harness prints a scaffold placeholder message until S01-B-04 lands.
+      # continue-on-error: true above means a non-zero exit code here is
+      # reported as a warning annotation on the run, not a pipeline failure.
+      - name: Run memory-leak harness
+        run: >
+          dotnet run
+          -c Release
+          --no-build
+          --project tests/Platform.Engine.Compilation.MemoryHarness
+
+  # ── Docker / Aspire integration — forward-looking stub ───────────────────────
+  # ubuntu-latest runners include Docker Engine, which is required for the
+  # Aspire topology (Testcontainers, §4).  Tests decorated with
+  # [Trait("requires","docker")] run here, isolated from the blocking `build`
+  # job, so a topology failure never blocks a clean unit-test run.
+  #
+  # This job is NON-BLOCKING (continue-on-error: true) until the Aspire spike
+  # tests exist (S01-A-*).  Remove continue-on-error when tests are green.
+  integration:
+    name: Integration tests — Docker / Aspire (forward-looking, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      - name: Build (Release)
+        run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # Run only tests carrying [Trait("requires","docker")].
+      # Until the Aspire topology tests are wired in S01-A-*, this filter
+      # matches nothing and dotnet test exits 0 with "No tests found."
+      - name: Integration tests (requires=docker)
+        run: >
+          dotnet test vouchfx.sln
+          -c Release
+          --no-build
+          --filter "requires=docker"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults
