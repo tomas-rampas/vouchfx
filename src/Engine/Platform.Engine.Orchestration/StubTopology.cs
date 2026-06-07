@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 
@@ -50,15 +51,28 @@ public sealed class StubTopology : IAsyncDisposable
     private StubTopology(
         HeadlessTopology inner,
         IResourceBuilder<PostgresDatabaseResource> dbBuilder,
-        EndpointReference webEndpoint)
+        EndpointReference webEndpoint,
+        StartupTiming timing)
     {
         _inner = inner;
         _dbBuilder = dbBuilder;
         _webEndpoint = webEndpoint;
+        Timing = timing;
     }
 
     /// <summary>Gets the underlying <see cref="HeadlessTopology"/> instance.</summary>
     public HeadlessTopology Inner => _inner;
+
+    /// <summary>
+    /// Gets the wall-clock timing captured during <see cref="StartAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="StartupTiming.Total"/> covers the full build, start, and both health gates.
+    /// <see cref="StartupTiming.DatabaseReady"/> is the cumulative time until the
+    /// <c>"appdb"</c> gate completed.  <see cref="StartupTiming.ServiceReady"/> is the
+    /// additional time between the database gate and the <c>"web"</c> gate.
+    /// </remarks>
+    public StartupTiming Timing { get; }
 
     /// <summary>
     /// Builds, starts, and health-gates a stub topology containing:
@@ -72,17 +86,34 @@ public sealed class StubTopology : IAsyncDisposable
     /// carrying the DCP metadata attributes (R-1 finding, CLAUDE.md §"Aspire (§4, §19)").
     /// </param>
     /// <param name="startupTimeout">
-    /// Maximum time allowed for the entire topology (both resources) to reach healthy/running.
-    /// Defaults to 120 seconds; callers may tighten this to surface hangs loudly.
+    /// Maximum time allowed for the Aspire build-and-start phase (before the health gates).
+    /// Defaults to 120 seconds.  Also used as the default for <paramref name="databaseHealthTimeout"/>
+    /// and <paramref name="serviceHealthTimeout"/> when those are not specified.
     /// </param>
-    /// <param name="cancellationToken">Propagated to the underlying host.</param>
+    /// <param name="databaseHealthTimeout">
+    /// Maximum time allowed for the <c>"appdb"</c> health gate to complete after
+    /// <see cref="HeadlessTopology.StartAsync"/> returns.  Defaults to
+    /// <paramref name="startupTimeout"/> (or 120 seconds if that is also <see langword="null"/>).
+    /// </param>
+    /// <param name="serviceHealthTimeout">
+    /// Maximum time allowed for the <c>"web"</c> health gate to complete after the database
+    /// gate passes.  Defaults to <paramref name="startupTimeout"/> (or 120 seconds if that is
+    /// also <see langword="null"/>).
+    /// </param>
+    /// <param name="cancellationToken">Propagated to the underlying host. Must be the last parameter (CA1068).</param>
     /// <returns>A fully started and health-gated <see cref="StubTopology"/>.</returns>
     public static async Task<StubTopology> StartAsync(
         string? appHostAssemblyName = null,
         TimeSpan? startupTimeout = null,
+        TimeSpan? databaseHealthTimeout = null,
+        TimeSpan? serviceHealthTimeout = null,
         CancellationToken cancellationToken = default)
     {
         var timeout = startupTimeout ?? TimeSpan.FromSeconds(120);
+        var dbTimeout = databaseHealthTimeout ?? timeout;
+        var svcTimeout = serviceHealthTimeout ?? timeout;
+
+        var sw = Stopwatch.StartNew();
 
         // Retain the database builder so we can call GetConnectionStringAsync on its Resource
         // without depending on Aspire.Hosting.Testing extension methods.
@@ -155,12 +186,16 @@ public sealed class StubTopology : IAsyncDisposable
             // throws DistributedApplicationException immediately rather than hanging.
             // This is the DESIRED behaviour — a resource that fails to start is an
             // Environment error (§12.1) and must surface, not block indefinitely.
+            //
+            // Uses dbTimeout (defaults to startupTimeout) for a bounded, per-resource window.
             // ----------------------------------------------------------------
             using var healthCts1 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthCts1.CancelAfter(timeout);
+            healthCts1.CancelAfter(dbTimeout);
             await app.ResourceNotifications
                 .WaitForResourceHealthyAsync("appdb", WaitBehavior.StopOnResourceUnavailable, healthCts1.Token)
                 .ConfigureAwait(false);
+
+            var databaseReadyElapsed = sw.Elapsed;
 
             // ----------------------------------------------------------------
             // Health-gate 2: "web" container.
@@ -172,14 +207,22 @@ public sealed class StubTopology : IAsyncDisposable
             //
             // WaitBehavior.StopOnResourceUnavailable: same fail-fast semantics as gate 1 —
             // a container that exits or fails to start throws immediately.
+            //
+            // Uses svcTimeout (defaults to startupTimeout) for a bounded, per-resource window.
             // ----------------------------------------------------------------
             using var healthCts2 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthCts2.CancelAfter(timeout);
+            healthCts2.CancelAfter(svcTimeout);
             await app.ResourceNotifications
                 .WaitForResourceHealthyAsync("web", WaitBehavior.StopOnResourceUnavailable, healthCts2.Token)
                 .ConfigureAwait(false);
 
-            return new StubTopology(topology, dbBuilder!, webEndpoint);
+            sw.Stop();
+            var timing = new StartupTiming(
+                Total: sw.Elapsed,
+                DatabaseReady: databaseReadyElapsed,
+                ServiceReady: sw.Elapsed - databaseReadyElapsed);
+
+            return new StubTopology(topology, dbBuilder!, webEndpoint, timing);
         }
         catch
         {
