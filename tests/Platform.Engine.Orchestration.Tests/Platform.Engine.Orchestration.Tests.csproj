@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Aspire.AppHost.Sdk injects DCP binary references (Aspire.Hosting.Orchestration.win-x64)
-       and embeds the dcpclipath / dcpextensionpaths AssemblyMetadata attributes that
-       DistributedApplication.CreateBuilder requires to locate the DCP process.
+  <!-- Aspire.AppHost.Sdk injects DCP binary references (Aspire.Hosting.Orchestration.<RID>,
+       where <RID> is resolved per build host: win-x64 on Windows, linux-x64 on the CI runner,
+       osx-arm64 on Apple Silicon, etc.) and embeds the dcpclipath / dcpextensionpaths
+       AssemblyMetadata attributes that DistributedApplication.CreateBuilder requires to
+       locate the DCP process.
        This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
        a plain Aspire.Hosting library reference alone does NOT carry DCP binaries. -->
   <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />

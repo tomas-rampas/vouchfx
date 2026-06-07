@@ -183,7 +183,7 @@ internal static class ForbiddenScriptingApiScanner
         // directly so the generic instance decoding path yields it.
         try
         {
-            var provider = new GenericTypeDefinitionNameProvider(reader);
+            var provider = new GenericTypeDefinitionNameProvider();
             // DecodeSignature drives the blob decoder; for a generic instantiation it
             // calls ISignatureTypeProvider.GetGenericInstantiation, which our provider
             // handles by returning the open generic type definition's full name.
@@ -215,10 +215,6 @@ internal static class ForbiddenScriptingApiScanner
     private sealed class GenericTypeDefinitionNameProvider
         : ISignatureTypeProvider<string?, object?>
     {
-        private readonly MetadataReader _reader;
-
-        internal GenericTypeDefinitionNameProvider(MetadataReader reader) => _reader = reader;
-
         // The only two paths that matter for detecting Script<T>.RunAsync:
         //   1. GetGenericInstantiation is called with the open-generic typedef name.
         //   2. GetTypeFromReference is called to resolve that typedef.
