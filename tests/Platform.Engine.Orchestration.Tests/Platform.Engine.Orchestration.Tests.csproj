@@ -1,6 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- Aspire.AppHost.Sdk injects DCP binary references (Aspire.Hosting.Orchestration.win-x64)
+       and embeds the dcpclipath / dcpextensionpaths AssemblyMetadata attributes that
+       DistributedApplication.CreateBuilder requires to locate the DCP process.
+       This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
+       a plain Aspire.Hosting library reference alone does NOT carry DCP binaries. -->
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
+
+  <!-- Mark this project as an Aspire host so the AppHost build targets embed the DCP metadata. -->
+  <PropertyGroup>
+    <IsAspireHost>true</IsAspireHost>
+  </PropertyGroup>
 
   <ItemGroup>
+    <!-- AppHost must be a *direct* reference so its build/ targets run and embed the DCP metadata.
+         Aspire.AppHost.Sdk auto-adds this package; the explicit reference pins the CPM version. -->
+    <PackageReference Include="Aspire.Hosting.AppHost" />
     <PackageReference Include="Aspire.Hosting.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
@@ -15,7 +29,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Orchestration\Platform.Engine.Orchestration.csproj" />
+    <!-- IsAspireProjectResource=false: this is a library, not an orchestrated service. -->
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Orchestration\Platform.Engine.Orchestration.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
 </Project>
