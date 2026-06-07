@@ -10,7 +10,12 @@
 
 ## Delivery status
 
-All 11 tasks complete on branch `feat/sprint-01-foundations`. Both headline de-risking exit criteria met:
+**Delivered on PR #126** (branch `feat/sprint-01-foundations`) — pending CI and human review/merge.
+All 11 tasks implemented and their acceptance criteria met locally; per the plan's Definition of Done
+([README §8](README.md#8-definition-of-done-a-task-is-complete-when)) the sprint is not formally closed
+until the PR is reviewed by another engineer and merged. Milestone **M1 "Foundations proven" is not yet
+reached** — it closes after **Sprint 2** (the full Core-provider-closure leak gate and the reference
+provider land there). Both headline de-risking exit criteria are met:
 
 1. **Memory model verified:** Trivial script compiles once, runs 5,000× in a collectible `AssemblyLoadContext`, unloads with ~1.3 KB net heap delta (threshold 2 MB).
 2. **Orchestration stability:** Stub topology (Postgres + container service) starts health-gated deterministically across 20/20 runs; connection strings and HTTP endpoints correctly resolved.

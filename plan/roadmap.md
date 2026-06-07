@@ -7,6 +7,10 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > Dates are **notional**, anchored to a Monday start (2026-06-08) purely to lay the bars out. Per
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
+>
+> **Progress:** Sprint 01 (marked `done` below) is **delivered on PR #126** — acceptance criteria met,
+> pending CI and human review/merge. Milestone **M1 is not yet reached**: it closes after Sprint 02
+> (the full Core-provider-closure leak gate and the reference provider land there).
 
 ```mermaid
 gantt
@@ -16,7 +20,7 @@ gantt
     todayMarker off
 
     section P1 Foundations
-    S01 De-risk (PoC, spike)        :s01, 2026-06-08, 14d
+    S01 De-risk (PoC, spike)        :done, s01, 2026-06-08, 14d
     S02 Close risk (leak gate)      :s02, after s01, 14d
     M1 Foundations proven           :milestone, crit, m1, after s02, 0d
 
