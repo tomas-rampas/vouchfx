@@ -79,17 +79,19 @@ public sealed class HealthGateReliabilityTests
                     startupTimeout: RunTimeout);
 
                 // Reaching this line proves both health gates passed — the topology is fully healthy.
-                // Validate that timing was captured and all durations are non-negative.
+                // Validate that timing was captured and that the arithmetic relationships hold:
+                //   • DatabaseReady must not exceed Total (gate 1 completes before gate 2).
+                //   • ServiceReady == Total - DatabaseReady (it is the gap between the two gates).
+                // These assertions exercise the real timing arithmetic rather than the trivially
+                // true ">= TimeSpan.Zero" check.
                 var timing = topology.Timing;
                 Assert.True(
-                    timing.Total >= TimeSpan.Zero,
-                    $"Run {run}: Timing.Total must be non-negative; got {timing.Total}.");
-                Assert.True(
-                    timing.DatabaseReady >= TimeSpan.Zero,
-                    $"Run {run}: Timing.DatabaseReady must be non-negative; got {timing.DatabaseReady}.");
-                Assert.True(
-                    timing.ServiceReady >= TimeSpan.Zero,
-                    $"Run {run}: Timing.ServiceReady must be non-negative; got {timing.ServiceReady}.");
+                    timing.DatabaseReady <= timing.Total,
+                    $"Run {run}: Timing.DatabaseReady ({timing.DatabaseReady}) must not exceed " +
+                    $"Timing.Total ({timing.Total}); gate 1 cannot take longer than the full startup.");
+                Assert.Equal(
+                    timing.Total - timing.DatabaseReady,
+                    timing.ServiceReady);
 
                 totalDurations.Add(timing.Total.TotalSeconds);
 

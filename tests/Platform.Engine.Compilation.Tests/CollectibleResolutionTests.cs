@@ -262,6 +262,54 @@ public sealed class CollectibleResolutionTests : IDisposable
     }
 
     // -------------------------------------------------------------------------
+    // Test 5 — end-to-end: Load + collectibleProbingPaths + InvokeAsync.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Compiles a CSX body that calls <c>VouchfxSatTest.Widget.Answer()</c> using
+    /// <see cref="RoslynScriptCompiler.CompileOnce"/> with
+    /// <c>additionalReferencePaths</c> pointing to the satellite, then loads the result
+    /// via <see cref="RoslynScriptCompiler.Load"/> with <c>collectibleProbingPaths</c>
+    /// pointing to the same satellite.  Invokes the <see cref="LoadedScript"/> a few
+    /// times and asserts that <c>Vars["sat"]</c> equals 42 on every invocation.
+    /// Disposes the handle after use.
+    /// </summary>
+    [Fact]
+    public async Task Load_WithCollectibleProbingPaths_ResolvesAndInvokesSatelliteCorrectly()
+    {
+        // The CSX body uses the fully-qualified name to avoid needing an explicit import.
+        const string csxSource = """
+            Vars["sat"] = VouchfxSatTest.Widget.Answer();
+            """;
+
+        var referencePaths = new[] { _satPath };
+
+        // Compile once with the satellite as an additional metadata reference.
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            csxSource,
+            additionalReferencePaths: referencePaths);
+
+        Assert.NotNull(compiled);
+        Assert.NotEmpty(compiled.Image);
+
+        // Load into a single collectible ALC using the satellite probing path.
+        using var loaded = RoslynScriptCompiler.Load(compiled, collectibleProbingPaths: referencePaths);
+
+        // Invoke several times to confirm the delegate binding is stable across calls.
+        const int invocations = 3;
+        for (var i = 0; i < invocations; i++)
+        {
+            var vars = new Dictionary<string, object?>();
+            var globals = new ScriptGlobalVariables(vars);
+
+            await loaded.InvokeAsync(globals);
+
+            Assert.Equal(42, vars["sat"]);
+            _output.WriteLine($"Test 5 invocation {i + 1}: Vars[\"sat\"] = {vars["sat"]} (expected 42).");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Private helper — build the satellite assembly image.
     // -------------------------------------------------------------------------
 

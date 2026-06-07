@@ -1,7 +1,8 @@
 // Platform.Sdk — provider-authoring contract surface (§13).
-// This file declares the narrow context marker interfaces passed to provider
-// stages.  These surfaces are intentionally minimal at Sprint 1 and will be
-// expanded additively in Sprint 2 and beyond.
+// This file declares the provider context interfaces passed to each provider stage.
+// IBindingContext and IProjectContext remain marker interfaces this sprint;
+// ICompileContext carries the step-identity surface (StepId + SuiteNamespace)
+// introduced in Sprint 2.
 namespace Platform.Sdk;
 
 /// <summary>
