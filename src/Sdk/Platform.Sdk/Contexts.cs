@@ -37,7 +37,21 @@ public interface IProjectContext { }
 /// <remarks>
 /// The members of this interface are frozen for the v1.x engine series;
 /// evolution is additive only, via new optional interfaces.
-/// Sprint-1 surface: marker only.  Additional members are introduced
-/// in Sprint 2.
+/// Sprint-2 additions: <see cref="StepId"/> and <see cref="SuiteNamespace"/>.
 /// </remarks>
-public interface ICompileContext { }
+public interface ICompileContext
+{
+    /// <summary>
+    /// Gets the identifier of the step currently being compiled.
+    /// Providers must sanitise this value via <see cref="CsxFragment.SanitiseId"/>
+    /// before embedding it in emitted variable names.
+    /// </summary>
+    string StepId { get; }
+
+    /// <summary>
+    /// Gets the C# namespace into which the compiled suite is emitted.
+    /// Providers use this to qualify helper-class names when name collisions
+    /// across suites must be avoided.
+    /// </summary>
+    string SuiteNamespace { get; }
+}
