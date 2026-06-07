@@ -22,10 +22,16 @@ namespace Platform.Sdk;
 ///   </item>
 ///   <item>
 ///     <description>
-///       <see cref="RequiredHelpers"/> entries are nested static class
-///       <em>names</em> (not definitions), each prefixed with the provider id,
-///       e.g. <c>DbAssertPostgres_Helpers</c>.  The engine injects the
-///       corresponding class bodies before the main script body.
+///       <see cref="RequiredHelpers"/> entries are the <em>full source</em> of
+///       nested <c>static</c> classes whose declared class names must be
+///       prefixed with the provider identifier followed by an underscore, e.g.
+///       <c>static class DbAssertPostgres_Helpers { … }</c>.  The engine
+///       deduplicates entries by declared class name and injects the resulting
+///       unique definitions before the main script body.  A provider
+///       <strong>must</strong> emit byte-identical source for a given helper
+///       class across all of its step instances within one suite; two steps of
+///       the same kind must not produce two differing definitions of the same
+///       class.
 ///     </description>
 ///   </item>
 ///   <item>
@@ -68,9 +74,14 @@ namespace Platform.Sdk;
 /// the <c>using</c> keyword or a trailing semicolon.
 /// </param>
 /// <param name="RequiredHelpers">
-/// Names of nested static helper classes contributed by this provider.
-/// Each name must be prefixed with the provider identifier followed by an
-/// underscore, e.g. <c>NoopEcho_Helpers</c>.
+/// Full source of nested <c>static</c> helper class definitions contributed
+/// by this provider.  Each entry must contain exactly one class whose
+/// declared name is prefixed with the provider identifier followed by an
+/// underscore, e.g. <c>static class NoopEcho_Helpers { … }</c>.  The engine
+/// deduplicates by declared class name when assembling the script; a provider
+/// must therefore emit byte-identical source for a given helper across all of
+/// its step instances (two steps of the same kind must not produce two
+/// differing definitions of the same class).
 /// </param>
 /// <param name="StatementBlock">
 /// Exactly one brace-enclosed C# statement block for this step.

@@ -142,7 +142,8 @@ public interface IStepCompiler<TModel> where TModel : IStepModel
     /// Implementations must observe all CsxFragment composition rules
     /// (§13.3.1): bare namespace strings in
     /// <see cref="CsxFragment.RequiredUsings"/>, provider-id-prefixed
-    /// names in <see cref="CsxFragment.RequiredHelpers"/>, and a single
+    /// nested static class <em>definitions</em> (full source) in
+    /// <see cref="CsxFragment.RequiredHelpers"/>, and a single
     /// brace-enclosed <see cref="CsxFragment.StatementBlock"/>.
     /// </para>
     /// <para>
