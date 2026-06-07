@@ -72,6 +72,14 @@ public static class RoslynScriptCompiler
     /// references, imports).  When <see langword="null"/>, only the default references
     /// required to resolve <see cref="ScriptGlobalVariables"/> are used.
     /// </param>
+    /// <param name="additionalReferencePaths">
+    /// Optional list of absolute paths to assemblies that should be added as
+    /// <see cref="Microsoft.CodeAnalysis.MetadataReference"/> entries at compile time.
+    /// Use this when the CSX body references types from provider or satellite assemblies
+    /// that are not already on the Roslyn reference list.  At runtime, those assemblies
+    /// must be made available either via the Default context or via
+    /// <c>collectibleProbingPaths</c> on <see cref="RunIsolatedAsync"/>.
+    /// </param>
     /// <returns>
     /// A <see cref="CompiledScript"/> whose <see cref="CompiledScript.Image"/> contains
     /// the emitted PE bytes.  The image is safe to store and pass to
@@ -84,15 +92,17 @@ public static class RoslynScriptCompiler
     /// </exception>
     public static CompiledScript CompileOnce(
         string csxSource,
-        ScriptOptions? additionalOptions = null)
+        ScriptOptions? additionalOptions = null,
+        IReadOnlyList<string>? additionalReferencePaths = null)
     {
         ArgumentNullException.ThrowIfNull(csxSource);
 
         // Build ScriptOptions that include references for:
         //   • mscorlib / System.Private.CoreLib  (object, Task, …)
         //   • Platform.Engine.Abstractions       (ScriptGlobalVariables)
+        //   • any caller-supplied additionalReferencePaths
         // Additional caller-supplied options are merged on top.
-        var options = BuildBaseOptions(additionalOptions);
+        var options = BuildBaseOptions(additionalOptions, additionalReferencePaths);
 
         // CSharpScript.Create<object> — compile-time initialisation only.
         // NEVER call RunAsync / EvaluateAsync on this script or its state.
@@ -131,6 +141,16 @@ public static class RoslynScriptCompiler
     /// An optional human-readable label embedded in the ALC name for diagnostics
     /// (e.g. a step-id or iteration counter).
     /// </param>
+    /// <param name="collectibleProbingPaths">
+    /// Optional list of absolute paths to satellite assemblies that the script depends
+    /// on at runtime and that should be loaded into the per-run collectible
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> so they unload with it.
+    /// Assemblies whose simple name is already present in the Default context are
+    /// automatically excluded (pin-avoidance rule — see
+    /// <see cref="CollectibleScriptLoadContext"/>).
+    /// Pass <see langword="null"/> when the script's only runtime dependencies are
+    /// already in the Default context.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated into the awaited script task.
     /// </param>
@@ -142,12 +162,13 @@ public static class RoslynScriptCompiler
         CompiledScript compiled,
         ScriptGlobalVariables globals,
         string runLabel = "run",
+        IReadOnlyList<string>? collectibleProbingPaths = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(globals);
 
-        var alc = new CollectibleScriptLoadContext($"script-{runLabel}");
+        var alc = new CollectibleScriptLoadContext($"script-{runLabel}", collectibleProbingPaths);
         try
         {
             var asm = LoadImage(alc, compiled.Image);
@@ -196,14 +217,24 @@ public static class RoslynScriptCompiler
     /// The image produced by <see cref="CompileOnce"/>; its bytes are loaded
     /// into a fresh collectible ALC exactly once.
     /// </param>
+    /// <param name="collectibleProbingPaths">
+    /// Optional list of absolute paths to satellite assemblies that the script depends
+    /// on at runtime and that should be loaded into the single collectible
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> so they unload when the
+    /// <see cref="LoadedScript"/> is disposed.  Assemblies whose simple name is already
+    /// present in the Default context are automatically excluded (pin-avoidance rule).
+    /// Pass <see langword="null"/> when no satellite probing is required.
+    /// </param>
     /// <returns>
     /// A <see cref="LoadedScript"/> that is ready for repeated invocation.
     /// </returns>
-    public static LoadedScript Load(CompiledScript compiled)
+    public static LoadedScript Load(
+        CompiledScript compiled,
+        IReadOnlyList<string>? collectibleProbingPaths = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
 
-        var alc = new CollectibleScriptLoadContext("script-loaded");
+        var alc = new CollectibleScriptLoadContext("script-loaded", collectibleProbingPaths);
         try
         {
             var asm = LoadImage(alc, compiled.Image);
@@ -243,7 +274,9 @@ public static class RoslynScriptCompiler
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private static ScriptOptions BuildBaseOptions(ScriptOptions? additional)
+    private static ScriptOptions BuildBaseOptions(
+        ScriptOptions? additional,
+        IReadOnlyList<string>? additionalReferencePaths = null)
     {
         // Resolve BCL assembly paths from the trusted-platform-assemblies (TPA) list.
         // This is safe under single-file publish where Assembly.Location returns ""
@@ -264,6 +297,19 @@ public static class RoslynScriptCompiler
         {
             Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(abstractionsLocation),
         };
+
+        // Add caller-supplied per-script reference paths (e.g. provider or satellite
+        // assemblies referenced by the CSX body at compile time).  At runtime those
+        // assemblies are made available either via the Default context or via the
+        // collectibleProbingPaths parameter on RunIsolatedAsync / Load.
+        if (additionalReferencePaths is not null)
+        {
+            foreach (var path in additionalReferencePaths)
+            {
+                if (!string.IsNullOrEmpty(path))
+                    refs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+            }
+        }
 
         var baseOptions = ScriptOptions.Default.WithReferences(refs);
 
