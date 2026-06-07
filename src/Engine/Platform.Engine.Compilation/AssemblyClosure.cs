@@ -1,23 +1,35 @@
 // Platform.Engine.Compilation — AssemblyClosure (§5.6).
 //
 // The single suite-start hook for engine-assembly graph validation.
-// S02-F-03 (reserved-namespace guard) will extend GuardAtSuiteStart in a later
-// sprint without altering callers — this method is the stable hook.
+// Guards run in order: reserved-namespace guard (S02-F-03) then version-conflict
+// guard (S02-B-02).  Adding further guards means extending GuardAtSuiteStart without
+// altering callers.
 using System.Reflection;
 using System.Runtime.Loader;
 
 namespace Platform.Engine.Compilation;
 
 /// <summary>
-/// Resolves the engine assembly closure and runs the suite-start guard over it
+/// Resolves the engine assembly closure and runs the suite-start guards over it
 /// (§5.6).
 /// </summary>
 /// <remarks>
 /// <para>
 /// This class is the single, stable entry point for all suite-start assembly-graph
-/// checks.  At the moment it delegates version-conflict detection to
-/// <see cref="AssemblyGraphGuard"/>; later sprints will prepend a reserved-namespace
-/// guard (S02-F-03) without changing callers.
+/// checks.  Guards are invoked in the following order inside
+/// <see cref="GuardAtSuiteStart"/>:
+/// <list type="number">
+///   <item><description>
+///     <see cref="ReservedNamespaceGuard.ThrowIfSquatting"/> — refuses customer DLLs
+///     that declare types under the reserved namespaces <c>Platform.Engine.*</c> or
+///     <c>Platform.Steps.*</c> (S02-F-03).
+///   </description></item>
+///   <item><description>
+///     <see cref="AssemblyGraphGuard.ThrowIfConflicting(IEnumerable{Assembly})"/> —
+///     fails fast when the same simple assembly name appears at two or more distinct
+///     version values (S02-B-02).
+///   </description></item>
+/// </list>
 /// </para>
 /// <para>
 /// <b>When to call:</b> call <see cref="GuardAtSuiteStart"/> exactly once during
@@ -63,19 +75,24 @@ public static class AssemblyClosure
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Current guards (in invocation order):
+    /// Guards are invoked in this order:
     /// <list type="number">
     ///   <item><description>
-    ///     <see cref="AssemblyGraphGuard.ThrowIfConflicting(IEnumerable{Assembly})"/> —
+    ///     Reserved-namespace guard (<see cref="ReservedNamespaceGuard.ThrowIfSquatting"/>) —
+    ///     refuses customer DLLs that squat on <c>Platform.Engine.*</c> or
+    ///     <c>Platform.Steps.*</c>.  Engine and provider assemblies whose simple name
+    ///     starts with <c>Platform.Engine.</c> or <c>Platform.Steps.</c>, plus
+    ///     <c>Platform.Sdk</c>, are exempt (see <see cref="BuildTrustedSimpleNames"/>).
+    ///   </description></item>
+    ///   <item><description>
+    ///     Version-conflict guard (<see cref="AssemblyGraphGuard.ThrowIfConflicting(IEnumerable{Assembly})"/>) —
     ///     fails fast when the same simple assembly name appears at two or more distinct
     ///     <see cref="Version"/> values.
     ///   </description></item>
     /// </list>
     /// </para>
     /// <para>
-    /// A later task (S02-F-03) prepends a reserved-namespace guard here; this method
-    /// is the single suite-start hook.  The exceptions it throws map to the
-    /// Environment-error verdict bucket (§12.1).
+    /// Both exceptions map to the <em>Environment-error</em> verdict bucket (§12.1).
     /// </para>
     /// </remarks>
     /// <param name="closure">
@@ -85,6 +102,10 @@ public static class AssemblyClosure
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="closure"/> is <see langword="null"/>.
     /// </exception>
+    /// <exception cref="ReservedNamespaceSquatException">
+    /// Thrown when the namespace guard finds a customer DLL squatting on a reserved
+    /// namespace.  Maps to the Environment-error verdict (§12.1).
+    /// </exception>
     /// <exception cref="AssemblyVersionConflictException">
     /// Thrown when the version-conflict guard finds the same simple assembly name at
     /// two or more distinct versions.  Maps to the Environment-error verdict (§12.1).
@@ -93,6 +114,56 @@ public static class AssemblyClosure
     {
         ArgumentNullException.ThrowIfNull(closure);
 
-        AssemblyGraphGuard.ThrowIfConflicting(closure);
+        // Materialise once so both guards iterate the same snapshot without
+        // re-enumerating a potentially lazy source.
+        var list = closure as IReadOnlyList<Assembly> ?? closure.ToList();
+
+        var trusted = BuildTrustedSimpleNames(list);
+
+        // Guard 1 — reserved-namespace squat check (S02-F-03).
+        ReservedNamespaceGuard.ThrowIfSquatting(list, trusted);
+
+        // Guard 2 — version-conflict check (S02-B-02).
+        AssemblyGraphGuard.ThrowIfConflicting(list);
+    }
+
+    /// <summary>
+    /// Builds the set of assembly simple names that are exempt from the
+    /// reserved-namespace scan.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An assembly is trusted — and therefore permitted to declare types under
+    /// <c>Platform.Engine.*</c> or <c>Platform.Steps.*</c> — when its own simple name
+    /// starts with <c>Platform.Engine.</c> or <c>Platform.Steps.</c>, or equals
+    /// <c>Platform.Sdk</c>.  These are the engine and provider assemblies that own those
+    /// namespaces by design.
+    /// </para>
+    /// <para>
+    /// Residual: an assembly that impersonates a <c>Platform.Engine.*</c> or
+    /// <c>Platform.Steps.*</c> <em>name</em> will be included in the trusted set here,
+    /// but that is an assembly-name collision which <see cref="AssemblyGraphGuard"/>
+    /// handles — it is not this guard's responsibility.
+    /// </para>
+    /// </remarks>
+    private static HashSet<string> BuildTrustedSimpleNames(IReadOnlyList<Assembly> list)
+    {
+        var trusted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var assembly in list)
+        {
+            var name = assembly.GetName().Name;
+            if (name is null)
+                continue;
+
+            if (name.StartsWith("Platform.Engine.", StringComparison.Ordinal) ||
+                name.StartsWith("Platform.Steps.", StringComparison.Ordinal) ||
+                name.Equals("Platform.Sdk", StringComparison.Ordinal))
+            {
+                trusted.Add(name);
+            }
+        }
+
+        return trusted;
     }
 }
