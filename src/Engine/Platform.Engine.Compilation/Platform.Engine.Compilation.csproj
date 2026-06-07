@@ -4,6 +4,13 @@
     <RootNamespace>Platform.Engine.Compilation</RootNamespace>
   </PropertyGroup>
 
+  <!-- Expose internal types (CollectibleScriptLoadContext) to the memory-model test project. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Compilation.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
   </ItemGroup>
