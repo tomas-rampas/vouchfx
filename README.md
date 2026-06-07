@@ -1,6 +1,6 @@
 # vouchfx
 
-**End-to-end integration testing for distributed .NET systems, authored in YAML.**
+**End-to-end integration testing for distributed systems, authored in YAML.**
 
 vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them through
 Roslyn, and orchestrates the required container topology with **.NET Aspire + Testcontainers**. It
