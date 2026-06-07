@@ -8,9 +8,9 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress:** Sprint 01 (marked `done` below) is **delivered on PR #126** — acceptance criteria met,
-> pending CI and human review/merge. Milestone **M1 is not yet reached**: it closes after Sprint 02
-> (the full Core-provider-closure leak gate and the reference provider land there).
+> **Progress:** Sprint 01 (marked `done` below) is **merged to `main`** via PR #126 (merge commit
+> `72d8c16`) — delivered and integrated, CI green. Milestone **M1 is not yet reached**: it closes after
+> Sprint 02 (the full Core-provider-closure leak gate and the reference provider land there).
 
 ```mermaid
 gantt
