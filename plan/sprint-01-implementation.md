@@ -36,10 +36,39 @@ The container has Docker 29.3.1 and reaches NuGet, but **no .NET SDK**. Two piec
 
 Deliverable: a documented one-command bootstrap and a green `dotnet build` on an empty solution.
 
+### 1.1 SDK pinning via `global.json` (required — multiple SDKs present)
+
+Dev machines (and CI) carry side-by-side SDKs — the reference box has `8.0.409`, `8.0.421`, `9.0.300`,
+`9.0.314`, **and `10.0.108`**. Without a `global.json`, `dotnet build` selects the **newest** SDK (10.0)
+and applies its MSBuild/analyzer defaults even against a `net8.0` target — non-deterministic and a source
+of subtle drift. We pin the **SDK** (distinct from the **target framework**, which stays `net8.0`):
+
+```json
+{
+  "sdk": {
+    "version": "8.0.400",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false
+  }
+}
+```
+
+- `rollForward: latestFeature` resolves to the highest installed **8.0** SDK (e.g. `8.0.421` locally, the
+  latest `8.0` SDK the SessionStart hook installs in the container) and **never** rolls to 9.x/10.x.
+- The engine still **targets `net8.0`** via `Directory.Build.props`; `global.json` only fixes which SDK
+  builds it, so local, container, and CI builds are byte-for-byte comparable.
+- If a build host lacks any `8.0` SDK, the pin **fails fast** with a clear message — which is what we want,
+  rather than silently building on .NET 10.
+
+> *Aside on .NET 10:* it is also LTS, but the engine is committed to **.NET 8 LTS** (CLAUDE.md, MVP §1).
+> Re-targeting is a deliberate design change, not a default — flag it if you want to revisit, otherwise we
+> hold 8 LTS and Aspire 9.x.
+
 ## 2. Solution & project layout (`S01-D-01`)
 
 ```
 vouchfx.sln
+global.json                    # pins the .NET SDK to the 8.0.4xx band (see §1.1)
 Directory.Build.props          # LangVersion=11, Nullable=enable, ImplicitUsings=enable,
                                # TreatWarningsAsErrors=true, deterministic build
 Directory.Packages.props       # central package management (all versions pinned here)
@@ -170,7 +199,7 @@ A GitHub Actions workflow: restore → build → test → format check on every 
 ## 10. Build order & PR breakdown
 Recommended as **three small PRs** (reviewable, each independently green):
 
-1. **PR-1 Scaffold + CI** — `S01-D-01`, `S01-D-02`, banned-API analyzer, `Directory.*.props`. *(No Docker.)*
+1. **PR-1 Scaffold + CI** — `S01-D-01`, `S01-D-02`, `global.json` SDK pin, banned-API analyzer, `Directory.*.props`. *(No Docker.)*
 2. **PR-2 Memory model** — `S01-B-01/02/03/04` + `ScriptGlobalVariables`. The de-risking proof. *(No Docker.)*
 3. **PR-3 Spike + contracts** — `S01-A-01/02/03`, `S01-F-01`, `S01-G-01`. *(Orchestration needs Docker.)*
 
@@ -182,7 +211,7 @@ correct the design** (MVP §8.1 exit criterion) before investing further.
 |---|---|---|
 | 1 | Aspire major | **9.x stable** (supports .NET 8) |
 | 2 | SDK namespace/project | `Platform.Engine.Abstractions` in packable `Platform.Sdk` |
-| 3 | .NET install | **SessionStart hook** installing .NET 8 SDK |
+| 3 | .NET install + SDK pin | **SessionStart hook** installs .NET 8 SDK; `global.json` pins SDK to `8.0.400` / `rollForward: latestFeature` |
 | 4 | Test framework | **xUnit** |
 | 5 | Leak thresholds | N=5,000; ≤1 MB net growth; collected ≤10 GC iters |
 | 6 | PR granularity | three PRs as in §10 |
