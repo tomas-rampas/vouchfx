@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
   </ItemGroup>
 
 </Project>

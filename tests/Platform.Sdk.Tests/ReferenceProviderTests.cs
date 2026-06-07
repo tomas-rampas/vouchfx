@@ -1,4 +1,4 @@
-// Tests for the NoopEcho reference provider — BDD red phase for S01-F-01.
+// Tests for the NoopEcho reference provider — S02-F-01 lifecycle contract.
 // Covers: identity/metadata, reflection discovery, five-stage cohesion, CsxFragment guards.
 using System.Reflection;
 using Platform.Sdk.Tests.Providers;
@@ -9,11 +9,8 @@ namespace Platform.Sdk.Tests;
 
 public sealed class ReferenceProviderTests
 {
+    // All five roles are exercised through the single consolidated provider instance.
     private readonly NoopEchoProvider _provider = new();
-    private readonly NoopEchoBinder _binder = new();
-    private readonly NoopEchoValidator _validator = new();
-    private readonly NoopEchoCompiler _compiler = new();
-    private readonly NoopEchoResourceContributor _resources = new();
 
     // ── 1. Identity and metadata ──────────────────────────────────────────────
 
@@ -52,7 +49,7 @@ public sealed class ReferenceProviderTests
         {
             { "message", new YamlScalarNode("hello") }
         };
-        var model = _binder.Bind(yaml, NullBindingContext.Instance);
+        var model = _provider.Bind(yaml, NullBindingContext.Instance);
         Assert.IsAssignableFrom<IStepModel>(model);
         Assert.Equal("hello", ((NoopEchoModel)model).Message);
     }
@@ -60,7 +57,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Binder_SchemaFragment_ContainsJson()
     {
-        Assert.False(string.IsNullOrWhiteSpace(_binder.SchemaFragment.Json));
+        Assert.False(string.IsNullOrWhiteSpace(_provider.SchemaFragment.Json));
     }
 
     // ── 3. Validate returns correct verdicts ──────────────────────────────────
@@ -68,7 +65,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Validator_ReturnsSuccess_ForValidModel()
     {
-        var result = _validator.Validate(new NoopEchoModel("hello"), NullProjectContext.Instance);
+        var result = _provider.Validate(new NoopEchoModel("hello"), NullProjectContext.Instance);
         Assert.True(result.IsValid);
         Assert.Empty(result.Errors);
     }
@@ -76,7 +73,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Validator_ReturnsFailure_ForInvalidModel()
     {
-        var result = _validator.Validate(new NoopEchoModel(string.Empty), NullProjectContext.Instance);
+        var result = _provider.Validate(new NoopEchoModel(string.Empty), NullProjectContext.Instance);
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
     }
@@ -86,7 +83,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void ResourceContributor_ReturnsExpectedRequirement()
     {
-        var reqs = _resources.Resources(new NoopEchoModel("hello")).ToList();
+        var reqs = _provider.Resources(new NoopEchoModel("hello")).ToList();
         Assert.Single(reqs);
         var req = reqs[0];
         Assert.Equal("noop", req.Family);
@@ -98,7 +95,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Compiler_Emit_StatementBlockStartsAndEndsWithBrace()
     {
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
+        var frag = _provider.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
         var trimmed = frag.StatementBlock.Trim();
         Assert.StartsWith("{", trimmed);
         Assert.EndsWith("}", trimmed);
@@ -111,7 +108,7 @@ public sealed class ReferenceProviderTests
         // contain the underscore form and must NOT contain the hyphenated form.
         const string hyphenatedId = "orders-db";
         var ctx = new CompileContextWithStepId(hyphenatedId);
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), ctx);
+        var frag = _provider.Emit(new NoopEchoModel("hello"), ctx);
 
         var sanitised = CsxFragment.SanitiseId(hyphenatedId);
         Assert.Contains(sanitised, frag.StatementBlock, StringComparison.Ordinal);
@@ -121,7 +118,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Compiler_Emit_RequiredUsings_AreBarePrefixNamespaces()
     {
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
+        var frag = _provider.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
         foreach (var u in frag.RequiredUsings)
         {
             Assert.False(u.TrimStart().StartsWith("using ", StringComparison.Ordinal),
@@ -132,11 +129,15 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void Compiler_Emit_RequiredHelpers_AreProviderIdPrefixed()
     {
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
+        // RequiredHelpers entries are full static class DEFINITIONS whose declared
+        // class name is prefixed with the provider id (§13.3.1).
+        var frag = _provider.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
         foreach (var h in frag.RequiredHelpers)
         {
-            Assert.True(h.StartsWith("NoopEcho_", StringComparison.Ordinal),
-                $"RequiredHelpers entries must be prefixed with the provider id. Got: {h}");
+            Assert.True(h.Contains("NoopEcho_", StringComparison.Ordinal),
+                $"RequiredHelpers entries must contain a provider-id-prefixed class name. Got: {h}");
+            Assert.True(h.Contains("class NoopEcho_", StringComparison.Ordinal),
+                $"RequiredHelpers entries must declare a 'class NoopEcho_' type. Got: {h}");
         }
     }
 
@@ -145,7 +146,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void EmittedStatementBlock_ContainsNoInlineUsingDirective()
     {
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
+        var frag = _provider.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
         // "using " as a statement at the start of a line is illegal in a Roslyn script body.
         Assert.DoesNotContain("using ", frag.StatementBlock, StringComparison.Ordinal);
     }
@@ -153,7 +154,7 @@ public sealed class ReferenceProviderTests
     [Fact]
     public void EmittedStatementBlock_ContainsNoUsingVar()
     {
-        var frag = _compiler.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
+        var frag = _provider.Emit(new NoopEchoModel("hello"), NullCompileContext.Instance);
         // "using var" causes a parse error in any Roslyn script-language version.
         Assert.DoesNotContain("using var", frag.StatementBlock, StringComparison.Ordinal);
     }
