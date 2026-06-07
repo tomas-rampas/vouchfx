@@ -12,12 +12,12 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 
 ## How to work here — read first
 
-- **This repo is a specification, not code yet.** Only `docs/` and a stub README exist: no source, no build, no tests. "Build / implement / test X" means *start from a blank slate against a fully-specified design*, not modify existing code.
+- **This repo is a specification and a plan, not code yet.** Present: `docs/` (the design), `plan/` (the MVP delivery plan), `.claude/` (shared Claude Code config), `README.md`, this file. Absent: any `src/`, build, or tests. "Build / implement / test X" means *start from a blank slate against a fully-specified design*, not modify existing code.
 - **Do not invent commands.** No build/lint/test commands exist yet. The target is a .NET solution (engine on **.NET 8 LTS**) shipped as a `dotnet` global tool (CLI runner, deterministic CI exit codes) + a VSCode extension. Once projects exist, use standard `dotnet build`/`test`/`run`. Never reference a command before its project exists.
 - **Navigate the docs with Grep by section number.** They are large (blueprint ~1200 lines). Do not read end-to-end.
 - **Distrust illustrative snippets.** The docs mark some code "illustrative" and record corrections from real spikes (§1.2). Verify the actual Aspire/Roslyn API against the pinned version before trusting any snippet.
 - **Honour the hard invariants below.** They span multiple sections, were discovered in real spikes, and are non-negotiable.
-- **Follow the MVP build order (`docs/03`):** seven workstreams — A orchestration, B compiler/runtime, C tooling, D integration, E pilot, F Provider SDK, G reporting. Check phasing there before starting; the memory-leak regression test is a **Phase 1** deliverable, not an afterthought.
+- **Follow the MVP build order (`docs/03`), tracked in `plan/`:** seven workstreams — A orchestration, B compiler/runtime, C tooling, D integration, E pilot, F Provider SDK, G reporting. `plan/` decomposes this into 5 milestones / 12 sprints / 108 tasks; read `plan/README.md` for conventions and the milestone gates, and the relevant `plan/sprint-NN.md` before starting work. The memory-leak regression test is a **Phase 1 (M1)** deliverable and a permanent CI gate, not an afterthought.
 - **Documentation prose is British English.** Match it when editing docs.
 
 ## The authoritative documents
@@ -25,6 +25,8 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 - `docs/01_Technical_Architecture_and_Engineering_Blueprint.md` — single source of truth for how the system is built. §3 five layers; §4 Aspire/Testcontainers; §5 Roslyn compiler + memory model; §6 cloud fabric; §11 security; §12 verdict taxonomy; §13 provider architecture; §14 reporting/event stream; §16 test runner; §17 secrets; §18 risks; §19 technology table.
 - `docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md` — the `.e2e.yaml` grammar + VSCode/LSP. §3 document structure; §4 common step fields; §5 step families; §6 capture/placeholder syntax; §7 verifyMode; §8 JSON Schema; §10 extension.
 - `docs/03_MVP_Project_Plan.md` — scope, the seven workstreams, phasing, MVP vs. later.
+- `plan/README.md` — the execution plan that turns `docs/03` into milestones (M1–M5), 12 sprints, and tasks; the conventions, capacity, milestone gates, and the hard-invariant review checklist. Per-sprint task lists live in `plan/sprint-01.md … sprint-12.md`; `plan/roadmap.md` is the Mermaid overview.
+- `.claude/` — shared, project-scoped Claude Code config (agents, skills, commands, settings) vendored from the claude-agentic-framework; see `.claude/README.md` for provenance and what activates. It does not change the engine design — only how Claude Code works in this repo.
 
 ## Hard invariants (non-negotiable)
 
