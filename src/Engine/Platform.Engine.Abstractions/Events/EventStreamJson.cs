@@ -18,6 +18,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+// VerdictJsonConverter lives in the parent namespace; bring it in without
+// polluting the public API surface of this file.
+using Platform.Engine.Abstractions;
+
 namespace Platform.Engine.Abstractions.Events;
 
 /// <summary>
@@ -61,6 +65,7 @@ public static class EventStreamJson
     {
         WriteIndented = false,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new VerdictJsonConverter() },
     };
 
     /// <summary>
@@ -95,5 +100,44 @@ public static class EventStreamJson
         JsonSerializer.Deserialize<EventEnvelope>(line, Options)
             ?? throw new InvalidOperationException(
                 "Deserialisation of event-stream line produced a null result; " +
+                "the input was not a JSON object.");
+
+    /// <summary>
+    /// Serialises <paramref name="payload"/> to a compact single-line JSON
+    /// string suitable for appending to a JSON Lines stream.
+    /// </summary>
+    /// <typeparam name="T">
+    /// The typed event-payload record (e.g. <see cref="StepCompletedEvent"/>).
+    /// </typeparam>
+    /// <param name="payload">The payload record to serialise.</param>
+    /// <returns>
+    /// A compact JSON object string with no embedded newline characters.
+    /// </returns>
+    public static string ToLine<T>(T payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    /// <summary>
+    /// Deserialises a single JSON Lines record into the specified typed
+    /// event-payload record.
+    /// </summary>
+    /// <typeparam name="T">
+    /// The typed event-payload record (e.g. <see cref="StepCompletedEvent"/>).
+    /// </typeparam>
+    /// <param name="line">
+    /// A single JSON object string, as produced by <see cref="ToLine{T}"/> or
+    /// emitted by any compatible engine version.
+    /// </param>
+    /// <returns>The deserialised payload record.</returns>
+    /// <exception cref="JsonException">
+    /// Thrown if <paramref name="line"/> is not valid JSON or cannot be
+    /// deserialised as <typeparamref name="T"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown if deserialisation produces a <see langword="null"/> result.
+    /// </exception>
+    public static T FromLine<T>(string line) =>
+        JsonSerializer.Deserialize<T>(line, Options)
+            ?? throw new InvalidOperationException(
+                $"Deserialisation of event-stream line as {typeof(T).Name} produced a null result; " +
                 "the input was not a JSON object.");
 }
