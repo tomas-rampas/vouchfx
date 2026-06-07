@@ -29,6 +29,11 @@
       which requires this reference so the call binds at Roslyn compilation time.
     -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+    <!-- S01-B-04 §5.7 canonical client libraries — spike: load/unload in collectible context. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="MongoDB.Driver" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
   <ItemGroup>
