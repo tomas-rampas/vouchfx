@@ -12,15 +12,21 @@ shares the same agents and permissions when working on vouchfx.
 - `skills/` — 14 framework skills.
 - `commands/` — 6 slash commands.
 - `settings.json` — the permission allowlist (dotnet/git/npm/etc.) + `alwaysThinkingEnabled`.
+- `hooks/` — 44 framework hook configs + `PHASE3_SUMMARY.md`. **Note:** these use the framework's own
+  v3.0 schema (`agents`/`triggers`/`actions`/`enforcement`), **not** Claude Code's native `settings.json`
+  hook format (`PreToolUse`/`PostToolUse` → command). They therefore do **not** auto-execute as native
+  Claude Code hooks — they are configuration consumed by the framework's own routing/agents. Included for
+  parity with upstream.
 
 ## What was deliberately omitted
 - **`.mcp.json`** — the framework's 5 `npx` MCP servers (dotnet, serena, filesystem, context7, bash).
   They require Node/npm and live-session registration; the `filesystem` path is machine-specific.
   Add them on a local machine if wanted.
-- **`hooks/*.json`** — the framework's own validation/routing/pattern-capture config. These are **not**
-  Claude Code native `settings.json` hooks; they are consumed by the framework's scripts. Wiring native
-  `PreToolUse`/`PostToolUse` hooks is a separate, deliberate step.
 - **`shared/`, `scripts/`, `claude.json`** — framework internals not needed for project-scoped use.
+
+> Wiring **native** Claude Code hooks (a `settings.json` `hooks` block with `PreToolUse`/`PostToolUse`
+> commands — e.g. a SessionStart `.NET 8` installer) is a separate, deliberate step and is not created by
+> copying the framework's `hooks/*.json`.
 
 ## How it activates
 Claude Code reads agents/skills/commands/settings **at session start**. These take effect in a **new**
