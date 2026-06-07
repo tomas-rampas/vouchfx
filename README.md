@@ -18,7 +18,7 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 ## Status
 
 > **Specification and delivery plan — pre-code.** This repository currently contains the authoritative
-> design (`docs/`), the MVP delivery plan (`plan/`), and shared Claude Code configuration (`.claude/`).
+> design (`docs/`), the MVP delivery plan (`plan/`).
 > There is **no source, build, or test yet**; the engine targets **.NET 8 LTS**, shipped as a `dotnet`
 > global tool plus a VSCode extension. The repository layout under `src/` described in the docs does
 > not exist until implementation begins (see the plan).
@@ -71,7 +71,6 @@ breaks CI by default** — conflating an environment error with a defect destroy
 |---|---|
 | [`docs/`](docs/) | The authoritative design — single source of truth (see below). |
 | [`plan/`](plan/) | MVP delivery plan: 5 milestones, 12 sprints, 108 tasks, 7 workstreams. |
-| [`.claude/`](.claude/) | Shared, project-scoped Claude Code configuration (agents, skills, commands, settings). |
 | [`CLAUDE.md`](CLAUDE.md) | Operating rules and hard invariants for working in this repository. |
 
 ### The authoritative documents
