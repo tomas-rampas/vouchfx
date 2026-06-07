@@ -8,6 +8,15 @@
 | **Milestone** | Contributes to **M1** (closes Sprint 2) |
 | **Theme** | Stand up the scaffolding and attack the two project-defining risks: memory-safe dynamic compilation and predictable Aspire orchestration. |
 
+## Delivery status
+
+All 11 tasks complete on branch `feat/sprint-01-foundations`. Both headline de-risking exit criteria met:
+
+1. **Memory model verified:** Trivial script compiles once, runs 5,000× in a collectible `AssemblyLoadContext`, unloads with ~1.3 KB net heap delta (threshold 2 MB).
+2. **Orchestration stability:** Stub topology (Postgres + container service) starts health-gated deterministically across 20/20 runs; connection strings and HTTP endpoints correctly resolved.
+
+Carried forward into Sprint 2: make the memory-leak CI job blocking; reference provider implementation; reflective step-kind registry; full event-schema specification; first JSON Schema draft (see "[Carry-out into Sprint 2](#carry-out-into-sprint-2)" below).
+
 ## Sprint goal
 
 A clean solution and CI pipeline exist; a trivial script compiles **once**, runs many thousands of
