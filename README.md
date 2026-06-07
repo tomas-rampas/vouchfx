@@ -2,9 +2,9 @@
 
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
-vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them through
-Roslyn, and orchestrates the required container topology with **.NET Aspire + Testcontainers**. It
-tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
+vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them memory-safely
+through Roslyn, and orchestrates the required container topology with **.NET Aspire + Testcontainers**.
+It tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
 outbound webhook — the seams where distributed systems actually break.
 
 It is **not** a unit-test framework and **not** a UI/browser tool.
@@ -17,11 +17,13 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Specification and delivery plan — pre-code.** This repository currently contains the authoritative
-> design (`docs/`), the MVP delivery plan (`plan/`).
-> There is **no source, build, or test yet**; the engine targets **.NET 8 LTS**, shipped as a `dotnet`
-> global tool plus a VSCode extension. The repository layout under `src/` described in the docs does
-> not exist until implementation begins (see the plan).
+> **Pre-release — Sprint 1 (Foundations) complete.** The project's two defining risks are now
+> empirically retired: memory-safe dynamic compilation (compile-once into a collectible
+> `AssemblyLoadContext` that unloads to baseline) and predictable, health-gated Aspire orchestration.
+> A buildable .NET 8 LTS solution exists under `src/` and `tests/`; the compiler, provider set, test
+> runner, reporting renderers and VSCode extension are still to come — see the
+> [delivery plan](plan/README.md). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global
+> tool plus a VSCode extension.
 
 ## How it works
 
@@ -65,13 +67,62 @@ Four outcomes are kept distinct everywhere (taxonomy, reporting, exit codes): **
 **Environment error** (infrastructure), **Inconclusive** (timeout / unmet capture). **Only `Fail`
 breaks CI by default** — conflating an environment error with a defect destroys trust in the tool.
 
+## Building and testing
+
+**Prerequisites:** the **.NET 8 SDK** (pinned in `global.json`; install
+[.NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)) and, for the Aspire
+integration tests only, a running **Docker** daemon (the unit tests need neither).
+
+```bash
+# Build — C# 11, nullable enabled, warnings-as-errors (output has zero warnings).
+dotnet build vouchfx.sln
+
+# Unit tests — fast, no Docker.
+dotnet test vouchfx.sln --filter "requires!=docker"
+
+# Integration tests — require a running Docker daemon (Aspire topology + collectible loading).
+dotnet test vouchfx.sln --filter "requires=docker"
+
+# Formatting gate.
+dotnet format --verify-no-changes
+```
+
+Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a blocking **build** job
+(build + format + unit tests), a **memory-leak** job that runs the heap-measurement harness over
+5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
+(Docker) job.
+
+## Sprint 1 de-risking results
+
+- **Memory model verified** — a trivial script compiles once, runs 5,000 times in a collectible
+  `AssemblyLoadContext`, and unloads with only ~1.3 KB net heap delta (2 MB threshold). The central
+  risk — uncollectable Roslyn assemblies — is empirically retired, with a CI guard that forbids
+  `CSharpScript.EvaluateAsync`/`RunAsync`.
+- **Orchestration stability** — the stub topology (Postgres + container service) starts health-gated
+  deterministically across 20/20 consecutive runs, resolving both a connection string and an HTTP
+  endpoint.
+- **Provider contract frozen** — the v1.x `IStepProvider` / `IStepBinder<T>` / `IStepValidator<T>` /
+  `IStepCompiler<T>` / `IResourceContributor<T>` set and the `[StepProvider]` attribute.
+- **Event-stream envelope** — the schema-versioned JSON Lines substrate every renderer and the Healer
+  agent will consume.
+
 ## Repository layout
 
-| Path | What it is |
-|---|---|
-| [`docs/`](docs/) | The authoritative design — single source of truth (see below). |
-| [`plan/`](plan/) | MVP delivery plan: 5 milestones, 12 sprints, 108 tasks, 7 workstreams. |
-| [`CLAUDE.md`](CLAUDE.md) | Operating rules and hard invariants for working in this repository. |
+```
+src/
+  Engine/
+    Platform.Engine.Abstractions      ScriptGlobalVariables, the JSON Lines event envelope
+    Platform.Engine.Compilation       compile-once Roslyn path, collectible context, leak guards
+    Platform.Engine.Orchestration     headless Aspire AppHost, health-gated topology
+  Sdk/
+    Platform.Sdk                      the frozen v1.x provider contract
+  Providers/Core/
+    Platform.Steps.Core.HttpRest      reference HTTP provider (stub; built out in Sprint 2)
+tests/                                4 xUnit projects + the memory-leak measurement harness
+docs/                                 the authoritative design — single source of truth (see below)
+plan/                                 MVP delivery plan: 5 milestones, 12 sprints, 108 tasks
+CLAUDE.md                             operating rules and hard invariants for this repository
+```
 
 ### The authoritative documents
 
@@ -83,14 +134,27 @@ breaks CI by default** — conflating an environment error with a defect destroy
 - [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — scope, the seven workstreams, phasing,
   and what is in the MVP versus later.
 - [`plan/README.md`](plan/README.md) — the execution plan that decomposes the MVP into milestones,
-  sprints, and tasks.
+  sprints, and tasks; [`plan/sprint-01.md`](plan/sprint-01.md) is the delivered Foundations sprint.
+
+## Reserved namespaces
+
+Two namespace prefixes are reserved (see §5.6 of the Architecture Blueprint); customer assemblies
+declaring them are refused at suite start-up, and version conflicts fail fast at suite start rather
+than at runtime:
+
+| Prefix | Owner | Purpose |
+|---|---|---|
+| `Platform.Engine.*` | Engine | Core engine internals — compilation, orchestration, execution host, verdict taxonomy, reporting. |
+| `Platform.Steps.*` | Providers | Step providers — e.g. `Platform.Steps.Core.HttpRest`, `Platform.Steps.DbAssert.Postgres`. |
+
+`Platform.Sdk` is the public provider-authoring contract — consumed by providers, not part of the
+engine internals.
 
 ## Contributing
 
-Implementation has not started; the entry point is the [delivery plan](plan/README.md), which
-sequences work by risk (memory model and orchestration first). Anyone working in this repository —
-human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose
-is British English.
+The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and
+orchestration first). Anyone working in this repository — human or agent — must honour the **hard
+invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
 ## Licence
 

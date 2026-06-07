@@ -1,0 +1,249 @@
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+
+namespace Platform.Engine.Orchestration;
+
+/// <summary>
+/// A pre-wired, health-gated Aspire topology used by the S01-A-02 and S01-A-03 acceptance tests.
+/// Assembles one managed Postgres dependency and one HTTP container service, then waits
+/// until both are fully healthy before returning.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This topology demonstrates the two distinct endpoint-discovery paths mandated by §4:
+/// <list type="bullet">
+///   <item>
+///     <b>Managed dependency connection string</b> — retrieved via
+///     <see cref="GetConnectionStringAsync"/> which calls
+///     <see cref="IResourceWithConnectionString.GetConnectionStringAsync"/> on the retained
+///     database resource builder's <c>Resource</c>, using the Aspire application-model API
+///     rather than the testing-infrastructure helper.
+///   </item>
+///   <item>
+///     <b>Service HTTP endpoint</b> — retrieved through the <em>retained</em>
+///     <see cref="IResourceBuilder{ContainerResource}"/> returned by
+///     <c>AddContainer(name, image)</c>, accessed as
+///     <c>containerBuilder.GetEndpoint("http").Url</c> after
+///     <see cref="DistributedApplication.StartAsync"/> completes.
+///     <br/>
+///     <b>Note:</b> <c>app.GetEndpoint(name, scheme)</c> does <em>not</em> exist as a
+///     non-extension member on <see cref="DistributedApplication"/> — this is the §4 footgun.
+///     The retained-builder pattern avoids it entirely and does not depend on the
+///     <c>Aspire.Hosting.Testing</c> namespace.
+///   </item>
+/// </list>
+/// </para>
+/// </remarks>
+public sealed class StubTopology : IAsyncDisposable
+{
+    private readonly HeadlessTopology _inner;
+
+    // Retained database resource — used to call GetConnectionStringAsync without depending
+    // on Aspire.Hosting.Testing extension methods.
+    private readonly IResourceBuilder<PostgresDatabaseResource> _dbBuilder;
+
+    // Retained container endpoint reference — allocated by the DCP process after StartAsync.
+    private readonly EndpointReference _webEndpoint;
+
+    private bool _disposed;
+
+    private StubTopology(
+        HeadlessTopology inner,
+        IResourceBuilder<PostgresDatabaseResource> dbBuilder,
+        EndpointReference webEndpoint)
+    {
+        _inner = inner;
+        _dbBuilder = dbBuilder;
+        _webEndpoint = webEndpoint;
+    }
+
+    /// <summary>Gets the underlying <see cref="HeadlessTopology"/> instance.</summary>
+    public HeadlessTopology Inner => _inner;
+
+    /// <summary>
+    /// Builds, starts, and health-gates a stub topology containing:
+    /// <list type="bullet">
+    ///   <item>A managed Postgres server (<c>"pg"</c>) with a database (<c>"appdb"</c>).</item>
+    ///   <item>A <c>traefik/whoami</c> HTTP container (<c>"web"</c>) on port 80.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="appHostAssemblyName">
+    /// Passed through to <see cref="HeadlessTopology.StartAsync"/> — must name the assembly
+    /// carrying the DCP metadata attributes (R-1 finding, CLAUDE.md §"Aspire (§4, §19)").
+    /// </param>
+    /// <param name="startupTimeout">
+    /// Maximum time allowed for the entire topology (both resources) to reach healthy/running.
+    /// Defaults to 120 seconds; callers may tighten this to surface hangs loudly.
+    /// </param>
+    /// <param name="cancellationToken">Propagated to the underlying host.</param>
+    /// <returns>A fully started and health-gated <see cref="StubTopology"/>.</returns>
+    public static async Task<StubTopology> StartAsync(
+        string? appHostAssemblyName = null,
+        TimeSpan? startupTimeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var timeout = startupTimeout ?? TimeSpan.FromSeconds(120);
+
+        // Retain the database builder so we can call GetConnectionStringAsync on its Resource
+        // without depending on Aspire.Hosting.Testing extension methods.
+        IResourceBuilder<PostgresDatabaseResource>? dbBuilder = null;
+
+        // Retain the container builder so we can retrieve its endpoint URL after StartAsync.
+        // This is the ONLY correct approach — DistributedApplication has no non-extension
+        // GetEndpoint(name, scheme) member (§4 footgun).  The retained IResourceBuilder<T>
+        // exposes GetEndpoint("http").Url once endpoints are allocated by the DCP process.
+        IResourceBuilder<ContainerResource>? webBuilder = null;
+
+        using var startCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        startCts.CancelAfter(timeout);
+
+        var topology = await HeadlessTopology.StartAsync(
+            appHostAssemblyName: appHostAssemblyName,
+            configureResources: b =>
+            {
+                // ----------------------------------------------------------------
+                // Managed dependency: Postgres server → database.
+                // §4 hard invariant: WaitFor must target the DATABASE resource
+                // ("appdb"), not the server ("pg").  The server resource returns
+                // healthy before Aspire's lifecycle script finishes creating the
+                // database, which causes intermittent failures on fast hardware.
+                // See: CLAUDE.md §"Aspire (§4, §19)" — server-vs-database race.
+                // ----------------------------------------------------------------
+                var pgServer = b.AddPostgres("pg");
+                dbBuilder = pgServer.AddDatabase("appdb");
+
+                // ----------------------------------------------------------------
+                // Service container: traefik/whoami — lightweight HTTP server on
+                // port 80.  WaitFor the database so the container does not start
+                // until the full Postgres stack is confirmed healthy.
+                // Use string overload AddContainer(name, image) only — never the
+                // generic AddProject<T>() which creates compile-time coupling
+                // (§4 hard invariant, CLAUDE.md).
+                // ----------------------------------------------------------------
+                webBuilder = b.AddContainer("web", "traefik/whoami")
+                    .WithHttpEndpoint(targetPort: 80, name: "http")
+                    // Register a real HTTP health check on "/" so Aspire polls for an
+                    // actual 200 response (not merely port-mapped / Running state).
+                    // This closes the HTTP-serving race on loaded CI agents (S2).
+                    // Signature (Aspire 9.x / package 13.4.2):
+                    //   WithHttpHealthCheck(string path, int? statusCode, string endpointName)
+                    .WithHttpHealthCheck(path: "/", endpointName: "http")
+                    // §4: gate on the *database* resource, not the server,
+                    // to avoid the fast-hardware server-vs-database race.
+                    .WaitFor(dbBuilder);
+            },
+            cancellationToken: startCts.Token).ConfigureAwait(false);
+
+        // HeadlessTopology.StartAsync returned successfully: live containers are running.
+        // If anything below throws (health-gate timeout, endpoint resolution failure) the
+        // started topology must be disposed so containers do not leak (BLOCKER B1).
+        try
+        {
+            // Both builders are guaranteed non-null: the configureResources callback always assigns them.
+            var webEndpoint = webBuilder!.GetEndpoint("http");
+
+            var app = topology.Application;
+
+            // ----------------------------------------------------------------
+            // Health-gate 1: Postgres DATABASE ("appdb").
+            // §4 invariant: wait on the database resource, not the server resource.
+            // "The server returns before Aspire's lifecycle script creates the DB →
+            //  intermittent failures on fast hardware." — CLAUDE.md
+            //
+            // WaitBehavior.StopOnResourceUnavailable (Aspire 9.x default, made explicit here):
+            // if the resource enters FailedToStart / Exited / RuntimeUnhealthy, the gate
+            // throws DistributedApplicationException immediately rather than hanging.
+            // This is the DESIRED behaviour — a resource that fails to start is an
+            // Environment error (§12.1) and must surface, not block indefinitely.
+            // ----------------------------------------------------------------
+            using var healthCts1 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            healthCts1.CancelAfter(timeout);
+            await app.ResourceNotifications
+                .WaitForResourceHealthyAsync("appdb", WaitBehavior.StopOnResourceUnavailable, healthCts1.Token)
+                .ConfigureAwait(false);
+
+            // ----------------------------------------------------------------
+            // Health-gate 2: "web" container.
+            // WithHttpHealthCheck("/", endpointName: "http") added above registers a real
+            // HTTP probe on "/", so this gate waits for an actual 200 response rather than
+            // merely waiting for the container to reach KnownResourceStates.Running
+            // (port-mapped but possibly not yet serving HTTP).  This closes the
+            // HTTP-serving race on loaded CI agents (S2 fix).
+            //
+            // WaitBehavior.StopOnResourceUnavailable: same fail-fast semantics as gate 1 —
+            // a container that exits or fails to start throws immediately.
+            // ----------------------------------------------------------------
+            using var healthCts2 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            healthCts2.CancelAfter(timeout);
+            await app.ResourceNotifications
+                .WaitForResourceHealthyAsync("web", WaitBehavior.StopOnResourceUnavailable, healthCts2.Token)
+                .ConfigureAwait(false);
+
+            return new StubTopology(topology, dbBuilder!, webEndpoint);
+        }
+        catch
+        {
+            // A health-gate failure is an Environment error (§12.1).  Dispose the already-started
+            // topology so containers started by HeadlessTopology.StartAsync do not leak.
+            await topology.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Returns the connection string for the managed Postgres database resource.
+    /// </summary>
+    /// <param name="cancellationToken">Propagated to the underlying Aspire connection-string resolver.</param>
+    /// <returns>
+    /// The connection string, or <see langword="null"/> if the resource does not expose one.
+    /// </returns>
+    /// <remarks>
+    /// Calls <see cref="IResourceWithConnectionString.GetConnectionStringAsync"/> on the
+    /// retained database resource builder's <c>Resource</c>.  This uses the Aspire
+    /// application-model API and does not depend on <c>Aspire.Hosting.Testing</c>.
+    /// The §4-mandated separation: this is the managed-dependency discovery path.
+    /// </remarks>
+    public ValueTask<string?> GetConnectionStringAsync(CancellationToken cancellationToken = default)
+    {
+        if (_dbBuilder.Resource is not IResourceWithConnectionString cs)
+        {
+            throw new InvalidOperationException(
+                $"Resource '{_dbBuilder.Resource.Name}' does not implement {nameof(IResourceWithConnectionString)}. " +
+                "Verify the database resource was created with AddDatabase() on a managed Postgres server.");
+        }
+
+        return cs.GetConnectionStringAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Returns the HTTP endpoint URL of the <c>"web"</c> container service.
+    /// </summary>
+    /// <returns>
+    /// The fully-qualified URL (e.g. <c>http://localhost:12345</c>) allocated by the DCP process.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Retrieved from the <em>retained</em> <see cref="IResourceBuilder{ContainerResource}"/>
+    /// captured during resource configuration, via <c>GetEndpoint("http").Url</c>.
+    /// </para>
+    /// <para>
+    /// <b>§4 footgun note:</b> <c>app.GetEndpoint(name, scheme)</c> does <em>not</em> exist
+    /// as a non-extension member on <see cref="DistributedApplication"/>.  The retained-builder
+    /// approach used here is the correct path that does not depend on
+    /// <c>Aspire.Hosting.Testing</c> extension methods.
+    /// </para>
+    /// </remarks>
+    public string GetHttpEndpointUrl() => _webEndpoint.Url;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        await _inner.DisposeAsync().ConfigureAwait(false);
+    }
+}

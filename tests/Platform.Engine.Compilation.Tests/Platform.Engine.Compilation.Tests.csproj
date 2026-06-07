@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Pin to Workstation GC so the collectibility / memory-leak gate tests are
+      deterministic.  Server GC (which CI hosts may enable by default) has different
+      unload timing that can cause the bounded GC-loop assertions to flake.
+      This setting becomes a hard requirement once the memory-leak job is a blocking
+      CI gate in Sprint 2.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!--
+      Required by ForbiddenScriptingApiScannerTests: we compile a throwaway assembly
+      in the negative-control test that calls Script<object>.RunAsync / EvaluateAsync,
+      which requires this reference so the call binds at Roslyn compilation time.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+    <!-- S01-B-04 §5.7 canonical client libraries — spike: load/unload in collectible context. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="MongoDB.Driver" />
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <!--
+      Reference the MemoryHarness exe project so this test project can use the public
+      MemoryProbe type directly.  OutputType=Exe projects expose their public types to
+      referencing projects normally; the test runner does not execute the exe, it calls
+      MemoryProbe.RunAsync directly.
+    -->
+    <ProjectReference Include="..\Platform.Engine.Compilation.MemoryHarness\Platform.Engine.Compilation.MemoryHarness.csproj" />
+  </ItemGroup>
+
+</Project>

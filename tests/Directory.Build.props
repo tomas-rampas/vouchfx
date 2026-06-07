@@ -1,0 +1,7 @@
+<Project>
+  <!-- Import the root Directory.Build.props so all shared properties (TargetFramework, LangVersion, etc.) apply here too. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

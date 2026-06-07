@@ -1,0 +1,111 @@
+# .gitattributes — vouchfx line-ending and binary-marking rules.
+#
+# Design rationale
+# ----------------
+# All source and configuration text is stored as LF in the Git object store
+# and checked out as LF on every platform.  This makes the dotnet format gate
+# deterministic: a file written on Windows (where Git may have converted CRLF
+# on checkout) still round-trips cleanly through the formatter and produces the
+# same byte sequence that Linux CI will compare.
+#
+# Exception — .sln files: Visual Studio's solution parser has historically
+# required CRLF line endings; the file is read by MSBuild on Linux without
+# issue, but opening the solution in Visual Studio on Windows produces spurious
+# "file modified" prompts when stored as LF.  We store .sln as CRLF to avoid
+# that friction.  The dotnet CLI and GitHub Actions runners are unaffected.
+#
+# Usage after initial setup
+# -------------------------
+# Run  git add --renormalize .  once after committing this file so Git
+# rewrites any existing objects that were stored with the wrong endings.
+
+# ── Default: text files normalise to LF ──────────────────────────────────────
+* text=auto eol=lf
+
+# ── C# / .NET source ─────────────────────────────────────────────────────────
+*.cs        text eol=lf
+*.csx       text eol=lf
+*.vb        text eol=lf
+*.fs        text eol=lf
+*.fsx       text eol=lf
+
+# ── MSBuild / project system ─────────────────────────────────────────────────
+*.csproj    text eol=lf
+*.fsproj    text eol=lf
+*.vbproj    text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.msbuildproj text eol=lf
+# .sln — stored CRLF so Visual Studio on Windows does not show spurious diffs
+*.sln       text eol=crlf
+
+# ── Configuration / data ─────────────────────────────────────────────────────
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.xml       text eol=lf
+*.xsd       text eol=lf
+*.xslt      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.config    text eol=lf
+*.editorconfig text eol=lf
+
+# ── Documentation and markup ─────────────────────────────────────────────────
+*.md        text eol=lf
+*.txt       text eol=lf
+*.rst       text eol=lf
+
+# ── Shell / scripts ──────────────────────────────────────────────────────────
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.ps1       text eol=lf
+*.psm1      text eol=lf
+*.psd1      text eol=lf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# ── TypeScript / JavaScript (VS Code extension) ───────────────────────────────
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+
+# ── Web / CSS ─────────────────────────────────────────────────────────────────
+*.html      text eol=lf
+*.htm       text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+
+# ── Git housekeeping ─────────────────────────────────────────────────────────
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+.gitmodules    text eol=lf
+
+# ── Binaries — never diff or merge ───────────────────────────────────────────
+*.dll       binary
+*.exe       binary
+*.pdb       binary
+*.nupkg     binary
+*.snupkg    binary
+*.zip       binary
+*.tar       binary
+*.tar.gz    binary
+*.tgz       binary
+*.7z        binary
+*.gz        binary
+*.bz2       binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.svg       binary -diff
+*.ttf       binary
+*.woff      binary
+*.woff2     binary
+*.pdf       binary
+*.vsix      binary
