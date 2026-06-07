@@ -35,6 +35,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Orchestrati
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Sdk.Tests", "tests\Platform.Sdk.Tests\Platform.Sdk.Tests.csproj", "{FA6C952C-5566-4627-9855-4F57AF9E37DE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Reporting", "src\Engine\Platform.Engine.Reporting\Platform.Engine.Reporting.csproj", "{49EC8A70-2985-4B00-B9F4-8868A69F82BD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Reporting.Tests", "tests\Platform.Engine.Reporting.Tests\Platform.Engine.Reporting.Tests.csproj", "{6175A057-1099-40B7-BEAB-5221D7E9ABD9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -84,6 +88,14 @@ Global
 		{FA6C952C-5566-4627-9855-4F57AF9E37DE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FA6C952C-5566-4627-9855-4F57AF9E37DE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FA6C952C-5566-4627-9855-4F57AF9E37DE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{49EC8A70-2985-4B00-B9F4-8868A69F82BD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{49EC8A70-2985-4B00-B9F4-8868A69F82BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49EC8A70-2985-4B00-B9F4-8868A69F82BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{49EC8A70-2985-4B00-B9F4-8868A69F82BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6175A057-1099-40B7-BEAB-5221D7E9ABD9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6175A057-1099-40B7-BEAB-5221D7E9ABD9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6175A057-1099-40B7-BEAB-5221D7E9ABD9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6175A057-1099-40B7-BEAB-5221D7E9ABD9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -100,5 +112,7 @@ Global
 		{B0C9C9D2-0EF3-41E4-B670-71F32658BA14} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{306CF0EF-87D7-45A8-BED8-D361F07D45A3} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{FA6C952C-5566-4627-9855-4F57AF9E37DE} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{49EC8A70-2985-4B00-B9F4-8868A69F82BD} = {A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}
+		{6175A057-1099-40B7-BEAB-5221D7E9ABD9} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal
