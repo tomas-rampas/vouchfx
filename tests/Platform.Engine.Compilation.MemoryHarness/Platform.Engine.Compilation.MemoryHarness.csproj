@@ -3,6 +3,16 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Platform.Engine.Compilation.MemoryHarness</RootNamespace>
+    <!--
+      Pin to Workstation GC so heap measurements are deterministic and not perturbed
+      by Server GC's per-core heaps or Concurrent GC's background threads.
+      Server GC (which CI hosts may enable by default) keeps heap segments alive longer,
+      which can cause the net-delta assertion to report artificially large values even
+      when no leak exists.  Workstation + non-concurrent GC gives the tightest baseline.
+      This matches the GC settings already applied to the companion test project.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

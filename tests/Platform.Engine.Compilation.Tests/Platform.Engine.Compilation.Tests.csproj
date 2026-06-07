@@ -33,6 +33,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <!--
+      Reference the MemoryHarness exe project so this test project can use the public
+      MemoryProbe type directly.  OutputType=Exe projects expose their public types to
+      referencing projects normally; the test runner does not execute the exe, it calls
+      MemoryProbe.RunAsync directly.
+    -->
+    <ProjectReference Include="..\Platform.Engine.Compilation.MemoryHarness\Platform.Engine.Compilation.MemoryHarness.csproj" />
   </ItemGroup>
 
 </Project>
