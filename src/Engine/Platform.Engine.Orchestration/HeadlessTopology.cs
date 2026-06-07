@@ -76,6 +76,8 @@ public sealed class HeadlessTopology : IAsyncDisposable
         var options = new DistributedApplicationOptions
         {
             DisableDashboard = true,
+            // Prevent Aspire from forwarding the xUnit/test-host process argv (e.g. "--filter",
+            // "--list-tests") to the DCP process, which does not understand those arguments.
             Args = Array.Empty<string>(),
             // Provide the name of the assembly carrying the dcpclipath/dcpextensionpaths
             // metadata attributes so Aspire can locate the DCP binary.
@@ -94,7 +96,18 @@ public sealed class HeadlessTopology : IAsyncDisposable
         configureResources?.Invoke(builder);
 
         var app = builder.Build();
-        await app.StartAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await app.StartAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // StartAsync can fail with an Environment error (image-pull failure, DCP crash, partial
+            // start).  The DistributedApplication is IAsyncDisposable and already holds resources
+            // that must be released; dispose it before re-throwing so containers do not leak.
+            await app.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
 
         return new HeadlessTopology(app);
     }
