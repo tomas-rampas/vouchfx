@@ -30,8 +30,9 @@ public sealed class NullProjectContext : IProjectContext
 
 /// <summary>
 /// Null-object implementation of <see cref="ICompileContext"/> for unit tests
-/// that do not require compile-stage services.  Uses the literal string
-/// <c>"default_step"</c> as the step identifier.
+/// that do not require compile-stage services.  Returns <c>"default_step"</c>
+/// as the step identifier and <c>"Generated"</c> as the suite namespace,
+/// preserving the pre-Sprint-2 default-step fallback behaviour.
 /// </summary>
 public sealed class NullCompileContext : ICompileContext
 {
@@ -39,4 +40,10 @@ public sealed class NullCompileContext : ICompileContext
     public static readonly NullCompileContext Instance = new();
 
     private NullCompileContext() { }
+
+    /// <inheritdoc />
+    public string StepId => "default_step";
+
+    /// <inheritdoc />
+    public string SuiteNamespace => "Generated";
 }

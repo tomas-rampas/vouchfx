@@ -1,19 +1,78 @@
-// Throwaway reference provider for S01-F-01 contract tests.
-// Implements all five provider interfaces over NoopEchoModel.
+// Throwaway reference provider for S02-F-01 lifecycle tests.
+// Consolidated: one [StepProvider] class implements all five provider interfaces.
+// Must NOT be moved to src/ — it is fixture-only.
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
 
 namespace Platform.Sdk.Tests.Providers;
 
 /// <summary>
-/// Reference implementation of <see cref="IStepProvider"/> for the
+/// Reference implementation of all five provider interfaces for the
 /// <c>noop.echo</c> step kind.  Exists solely to prove the provider
-/// contract is implementable and to exercise it in unit tests.
+/// contract is implementable and to exercise the full lifecycle
+/// resolve→bind→validate→plan→emit end-to-end in unit tests.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Demonstrates the mandatory CSX fragment composition rules (§13.3.1):
+/// </para>
+/// <list type="bullet">
+///   <item>
+///     <description>
+///       <see cref="CsxFragment.RequiredUsings"/> contains bare namespace
+///       strings — no <c>using</c> keyword, no semicolons.
+///     </description>
+///   </item>
+///   <item>
+///     <description>
+///       <see cref="CsxFragment.RequiredHelpers"/> entries are full
+///       <c>static class</c> definitions whose names are prefixed with
+///       the provider id (<c>NoopEcho_</c>).
+///     </description>
+///   </item>
+///   <item>
+///     <description>
+///       <see cref="CsxFragment.StatementBlock"/> is built with a C# 11
+///       double-dollar raw string (<c>$$"""…"""</c>): a single
+///       <c>{</c>/<c>}</c> is a literal brace in the emitted CSX (so the
+///       step's own block passes through verbatim) and <c>{{hole}}</c> is
+///       an interpolation hole filled at emit time.
+///     </description>
+///   </item>
+///   <item>
+///     <description>
+///       The step identifier is sanitised via
+///       <see cref="CsxFragment.SanitiseId"/> before use as a variable-name
+///       suffix; hyphens are replaced by underscores.
+///     </description>
+///   </item>
+/// </list>
+/// </remarks>
 [StepProvider]
-public sealed class NoopEchoProvider : IStepProvider
+public sealed class NoopEchoProvider
+    : IStepProvider,
+      IStepBinder<NoopEchoModel>,
+      IStepValidator<NoopEchoModel>,
+      IStepCompiler<NoopEchoModel>,
+      IResourceContributor<NoopEchoModel>
 {
     private static readonly string[] s_authors = { "vouchfx-contributors" };
+
+    private static readonly IReadOnlyList<string> s_usings =
+        new[] { "System", "System.Collections.Generic" };
+
+    /// <summary>
+    /// The helper class definition injected into the compiled CSX submission.
+    /// The name is provider-id-prefixed (<c>NoopEcho_Helpers</c>) to avoid
+    /// collisions when multiple providers contribute helpers to the same
+    /// submission (§13.3.1).
+    /// </summary>
+    private static readonly IReadOnlyList<string> s_helpers = new[]
+    {
+        "static class NoopEcho_Helpers\n{\n    public static int Echo(int length) => length;\n}",
+    };
+
+    // ── IStepProvider ─────────────────────────────────────────────────────────
 
     /// <inheritdoc />
     public StepKindId Kind { get; } = new StepKindId("noop", "echo");
@@ -24,14 +83,9 @@ public sealed class NoopEchoProvider : IStepProvider
         MinEngineVersion: "1.0.0",
         License: "Apache-2.0",
         Authors: s_authors);
-}
 
-/// <summary>
-/// Reference implementation of <see cref="IStepBinder{TModel}"/> for
-/// <see cref="NoopEchoModel"/>.
-/// </summary>
-public sealed class NoopEchoBinder : IStepBinder<NoopEchoModel>
-{
+    // ── IStepBinder<NoopEchoModel> ────────────────────────────────────────────
+
     /// <inheritdoc />
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
@@ -58,14 +112,9 @@ public sealed class NoopEchoBinder : IStepBinder<NoopEchoModel>
 
         return new NoopEchoModel(message);
     }
-}
 
-/// <summary>
-/// Reference implementation of <see cref="IStepValidator{TModel}"/> for
-/// <see cref="NoopEchoModel"/>.
-/// </summary>
-public sealed class NoopEchoValidator : IStepValidator<NoopEchoModel>
-{
+    // ── IStepValidator<NoopEchoModel> ─────────────────────────────────────────
+
     /// <inheritdoc />
     public ValidationResult Validate(NoopEchoModel model, IProjectContext ctx)
     {
@@ -74,63 +123,13 @@ public sealed class NoopEchoValidator : IStepValidator<NoopEchoModel>
 
         return ValidationResult.Success;
     }
-}
 
-/// <summary>
-/// Reference implementation of <see cref="IStepCompiler{TModel}"/> for
-/// <see cref="NoopEchoModel"/>.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Demonstrates the mandatory CSX fragment composition rules (§13.3.1):
-/// </para>
-/// <list type="bullet">
-///   <item>
-///     <description>
-///       <see cref="CsxFragment.RequiredUsings"/> contains bare namespace
-///       strings — no <c>using</c> keyword, no semicolons.
-///     </description>
-///   </item>
-///   <item>
-///     <description>
-///       <see cref="CsxFragment.RequiredHelpers"/> entries are prefixed with
-///       the provider id (<c>NoopEcho_</c>).
-///     </description>
-///   </item>
-///   <item>
-///     <description>
-///       <see cref="CsxFragment.StatementBlock"/> is built with a C# 11
-///       double-dollar raw string (<c>$$"""…"""</c>): with two <c>$</c>, a
-///       single <c>{</c>/<c>}</c> is a literal brace in the emitted CSX (so the
-///       step's own <c>{ … }</c> block passes through verbatim) and
-///       <c>{{hole}}</c> is an interpolation hole the emitter fills.
-///     </description>
-///   </item>
-///   <item>
-///     <description>
-///       The step identifier is sanitised via
-///       <see cref="CsxFragment.SanitiseId"/> before use as a variable-name
-///       suffix; hyphens are replaced by underscores.
-///     </description>
-///   </item>
-/// </list>
-/// </remarks>
-public sealed class NoopEchoCompiler : IStepCompiler<NoopEchoModel>
-{
-    private static readonly IReadOnlyList<string> s_usings =
-        new[] { "System", "System.Collections.Generic" };
-
-    private static readonly IReadOnlyList<string> s_helpers =
-        new[] { "NoopEcho_Helpers" };
+    // ── IStepCompiler<NoopEchoModel> ──────────────────────────────────────────
 
     /// <inheritdoc />
     public CsxFragment Emit(NoopEchoModel model, ICompileContext ctx)
     {
-        var stepId = ctx is IStepIdAccessor accessor
-            ? accessor.StepId
-            : "default_step";
-
-        var safeId = CsxFragment.SanitiseId(stepId);
+        var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
         // Statement block built with a C# 11 $$"""…""" double-dollar raw string:
         //   {  }      →  literal brace in the emitted CSX (the block's own braces)
@@ -147,14 +146,9 @@ public sealed class NoopEchoCompiler : IStepCompiler<NoopEchoModel>
             RequiredHelpers: s_helpers,
             StatementBlock: block);
     }
-}
 
-/// <summary>
-/// Reference implementation of <see cref="IResourceContributor{TModel}"/> for
-/// <see cref="NoopEchoModel"/>.
-/// </summary>
-public sealed class NoopEchoResourceContributor : IResourceContributor<NoopEchoModel>
-{
+    // ── IResourceContributor<NoopEchoModel> ───────────────────────────────────
+
     /// <inheritdoc />
     public IEnumerable<ResourceRequirement> Resources(NoopEchoModel model)
     {
@@ -166,23 +160,11 @@ public sealed class NoopEchoResourceContributor : IResourceContributor<NoopEchoM
 }
 
 /// <summary>
-/// Extends <see cref="ICompileContext"/> with access to the current step
-/// identifier.  Used by tests to inject a known step id when exercising
-/// <see cref="NoopEchoCompiler"/>.
-/// </summary>
-public interface IStepIdAccessor : ICompileContext
-{
-    /// <summary>
-    /// Gets the step identifier for the current compilation pass.
-    /// </summary>
-    string StepId { get; }
-}
-
-/// <summary>
 /// Test-only <see cref="ICompileContext"/> that carries a specific step
-/// identifier for verifying id sanitisation behaviour.
+/// identifier for verifying id sanitisation behaviour and end-to-end
+/// compilation.
 /// </summary>
-public sealed class CompileContextWithStepId : IStepIdAccessor
+public sealed class CompileContextWithStepId : ICompileContext
 {
     /// <summary>
     /// Initialises a new instance with the given step identifier.
@@ -195,4 +177,7 @@ public sealed class CompileContextWithStepId : IStepIdAccessor
 
     /// <inheritdoc />
     public string StepId { get; }
+
+    /// <inheritdoc />
+    public string SuiteNamespace => "Generated";
 }
