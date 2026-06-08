@@ -43,6 +43,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Authoring",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Authoring.Tests", "tests\Platform.Engine.Authoring.Tests\Platform.Engine.Authoring.Tests.csproj", "{9724E20A-1741-4FF6-BFD1-73CB45DF9704}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime", "src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj", "{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime.Tests", "tests\Platform.Engine.Runtime.Tests\Platform.Engine.Runtime.Tests.csproj", "{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -108,6 +112,14 @@ Global
 		{9724E20A-1741-4FF6-BFD1-73CB45DF9704}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9724E20A-1741-4FF6-BFD1-73CB45DF9704}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9724E20A-1741-4FF6-BFD1-73CB45DF9704}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -128,5 +140,7 @@ Global
 		{6175A057-1099-40B7-BEAB-5221D7E9ABD9} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{66603AA1-D104-4EB2-841A-DABE1FC018FB} = {A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}
 		{9724E20A-1741-4FF6-BFD1-73CB45DF9704} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9} = {A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}
+		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal
