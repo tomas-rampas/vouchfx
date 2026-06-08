@@ -12,8 +12,8 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 
 ## How to work here — read first
 
-- **This repo is a specification and a plan, not code yet.** Present: `docs/` (the design), `plan/` (the MVP delivery plan), `README.md`, this file. Absent: any `src/`, build, or tests. "Build / implement / test X" means *start from a blank slate against a fully-specified design*, not modify existing code.
-- **Do not invent commands.** No build/lint/test commands exist yet. The target is a .NET solution (engine on **.NET 8 LTS**) shipped as a `dotnet` global tool (CLI runner, deterministic CI exit codes) + a VSCode extension. Once projects exist, use standard `dotnet build`/`test`/`run`. Never reference a command before its project exists.
+- **This repo contains both the specification docs and an implemented .NET solution.** Present: `docs/` (the design), `plan/` (the delivery plan), `src/`, `tests/`, `vouchfx.sln`, `README.md`, this file.
+- **Use documented commands.** See `README.md` / `.github/workflows/build.yml` for the supported `dotnet build`/`test`/`format` commands; don’t reference tooling that isn’t in the repo yet.
 - **Navigate the docs with Grep by section number.** They are large (blueprint ~1200 lines). Do not read end-to-end.
 - **Distrust illustrative snippets.** The docs mark some code "illustrative" and record corrections from real spikes (§1.2). Verify the actual Aspire/Roslyn API against the pinned version before trusting any snippet.
 - **Honour the hard invariants below.** They span multiple sections, were discovered in real spikes, and are non-negotiable.
