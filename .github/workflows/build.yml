@@ -1,6 +1,7 @@
 # .github/workflows/build.yml — vouchfx CI pipeline skeleton
 #
-# Task: S01-D-02 — Engineering CI pipeline skeleton
+# Tasks: S01-D-02 — Engineering CI pipeline skeleton
+#        S02-D-01 — Wire the leak test as a permanent CI gate (M1)
 #
 # Jobs
 # ----
@@ -9,9 +10,15 @@
 #               `requires!=docker` trait filter; they land in the `integration`
 #               job once Aspire topology is wired (S01-A-*).
 #
-#  memory-leak  Non-blocking placeholder for the memory-leak regression harness
-#               (Platform.Engine.Compilation.MemoryHarness).  The harness body
-#               is implemented in S01-B-04; this job becomes BLOCKING in S02-D-01.
+#  memory-leak  BLOCKING permanent gate (M1, S02-D-01): runs the 5,000-iteration
+#               provider-closure memory-leak harness over the full Core-provider
+#               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
+#               StackExchange.Redis, HttpClient).  Docker-independent — the
+#               closure script touches client types in-memory only, never
+#               connects.  Also scheduled weekly (Monday 06:00 UTC) to catch
+#               regressions introduced by dependency upgrades between pushes.
+#               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
+#               not reclaimed; a failure here blocks merge.
 #
 #  integration  Forward-looking stub for Docker-dependent Aspire spike tests
 #               (requires=docker trait).  Non-blocking until tests exist.
@@ -30,6 +37,8 @@ on:
     branches:
       - main
       - "feat/**"
+  schedule:
+    - cron: "0 6 * * 1"   # 06:00 UTC every Monday — weekly memory-leak regression cadence
 
 # Cancel in-progress runs for the same ref to avoid wasting runner minutes.
 concurrency:
@@ -103,15 +112,13 @@ jobs:
           path: TestResults/
           retention-days: 7
 
-  # ── Memory-leak regression — non-blocking placeholder ────────────────────────
-  # This job becomes BLOCKING in Sprint 2, task S02-D-01, once the harness body
-  # is implemented (S01-B-04) and the memory threshold is calibrated.
+  # ── Memory-leak regression — BLOCKING permanent gate (M1, S02-D-01) ──────────
+  # Runs the 5,000-iteration provider-closure harness over the full Core-provider
+  # client closure.  Docker-independent; scheduled weekly to catch regressions
+  # introduced by dependency upgrades between feature pushes.
   memory-leak:
-    name: Memory-leak regression (placeholder — becomes blocking in S02-D-01)
+    name: Memory-leak regression gate (provider closure)
     runs-on: ubuntu-latest
-    # NON-BLOCKING: continue-on-error ensures a harness failure (or the current
-    # stub exit) never fails the overall workflow.  Remove this flag in S02-D-01.
-    continue-on-error: true
     needs: build
 
     steps:
@@ -129,16 +136,21 @@ jobs:
       - name: Build (Release)
         run: dotnet build vouchfx.sln -c Release --no-restore
 
-      # Run the memory-leak regression harness.
-      # The harness prints a scaffold placeholder message until S01-B-04 lands.
-      # continue-on-error: true above means a non-zero exit code here is
-      # reported as a warning annotation on the run, not a pipeline failure.
-      - name: Run memory-leak harness
+      # Run the 5,000-iteration provider-closure memory-leak regression gate.
+      # --mode closure  exercises the full Core-provider client type closure
+      #                 (Npgsql, Confluent.Kafka, MongoDB.Driver,
+      #                  StackExchange.Redis, HttpClient) — no live connections.
+      # --iterations 5000  is the calibrated run length (verified locally:
+      #                    NetDelta ≈ 1.7 KB against a 2 MB threshold, ≈1000× headroom).
+      # --threshold-bytes 2000000  (2 MB) is the M1 permanent threshold.
+      # Exit 0 iff Passed && ContextReclaimed; any non-zero exit fails the pipeline.
+      - name: Run memory-leak harness (closure, 5 000 iterations, 2 MB threshold)
         run: >
           dotnet run
           -c Release
           --no-build
           --project tests/Platform.Engine.Compilation.MemoryHarness
+          -- --mode closure --iterations 5000 --threshold-bytes 2000000
 
   # ── Docker / Aspire integration — forward-looking stub ───────────────────────
   # ubuntu-latest runners include Docker Engine, which is required for the
