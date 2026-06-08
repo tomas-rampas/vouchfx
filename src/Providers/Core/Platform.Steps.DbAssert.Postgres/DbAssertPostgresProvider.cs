@@ -3,10 +3,14 @@
 // F-01 implementation: IStepProvider + IStepBinder<T> + IStepValidator<T>.
 // F-02 adds: IStepCompiler<T> + IResourceContributor<T> + ICompileReferenceContributor.
 //
-// S04-B-03: {placeholder} substitution is now applied to the SQL query text and each
-//   parameter VALUE at execution time via Substitute_Helpers.Resolve(Vars, …).
-//   The query stays parameterised — substitution happens on the parameter value string
-//   (and on the query text for non-parameter placeholders such as table identifiers).
+// Substitution model (S04-B-03, H1 security fix):
+//   • Parameter VALUES    — Substitute_Helpers.Resolve(Vars, …); the resolved value is
+//     passed to cmd.Parameters.AddWithValue (parameterised SQL — never concatenated).
+//   • Expect-row VALUES   — Substitute_Helpers.Resolve(Vars, …); compared in-memory.
+//   • SQL query TEXT      — Substitute_Helpers.ResolveIdentifier(Vars, …); each resolved
+//     value is validated against [A-Za-z0-9_.] before being spliced into the query text.
+//     This permits dynamic table/schema identifiers (DSL §6.2) while blocking injection.
+//     Untrusted or non-identifier data MUST be bound through a SQL parameter instead.
 //
 // Schema composition invariants (§13.3.1, §13.6):
 //   • SchemaFragment describes ONLY the provider's own fields (target, query,
@@ -41,8 +45,12 @@ namespace Platform.Steps.DbAssert.Postgres;
 /// The <see cref="Emit"/> method produces a <see cref="CsxFragment"/> whose emitted
 /// CSX executes a parameterised Npgsql query, evaluates row-count and/or column-value
 /// expectations, and writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for
-/// the runner to read after execution (§13.3.1).  Placeholder substitution of query
-/// and parameter values is deferred to S04-B-03; raw values are emitted here.
+/// the runner to read after execution (§13.3.1).  The SQL query text supports
+/// <c>{placeholder}</c> substitution only of safe SQL identifiers (via
+/// <c>Substitute_Helpers.ResolveIdentifier</c>); parameter values and expect-row
+/// values support arbitrary substitution (via <c>Substitute_Helpers.Resolve</c>)
+/// because parameters are bound via <c>AddWithValue</c> (never concatenated into
+/// SQL) and expect values are compared in-memory only.
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -404,11 +412,39 @@ public sealed class DbAssertPostgresProvider
     /// <para>
     /// Emits a CSX block whose execution opens an Npgsql connection keyed by
     /// <c>VarKeys.Connection(model.Target)</c>, runs <c>model.Query</c> with the
-    /// declared parameters bound as <c>NpgsqlParameter</c> instances (parameterised
-    /// — never concatenated into SQL), evaluates the <c>expect.rowCount</c> and/or
-    /// <c>expect.row</c> assertions, and writes a typed <see cref="StepOutcome"/>
-    /// into <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
+    /// declared parameters bound as <c>NpgsqlParameter</c> instances via
+    /// <c>AddWithValue</c> (parameterised SQL — parameter values are never
+    /// concatenated into the query text), evaluates the <c>expect.rowCount</c>
+    /// and/or <c>expect.row</c> assertions, and writes a typed
+    /// <see cref="StepOutcome"/> into
+    /// <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
     /// after the script returns.
+    /// </para>
+    /// <para>
+    /// Substitution model (S04-B-03, H1 security fix):
+    /// <list type="bullet">
+    ///   <item>
+    ///     <b>Query TEXT</b> — wrapped in
+    ///     <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> at runtime.
+    ///     Each resolved placeholder value is validated against
+    ///     <c>[A-Za-z0-9_.]</c> before being spliced into the query string,
+    ///     which permits dynamic table/schema identifiers (DSL §6.2) whilst
+    ///     blocking SQL injection.  If any resolved value fails validation,
+    ///     <c>ResolveIdentifier</c> throws <see cref="InvalidOperationException"/>,
+    ///     which the helper's outer <c>catch (Exception)</c> maps to
+    ///     <see cref="Verdict.EnvironmentError"/> (§12.1).
+    ///   </item>
+    ///   <item>
+    ///     <b>Parameter VALUES</b> — wrapped in
+    ///     <c>Substitute_Helpers.Resolve(Vars, …)</c>; the resolved value is
+    ///     passed to <c>cmd.Parameters.AddWithValue</c> (parameterised — never
+    ///     concatenated into SQL).
+    ///   </item>
+    ///   <item>
+    ///     <b>Expect-row VALUES</b> — wrapped in
+    ///     <c>Substitute_Helpers.Resolve(Vars, …)</c>; compared in-memory only.
+    ///   </item>
+    /// </list>
     /// </para>
     /// <para>
     /// CsxFragment rules observed (§13.3.1):
@@ -418,7 +454,6 @@ public sealed class DbAssertPostgresProvider
     ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
     ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
     ///   <item>The step id is sanitised via <c>CsxFragment.SanitiseId</c> before splicing.</item>
-    ///   <item><c>{placeholder}</c> substitution (S04-B-03) wraps the query text, each parameter value, and each expect-row value in <c>Substitute_Helpers.Resolve(Vars, …)</c> — resolved at runtime against <c>Vars</c>, never at emit time.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -461,10 +496,15 @@ public sealed class DbAssertPostgresProvider
             ? rc.ToString(CultureInfo.InvariantCulture)
             : "null";
 
-        // S04-B-03: wrap the query text in Substitute_Helpers.Resolve so {placeholder}
-        // tokens in the SQL text resolve against Vars at runtime.  The JSON-escape ensures
-        // any embedded quotes or backslashes in the SQL do not break the C# string literal.
-        var resolvedQuery = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(model.Query)})";
+        // S04-B-03 / H1: wrap the query text in Substitute_Helpers.ResolveIdentifier so
+        // {placeholder} tokens in the SQL text resolve against Vars at runtime, but each
+        // resolved value is validated against [A-Za-z0-9_.] before being spliced into the
+        // query string.  This permits dynamic table/schema identifiers (DSL §6.2) whilst
+        // blocking SQL injection.  The JSON-escape ensures embedded quotes or backslashes in
+        // the static query text do not break the C# string literal.
+        // Parameter values and expect-row values continue to use Resolve (not ResolveIdentifier)
+        // because they are passed via AddWithValue (parameterised SQL) or compared in-memory.
+        var resolvedQuery = $"Substitute_Helpers.ResolveIdentifier(Vars, {JsonSerializer.Serialize(model.Query)})";
 
         // S04-B-03: wrap each parameter VALUE in Substitute_Helpers.Resolve.  Parameter
         // NAMES are SQL identifiers and are not subject to substitution.  The substituted

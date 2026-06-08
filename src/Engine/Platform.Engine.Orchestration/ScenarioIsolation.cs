@@ -171,18 +171,29 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
 
     /// <inheritdoc />
     /// <remarks>
-    /// On its first invocation this opens the connection and creates the
-    /// <see cref="Respawner"/> (by which point the first scenario has
-    /// established its schema, so Respawn finds tables to checkpoint).  It then
-    /// resets all user-created Postgres tables via
-    /// <c>respawner.ResetAsync(connection)</c>.  Any failure is wrapped in
-    /// <see cref="OrchestrationException"/> (§12.1: Environment error, never Fail).
+    /// <para>
+    /// Opens the connection on first use, then <em>re-creates</em> the
+    /// <see cref="Respawner"/> checkpoint and resets all user-created Postgres
+    /// tables via <c>respawner.ResetAsync(connection)</c>.  Any failure is
+    /// wrapped in <see cref="OrchestrationException"/> (§12.1: Environment error,
+    /// never Fail).
+    /// </para>
+    /// <para>
+    /// The checkpoint is re-created on <em>every</em> call (not cached) because
+    /// Respawn computes its table-reset set at checkpoint time: a scenario may
+    /// create new tables (via <c>seed</c> or an early <c>script.csharp</c> step),
+    /// and those tables would escape a checkpoint taken after an earlier scenario.
+    /// Re-checkpointing keeps the reset set current, so no row created by any
+    /// scenario bleeds into the next.  <see cref="Respawner.CreateAsync"/> is a
+    /// cheap <c>information_schema</c> introspection relative to the topology build.
+    /// </para>
     /// </remarks>
     public async Task EndScenarioAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        await EnsureInitialisedAsync(ct).ConfigureAwait(false);
+        await EnsureConnectionAsync(ct).ConfigureAwait(false);
+        await CreateRespawnerAsync(ct).ConfigureAwait(false);
         await ResetAsync(ct).ConfigureAwait(false);
     }
 
@@ -211,12 +222,12 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Opens a new <see cref="Npgsql.NpgsqlConnection"/> and creates the
-    /// <see cref="Respawner"/> instance if they have not already been created.
+    /// Opens the shared <see cref="Npgsql.NpgsqlConnection"/> once and caches it
+    /// for the lifetime of the topology.  A no-op once the connection is open.
     /// </summary>
-    private async Task EnsureInitialisedAsync(CancellationToken ct)
+    private async Task EnsureConnectionAsync(CancellationToken ct)
     {
-        if (_respawner is not null)
+        if (_connection is not null)
         {
             return;
         }
@@ -224,48 +235,48 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
         var conn = new Npgsql.NpgsqlConnection(_connectionString);
         try
         {
-            try
-            {
-                await conn.OpenAsync(ct).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                var info = new OrchestrationErrorInfo(
-                    Kind: OrchestrationErrorKind.Provision,
-                    ResourceName: "respawn-init",
-                    RegistryHost: null,
-                    AuthStatus: null,
-                    Detail: TrimDetail(ex.Message));
-                throw new OrchestrationException(info, ex);
-            }
-
-            Respawner respawner;
-            try
-            {
-                respawner = await Respawner.CreateAsync(
-                    conn,
-                    new RespawnerOptions { DbAdapter = DbAdapter.Postgres })
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                var info = new OrchestrationErrorInfo(
-                    Kind: OrchestrationErrorKind.Provision,
-                    ResourceName: "respawn-create",
-                    RegistryHost: null,
-                    AuthStatus: null,
-                    Detail: TrimDetail(ex.Message));
-                throw new OrchestrationException(info, ex);
-            }
-
-            _connection = conn;
-            _respawner = respawner;
+            await conn.OpenAsync(ct).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             // Dispose the connection on any failure so we don't leak it.
             conn.Dispose();
-            throw;
+            var info = new OrchestrationErrorInfo(
+                Kind: OrchestrationErrorKind.Provision,
+                ResourceName: "respawn-init",
+                RegistryHost: null,
+                AuthStatus: null,
+                Detail: TrimDetail(ex.Message));
+            throw new OrchestrationException(info, ex);
+        }
+
+        _connection = conn;
+    }
+
+    /// <summary>
+    /// (Re-)creates the <see cref="Respawner"/> checkpoint over the current
+    /// schema, so any table created since the previous reset is included in the
+    /// reset set.  The connection must already be open.
+    /// </summary>
+    private async Task CreateRespawnerAsync(CancellationToken ct)
+    {
+        _ = ct; // Respawner.CreateAsync does not accept a CancellationToken in v6.
+        try
+        {
+            _respawner = await Respawner.CreateAsync(
+                _connection!,
+                new RespawnerOptions { DbAdapter = DbAdapter.Postgres })
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            var info = new OrchestrationErrorInfo(
+                Kind: OrchestrationErrorKind.Provision,
+                ResourceName: "respawn-create",
+                RegistryHost: null,
+                AuthStatus: null,
+                Detail: TrimDetail(ex.Message));
+            throw new OrchestrationException(info, ex);
         }
     }
 

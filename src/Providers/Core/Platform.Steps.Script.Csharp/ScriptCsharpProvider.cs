@@ -38,6 +38,23 @@ namespace Platform.Steps.Script.Csharp;
 /// string interpolations, raw-string fences, or any other C# syntax that would
 /// corrupt or break out of such a hole (§13.3.1).
 /// </para>
+/// <para>
+/// <strong>Trust boundary (§13 — no sandbox).</strong> The author body runs in
+/// the same compiled submission as every other step and has full ambient access
+/// to the shared <c>Vars</c> dictionary.  This is an intentional escape-hatch
+/// property of <c>script.csharp</c>: the author is trusted (it is their own test
+/// code), so the body may read any staged value — <em>including connection
+/// strings under <c>conn::…</c> that carry credentials</em> — and may write any
+/// key.  It is therefore NOT isolated from the engine's reserved keys
+/// (<c>__outcome::</c>, <c>conn::</c>, <c>svc::</c>); a malicious or buggy body
+/// could forge another step's outcome or overwrite a captured variable.  The
+/// engine's only structural guarantee is brace-balance: the author body sits
+/// inside a <c>try</c> and the engine's own outcome write follows the
+/// <c>finally</c> with an engine-derived key, so an unbalanced body fails to
+/// compile (→ Inconclusive) rather than silently clobbering engine state.
+/// Reserving those namespaces against author writes, and redacting credentials
+/// (§17 <c>SecretString</c>), are post-MVP hardening items.
+/// </para>
 /// </remarks>
 [StepProvider]
 public sealed class ScriptCsharpProvider

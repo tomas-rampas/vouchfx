@@ -54,11 +54,20 @@ public static class SubstituteHelper
     public const string Source =
         "static class Substitute_Helpers\n" +
         "{\n" +
-        "    // Compiled-once regex — cheaper than a per-call Regex.Replace call and\n" +
-        "    // avoids the generated-regex source-generator constraint (not available in CSX).\n" +
+        "    // Compiled-once token regex — matches every {identifier} placeholder.\n" +
+        "    // Cheaper than a per-call Regex.Replace call and avoids the generated-regex\n" +
+        "    // source-generator constraint (not available in CSX).\n" +
         "    private static readonly System.Text.RegularExpressions.Regex s_pattern =\n" +
         "        new System.Text.RegularExpressions.Regex(\n" +
         "            @\"\\{([A-Za-z_][A-Za-z0-9_]*)\\}\",\n" +
+        "            System.Text.RegularExpressions.RegexOptions.Compiled);\n" +
+        "\n" +
+        "    // Compiled-once safe-identifier regex used by ResolveIdentifier.\n" +
+        "    // Allows letters, digits, underscore, and dot (covers schema.table).\n" +
+        "    // The empty string is accepted (absent/null placeholder → empty → harmless).\n" +
+        "    private static readonly System.Text.RegularExpressions.Regex s_safeIdentifier =\n" +
+        "        new System.Text.RegularExpressions.Regex(\n" +
+        "            @\"^[A-Za-z0-9_.]*$\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.Compiled);\n" +
         "\n" +
         "    /// <summary>\n" +
@@ -77,6 +86,55 @@ public static class SubstituteHelper
         "            if (vars.TryGetValue(key, out var val) && val is not null)\n" +
         "                return System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;\n" +
         "            return string.Empty;\n" +
+        "        });\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Replaces every <c>{name}</c> token in <paramref name=\"template\"/> with\n" +
+        "    /// the string representation of <c>vars[name]</c>, exactly as\n" +
+        "    /// <see cref=\"Resolve\"/> does, but additionally validates each resolved\n" +
+        "    /// value against a safe SQL-identifier charset before substitution.\n" +
+        "    /// </summary>\n" +
+        "    /// <remarks>\n" +
+        "    /// <para>\n" +
+        "    /// Permitted resolved characters: <c>[A-Za-z0-9_.]</c> (letters, digits,\n" +
+        "    /// underscore, dot — covers qualified names such as <c>myschema.orders</c>).\n" +
+        "    /// The empty string (absent or null placeholder) is also permitted and\n" +
+        "    /// is harmless in SQL context.\n" +
+        "    /// </para>\n" +
+        "    /// <para>\n" +
+        "    /// If any resolved value contains a character outside the permitted set\n" +
+        "    /// (e.g. a space, semicolon, quote, or SQL keyword fragment), the method\n" +
+        "    /// throws <see cref=\"System.InvalidOperationException\"/> with an actionable\n" +
+        "    /// message naming the placeholder and the offending value.  The caller's\n" +
+        "    /// <c>catch (System.Exception)</c> block maps this to\n" +
+        "    /// <c>Verdict.EnvironmentError</c> (§12.1) so the test cannot run and the\n" +
+        "    /// injection attempt is surfaced in the observation without executing SQL.\n" +
+        "    /// </para>\n" +
+        "    /// <para>\n" +
+        "    /// Untrusted or non-identifier data MUST be bound through a parameterised\n" +
+        "    /// SQL parameter (via <c>AddWithValue</c>) rather than substituted into\n" +
+        "    /// the query text.\n" +
+        "    /// </para>\n" +
+        "    /// </remarks>\n" +
+        "    internal static string ResolveIdentifier(\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        string template)\n" +
+        "    {\n" +
+        "        return s_pattern.Replace(template, m =>\n" +
+        "        {\n" +
+        "            var key = m.Groups[1].Value;\n" +
+        "            string resolved;\n" +
+        "            if (vars.TryGetValue(key, out var val) && val is not null)\n" +
+        "                resolved = System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;\n" +
+        "            else\n" +
+        "                resolved = string.Empty;\n" +
+        "            if (!s_safeIdentifier.IsMatch(resolved))\n" +
+        "                throw new System.InvalidOperationException(\n" +
+        "                    \"db-assert query-text placeholder '{\" + key + \"}' resolved to '\" + resolved +\n" +
+        "                    \"', which is not a safe SQL identifier; bind untrusted or non-identifier \" +\n" +
+        "                    \"data through a parameter instead.\");\n" +
+        "            return resolved;\n" +
         "        });\n" +
         "    }\n" +
         "}";
