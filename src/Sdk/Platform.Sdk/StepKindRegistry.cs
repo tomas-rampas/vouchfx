@@ -194,7 +194,21 @@ public sealed class StepKindRegistry
 
         foreach (var assembly in assemblies)
         {
-            foreach (var type in assembly.GetTypes())
+            // Tolerate partial load failures: a provider assembly that has an
+            // unresolvable transitive dependency raises ReflectionTypeLoadException
+            // from GetTypes().  Use whichever types did load so the scan degrades
+            // gracefully rather than crashing startup with an opaque exception.
+            IEnumerable<Type> assemblyTypes;
+            try
+            {
+                assemblyTypes = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                assemblyTypes = ex.Types.Where(t => t is not null)!;
+            }
+
+            foreach (var type in assemblyTypes)
             {
                 if (!type.IsClass || type.IsAbstract)
                     continue;

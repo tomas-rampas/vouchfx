@@ -80,9 +80,13 @@ public static class AssemblyClosure
     ///   <item><description>
     ///     Reserved-namespace guard (<see cref="ReservedNamespaceGuard.ThrowIfSquatting"/>) —
     ///     refuses customer DLLs that squat on <c>Platform.Engine.*</c> or
-    ///     <c>Platform.Steps.*</c>.  Engine and provider assemblies whose simple name
-    ///     starts with <c>Platform.Engine.</c> or <c>Platform.Steps.</c>, plus
-    ///     <c>Platform.Sdk</c>, are exempt (see <see cref="BuildTrustedSimpleNames"/>).
+    ///     <c>Platform.Steps.*</c>.  Assemblies in the trusted set (built by
+    ///     <see cref="BuildTrustedSimpleNames"/>) are exempt; trust requires both a
+    ///     reserved-prefix name AND co-location with the engine directory (defence-in-depth).
+    ///     A hostile DLL with a reserved prefix that is loaded from a different directory is
+    ///     NOT trusted and will be scanned.  The residual case (byte-loaded or single-file
+    ///     published assembly with a reserved-prefix name) falls back to prefix-only trust —
+    ///     a tracked limitation pending engine strong-naming.
     ///   </description></item>
     ///   <item><description>
     ///     Version-conflict guard (<see cref="AssemblyGraphGuard.ThrowIfConflicting(IEnumerable{Assembly})"/>) —
@@ -134,21 +138,44 @@ public static class AssemblyClosure
     /// <remarks>
     /// <para>
     /// An assembly is trusted — and therefore permitted to declare types under
-    /// <c>Platform.Engine.*</c> or <c>Platform.Steps.*</c> — when its own simple name
-    /// starts with <c>Platform.Engine.</c> or <c>Platform.Steps.</c>, or equals
-    /// <c>Platform.Sdk</c>.  These are the engine and provider assemblies that own those
-    /// namespaces by design.
+    /// <c>Platform.Engine.*</c> or <c>Platform.Steps.*</c> — when <em>both</em>
+    /// conditions hold:
     /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     Its simple name starts with <c>Platform.Engine.</c> or
+    ///     <c>Platform.Steps.</c>, or equals <c>Platform.Sdk</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     It is loaded from the <em>same directory</em> as the engine's own assembly
+    ///     (<c>typeof(AssemblyClosure).Assembly.Location</c>'s directory), compared
+    ///     with <see cref="StringComparison.OrdinalIgnoreCase"/>.  This co-location
+    ///     check closes the file-based impersonation case: a hostile DLL named
+    ///     <c>Platform.Engine.Evil</c> that lives outside the engine directory is NOT
+    ///     trusted and will be scanned by <see cref="ReservedNamespaceGuard"/>.
+    ///   </description></item>
+    /// </list>
     /// <para>
-    /// Residual: an assembly that impersonates a <c>Platform.Engine.*</c> or
-    /// <c>Platform.Steps.*</c> <em>name</em> will be included in the trusted set here,
-    /// but that is an assembly-name collision which <see cref="AssemblyGraphGuard"/>
-    /// handles — it is not this guard's responsibility.
+    /// <b>Residual (tracked limitation):</b> when <c>engineDir</c> is null or empty
+    /// (single-file publish) OR the candidate assembly's <c>Location</c> is empty
+    /// (loaded from a byte array, e.g. via <see cref="Assembly.Load(byte[])"/>), the
+    /// co-location signal is unavailable and the method falls back to prefix-only
+    /// trust for that candidate.  A byte-loaded or single-file-published assembly
+    /// with a reserved-prefix name is therefore trusted on name alone — this residual
+    /// is a tracked limitation pending engine strong-naming.
     /// </para>
     /// </remarks>
-    private static HashSet<string> BuildTrustedSimpleNames(IReadOnlyList<Assembly> list)
+    internal static HashSet<string> BuildTrustedSimpleNames(IReadOnlyList<Assembly> list)
     {
         var trusted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Determine the directory from which the engine itself was loaded.
+        // When engineDir is null or empty (single-file publish), co-location
+        // cannot be verified and the fallback applies to every candidate.
+        var engineLocation = typeof(AssemblyClosure).Assembly.Location;
+        var engineDir = string.IsNullOrEmpty(engineLocation)
+            ? null
+            : Path.GetDirectoryName(engineLocation);
 
         foreach (var assembly in list)
         {
@@ -156,12 +183,39 @@ public static class AssemblyClosure
             if (name is null)
                 continue;
 
-            if (name.StartsWith("Platform.Engine.", StringComparison.Ordinal) ||
+            // Step 1 — name must carry a reserved prefix or equal Platform.Sdk.
+            var hasReservedPrefix =
+                name.StartsWith("Platform.Engine.", StringComparison.Ordinal) ||
                 name.StartsWith("Platform.Steps.", StringComparison.Ordinal) ||
-                name.Equals("Platform.Sdk", StringComparison.Ordinal))
+                name.Equals("Platform.Sdk", StringComparison.Ordinal);
+
+            if (!hasReservedPrefix)
+                continue;
+
+            // Step 2 — co-location check (defence-in-depth).
+            // When the engine directory or the candidate's Location is unavailable
+            // (single-file publish or byte-loaded assembly), the co-location signal
+            // cannot be verified; fall back to prefix-only trust.
+            var candidateLocation = assembly.Location;
+
+            if (engineDir is null || string.IsNullOrEmpty(candidateLocation))
             {
+                // Residual: prefix-only trust — documented limitation above.
+                trusted.Add(name);
+                continue;
+            }
+
+            var candidateDir = Path.GetDirectoryName(candidateLocation);
+
+            if (string.Equals(candidateDir, engineDir, StringComparison.OrdinalIgnoreCase))
+            {
+                // Co-located with the engine — genuinely trusted.
                 trusted.Add(name);
             }
+
+            // If not co-located, the prefix-named DLL is NOT added to the trusted
+            // set.  It will be scanned by ReservedNamespaceGuard and refused if it
+            // squats on a reserved namespace.
         }
 
         return trusted;

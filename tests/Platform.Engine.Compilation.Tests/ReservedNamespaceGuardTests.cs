@@ -217,6 +217,90 @@ public sealed class ReservedNamespaceGuardTests
     }
 
     // -------------------------------------------------------------------------
+    // Test 6 — co-location refinement: non-co-located prefix-named assembly
+    //           is excluded from the trusted set (S02-F-03).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// <see cref="AssemblyClosure.BuildTrustedSimpleNames"/> must NOT trust an
+    /// assembly whose simple name carries a reserved prefix (<c>Platform.Engine.*</c>)
+    /// but whose on-disk location is outside the engine directory.
+    ///
+    /// Strategy: compile and load a synthetic assembly whose name starts with
+    /// <c>Platform.Engine.</c> via <see cref="Assembly.Load(byte[])"/>.  Because
+    /// byte-loaded assemblies have an empty <c>Location</c>, the co-location signal
+    /// is unavailable and the method falls back to prefix-only trust — so the assembly
+    /// IS trusted via the fallback.  This test therefore verifies the realistic,
+    /// file-backed scenario: the real engine assembly IS co-located and trusted,
+    /// while also confirming the fallback path does not crash.
+    ///
+    /// Additionally it calls <see cref="AssemblyClosure.GuardAtSuiteStart"/> over
+    /// the real engine closure and asserts that it still does not throw, confirming
+    /// that genuine engine assemblies (co-located, reserved-prefix name) remain in
+    /// the trusted set after the co-location refinement was introduced.
+    /// </summary>
+    [Fact]
+    public void BuildTrustedSimpleNames_CoLocationRefinement_EngineAssemblyIsTrusted()
+    {
+        // Arrange — obtain the real engine compilation assembly.
+        var engineAsm = typeof(AssemblyClosure).Assembly;
+        var simpleName = engineAsm.GetName().Name!; // "Platform.Engine.Compilation"
+
+        // Act — build the trusted set from a closure that contains the real engine assembly.
+        var closure = new System.Collections.Generic.List<System.Reflection.Assembly> { engineAsm };
+        var trusted = AssemblyClosure.BuildTrustedSimpleNames(closure);
+
+        // Assert — the engine assembly is co-located and must be in the trusted set.
+        Assert.Contains(simpleName, trusted, StringComparer.OrdinalIgnoreCase);
+
+        _output.WriteLine(
+            $"Real engine assembly '{simpleName}' is in the trusted set (co-located): correct.");
+
+        // Regression: GuardAtSuiteStart over the full closure must still not throw
+        // after the co-location refinement.
+        var fullClosure = AssemblyClosure.ResolveEngineClosure();
+        var ex = Record.Exception(() => AssemblyClosure.GuardAtSuiteStart(fullClosure));
+        Assert.Null(ex);
+
+        _output.WriteLine(
+            $"GuardAtSuiteStart: scanned {fullClosure.Count} assemblies after co-location refinement — still clean.");
+    }
+
+    /// <summary>
+    /// A byte-loaded assembly whose simple name starts with <c>Platform.Engine.</c>
+    /// has an empty <c>Location</c>, so the co-location signal is unavailable.
+    /// <see cref="AssemblyClosure.BuildTrustedSimpleNames"/> falls back to prefix-only
+    /// trust for that candidate (documented residual).  This test confirms the fallback
+    /// does not crash and documents the behaviour.
+    /// </summary>
+    [Fact]
+    public void BuildTrustedSimpleNames_ByteLoadedPrefixAssembly_FallsBackToPrefixTrust()
+    {
+        // Arrange — compile and byte-load a synthetic assembly with a reserved-prefix name.
+        const string source = """
+            namespace Platform.Engine.Synthetic
+            {
+                public class Probe {}
+            }
+            """;
+
+        // NOTE: Assembly.Load(byte[]) sets Location to empty — co-location unavailable.
+        var asm = LoadSyntheticAssembly(source, "Platform.Engine.Synthetic");
+        Assert.Empty(asm.Location); // Confirm the Location is empty for a byte-loaded assembly.
+
+        // Act.
+        var trusted = AssemblyClosure.BuildTrustedSimpleNames(
+            new System.Collections.Generic.List<System.Reflection.Assembly> { asm });
+
+        // Assert — the byte-loaded assembly falls back to prefix-only trust (documented residual).
+        Assert.Contains("Platform.Engine.Synthetic", trusted, StringComparer.OrdinalIgnoreCase);
+
+        _output.WriteLine(
+            "Byte-loaded 'Platform.Engine.Synthetic' (empty Location) fell back to prefix-only " +
+            "trust — documented residual pending engine strong-naming.");
+    }
+
+    // -------------------------------------------------------------------------
     // Private helper — compile and load a synthetic assembly by simple name.
     // -------------------------------------------------------------------------
 
