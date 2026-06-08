@@ -321,8 +321,19 @@ public sealed class HttpRestProvider
             // SSRF guard (M1): path must be a safe rooted relative reference.
             // Reject absolute URLs, protocol-relative paths, backslash paths, and
             // paths that do not start with '/' (§security hardening PR #131).
+            //
+            // NOTE: Uri.TryCreate(path, UriKind.Absolute, …) is intentionally absent.
+            // On Linux a leading '/' parses as a file URI (file:///foo), so that check
+            // would reject valid rooted paths on that platform.  The three guards below
+            // are fully platform-independent and together cover every unsafe form:
+            //   • !StartsWith('/')           — rejects scheme-bearing URLs (http://…) and
+            //                                  bare relative paths such as "users/123".
+            //   • StartsWith("//", …)        — rejects protocol-relative paths (//evil/…).
+            //   • Contains('\\', …)          — rejects backslash paths.
+            // A scheme-bearing absolute URL always starts with a letter, not '/', so the
+            // first guard catches it without any Uri parsing.
             var path = model.Path;
-            if (Uri.TryCreate(path, UriKind.Absolute, out _))
+            if (!path.StartsWith('/'))
             {
                 errors.Add(
                     "http.rest: 'path' must be a rooted relative path (start with '/'); " +
@@ -339,12 +350,6 @@ public sealed class HttpRestProvider
                 errors.Add(
                     "http.rest: 'path' must not contain backslashes; " +
                     "use forward slashes for URL path separators.");
-            }
-            else if (!path.StartsWith('/'))
-            {
-                errors.Add(
-                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
-                    "absolute URLs and protocol-relative paths are not allowed.");
             }
         }
 
