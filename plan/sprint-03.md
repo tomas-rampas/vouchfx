@@ -8,6 +8,35 @@
 | **Milestone** | Contributes to **M2** (closes Sprint 5) |
 | **Theme** | Promote the Phase 1 proofs into a production compiler skeleton: parse a real `.e2e.yaml` to an AST, validate it, run the production Roslyn pipeline, and execute the first real provider against a build-once topology. |
 
+## Delivery status
+
+**Implemented on `feat/sprint-03-compiler`** (PR pending; date 2026-06-08) — all **9 tasks** delivered
+(plus the integration spine). Build is 0-warning under `TreatWarningsAsErrors`, `dotnet format` is
+clean, and the full non-docker suite is green (**265 tests** across seven projects); the Docker
+capstone suite is green locally. The **sprint exit criterion is met**: a real `.e2e.yaml` with one
+`http.rest` step parses → validates → compiles once → runs against a build-once Aspire topology →
+renders a verdict (`step 'get-root': PASS (12 ms)` → `Verdict.Pass`), independently re-verified.
+
+Key proofs:
+
+1. **Front-end:** `Platform.Engine.Authoring` — typed document model + `YamlDocumentParser` (S03-B-01)
+   and `AstBuilder` with alias resolution (single-provider family → default; bare `db-assert` rejected;
+   ambiguous rejected) (S03-B-02).
+2. **Compiler:** `CsxAssembler` (dedup usings/helpers, splice in step order) + production compile-once
+   pipeline (S03-B-04); pre-compile schema validation with line context (S03-B-03).
+3. **First real provider:** `http.rest` issues an HTTP GET and reports a verdict via `StepOutcome`
+   (Pass/Fail/EnvironmentError) (S03-F-01/F-02).
+4. **Orchestration:** `EnvironmentMapper` (environment → Aspire resources, gate the database) (S03-A-02)
+   and the build-once `SuiteTopology` fixture (S03-A-01).
+5. **Reporting:** terminal renderer v0 with per-step verdicts + durations (S03-G-01).
+6. **Spine:** `Platform.Engine.Runtime.ScenarioRunner` wires the whole slice and aggregates the verdict
+   (EnvironmentError > Fail > Inconclusive > Pass); topology/compile failures map to Environment
+   error/Inconclusive, never Fail.
+
+The 5,000-iteration provider-closure memory gate stays green (NetDelta +1.7 KB). Carry-forward to later
+sprints: RETRY/Polly + per-step timeouts (rejected with a clear message until Sprint 6), richer
+image-pull registry/auth fidelity, inline request bodies, and capture/placeholder threading.
+
 ## Sprint goal
 
 A `.e2e.yaml` file parses into an AST, validates against the Phase 1 schema, and a single `http.rest`
