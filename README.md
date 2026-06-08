@@ -2,6 +2,12 @@
 
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
+## About
+
+vouchfx is a .NET 8 testing platform for distributed systems that lets teams author end-to-end tests in
+declarative YAML, compile them into memory-safe executable workflows, and run them against real
+containerised topologies with deterministic orchestration and clear verdict reporting.
+
 vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them memory-safely
 through Roslyn, and orchestrates the required container topology with **.NET Aspire + Testcontainers**.
 It tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
@@ -158,4 +164,4 @@ invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English
 
 ## Licence
 
-Apache-2.0 (intended), so providers can move between governance tiers without IP friction.
+Apache-2.0 — see [`LICENSE`](LICENSE).
