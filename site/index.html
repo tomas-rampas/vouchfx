@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>vouchfx — End-to-end testing for distributed systems, authored in YAML</title>
+<meta name="description" content="vouchfx compiles declarative .e2e.yaml specs into memory-safe C#, orchestrates the full container topology with .NET Aspire + Testcontainers, and proves your distributed system works end-to-end — across REST, Kafka, Postgres and webhooks." />
+<meta name="theme-color" content="#0b0f1a" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+<!-- Open Graph / social -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="vouchfx — End-to-end testing for distributed systems, authored in YAML" />
+<meta property="og:description" content="Declarative .e2e.yaml → compiled C# → real container topology via .NET Aspire. End-to-end testing for distributed systems, whatever the stack under test." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ===================== NAV ===================== -->
+<header class="nav" id="top">
+  <div class="nav__inner">
+    <a class="brand" href="#top" aria-label="vouchfx home">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">vouchfx</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#dsl">The DSL</a>
+      <a href="#memory">Memory model</a>
+      <a href="#verdicts">Verdicts</a>
+      <a href="#roadmap">Roadmap</a>
+    </nav>
+    <a class="btn btn--ghost nav__gh" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="hero__glow" aria-hidden="true"></div>
+  <div class="container hero__inner">
+    <span class="badge"><span class="badge__dot"></span> Pre-release · Sprint 1 (Foundations) complete</span>
+    <h1 class="hero__title">
+      End-to-end testing for<br />distributed systems,<br /><span class="grad">authored in YAML.</span>
+    </h1>
+    <p class="hero__lede">
+      vouchfx compiles declarative <code>.e2e.yaml</code> specs into memory-safe C#, orchestrates the full
+      container topology with <strong>.NET Aspire&nbsp;+&nbsp;Testcontainers</strong>, and proves one business
+      transaction works as it crosses a REST call, a Kafka event, a database mutation and an outbound webhook —
+      <em>the seams where distributed systems actually break.</em>
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener">Explore the repo</a>
+      <a class="btn btn--ghost" href="#dsl">See a test &darr;</a>
+    </div>
+
+    <div class="pipeline" role="img" aria-label="Pipeline: author, validate, compile once, orchestrate, execute, verdict, unload">
+      <span class="pipeline__step">author <code>.e2e.yaml</code></span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step">validate vs JSON Schema</span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step pipeline__step--hot">compile YAML→AST→CSX→Roslyn <em>(once)</em></span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step">orchestrate topology via Aspire</span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step">execute against discovered endpoints</span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step">collect verdict</span><span class="pipeline__arr">→</span>
+      <span class="pipeline__step">unload context · reset</span>
+    </div>
+
+    <p class="hero__not">
+      It is <strong>not</strong> a unit-test framework and <strong>not</strong> a UI/browser tool.
+    </p>
+  </div>
+</section>
+
+<!-- ===================== PROBLEM ===================== -->
+<section class="section" id="why">
+  <div class="container">
+    <p class="eyebrow">The problem</p>
+    <h2 class="section__title">Unit tests pass. Production still breaks at the seams.</h2>
+    <p class="section__lede">
+      A modern transaction is not a function call — it is a relay across services, brokers, databases and
+      webhooks. Each component is tested in isolation and works. The <em>handoffs</em> between them are where
+      ordering, timing, schema drift and partial failure hide. vouchfx tests that relay as a single,
+      declarative scenario.
+    </p>
+    <div class="grid grid--3">
+      <article class="card">
+        <h3>Cross-boundary by design</h3>
+        <p>One scenario spans REST, Kafka, Postgres and outbound webhooks — exercising the contracts between systems, not within them.</p>
+      </article>
+      <article class="card">
+        <h3>Determinism by default</h3>
+        <p>No hand-rolled <code>Thread.Sleep</code>. Asynchronous assertions are a first-class <code>RETRY</code> mode the engine owns, with bounded exponential backoff.</p>
+      </article>
+      <article class="card">
+        <h3>Topological parity</h3>
+        <p>The same suite runs unchanged on a laptop, in SaaS, or in CI — because the compiled delegate depends only on a typed contract that orchestration produces.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HOW IT WORKS ===================== -->
+<section class="section section--alt" id="how">
+  <div class="container">
+    <p class="eyebrow">How it works</p>
+    <h2 class="section__title">Compile once. Isolate. Run N times. Unload to baseline.</h2>
+    <p class="section__lede">
+      A spec is parsed to an AST, lowered to Turing-complete C# script (CSX), and compiled <strong>exactly once</strong>
+      through Roslyn into a collectible assembly. Orchestration stands up the topology; the delegate runs against the
+      discovered endpoints; the context unloads and resets — no leaked assemblies, no drift between runs.
+    </p>
+    <div class="flow">
+      <div class="flow__node"><span class="flow__k">01</span><h4>Author &amp; validate</h4><p>Write <code>.e2e.yaml</code>; validate against a single JSON Schema before any container starts.</p></div>
+      <div class="flow__node"><span class="flow__k">02</span><h4>Compile (once)</h4><p>YAML → AST → CSX → <code>CSharpScript.Create&lt;T&gt;()</code> → <code>.Emit()</code> into a collectible <code>AssemblyLoadContext</code>.</p></div>
+      <div class="flow__node"><span class="flow__k">03</span><h4>Orchestrate</h4><p>Headless .NET Aspire AppHost + Testcontainers bring up services and managed dependencies, health-gated.</p></div>
+      <div class="flow__node"><span class="flow__k">04</span><h4>Execute</h4><p>Invoke the delegate against discovered endpoints; Polly v8 drives <code>RETRY</code> polling under the hood.</p></div>
+      <div class="flow__node"><span class="flow__k">05</span><h4>Verdict &amp; unload</h4><p>Emit a verdict to a JSON Lines event stream, <code>.Unload()</code> the context, and reset to baseline.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ARCHITECTURE ===================== -->
+<section class="section" id="architecture">
+  <div class="container">
+    <p class="eyebrow">Architecture</p>
+    <h2 class="section__title">Five layers, each exposing one narrow typed contract upward.</h2>
+    <p class="section__lede">
+      The contract that makes a suite portable: the compiled delegate touches the environment <strong>only</strong>
+      through a typed <code>ScriptGlobalVariables</code>, and orchestration is its sole producer. Nothing else bridges
+      the boundary.
+    </p>
+
+    <div class="layers">
+      <div class="layer">
+        <span class="layer__n">1</span>
+        <div class="layer__body"><h4>Authoring</h4><p>The <code>.e2e.yaml</code> grammar, JSON Schema, VSCode/LSP tooling.</p></div>
+      </div>
+      <div class="layer">
+        <span class="layer__n">2</span>
+        <div class="layer__body"><h4>Compilation</h4><p>Parser → AST → CSX → Roslyn delegate, compiled <strong>once</strong>.</p></div>
+      </div>
+      <div class="layer">
+        <span class="layer__n">3</span>
+        <div class="layer__body"><h4>Orchestration</h4><p>Aspire AppHost, Testcontainers, health-gated startup.</p></div>
+      </div>
+      <div class="layer">
+        <span class="layer__n">4</span>
+        <div class="layer__body"><h4>Execution</h4><p>Delegate host, collectible <code>AssemblyLoadContext</code>, Polly v8 resilience.</p></div>
+      </div>
+      <div class="layer">
+        <span class="layer__n">5</span>
+        <div class="layer__body"><h4>Infrastructure fabric</h4><p>Local Docker, SaaS, or on-prem Kubernetes.</p></div>
+      </div>
+      <div class="layers__contract">
+        <span class="layers__chip">contract</span>
+        compiled delegate&nbsp;→&nbsp;<code>ScriptGlobalVariables</code>&nbsp;←&nbsp;orchestration
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DSL ===================== -->
+<section class="section section--alt" id="dsl">
+  <div class="container">
+    <p class="eyebrow">A test, in shape</p>
+    <h2 class="section__title">Four sections. Only <code>steps</code> is mandatory.</h2>
+    <p class="section__lede">
+      State threads forward between steps through <code>capture</code> and <code>{placeholder}</code> substitution.
+      One generated identifier from step one can appear in the assertions of step five — across heterogeneous systems.
+    </p>
+
+    <div class="code">
+      <div class="code__bar"><span class="dot dot--r"></span><span class="dot dot--y"></span><span class="dot dot--g"></span><span class="code__file">provision-customer.e2e.yaml</span></div>
+<pre><code><span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">New customer is provisioned end-to-end</span>
+  <span class="k">owner</span>: <span class="s">payments-team</span>
+  <span class="k">tags</span>: [<span class="s">checkout</span>, <span class="s">billing</span>]
+
+<span class="k">environment</span>:
+  <span class="k">services</span>:                          <span class="c"># the system under test — any container, any stack</span>
+    <span class="k">orders-api</span>: { <span class="k">image</span>: <span class="s">ghcr.io/acme/orders-api:latest</span> }
+  <span class="k">dependencies</span>:                      <span class="c"># managed Aspire resources</span>
+    <span class="k">orders-db</span>: { <span class="k">type</span>: <span class="t">postgres</span>, <span class="k">version</span>: <span class="s">"16"</span> }
+    <span class="k">events</span>:    { <span class="k">type</span>: <span class="t">kafka</span>, <span class="k">schemaRegistry</span>: <span class="n">true</span> }
+
+<span class="k">variables</span>:
+  <span class="k">basePath</span>: <span class="s">/api/v1</span>
+
+<span class="k">steps</span>:
+  - <span class="k">id</span>: <span class="s">create-user</span>
+    <span class="k">type</span>: <span class="t">http.rest</span>
+    <span class="k">target</span>: <span class="s">orders-api</span>
+    <span class="k">method</span>: <span class="t">POST</span>
+    <span class="k">path</span>: <span class="s">"{basePath}/users"</span>
+    <span class="k">body</span>: { <span class="k">email</span>: <span class="s">ada@example.com</span> }
+    <span class="k">capture</span>:
+      <span class="k">newUserId</span>: <span class="s">$.id</span>            <span class="c"># JSONPath → shared context</span>
+
+  - <span class="k">id</span>: <span class="s">expect-billing-event</span>
+    <span class="k">type</span>: <span class="t">mq-expect.kafka</span>
+    <span class="k">topic</span>: <span class="s">billing.accounts</span>
+    <span class="k">verifyMode</span>: <span class="hot">RETRY</span>            <span class="c"># engine polls with backoff — never Thread.Sleep</span>
+    <span class="k">timeout</span>: <span class="n">30s</span>
+    <span class="k">match</span>:
+      <span class="k">key</span>: <span class="s">"{newUserId}"</span>
+
+  - <span class="k">id</span>: <span class="s">assert-projection</span>
+    <span class="k">type</span>: <span class="t">db-assert.postgres</span>
+    <span class="k">target</span>: <span class="s">orders-db</span>
+    <span class="k">verifyMode</span>: <span class="hot">RETRY</span>
+    <span class="k">query</span>: <span class="s">SELECT 1 FROM accounts WHERE user_id = '{newUserId}'</span>
+    <span class="k">expect</span>: { <span class="k">rows</span>: <span class="n">1</span> }
+</code></pre>
+    </div>
+    <p class="note">
+      Secrets are references, never literals — <code>${secret:vault/orders-db/conn}</code>, resolved at execution time
+      and redacted in every report. Test doubles (WireMock/Mountebank) are ordinary containers in <code>environment</code>,
+      not a bolted-on mocking feature.
+    </p>
+  </div>
+</section>
+
+<!-- ===================== MEMORY MODEL ===================== -->
+<section class="section" id="memory">
+  <div class="container">
+    <p class="eyebrow">The central problem</p>
+    <h2 class="section__title">Dynamic compilation that doesn't leak.</h2>
+    <p class="section__lede">
+      Naïvely evaluating a script per run leaks an uncollectable assembly every time. vouchfx is built around the
+      opposite discipline — and ships a CI memory-leak regression test over the full transitive closure of every
+      Core provider as a permanent gate.
+    </p>
+    <div class="split">
+      <div class="split__bad">
+        <span class="split__tag split__tag--bad">Never</span>
+        <pre><code><span class="c">// leaks an uncollectable assembly per call</span>
+<span class="k">await</span> CSharpScript.<span class="hot">EvaluateAsync</span>(code);</code></pre>
+      </div>
+      <div class="split__good">
+        <span class="split__tag split__tag--good">Always</span>
+        <pre><code><span class="c">// compile once …</span>
+<span class="k">var</span> script = CSharpScript.Create&lt;T&gt;(code);
+script.<span class="t">GetCompilation</span>().<span class="t">Emit</span>(stream);
+<span class="c">// … isolate, invoke N times, then collect</span>
+<span class="k">var</span> alc = <span class="k">new</span> AssemblyLoadContext(isCollectible: <span class="n">true</span>);
+<span class="c">// … run …</span>
+alc.<span class="t">Unload</span>();</code></pre>
+      </div>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><span class="stat__num">5,000</span><span class="stat__label">load–unload cycles</span></div>
+      <div class="stat"><span class="stat__num">~1.3&nbsp;KB</span><span class="stat__label">net heap delta (2&nbsp;MB threshold)</span></div>
+      <div class="stat"><span class="stat__num">20 / 20</span><span class="stat__label">health-gated topology starts</span></div>
+    </div>
+    <p class="note note--center">Sprint&nbsp;1 results — the two defining risks empirically retired, guarded in CI.</p>
+  </div>
+</section>
+
+<!-- ===================== PROVIDERS ===================== -->
+<section class="section section--alt" id="providers">
+  <div class="container">
+    <p class="eyebrow">Provider model</p>
+    <h2 class="section__title">Step type = <code>&lt;family&gt;.&lt;provider&gt;</code> — intent, then technology.</h2>
+    <p class="section__lede">
+      Providers are <strong>compile-time, source-level plugins</strong>: add a project, implement the frozen v1.x
+      contract, mark it <code>[StepProvider]</code>, and a reflective registry discovers it at startup. No runtime
+      loader, no dynamic assembly loading, no sandbox. Models are strongly-typed records, never
+      <code>Dictionary&lt;string,object&gt;</code>.
+    </p>
+    <div class="providers">
+      <span class="prov">http.rest</span>
+      <span class="prov">mq-publish.kafka</span>
+      <span class="prov">mq-expect.kafka</span>
+      <span class="prov">db-assert.postgres</span>
+      <span class="prov">webhook-listen.http</span>
+      <span class="prov">script.csharp</span>
+    </div>
+    <div class="grid grid--3">
+      <article class="card">
+        <h3>Three governance tiers</h3>
+        <p><strong>Core</strong> · <strong>Verified</strong> · <strong>Community</strong> — all Apache-2.0, so providers move tiers without IP friction.</p>
+      </article>
+      <article class="card">
+        <h3>Frozen v1 contract</h3>
+        <p><code>IStepProvider</code> / <code>IStepBinder&lt;T&gt;</code> / <code>IStepValidator&lt;T&gt;</code> / <code>IStepCompiler&lt;T&gt;</code> / <code>IResourceContributor&lt;T&gt;</code> — stable for the v1.x engine series.</p>
+      </article>
+      <article class="card">
+        <h3>Any stack under test</h3>
+        <p>vouchfx is a .NET-native engine, but it talks to the system under test over the wire. Aspire is polyglot — your services can be <strong>Java, Go, Python, Node</strong> or .NET.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== VERDICTS ===================== -->
+<section class="section" id="verdicts">
+  <div class="container">
+    <p class="eyebrow">Verdict taxonomy</p>
+    <h2 class="section__title">Four outcomes, kept distinct everywhere.</h2>
+    <p class="section__lede">
+      Taxonomy, reporting and exit codes never conflate them. <strong>Only <code>Fail</code> breaks CI by default</strong> —
+      because conflating an environment error with a real defect is how teams stop trusting a tool.
+    </p>
+    <div class="grid grid--4">
+      <article class="verdict verdict--pass"><h3>Pass</h3><p>Every assertion held.</p></article>
+      <article class="verdict verdict--fail"><h3>Fail</h3><p>A defect in the system under test. The only outcome that breaks CI by default.</p></article>
+      <article class="verdict verdict--env"><h3>Environment error</h3><p>Infrastructure: unhealthy container, pull / tunnel / seed failure.</p></article>
+      <article class="verdict verdict--inc"><h3>Inconclusive</h3><p>Timeout, partition outlasted grace, or an upstream capture unmet.</p></article>
+    </div>
+    <p class="note note--center">
+      One schema-versioned JSON Lines event stream feeds every renderer — terminal, HTML, JUnit XML, dashboard —
+      and the Healer agent. Each step-attempt is recorded individually, so the RETRY timeline renders without re-running.
+    </p>
+  </div>
+</section>
+
+<!-- ===================== ROADMAP ===================== -->
+<section class="section section--alt" id="roadmap">
+  <div class="container">
+    <p class="eyebrow">Status &amp; roadmap</p>
+    <h2 class="section__title">Risk-ordered delivery — five milestones, twelve sprints.</h2>
+    <p class="section__lede">
+      The plan sequences work by <em>risk</em>, not visibility: the memory model and orchestration are de-risked first,
+      and the memory-leak regression test is a Phase 1 deliverable and a permanent CI gate.
+    </p>
+    <ol class="timeline">
+      <li class="timeline__item timeline__item--done">
+        <span class="timeline__badge">M1 · done</span>
+        <h4>Foundations</h4>
+        <p>Memory-safe dynamic compilation and health-gated Aspire orchestration empirically retired. Buildable .NET 8 solution; frozen provider contract; JSON Lines event envelope.</p>
+      </li>
+      <li class="timeline__item">
+        <span class="timeline__badge">M2</span>
+        <h4>Compiler &amp; Core providers</h4>
+        <p>YAML→AST→CSX compiler built out; the six Core providers and the RETRY/Polly path.</p>
+      </li>
+      <li class="timeline__item">
+        <span class="timeline__badge">M3</span>
+        <h4>Tooling &amp; runner</h4>
+        <p>CLI global tool with deterministic CI exit codes; VSCode/LSP authoring extension.</p>
+      </li>
+      <li class="timeline__item">
+        <span class="timeline__badge">M4</span>
+        <h4>Integration &amp; reporting</h4>
+        <p>End-to-end hardening; the multi-renderer reporting stream and diagnostics.</p>
+      </li>
+      <li class="timeline__item">
+        <span class="timeline__badge">M5</span>
+        <h4>Pilot &amp; release</h4>
+        <p>Pilot feedback, hardening, and the first release of the engine + extension.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ===================== CTA ===================== -->
+<section class="cta">
+  <div class="container cta__inner">
+    <h2>Read the design. It's the source of truth.</h2>
+    <p>vouchfx is a fully-specified system: an architecture blueprint, a DSL specification, and a milestone-driven delivery plan — all in the open.</p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener">View on GitHub</a>
+      <a class="btn btn--ghost" href="https://github.com/tomas-rampas/vouchfx/blob/main/docs/01_Technical_Architecture_and_Engineering_Blueprint.md" target="_blank" rel="noopener">Architecture blueprint</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer class="footer">
+  <div class="container footer__inner">
+    <div class="footer__brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <div>
+        <strong>vouchfx</strong>
+        <p>End-to-end integration testing for distributed systems, authored in YAML.</p>
+      </div>
+    </div>
+    <div class="footer__links">
+      <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener">Repository</a>
+      <a href="https://github.com/tomas-rampas/vouchfx/tree/main/docs" target="_blank" rel="noopener">Design docs</a>
+      <a href="https://github.com/tomas-rampas/vouchfx/blob/main/plan/README.md" target="_blank" rel="noopener">Delivery plan</a>
+      <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener">Licence (Apache-2.0)</a>
+    </div>
+  </div>
+  <div class="footer__base">
+    <span>© 2026 vouchfx · Apache-2.0</span>
+    <span>Built on .NET 8 LTS · Roslyn · .NET Aspire · Testcontainers · Polly v8</span>
+  </div>
+</footer>
+
+</body>
+</html>
