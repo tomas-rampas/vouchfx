@@ -33,8 +33,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- IsAspireProjectResource=false: this is a library, not an orchestrated service. -->
+    <!-- IsAspireProjectResource=false: these are libraries, not orchestrated services. -->
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Orchestration\Platform.Engine.Orchestration.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- script.csharp provider: used by RespawnResetProofTests (S04-A-01). -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

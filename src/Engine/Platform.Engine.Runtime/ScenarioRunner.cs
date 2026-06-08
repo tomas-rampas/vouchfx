@@ -1,4 +1,4 @@
-// Platform.Engine.Runtime — ScenarioRunner (Sprint 3 integration spine).
+// Platform.Engine.Runtime — ScenarioRunner (Sprint 3 integration spine; updated S04-A-02).
 //
 // Wires all five layers into a single end-to-end pipeline:
 //   1. Validate YAML against the composed JSON Schema (early-return on invalid input).
@@ -16,10 +16,19 @@
 //   • OrchestrationException maps to EnvironmentError, never to Fail (§12.1).
 //   • Schema-invalid input maps to Inconclusive, never to Fail (the test never ran).
 //   • No static handles bridge the ALC boundary; all state flows through ScriptGlobalVariables.
+//
+// S04-A-02 additions:
+//   • RunScenarioAgainstTopologyAsync — private helper with the per-scenario execution body.
+//     RunAsync delegates to it so all behaviour is preserved byte-for-byte.
+//   • RunSuiteAsync — builds the topology ONCE, iterates scenarios, calls
+//     RespawnPostgresIsolation (or NullScenarioIsolation) between each.
+//   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Authoring;
+using Platform.Engine.Authoring.Ast;
+using Platform.Engine.Authoring.Model;
 using Platform.Engine.Compilation;
 using Platform.Engine.Compilation.Schema;
 using Platform.Engine.Orchestration;
@@ -28,16 +37,50 @@ using Platform.Sdk;
 
 namespace Platform.Engine.Runtime;
 
+// ---------------------------------------------------------------------------
+// SuiteResult
+// ---------------------------------------------------------------------------
+
 /// <summary>
-/// Executes the full vouchfx end-to-end pipeline for a single scenario:
-/// validate → parse → AST → bind/validate/emit → assemble → compile-once →
-/// build topology → run → emit events → render verdict.
+/// The aggregate result of a multi-scenario suite run via
+/// <see cref="ScenarioRunner.RunSuiteAsync"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="ScenarioRunner"/> is the integration spine introduced in Sprint 3.
+/// <see cref="Verdict"/> is the suite-level aggregate, computed from all
+/// per-scenario verdicts using the standard precedence rule
+/// (<c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c>).
+/// </para>
+/// <para>
+/// <see cref="ScenarioVerdicts"/> provides the per-scenario breakdown,
+/// keyed by scenario name (or <c>"scenario-{n}"</c> when a name is not
+/// available from the AST metadata).
+/// </para>
+/// </remarks>
+/// <param name="Verdict">
+/// Suite-level aggregate verdict (highest precedence across all scenarios).
+/// </param>
+/// <param name="ScenarioVerdicts">
+/// Per-scenario verdicts in execution order.
+/// </param>
+public sealed record SuiteResult(
+    Verdict Verdict,
+    IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts);
+
+// ---------------------------------------------------------------------------
+// ScenarioRunner
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Executes the full vouchfx end-to-end pipeline for a single scenario or a
+/// multi-scenario suite.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="ScenarioRunner"/> is the integration spine introduced in Sprint 3
+/// and extended in Sprint 4 (S04-A-02).
 /// It is deliberately provider-agnostic: the caller supplies the provider
-/// assemblies to scan via <paramref name="providerAssemblies"/>, so the runner
+/// assemblies to scan via the <c>providerAssemblies</c> parameter, so the runner
 /// does not take a compile-time dependency on any concrete provider.
 /// </para>
 /// <para>
@@ -62,18 +105,13 @@ namespace Platform.Engine.Runtime;
 ///   </item>
 ///   <item>
 ///     <description>
-///       Per-step timeout enforcement — also Sprint 6+.  The authored
-///       <c>timeout</c> value is parsed and stored on the AST node but is
-///       not enforced at runtime; <c>StepStartedEvent.TimeoutMs</c> is
-///       emitted as <see langword="null"/> to avoid advertising behaviour
-///       that does not happen.
+///       Per-step timeout enforcement — also Sprint 6+.
 ///     </description>
 ///   </item>
 ///   <item>
 ///     <description>
 ///       <c>continueOnFailure</c> abort semantics — the field is parsed but
-///       the runner does not yet short-circuit on step failure when the flag
-///       is <see langword="false"/>.
+///       not yet enforced.
 ///     </description>
 ///   </item>
 /// </list>
@@ -83,6 +121,8 @@ public static class ScenarioRunner
 {
     // Fixed suite namespace injected into every ICompileContext during emit.
     private const string SuiteNamespace = "VouchfxGenerated";
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Executes the full vouchfx pipeline for a single scenario and returns the
@@ -105,7 +145,7 @@ public static class ScenarioRunner
     /// <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c> and the embedded
     /// DCP metadata attributes (R-1 finding, CLAUDE.md §"Aspire (§4, §19)").
     /// Pass <see langword="null"/> to let Aspire fall back to
-    /// <see cref="System.Reflection.Assembly.GetEntryAssembly"/>.
+    /// <see cref="Assembly.GetEntryAssembly"/>.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
@@ -168,8 +208,8 @@ public static class ScenarioRunner
         }
 
         // ── Step 3: Parse YAML → E2eDocument → ScenarioAst ───────────────────
-        Platform.Engine.Authoring.Ast.ScenarioAst ast;
-        Platform.Engine.Authoring.Model.E2eDocument doc;
+        ScenarioAst ast;
+        E2eDocument doc;
         try
         {
             doc = YamlDocumentParser.Parse(yamlText);
@@ -201,9 +241,6 @@ public static class ScenarioRunner
         }
 
         // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
-        // Delegates to ProviderPipeline.Compile which walks every step, dispatches
-        // the four reflection operations, collects the resource plan and compile
-        // references, then assembles all fragments into a single AssembledScript.
         var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
         if (pipelineResult.Failure is not null)
         {
@@ -227,13 +264,7 @@ public static class ScenarioRunner
             return Verdict.Inconclusive;
         }
 
-        // Assembled is guaranteed non-null when Failure is null.
-        var assembled = pipelineResult.Assembled!;
-
         // ── Step 5b: Reject RETRY until Sprint 6 implements the polling loop ──
-        // Emitting RETRY events when the engine runs each step exactly once is a
-        // §12.1 trust hazard: the stream would claim behaviour that does not happen.
-        // Until the RETRY loop lands (Sprint 6), reject RETRY-marked steps honestly.
         var retryStep = ast.Steps.FirstOrDefault(
             s => s.VerifyMode == VerifyMode.Retry);
         if (retryStep is not null)
@@ -296,159 +327,520 @@ public static class ScenarioRunner
 
         await using (suite.ConfigureAwait(false))
         {
-            // ── Step 7: Stage service URLs and dependency connection strings ──
-            // Services (image/project) → svc::<name>
-            // Managed dependencies (postgres, kafka, …) → conn::<name>
-            // The dependency name set is determined by SuiteTopology.DependencyNames,
-            // which mirrors the EnvironmentSpec.Dependencies keys.
-            var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (var kv in suite.DiscoveredServices)
+            // Use NullScenarioIsolation for single-scenario RunAsync — no state reset needed.
+            IScenarioIsolation isolation = new NullScenarioIsolation();
+            var verdict = await RunScenarioAgainstTopologyAsync(
+                ast,
+                scenarioName,
+                runId,
+                suite,
+                pipelineResult.Assembled!,
+                pipelineResult.CompileReferencePaths,
+                buffer,
+                isolation,
+                output,
+                cancellationToken).ConfigureAwait(false);
+
+            TerminalRenderer.Render(buffer, output);
+            return verdict;
+        }
+    }
+
+    /// <summary>
+    /// Executes many scenarios against a topology that is built <strong>once</strong>
+    /// and torn down after all scenarios complete, resetting mutable dependency state
+    /// (Postgres) between scenarios via <see cref="RespawnPostgresIsolation"/> (S04-A-02).
+    /// </summary>
+    /// <param name="scenarios">
+    /// The ordered list of fully-parsed scenario ASTs to execute.  All scenarios
+    /// must share the same <c>environment</c> block — the topology is built from
+    /// the first scenario's environment; a mismatch is reported as
+    /// <see cref="Verdict.EnvironmentError"/>.
+    /// </param>
+    /// <param name="scenarioNames">
+    /// Human-readable names for each scenario, used as the <c>scenarioId</c>
+    /// in the event stream.  Must have the same length as <paramref name="scenarios"/>.
+    /// </param>
+    /// <param name="yamlTexts">
+    /// The raw YAML text for each scenario (used for schema validation and compilation).
+    /// Must have the same length as <paramref name="scenarios"/>.
+    /// </param>
+    /// <param name="providerAssemblies">
+    /// The assemblies to scan for provider classes.
+    /// </param>
+    /// <param name="appHostAssemblyName">
+    /// Short name of the Aspire host assembly (R-1 finding, CLAUDE.md §"Aspire (§4, §19)").
+    /// </param>
+    /// <param name="output">
+    /// The <see cref="TextWriter"/> that receives the rendered terminal output.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Propagated to all async operations.
+    /// </param>
+    /// <returns>
+    /// A <see cref="SuiteResult"/> containing the per-scenario verdicts and the
+    /// suite-level aggregate verdict.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Shared-environment assumption:</strong> all scenarios in the suite
+    /// are expected to declare the same <c>environment</c> block.  The topology is
+    /// built from <paramref name="scenarios"/>[0].Environment.  If a later scenario's
+    /// environment differs (detected by structural equality on the serialised JSON),
+    /// the suite short-circuits with <see cref="Verdict.EnvironmentError"/> — running
+    /// heterogeneous topologies in one suite would produce unpredictable results.
+    /// </para>
+    /// <para>
+    /// <strong>Isolation failure → EnvironmentError:</strong> any
+    /// <see cref="OrchestrationException"/> thrown by
+    /// <see cref="IScenarioIsolation.BeginScenarioAsync"/> or
+    /// <see cref="IScenarioIsolation.EndScenarioAsync"/> causes the affected scenario
+    /// to receive <see cref="Verdict.EnvironmentError"/> and the suite to abort —
+    /// because subsequent scenarios would run against an unknown DB state.
+    /// </para>
+    /// </remarks>
+    public static async Task<SuiteResult> RunSuiteAsync(
+        IReadOnlyList<ScenarioAst> scenarios,
+        IReadOnlyList<string> scenarioNames,
+        IReadOnlyList<string> yamlTexts,
+        IEnumerable<Assembly> providerAssemblies,
+        string? appHostAssemblyName,
+        TextWriter output,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(scenarios);
+        ArgumentNullException.ThrowIfNull(scenarioNames);
+        ArgumentNullException.ThrowIfNull(yamlTexts);
+        ArgumentNullException.ThrowIfNull(providerAssemblies);
+        ArgumentNullException.ThrowIfNull(output);
+
+        if (scenarios.Count == 0)
+        {
+            return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>());
+        }
+
+        if (scenarioNames.Count != scenarios.Count || yamlTexts.Count != scenarios.Count)
+        {
+            throw new ArgumentException(
+                "scenarios, scenarioNames, and yamlTexts must all have the same length.",
+                nameof(scenarios));
+        }
+
+        // Build the provider registry once (shared across all scenarios).
+        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+
+        // ── Validate shared-environment assumption ─────────────────────────────
+        // All scenarios must share the environment declared in scenario[0].
+        // If any scenario diverges, return EnvironmentError for the whole suite.
+        var firstEnvJson = SerialiseEnvironment(scenarios[0].Environment);
+        for (int i = 1; i < scenarios.Count; i++)
+        {
+            var envJson = SerialiseEnvironment(scenarios[i].Environment);
+            if (!string.Equals(envJson, firstEnvJson, StringComparison.Ordinal))
             {
-                var varKey = suite.DependencyNames.Contains(kv.Key, StringComparer.Ordinal)
-                    ? VarKeys.Connection(kv.Key)
-                    : VarKeys.Service(kv.Key);
-                vars[varKey] = kv.Value;
-            }
-
-            var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
-
-            // ── Step 8: Compile-once + RunIsolatedAsync ───────────────────────
-            // Failure to compile or run engine-generated code is Inconclusive
-            // (§12.1): the test could not be executed.  A compile failure is an
-            // engine/provider bug, not a product defect; propagating it as an
-            // unhandled throw would give the caller no verdict.
-            //
-            // Merge BCL TPA paths with any provider-contributed compile reference
-            // paths (ICompileReferenceContributor).  These are metadata-only
-            // references and must NOT be passed to RunIsolatedAsync's
-            // collectibleProbingPaths — they resolve from the Default ALC,
-            // preserving the §5 memory-model invariant.
-            var tpaPaths = BclReferencePaths()
-                .Concat(pipelineResult.CompileReferencePaths)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-
-            CompiledScript compiled;
-            try
-            {
-                compiled = RoslynScriptCompiler.CompileOnce(
-                    assembled.CsxSource,
-                    additionalOptions: null,
-                    additionalReferencePaths: tpaPaths);
-
-                await RoslynScriptCompiler.RunIsolatedAsync(
-                    compiled,
-                    globals,
-                    runLabel: scenarioName,
-                    cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                var nowCE = DateTimeOffset.UtcNow;
-                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowCE,
-                    ScenarioId = scenarioName,
-                }));
-                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowCE,
-                    ScenarioId = scenarioName,
-                    Verdict = Verdict.Inconclusive,
-                    Counts = new VerdictCounts { Inconclusive = 1 },
-                }));
-
-                var diagnosis = ex is ScriptCompilationException sce
-                    ? $"CSX compilation failed: {sce.Message}"
-                    : $"{ex.GetType().Name}: {ex.Message}";
-
                 await output.WriteLineAsync(
-                    $"Compile/run error (Inconclusive): {diagnosis}")
+                    $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
+                    "environment block than the first scenario.  All scenarios in a suite " +
+                    "must share one topology.  Suite aborted with EnvironmentError.")
                     .ConfigureAwait(false);
 
-                TerminalRenderer.Render(buffer, output);
-                return Verdict.Inconclusive;
+                return new SuiteResult(
+                    Verdict.EnvironmentError,
+                    Array.Empty<(string, Verdict)>());
+            }
+        }
+
+        // ── Per-scenario compilation (pre-topology) ───────────────────────────
+        // Validate + compile each scenario's YAML before we pay the topology build cost.
+        var compilations = new List<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage)>();
+
+        for (int i = 0; i < scenarios.Count; i++)
+        {
+            var name = scenarioNames[i];
+            var yaml = yamlTexts[i];
+            var ast = scenarios[i];
+
+            // Schema-validate the YAML.
+            var validationResult = DocumentValidator.Validate(yaml, registry);
+            if (!validationResult.IsValid)
+            {
+                compilations.Add((name, ast, null, Verdict.Inconclusive,
+                    string.Join("; ", validationResult.Errors.Select(e => e.Message))));
+                continue;
             }
 
-            // ── Step 9: Emit events from outcomes + aggregate verdict ─────────
-            var now9 = DateTimeOffset.UtcNow;
+            // RETRY guard.
+            var retryStep = ast.Steps.FirstOrDefault(s => s.VerifyMode == VerifyMode.Retry);
+            if (retryStep is not null)
+            {
+                compilations.Add((name, ast, null, Verdict.Inconclusive,
+                    $"step '{retryStep.Id}': verifyMode RETRY is not yet supported (lands in Sprint 6); use IMMEDIATE."));
+                continue;
+            }
+
+            // Provider pipeline compile.
+            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+            if (pipelineResult.Failure is not null)
+            {
+                compilations.Add((name, ast, null, Verdict.Inconclusive,
+                    pipelineResult.Failure.Message));
+                continue;
+            }
+
+            compilations.Add((name, ast, pipelineResult, null, null));
+        }
+
+        // ── Build topology once ────────────────────────────────────────────────
+        SuiteTopology suite;
+        try
+        {
+            suite = await SuiteTopology.StartAsync(
+                scenarios[0].Environment,
+                appHostAssemblyName,
+                startupTimeout: TimeSpan.FromSeconds(120),
+                cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OrchestrationException oex)
+        {
+            await output.WriteLineAsync(
+                $"RunSuiteAsync: topology failed to start — {oex.Message}")
+                .ConfigureAwait(false);
+
+            // Every scenario receives EnvironmentError.
+            var errVerdicts = compilations
+                .Select(c => (c.ScenarioName, Verdict.EnvironmentError))
+                .ToList();
+            return new SuiteResult(Verdict.EnvironmentError, errVerdicts);
+        }
+
+        await using (suite.ConfigureAwait(false))
+        {
+            // ── Construct isolation ────────────────────────────────────────────
+            // If a postgres dependency is present, use RespawnPostgresIsolation.
+            // Otherwise NullScenarioIsolation preserves the existing behaviour.
+            IScenarioIsolation isolation = BuildIsolation(suite);
+
+            var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
+            var suiteAggregate = Verdict.Pass;
+            var allBuffers = new List<string>();
+
+            for (int i = 0; i < compilations.Count; i++)
+            {
+                var (name, ast, pipeline, earlyVerdict, earlyMessage) = compilations[i];
+                var runId = Guid.NewGuid().ToString("n");
+                var buffer = new List<string>();
+
+                // Handle early-exit scenarios (validation / RETRY / pipeline failure).
+                if (earlyVerdict is not null)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = name,
+                    }));
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = name,
+                        Verdict = earlyVerdict.Value,
+                        Counts = new VerdictCounts { Inconclusive = 1 },
+                    }));
+                    if (!string.IsNullOrEmpty(earlyMessage))
+                    {
+                        await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+                    }
+
+                    results.Add((name, earlyVerdict.Value));
+                    suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
+                    allBuffers.AddRange(buffer);
+                    continue;
+                }
+
+                // ── BeginScenario (isolation) ──────────────────────────────────
+                try
+                {
+                    await isolation.BeginScenarioAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OrchestrationException oex)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = name,
+                    }));
+                    buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, now));
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = name,
+                        Verdict = Verdict.EnvironmentError,
+                        Counts = new VerdictCounts { EnvError = 1 },
+                    }));
+                    results.Add((name, Verdict.EnvironmentError));
+                    suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
+                    allBuffers.AddRange(buffer);
+
+                    // Isolation failure → abort the suite (subsequent scenarios
+                    // would run against an unknown DB state).
+                    await output.WriteLineAsync(
+                        $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
+                        "aborting suite.").ConfigureAwait(false);
+                    break;
+                }
+
+                // ── Run scenario ───────────────────────────────────────────────
+                var scenarioVerdict = await RunScenarioAgainstTopologyAsync(
+                    ast,
+                    name,
+                    runId,
+                    suite,
+                    pipeline!.Assembled!,
+                    pipeline.CompileReferencePaths,
+                    buffer,
+                    new NullScenarioIsolation(), // isolation already handled above/below
+                    output,
+                    cancellationToken).ConfigureAwait(false);
+
+                results.Add((name, scenarioVerdict));
+                suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
+                allBuffers.AddRange(buffer);
+
+                // ── EndScenario (isolation / reset) ────────────────────────────
+                try
+                {
+                    await isolation.EndScenarioAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OrchestrationException oex)
+                {
+                    await output.WriteLineAsync(
+                        $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
+                        "aborting suite — subsequent scenarios may run against unclean state.")
+                        .ConfigureAwait(false);
+                    suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
+                    break;
+                }
+            }
+
+            // Dispose the isolation connection when the topology is torn down.
+            if (isolation is IAsyncDisposable disposable)
+            {
+                await disposable.DisposeAsync().ConfigureAwait(false);
+            }
+
+            TerminalRenderer.Render(allBuffers, output);
+            return new SuiteResult(suiteAggregate, results);
+        }
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Executes the per-scenario compilation + isolated Roslyn run against an
+    /// already-started topology, populating <paramref name="buffer"/> with event
+    /// lines and returning the aggregate <see cref="Verdict"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method contains the body that was previously inlined inside
+    /// <see cref="RunAsync"/> (after the topology was built).  Extracting it
+    /// allows <see cref="RunSuiteAsync"/> to call it for each scenario without
+    /// duplicating the event-emission logic.
+    /// </para>
+    /// <para>
+    /// Note: <paramref name="isolation"/> is always <see cref="NullScenarioIsolation"/>
+    /// when called from both <see cref="RunAsync"/> and the inner loop of
+    /// <see cref="RunSuiteAsync"/> (the suite loop handles isolation externally).
+    /// The parameter exists for future flexibility and to preserve the call-site shape.
+    /// </para>
+    /// </remarks>
+    private static async Task<Verdict> RunScenarioAgainstTopologyAsync(
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        SuiteTopology suite,
+        AssembledScript assembled,
+        IReadOnlyList<string> compileReferencePaths,
+        List<string> buffer,
+        IScenarioIsolation isolation,
+        TextWriter output,
+        CancellationToken cancellationToken)
+    {
+        // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
+        _ = isolation;
+
+        // ── Stage service URLs and dependency connection strings ──────────────
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var kv in suite.DiscoveredServices)
+        {
+            var varKey = suite.DependencyNames.Contains(kv.Key, StringComparer.Ordinal)
+                ? VarKeys.Connection(kv.Key)
+                : VarKeys.Service(kv.Key);
+            vars[varKey] = kv.Value;
+        }
+
+        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
+
+        // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
+        var tpaPaths = BclReferencePaths()
+            .Concat(compileReferencePaths)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        CompiledScript compiled;
+        try
+        {
+            compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource,
+                additionalOptions: null,
+                additionalReferencePaths: tpaPaths);
+
+            await RoslynScriptCompiler.RunIsolatedAsync(
+                compiled,
+                globals,
+                runLabel: scenarioName,
+                cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            var nowCE = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
                 RunId = runId,
-                Timestamp = now9,
+                Timestamp = nowCE,
                 ScenarioId = scenarioName,
             }));
-
-            var aggregate = Verdict.Pass;
-            var counts = new int[4]; // [Pass, Fail, EnvironmentError, Inconclusive]
-
-            foreach (var node in ast.Steps)
-            {
-                var safeId = CsxFragment.SanitiseId(node.Id);
-
-                // Per-step timeouts are not yet enforced (Sprint 6+); emitting a
-                // non-null TimeoutMs would advertise behaviour that does not
-                // happen.  All surviving steps are IMMEDIATE (RETRY is rejected
-                // above), so VerifyMode is always "IMMEDIATE" here — honest.
-                buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
-                {
-                    RunId = runId,
-                    Timestamp = now9,
-                    StepId = node.Id,
-                    Kind = node.CanonicalType,
-                    VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
-                    TimeoutMs = null,
-                }));
-
-                var outcomeKey = VarKeys.Outcome(safeId);
-                var outcome = vars.TryGetValue(outcomeKey, out var raw)
-                    ? raw as StepOutcome
-                    : null;
-
-                var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
-                var durationMs = outcome?.DurationMs ?? 0L;
-
-                buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = now9,
-                    StepId = node.Id,
-                    Verdict = stepVerdict,
-                    DurationMs = durationMs,
-                }));
-
-                // Tally counts
-                counts[(int)stepVerdict]++;
-
-                // Aggregate with precedence: EnvironmentError > Fail > Inconclusive > Pass
-                aggregate = Elevate(aggregate, stepVerdict);
-            }
-
-            var finalCounts = new VerdictCounts
-            {
-                Pass = counts[(int)Verdict.Pass],
-                Fail = counts[(int)Verdict.Fail],
-                EnvError = counts[(int)Verdict.EnvironmentError],
-                Inconclusive = counts[(int)Verdict.Inconclusive],
-            };
-
             buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
             {
                 RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
+                Timestamp = nowCE,
                 ScenarioId = scenarioName,
-                Verdict = aggregate,
-                Counts = finalCounts,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
             }));
 
-            // ── Step 10: Render + return ──────────────────────────────────────
-            TerminalRenderer.Render(buffer, output);
-            return aggregate;
+            var diagnosis = ex is ScriptCompilationException sce
+                ? $"CSX compilation failed: {sce.Message}"
+                : $"{ex.GetType().Name}: {ex.Message}";
+
+            await output.WriteLineAsync(
+                $"Compile/run error (Inconclusive): {diagnosis}")
+                .ConfigureAwait(false);
+
+            return Verdict.Inconclusive;
         }
+
+        // ── Emit events from outcomes + aggregate verdict ─────────────────────
+        var now9 = DateTimeOffset.UtcNow;
+        buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+        {
+            RunId = runId,
+            Timestamp = now9,
+            ScenarioId = scenarioName,
+        }));
+
+        var aggregate = Verdict.Pass;
+        var counts = new int[4];
+
+        foreach (var node in ast.Steps)
+        {
+            var safeId = CsxFragment.SanitiseId(node.Id);
+
+            buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now9,
+                StepId = node.Id,
+                Kind = node.CanonicalType,
+                VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
+                TimeoutMs = null,
+            }));
+
+            var outcomeKey = VarKeys.Outcome(safeId);
+            var outcome = vars.TryGetValue(outcomeKey, out var raw)
+                ? raw as StepOutcome
+                : null;
+
+            var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
+            var durationMs = outcome?.DurationMs ?? 0L;
+
+            buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now9,
+                StepId = node.Id,
+                Verdict = stepVerdict,
+                DurationMs = durationMs,
+            }));
+
+            counts[(int)stepVerdict]++;
+            aggregate = Elevate(aggregate, stepVerdict);
+        }
+
+        var finalCounts = new VerdictCounts
+        {
+            Pass = counts[(int)Verdict.Pass],
+            Fail = counts[(int)Verdict.Fail],
+            EnvError = counts[(int)Verdict.EnvironmentError],
+            Inconclusive = counts[(int)Verdict.Inconclusive],
+        };
+
+        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+        {
+            RunId = runId,
+            Timestamp = DateTimeOffset.UtcNow,
+            ScenarioId = scenarioName,
+            Verdict = aggregate,
+            Counts = finalCounts,
+        }));
+
+        return aggregate;
     }
+
+    /// <summary>
+    /// Builds the appropriate <see cref="IScenarioIsolation"/> for the given
+    /// <paramref name="topology"/>.  Uses <see cref="RespawnPostgresIsolation"/>
+    /// when the topology has at least one Postgres dependency; otherwise falls
+    /// back to <see cref="NullScenarioIsolation"/>.
+    /// </summary>
+    private static IScenarioIsolation BuildIsolation(SuiteTopology topology)
+    {
+        // Look for the first dependency name whose DiscoveredServices value looks
+        // like a Postgres connection string (contains "Host=" — ADO.NET convention).
+        foreach (var name in topology.DependencyNames)
+        {
+            if (topology.DiscoveredServices.TryGetValue(name, out var value) &&
+                value is string connStr &&
+                connStr.Contains("Host=", StringComparison.OrdinalIgnoreCase))
+            {
+                return new RespawnPostgresIsolation(connStr);
+            }
+        }
+
+        return new NullScenarioIsolation();
+    }
+
+    /// <summary>
+    /// Serialises an <see cref="EnvironmentSpec"/> to a stable JSON string for
+    /// equality comparison across suite scenarios (shared-environment validation).
+    /// Returns an empty string for a <see langword="null"/> environment.
+    /// </summary>
+    private static string SerialiseEnvironment(EnvironmentSpec? env) =>
+        env is null
+            ? string.Empty
+            : System.Text.Json.JsonSerializer.Serialize(env);
 
     // ── Verdict aggregation ────────────────────────────────────────────────────
 
@@ -457,10 +849,10 @@ public static class ScenarioRunner
     /// higher precedence.  Precedence (highest first):
     /// <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c>.
     /// </summary>
-    private static Verdict Elevate(Verdict current, Verdict next) =>
+    internal static Verdict Elevate(Verdict current, Verdict next) =>
         VerdictPrecedence(next) > VerdictPrecedence(current) ? next : current;
 
-    private static int VerdictPrecedence(Verdict v) => v switch
+    internal static int VerdictPrecedence(Verdict v) => v switch
     {
         Verdict.Pass => 0,
         Verdict.Inconclusive => 1,
@@ -477,23 +869,7 @@ public static class ScenarioRunner
     /// passing to <see cref="RoslynScriptCompiler.CompileOnce"/> as
     /// <c>additionalReferencePaths</c>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The TPA list is split on the platform path separator (<c>;</c> on Windows,
-    /// <c>:</c> on Unix) and empty entries are removed.  This gives Roslyn access
-    /// to every BCL assembly — including <c>System.Net.Http</c>,
-    /// <c>System.Text.Json</c>, <c>System.Net.Primitives</c>,
-    /// <c>System.Globalization</c>, and <c>System.Private.Uri</c> — which the
-    /// http.rest provider's emitted CSX body requires.
-    /// </para>
-    /// <para>
-    /// These are compile-time metadata references only; they do not load additional
-    /// assemblies into the collectible ALC, so the memory-model invariant (§5) is
-    /// preserved.
-    /// </para>
-    /// </remarks>
     private static string[] BclReferencePaths() =>
         ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
 }
