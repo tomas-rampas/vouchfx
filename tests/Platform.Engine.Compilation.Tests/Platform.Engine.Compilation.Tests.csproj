@@ -45,6 +45,11 @@
       MemoryProbe.RunAsync directly.
     -->
     <ProjectReference Include="..\Platform.Engine.Compilation.MemoryHarness\Platform.Engine.Compilation.MemoryHarness.csproj" />
+    <!--
+      S02-C-02: schema composition tests register HttpRestProvider from its assembly so
+      the test can prove the constraint originates from the provider, not a central file.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj" />
   </ItemGroup>
 
 </Project>

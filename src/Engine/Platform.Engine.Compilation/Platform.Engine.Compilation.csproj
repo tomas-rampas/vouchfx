@@ -19,6 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <!--
+      S02-C-02: the compiler consumes the provider contract (IStepBinder/IStepCompiler/…)
+      and the StepKindRegistry to build the composed JSON Schema.  Platform.Sdk does NOT
+      reference Platform.Engine.Compilation, so this edge is acyclic.
+    -->
+    <ProjectReference Include="..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
   </ItemGroup>
 
   <ItemGroup>
