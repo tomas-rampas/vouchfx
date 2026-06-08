@@ -1,12 +1,12 @@
 # .github/workflows/pages.yml — vouchfx project site (GitHub Pages)
 #
-# Publishes the static marketing/architecture site in `site/` to GitHub Pages.
-# The site is plain HTML/CSS — no build step — so the job simply uploads the
-# directory as a Pages artifact and deploys it.
+# Publishes the static landing page in `site/` PLUS the repository's markdown
+# design docs and delivery plan, rendered to styled HTML by
+# `scripts/build_site.py`. The markdown files stay the single source of truth;
+# this regenerates their HTML on every run, so the published docs never drift.
 #
 # One-time setup (repository owner): Settings → Pages → Build and deployment →
-# Source: "GitHub Actions". After that, every push to the default branch that
-# touches `site/` (or a manual run) publishes the site.
+# Source: "GitHub Actions".
 
 name: Pages
 
@@ -15,6 +15,11 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      - 'docs/**'
+      - 'plan/**'
+      - 'README.md'
+      - 'CLAUDE.md'
+      - 'scripts/build_site.py'
       - '.github/workflows/pages.yml'
   # Manual runs (any branch) for previewing before a change reaches main.
   workflow_dispatch:
@@ -40,17 +45,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: pip install markdown pygments
+
+      - name: Build site (landing page + rendered docs)
+        run: python scripts/build_site.py _site
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          # Enable Pages (Actions build) via the API on first run, so no manual
-          # Settings -> Pages toggle is required. Needs `pages: write` (granted).
-          enablement: true
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment
