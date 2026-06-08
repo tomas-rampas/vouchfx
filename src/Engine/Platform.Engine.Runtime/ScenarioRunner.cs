@@ -27,6 +27,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
+using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Authoring.Model;
@@ -128,6 +129,11 @@ public static class ScenarioRunner
     // compile-time provenance derivation only; never used to read runtime values.
     private static readonly Regex s_placeholderRegex =
         new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
+
+    // Secret-reference sources the engine can resolve (§17, S05-B-01).
+    // This sprint ships only the 'env' source; Vault adds "vault" in Sprint 8 by
+    // extending this set — no other change to the validation pass is required.
+    private static readonly string[] s_knownSecretSources = { "env" };
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -295,6 +301,33 @@ public static class ScenarioRunner
                 $"step '{retryStep.Id}': verifyMode RETRY is not yet supported " +
                 "(lands in Sprint 6); use IMMEDIATE.")
                 .ConfigureAwait(false);
+            TerminalRenderer.Render(buffer, output);
+            return Verdict.Inconclusive;
+        }
+
+        // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
+        // A central, provider-uniform pass over every substitutable field text.
+        // Runs BEFORE the topology is started and BEFORE CompileOnce so a bad
+        // secret reference is caught without spinning up any containers — the
+        // scenario never ran, so the verdict is Inconclusive, not Fail.
+        if (TryValidateSecretReferences(ast, out var secretError))
+        {
+            var now5c = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now5c,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now5c,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(secretError).ConfigureAwait(false);
             TerminalRenderer.Render(buffer, output);
             return Verdict.Inconclusive;
         }
@@ -487,6 +520,14 @@ public static class ScenarioRunner
             {
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
                     $"step '{retryStep.Id}': verifyMode RETRY is not yet supported (lands in Sprint 6); use IMMEDIATE."));
+                continue;
+            }
+
+            // Secret-reference validation (§17, S05-B-01) — engine-level, runs
+            // before the topology is built so a bad reference costs no containers.
+            if (TryValidateSecretReferences(ast, out var secretError))
+            {
+                compilations.Add((name, ast, null, Verdict.Inconclusive, secretError));
                 continue;
             }
 
@@ -974,6 +1015,44 @@ public static class ScenarioRunner
     }
 
     /// <summary>
+    /// Runs the central secret-reference validation pass over every substitutable
+    /// field of every step in <paramref name="ast"/> (§17, S05-B-01).
+    /// </summary>
+    /// <param name="ast">The parsed scenario to validate.</param>
+    /// <param name="error">
+    /// On the first failure, an actionable British-English message naming the
+    /// offending step and field problem; otherwise <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when a validation error was found (the caller should
+    /// short-circuit with <see cref="Verdict.Inconclusive"/>); <see langword="false"/>
+    /// when every field's secret references are well-formed and use a known source.
+    /// </returns>
+    /// <remarks>
+    /// This pass is engine-level and provider-uniform — it does not require any
+    /// change to the frozen <c>IStepValidator&lt;T&gt;</c> interface. It reuses
+    /// <see cref="CollectSubstitutableTexts"/> so the set of validated fields stays
+    /// in lock-step with the set of fields the providers actually substitute.
+    /// </remarks>
+    private static bool TryValidateSecretReferences(ScenarioAst ast, out string? error)
+    {
+        foreach (var node in ast.Steps)
+        {
+            foreach (var text in CollectSubstitutableTexts(node))
+            {
+                if (!SecretReference.ValidateField(text, s_knownSecretSources, out var fieldError))
+                {
+                    error = $"step '{node.Id}': {fieldError}";
+                    return true;
+                }
+            }
+        }
+
+        error = null;
+        return false;
+    }
+
+    /// <summary>
     /// Returns the set of raw field values from <paramref name="node"/> that are
     /// subject to <c>{placeholder}</c> substitution at runtime (B-03).  These are
     /// the fields whose emitted CSX wraps the value in
@@ -983,10 +1062,22 @@ public static class ScenarioRunner
     /// The implementation uses the raw YAML mapping node to extract the same fields
     /// that the provider emitters wrap.  For <c>http.rest</c> this is <c>path</c>
     /// (and header values when present); for <c>db-assert.postgres</c> this is
-    /// <c>query</c> and each parameter value.
+    /// <c>query</c>, each parameter value, AND each <c>expect.row</c> value — every
+    /// text the <c>DbAssertPostgresProvider.Emit</c> path resolves at runtime via
+    /// <c>Substitute_Helpers.Resolve</c>/<c>ResolveIdentifier</c>.  Keeping this set
+    /// in lock-step with the provider is load-bearing: a field the provider
+    /// substitutes but this scan omits would let a malformed/unknown-source secret
+    /// reference reach execution un-caught, defeating the compile-time guarantee.
     /// <para>
     /// This is a best-effort compile-time scan: it reads the known substitutable
     /// YAML keys for recognised step types.  Unknown provider types are skipped.
+    /// </para>
+    /// <para>
+    /// <c>script.csharp</c> is intentionally absent: its <c>code</c> body is spliced
+    /// into the CSX submission verbatim (it is Turing-complete C#, not a substitutable
+    /// template) — the engine performs NO <c>{placeholder}</c> or <c>${secret:…}</c>
+    /// substitution on it, so there is nothing here to collect or validate.  A future
+    /// reviewer should not re-flag this as a gap.
     /// </para>
     /// </remarks>
     private static List<string> CollectSubstitutableTexts(StepNode node)
@@ -1015,7 +1106,12 @@ public static class ScenarioRunner
                 }
             }
         }
-        // db-assert.postgres: 'query' and each parameter value are substitutable (B-03).
+        // db-assert.postgres: 'query', each parameter value, AND each expect.row
+        // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all
+        // three in Substitute_Helpers.Resolve/ResolveIdentifier at runtime, so all
+        // three must be collected here (the expect.row values were the under-collected
+        // gap fixed in S05-B-01: a ${secret:…} there is resolved at runtime but was
+        // previously invisible to both this scan and the secret-validation pass).
         else if (string.Equals(
             node.CanonicalType, "db-assert.postgres", StringComparison.Ordinal))
         {
@@ -1028,6 +1124,29 @@ public static class ScenarioRunner
                 && paramsNode is YamlDotNet.RepresentationModel.YamlMappingNode paramsMap)
             {
                 foreach (var kv in paramsMap.Children)
+                {
+                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
+                        && !string.IsNullOrEmpty(sv.Value))
+                    {
+                        texts.Add(sv.Value);
+                    }
+                }
+            }
+
+            // expect.row: a map of column name → expected value.  The provider binds
+            // this from RawNode["expect"]["row"] and wraps each VALUE (not the column
+            // name) in Substitute_Helpers.Resolve — mirror that traversal exactly so
+            // the collected set never drifts from what the provider resolves.
+            if (raw.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("expect"),
+                    out var expectNode)
+                && expectNode is YamlDotNet.RepresentationModel.YamlMappingNode expectMap
+                && expectMap.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("row"),
+                    out var rowNode)
+                && rowNode is YamlDotNet.RepresentationModel.YamlMappingNode rowMap)
+            {
+                foreach (var kv in rowMap.Children)
                 {
                     if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
                         && !string.IsNullOrEmpty(sv.Value))
