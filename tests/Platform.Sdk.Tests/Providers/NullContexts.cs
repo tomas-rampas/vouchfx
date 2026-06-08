@@ -18,7 +18,8 @@ public sealed class NullBindingContext : IBindingContext
 
 /// <summary>
 /// Null-object implementation of <see cref="IProjectContext"/> for unit tests
-/// that do not require project-stage services.
+/// that do not require project-stage services.  Returns an empty
+/// <see cref="DeclaredDependencies"/> map.
 /// </summary>
 public sealed class NullProjectContext : IProjectContext
 {
@@ -26,6 +27,10 @@ public sealed class NullProjectContext : IProjectContext
     public static readonly NullProjectContext Instance = new();
 
     private NullProjectContext() { }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
 /// <summary>

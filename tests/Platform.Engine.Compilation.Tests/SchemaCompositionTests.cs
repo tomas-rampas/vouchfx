@@ -293,5 +293,10 @@ public sealed class SchemaCompositionTests
     private sealed class TestBindingContext : IBindingContext { }
 
     /// <summary>Minimal test implementation of <see cref="IProjectContext"/>.</summary>
-    private sealed class TestProjectContext : IProjectContext { }
+    private sealed class TestProjectContext : IProjectContext
+    {
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
 }

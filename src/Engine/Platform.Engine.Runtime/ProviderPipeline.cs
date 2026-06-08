@@ -133,6 +133,11 @@ internal static class ProviderPipeline
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
 
+        // Build the declared-dependencies map once for the whole pipeline run.
+        // This is derived from environment.dependencies (name → Type) and is
+        // empty when the scenario omits the environment section (Sprint-4).
+        var projectCtx = BuildProjectContext(ast);
+
         foreach (var node in ast.Steps)
         {
             if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
@@ -149,7 +154,6 @@ internal static class ProviderPipeline
 
             var instance = rp.Instance;
             var bindingCtx = new RunBindingContext();
-            var projectCtx = new RunProjectContext();
             var compileCtx = new RunCompileContext(node.Id, suiteNamespace);
 
             // ── Bind ──────────────────────────────────────────────────────────
@@ -324,5 +328,30 @@ internal static class ProviderPipeline
             ?? throw new InvalidOperationException(
                 $"Provider '{instance.GetType().FullName}' does not implement " +
                 $"the required generic interface '{openGenericType.Name}'.");
+    }
+
+    /// <summary>
+    /// Builds a <see cref="RunProjectContext"/> from the scenario AST's
+    /// <c>environment.dependencies</c> section (Sprint-4).
+    /// </summary>
+    /// <param name="ast">The normalised scenario AST.</param>
+    /// <returns>
+    /// A <see cref="RunProjectContext"/> whose
+    /// <see cref="RunProjectContext.DeclaredDependencies"/> map contains every
+    /// declared dependency name mapped to its type string.  Returns
+    /// <see cref="RunProjectContext.Empty"/> when the scenario omits the
+    /// <c>environment.dependencies</c> section.
+    /// </returns>
+    private static RunProjectContext BuildProjectContext(ScenarioAst ast)
+    {
+        var deps = ast.Environment?.Dependencies;
+        if (deps is null || deps.Count == 0)
+            return RunProjectContext.Empty;
+
+        var map = new Dictionary<string, string>(deps.Count, StringComparer.Ordinal);
+        foreach (var kv in deps)
+            map[kv.Key] = kv.Value.Type;
+
+        return new RunProjectContext(map);
     }
 }

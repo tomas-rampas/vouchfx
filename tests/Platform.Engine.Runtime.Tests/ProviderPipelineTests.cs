@@ -392,6 +392,41 @@ public sealed class ProviderPipelineTests
         Assert.Empty(result.CompileReferencePaths);
     }
 
+    // ── Test: RunProjectContext.DeclaredDependencies (Sprint-4) ──────────────
+
+    /// <summary>
+    /// <see cref="RunProjectContext"/> constructed with a dependency map exposes
+    /// the map via <see cref="Platform.Sdk.IProjectContext.DeclaredDependencies"/>.
+    /// </summary>
+    [Fact]
+    public void RunProjectContext_WithDependencies_ExposesMapViaInterface()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["orders-db"] = "postgres",
+            ["events"] = "kafka",
+        };
+
+        // Access through the public IProjectContext interface, as providers do.
+        Platform.Sdk.IProjectContext ctx = new RunProjectContext(deps);
+
+        Assert.Equal(2, ctx.DeclaredDependencies.Count);
+        Assert.Equal("postgres", ctx.DeclaredDependencies["orders-db"]);
+        Assert.Equal("kafka", ctx.DeclaredDependencies["events"]);
+    }
+
+    /// <summary>
+    /// <see cref="RunProjectContext.Empty"/> exposes an empty
+    /// <see cref="Platform.Sdk.IProjectContext.DeclaredDependencies"/> map.
+    /// </summary>
+    [Fact]
+    public void RunProjectContext_Empty_HasNoDeclaredDependencies()
+    {
+        Platform.Sdk.IProjectContext ctx = RunProjectContext.Empty;
+
+        Assert.Empty(ctx.DeclaredDependencies);
+    }
+
     // ── Private helper ────────────────────────────────────────────────────────
 
     private static int CountOccurrences(string text, string token)

@@ -23,12 +23,32 @@ public interface IBindingContext { }
 /// cross-step dependency information.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The members of this interface are frozen for the v1.x engine series;
 /// evolution is additive only, via new optional interfaces.
-/// Sprint-1 surface: marker only.  Additional members are introduced
-/// in Sprint 2.
+/// </para>
+/// <para>
+/// Sprint-4 addition: <see cref="DeclaredDependencies"/>.  Context interfaces
+/// are engine-supplied and provider-consumed, so additive members are
+/// frozen-contract-compatible.
+/// </para>
 /// </remarks>
-public interface IProjectContext { }
+public interface IProjectContext
+{
+    /// <summary>
+    /// Gets the map of dependency names to their type identifiers as declared
+    /// under <c>environment.dependencies</c> in the scenario file.
+    /// </summary>
+    /// <remarks>
+    /// Keys are the logical dependency names (e.g. <c>"orders-db"</c>);
+    /// values are the type identifiers (e.g. <c>"postgres"</c>, <c>"kafka"</c>).
+    /// The map is empty when the scenario file omits the
+    /// <c>environment.dependencies</c> section.
+    /// Providers use this map to reconcile step targets against declared
+    /// infrastructure (dependency reconciliation, §13).
+    /// </remarks>
+    IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+}
 
 /// <summary>
 /// Provides contextual services available to a provider's compilation stage,

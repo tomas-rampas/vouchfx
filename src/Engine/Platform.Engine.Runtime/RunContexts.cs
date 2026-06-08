@@ -2,9 +2,9 @@
 // interfaces (IBindingContext, IProjectContext, ICompileContext) used during the
 // ScenarioRunner's bind/validate/emit phase.
 //
-// These are intentionally minimal: IBindingContext and IProjectContext are marker
-// interfaces in Sprint 1/2; ICompileContext carries the step identity surface
-// (StepId, SuiteNamespace) introduced in Sprint 2.
+// Sprint-4 addition: RunProjectContext now carries DeclaredDependencies, derived
+// from the scenario AST's environment.dependencies section and passed in by
+// ProviderPipeline.Compile.
 namespace Platform.Engine.Runtime;
 
 /// <summary>
@@ -22,10 +22,43 @@ internal sealed class RunBindingContext : Platform.Sdk.IBindingContext { }
 /// during the <c>ScenarioRunner</c>'s validation phase.
 /// </summary>
 /// <remarks>
-/// <see cref="Platform.Sdk.IProjectContext"/> is a marker interface in Sprint 1/2;
-/// this class carries no additional state.
+/// <para>
+/// Sprint-4 addition: carries <see cref="DeclaredDependencies"/> derived from
+/// <c>environment.dependencies</c> in the scenario AST.  The map is empty when
+/// the scenario omits that section.
+/// </para>
 /// </remarks>
-internal sealed class RunProjectContext : Platform.Sdk.IProjectContext { }
+internal sealed class RunProjectContext : Platform.Sdk.IProjectContext
+{
+    // ── Singleton representing an absent environment section ──────────────────
+
+    /// <summary>
+    /// A <see cref="RunProjectContext"/> with no declared dependencies, used
+    /// when the scenario file omits the <c>environment.dependencies</c> section.
+    /// </summary>
+    internal static readonly RunProjectContext Empty =
+        new(new Dictionary<string, string>(StringComparer.Ordinal));
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Initialises a <see cref="RunProjectContext"/> with the given dependency map.
+    /// </summary>
+    /// <param name="declaredDependencies">
+    /// Map of dependency name to type (e.g. <c>"orders-db" → "postgres"</c>).
+    /// Must not be <see langword="null"/>; use an empty dictionary when there
+    /// are no dependencies.
+    /// </param>
+    internal RunProjectContext(IReadOnlyDictionary<string, string> declaredDependencies)
+    {
+        DeclaredDependencies = declaredDependencies;
+    }
+
+    // ── IProjectContext ───────────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+}
 
 /// <summary>
 /// Runtime implementation of <see cref="Platform.Sdk.ICompileContext"/> used

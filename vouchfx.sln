@@ -47,6 +47,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime.Tests", "tests\Platform.Engine.Runtime.Tests\Platform.Engine.Runtime.Tests.csproj", "{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Postgres", "src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj", "{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Postgres.Tests", "tests\Platform.Steps.DbAssert.Postgres.Tests\Platform.Steps.DbAssert.Postgres.Tests.csproj", "{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -120,6 +124,14 @@ Global
 		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -142,5 +154,7 @@ Global
 		{9724E20A-1741-4FF6-BFD1-73CB45DF9704} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9} = {A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}
 		{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

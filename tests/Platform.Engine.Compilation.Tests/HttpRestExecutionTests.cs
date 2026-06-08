@@ -702,7 +702,13 @@ public sealed class HttpRestExecutionTests
 
     /// <summary>
     /// Minimal <see cref="IProjectContext"/> stub for validation tests.
-    /// <c>IProjectContext</c> is a marker interface (Sprint 1/2 surface).
+    /// Returns an empty <see cref="IProjectContext.DeclaredDependencies"/> map
+    /// (Sprint-4 addition to the interface).
     /// </summary>
-    private sealed class StubProjectContext : IProjectContext { }
+    private sealed class StubProjectContext : IProjectContext
+    {
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
 }
