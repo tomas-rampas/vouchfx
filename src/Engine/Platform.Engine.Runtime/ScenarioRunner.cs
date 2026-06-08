@@ -927,34 +927,11 @@ public static class ScenarioRunner
                 capturedList = capturedVars;
             }
 
-            // ── G-01: build Substitutions provenance (compile-time) ───────────
+            // ── G-01 + S05-G-01: build Substitutions provenance (compile-time) ─
             // Scan every substitutable field in the step's raw YAML for {name}
-            // tokens.  This is compile-time derivation — no runtime value is read.
-            IReadOnlyList<SubstitutionRef>? substitutionsList = null;
-            var substitutableTexts = CollectSubstitutableTexts(node);
-            if (substitutableTexts.Count > 0)
-            {
-                var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
-                var subs = new List<SubstitutionRef>();
-                foreach (var text in substitutableTexts)
-                {
-                    foreach (System.Text.RegularExpressions.Match m in
-                        s_placeholderRegex.Matches(text))
-                    {
-                        var placeholder = m.Groups[1].Value;
-                        if (!seenPlaceholders.Add(placeholder))
-                            continue; // deduplicate within step
-
-                        captureOriginMap.TryGetValue(placeholder, out var originStepId);
-                        subs.Add(new SubstitutionRef(
-                            Placeholder: placeholder,
-                            OriginStepId: originStepId,
-                            SecretDerived: false)); // no secret resolution this sprint
-                    }
-                }
-                if (subs.Count > 0)
-                    substitutionsList = subs;
-            }
+            // placeholder tokens AND ${secret:source/path} references.  This is
+            // compile-time derivation — no runtime value is ever read.
+            var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
 
             buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
             {
@@ -1056,7 +1033,7 @@ public static class ScenarioRunner
     /// step that declares it.  When the same name is declared by multiple steps
     /// (overwriting), the first declaration wins (it is the origin).
     /// </returns>
-    private static Dictionary<string, string> BuildCaptureOriginMap(
+    internal static Dictionary<string, string> BuildCaptureOriginMap(
         IReadOnlyList<StepNode> steps)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1107,6 +1084,105 @@ public static class ScenarioRunner
 
         error = null;
         return false;
+    }
+
+    /// <summary>
+    /// Derives the compile-time substitution provenance for a single step
+    /// (S04-G-01 + S05-G-01) by scanning every substitutable field of
+    /// <paramref name="node"/> for two distinct token kinds:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>{placeholder}</c> tokens — each unique placeholder becomes a
+    ///     <see cref="SubstitutionRef"/> with <see cref="SubstitutionRef.SecretDerived"/>
+    ///     <see langword="false"/>.  Whether a placeholder's value <em>happens</em> to
+    ///     have come from a secret is not determinable here in the general case, so we
+    ///     never speculatively taint a plain placeholder — its origin (if any) is the
+    ///     prior capture step recorded in <paramref name="captureOriginMap"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>${secret:source/path}</c> references — each unique reference becomes a
+    ///     <see cref="SubstitutionRef"/> with <see cref="SubstitutionRef.SecretDerived"/>
+    ///     <see langword="true"/>, <see cref="SubstitutionRef.OriginStepId"/>
+    ///     <see langword="null"/> (a secret does not originate from a prior capture),
+    ///     and <see cref="SubstitutionRef.Placeholder"/> set to the non-sensitive
+    ///     reference label <c>"{source}/{path}"</c> (e.g. <c>"env/API_TOKEN"</c>).
+    ///   </description></item>
+    /// </list>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the report-layer redaction hook (§17, docs/02 §14.5): the engine lights
+    /// up <see cref="SubstitutionRef.SecretDerived"/> using only the secret
+    /// <em>reference</em> (source/path), which is intentionally shown in reports — the
+    /// resolved value is never read at compile time and never enters this record.
+    /// </para>
+    /// <para>
+    /// Deduplication is per-step and per token kind: placeholders dedupe on the
+    /// placeholder name, secret references dedupe on the reference label, and the two
+    /// kinds never collide because their grammars cannot overlap (the <c>${secret:</c>
+    /// sigil can never be produced by a bare <c>{name}</c> placeholder, S05-B-01).
+    /// </para>
+    /// <para>
+    /// Extracted as an <see langword="internal"/> method so the no-docker provenance
+    /// tests (S05-G-01) can exercise the <see cref="SubstitutionRef.SecretDerived"/>
+    /// wiring directly, without standing up a topology.
+    /// </para>
+    /// </remarks>
+    /// <param name="node">The step whose substitutable fields are scanned.</param>
+    /// <param name="captureOriginMap">
+    /// Map of captured variable name → originating step id, used to populate
+    /// <see cref="SubstitutionRef.OriginStepId"/> for plain placeholders.
+    /// </param>
+    /// <returns>
+    /// The list of substitution-provenance records for the step, or
+    /// <see langword="null"/> when no substitutable field contains any placeholder or
+    /// secret reference (so the wire field is omitted entirely).
+    /// </returns>
+    internal static IReadOnlyList<SubstitutionRef>? DeriveSubstitutionProvenance(
+        StepNode node,
+        IReadOnlyDictionary<string, string> captureOriginMap)
+    {
+        var substitutableTexts = CollectSubstitutableTexts(node);
+        if (substitutableTexts.Count == 0)
+            return null;
+
+        var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
+        var seenSecretRefs = new HashSet<string>(StringComparer.Ordinal);
+        var subs = new List<SubstitutionRef>();
+
+        foreach (var text in substitutableTexts)
+        {
+            // 1. Plain {placeholder} tokens — never speculatively tainted as secret.
+            foreach (System.Text.RegularExpressions.Match m in
+                s_placeholderRegex.Matches(text))
+            {
+                var placeholder = m.Groups[1].Value;
+                if (!seenPlaceholders.Add(placeholder))
+                    continue; // deduplicate within step
+
+                captureOriginMap.TryGetValue(placeholder, out var originStepId);
+                subs.Add(new SubstitutionRef(
+                    Placeholder: placeholder,
+                    OriginStepId: originStepId,
+                    SecretDerived: false));
+            }
+
+            // 2. ${secret:source/path} references — lit up as secret-derived using
+            //    the non-sensitive reference label only (never the value, §17).
+            foreach (var secretRef in SecretReference.FindAll(text))
+            {
+                var label = $"{secretRef.Source}/{secretRef.Path}";
+                if (!seenSecretRefs.Add(label))
+                    continue; // deduplicate within step
+
+                subs.Add(new SubstitutionRef(
+                    Placeholder: label,
+                    OriginStepId: null,
+                    SecretDerived: true));
+            }
+        }
+
+        return subs.Count > 0 ? subs : null;
     }
 
     /// <summary>

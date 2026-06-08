@@ -11,6 +11,8 @@
 // assembly (no injection sink is needed to mint a value in a unit test).
 
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
 using Platform.Engine.Abstractions.Secrets;
 using Xunit;
@@ -87,5 +89,45 @@ public sealed class SecretStringTests
 
         Assert.DoesNotContain(TheValue, interpolated, StringComparison.Ordinal);
         Assert.Contains(SecretString.RedactedMarker, interpolated, StringComparison.Ordinal);
+    }
+
+    // ── S05-G-01: structural redaction safety net for {placeholder} substitution ──
+
+    /// <summary>
+    /// If a <see cref="SecretString"/> were ever placed into <c>Vars</c> under a key
+    /// and that key were referenced by a <c>{placeholder}</c> token, the substitution
+    /// helper must stringify it to the redaction marker, NOT the value.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Substitute_Helpers.Resolve</c> resolves a placeholder by calling
+    /// <c>System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture)</c>
+    /// on the <c>Vars</c> entry (see <c>Platform.Sdk.SubstituteHelper.Source</c>).  For a
+    /// <see cref="SecretString"/>, <see cref="Convert.ToString(object, IFormatProvider)"/>
+    /// routes through <see cref="object.ToString"/> (the type is deliberately NOT
+    /// <see cref="IFormattable"/>), which returns <see cref="SecretString.RedactedMarker"/>.
+    /// </para>
+    /// <para>
+    /// This test pins that exact mechanism at the type level: it reproduces the helper's
+    /// <c>Convert.ToString(val, InvariantCulture)</c> call over a <c>Vars</c>-shaped
+    /// dictionary, proving the structural safety net holds even if a future provider
+    /// regression were to leak a <see cref="SecretString"/> into <c>Vars</c> (§17).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SecretStringInVars_StringifiesToMarker()
+    {
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["x"] = new SecretString(TheValue),
+        };
+
+        // Reproduce the exact resolution Substitute_Helpers.Resolve performs for "{x}".
+        Assert.True(vars.TryGetValue("x", out var val));
+        Assert.NotNull(val);
+        var resolved = Convert.ToString(val, CultureInfo.InvariantCulture);
+
+        Assert.Equal(SecretString.RedactedMarker, resolved);
+        Assert.DoesNotContain(TheValue, resolved!, StringComparison.Ordinal);
     }
 }

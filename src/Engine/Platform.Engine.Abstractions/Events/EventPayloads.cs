@@ -322,21 +322,28 @@ public sealed record CapturedVar(
 /// </para>
 /// </remarks>
 /// <param name="Placeholder">
-/// The placeholder name as it appeared in the template (e.g. <c>"orderId"</c>
-/// for the token <c>{orderId}</c>).
+/// For a plain placeholder, the placeholder name as it appeared in the template
+/// (e.g. <c>"orderId"</c> for the token <c>{orderId}</c>).  For a secret-derived
+/// entry (<see cref="SecretDerived"/> is <see langword="true"/>) this is instead
+/// the non-sensitive secret <em>reference</em> label <c>"{source}/{path}"</c>
+/// (e.g. <c>"env/API_TOKEN"</c>) — the reference is intentionally shown in reports
+/// (§17, docs/02 §14.5); the resolved value is never present.
 /// </param>
 /// <param name="OriginStepId">
 /// The step identifier that first captured the variable (i.e. the step whose
 /// <c>capture</c> map declares <paramref name="Placeholder"/> as a key).
 /// <see langword="null"/> when the variable originates from the <c>variables</c>
-/// block or is otherwise not traceable to a prior capture.
+/// block, when the entry is secret-derived (a secret does not originate from a
+/// prior capture), or when it is otherwise not traceable to a prior capture.
 /// </param>
 /// <param name="SecretDerived">
-/// <see langword="true"/> when the placeholder name resolves to a value that
-/// was obtained from a secret reference (<c>${secret:…}</c>).  Always
-/// <see langword="false"/> in the current MVP (secret resolution is not yet
-/// implemented for this sprint); the flag is present so the wire format is
-/// stable for future sprints.
+/// <see langword="true"/> when this entry records a <c>${secret:source/path}</c>
+/// reference found in a substitutable field of the step (S05-G-01); in that case
+/// <see cref="Placeholder"/> carries the reference label, never the value (§17).
+/// <see langword="false"/> for an ordinary <c>{placeholder}</c> token: whether a
+/// placeholder's runtime value happens to derive from a secret is not determinable
+/// at compile time in the general case, so a plain placeholder is never
+/// speculatively tainted.
 /// </param>
 public sealed record SubstitutionRef(
     [property: System.Text.Json.Serialization.JsonPropertyName("placeholder")] string Placeholder,
