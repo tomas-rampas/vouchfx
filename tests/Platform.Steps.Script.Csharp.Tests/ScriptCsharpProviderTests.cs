@@ -14,6 +14,10 @@
 //   7. Brace-injection attempt: unbalanced author body → compile error (not silent clobber).
 //   8. Registry: provider discoverable via StepKindRegistry with key "script.csharp".
 //   9. SchemaFragment: contains "code" field.
+//  10. M3 fix: return; in author body does NOT abort downstream steps (local-function containment).
+//  11. M3 fix: author body using await compiles and runs correctly.
+//  12. M3 fix: brace-injection into local function still yields compile error.
+using System.Linq;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -131,6 +135,7 @@ public sealed class ScriptCsharpProviderTests
         Assert.Contains("__sw_" + safeId, fragment.StatementBlock, StringComparison.Ordinal);
         Assert.Contains("__v_" + safeId, fragment.StatementBlock, StringComparison.Ordinal);
         Assert.Contains("__obs_" + safeId, fragment.StatementBlock, StringComparison.Ordinal);
+        Assert.Contains("__body_" + safeId, fragment.StatementBlock, StringComparison.Ordinal);
 
         // The raw hyphenated id must NOT appear (invalid C# identifier).
         Assert.DoesNotContain(rawId, fragment.StatementBlock, StringComparison.Ordinal);
@@ -156,7 +161,7 @@ public sealed class ScriptCsharpProviderTests
 
     /// <summary>
     /// <see cref="CsxFragment.RequiredUsings"/> must contain at least
-    /// <c>System</c>, <c>System.Diagnostics</c>, and
+    /// <c>System</c>, <c>System.Diagnostics</c>, <c>System.Threading.Tasks</c>, and
     /// <c>Platform.Engine.Abstractions</c>.
     /// </summary>
     [Fact]
@@ -169,6 +174,7 @@ public sealed class ScriptCsharpProviderTests
 
         Assert.Contains("System", fragment.RequiredUsings, StringComparer.Ordinal);
         Assert.Contains("System.Diagnostics", fragment.RequiredUsings, StringComparer.Ordinal);
+        Assert.Contains("System.Threading.Tasks", fragment.RequiredUsings, StringComparer.Ordinal);
         Assert.Contains("Platform.Engine.Abstractions", fragment.RequiredUsings, StringComparer.Ordinal);
     }
 
@@ -176,8 +182,8 @@ public sealed class ScriptCsharpProviderTests
 
     /// <summary>
     /// When the step id contains hyphens, the engine-introduced locals in the
-    /// emitted block use the sanitised id (underscores) for all three names
-    /// (__sw_, __v_, __obs_).
+    /// emitted block use the sanitised id (underscores) for all names
+    /// (__sw_, __v_, __obs_, __body_, __ex_).
     /// </summary>
     [Fact]
     public void Emit_HyphenatedId_AllEngineLocalsAreSanitised()
@@ -190,10 +196,11 @@ public sealed class ScriptCsharpProviderTests
         var fragment = _provider.Emit(model, ctx);
         var block = fragment.StatementBlock;
 
-        // All three engine locals must use the safe id.
+        // All engine locals must use the safe id.
         Assert.Contains("__sw_" + safeId, block, StringComparison.Ordinal);
         Assert.Contains("__v_" + safeId, block, StringComparison.Ordinal);
         Assert.Contains("__obs_" + safeId, block, StringComparison.Ordinal);
+        Assert.Contains("__body_" + safeId, block, StringComparison.Ordinal);
         Assert.Contains("__ex_" + safeId, block, StringComparison.Ordinal);
     }
 
@@ -341,21 +348,23 @@ public sealed class ScriptCsharpProviderTests
     // ── 7. Brace-injection attempt ────────────────────────────────────────────
 
     /// <summary>
-    /// An author body that attempts to break out of the try block by injecting
-    /// unbalanced braces (<c>} Vars["evil"]=1; {</c>) must cause a compile error,
+    /// An author body that attempts structural injection by closing the local
+    /// function early and orphaning a <c>catch</c> clause must cause a compile error,
     /// NOT a silent clobber of the outcome write or another step's state.
     ///
-    /// Security reasoning: the author body is spliced verbatim inside
-    /// <c>try { … }</c>.  If the body introduces unbalanced braces the assembled
-    /// CSX text becomes syntactically invalid; Roslyn refuses to emit it and
-    /// <see cref="ScriptCompilationException"/> is thrown.  That is an Inconclusive
-    /// verdict — not a silent clobber (§13.3.1, §security M1).
+    /// Security reasoning (M3 fix): the author body is spliced verbatim inside
+    /// an <c>async</c> local function <c>__body_&lt;id&gt;()</c>.  If the body
+    /// closes that function early and injects an orphaned <c>catch</c> or other
+    /// mismatched keyword, the assembled CSX text is syntactically invalid; Roslyn
+    /// refuses to emit it and <see cref="ScriptCompilationException"/> is thrown.
+    /// That is an Inconclusive verdict — not a silent clobber (§13.3.1, §security M1).
     /// </summary>
     [Fact]
     public async Task Emit_BraceInjectionAttempt_CausesCompileError_NotSilentClobber()
     {
-        // This body tries to close the try-block early and inject a statement outside it.
-        const string maliciousCode = "} Vars[\"evil\"] = 1; {";
+        // This body closes the local async function early, then injects an orphaned
+        // catch clause which is syntactically invalid outside a try block.
+        const string maliciousCode = "} catch (System.Exception) { Vars[\"evil\"] = 1; } async System.Threading.Tasks.Task __dummy() {";
         const string stepId = "injection-attempt";
         var model = new ScriptCsharpModel(Code: maliciousCode);
         var ctx = new StubCompileContext(stepId);
@@ -373,6 +382,91 @@ public sealed class ScriptCsharpProviderTests
             Assert.Fail("Brace-injection author body compiled and ran without error; " +
                         "the outcome-write clobber guard is broken.");
         });
+    }
+
+    // ── M3 new tests: return-containment, author-await, brace-injection ──────
+
+    /// <summary>
+    /// M3 fix: a <c>return;</c> in the first script.csharp step must NOT abort the
+    /// Roslyn submission delegate — the second step's Vars write must still execute.
+    /// This proves <c>return;</c> now returns from <c>__body_&lt;safeId&gt;()</c>
+    /// only, not from the entire submission.
+    /// </summary>
+    [Fact]
+    public async Task Emit_ReturnInAuthorBody_DoesNotAbortDownstreamSteps()
+    {
+        // Step 1: author body is a bare 'return;'
+        const string stepId1 = "early-return";
+        var model1 = new ScriptCsharpModel(Code: "return;");
+        var ctx1 = new StubCompileContext(stepId1);
+        var fragment1 = _provider.Emit(model1, ctx1);
+
+        // Step 2: author body writes a marker var
+        const string stepId2 = "after-return";
+        var model2 = new ScriptCsharpModel(Code: "Vars[\"after\"] = \"ok\";");
+        var ctx2 = new StubCompileContext(stepId2);
+        var fragment2 = _provider.Emit(model2, ctx2);
+
+        // Assemble both steps into one CSX (mirrors CsxAssembler).
+        var allUsings = fragment1.RequiredUsings
+            .Concat(fragment2.RequiredUsings)
+            .Distinct(StringComparer.Ordinal);
+        var usings = string.Join("\n", allUsings.Select(u => $"using {u};"));
+        var csx = $"{usings}\n{fragment1.StatementBlock}\n{fragment2.StatementBlock}";
+        var compiled = RoslynScriptCompiler.CompileOnce(csx);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        // Step 2's marker must be present (downstream step ran).
+        Assert.True(vars.ContainsKey("after"),
+            $"Expected Vars[\"after\"] to be set by the downstream step. Keys: [{string.Join(", ", vars.Keys)}]");
+        Assert.Equal("ok", vars["after"]);
+
+        // Step 1 must still have a Pass outcome (return; exits cleanly).
+        var safeId1 = CsxFragment.SanitiseId(stepId1);
+        var outcomeKey1 = VarKeys.Outcome(safeId1);
+        Assert.True(vars.ContainsKey(outcomeKey1),
+            $"Expected step 1 outcome key '{outcomeKey1}'. Keys: [{string.Join(", ", vars.Keys)}]");
+        var outcome1 = Assert.IsType<StepOutcome>(vars[outcomeKey1]);
+        Assert.Equal(Verdict.Pass, outcome1.Verdict);
+    }
+
+    /// <summary>
+    /// M3 fix: an author body that uses <c>await</c> must compile and run correctly
+    /// because the local function is declared <c>async</c>.
+    /// </summary>
+    [Fact]
+    public async Task Emit_AuthorBodyWithAwait_CompilesAndRunsCorrectly()
+    {
+        const string stepId = "await-step";
+        // Author body that awaits a Task and then writes a Vars entry.
+        const string authorCode =
+            "await System.Threading.Tasks.Task.Delay(1);\n" +
+            "Vars[\"awaited\"] = \"yes\";";
+        var model = new ScriptCsharpModel(Code: authorCode);
+        var ctx = new StubCompileContext(stepId);
+
+        var fragment = _provider.Emit(model, ctx);
+        var compiled = CompileFragment(fragment);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        // The author var must be set (await completed correctly).
+        Assert.True(vars.ContainsKey("awaited"),
+            $"Expected Vars[\"awaited\"] to be set. Keys: [{string.Join(", ", vars.Keys)}]");
+        Assert.Equal("yes", vars["awaited"]);
+
+        // Step must be Pass.
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
     }
 
     // ── 8. Registry: provider discoverable ───────────────────────────────────

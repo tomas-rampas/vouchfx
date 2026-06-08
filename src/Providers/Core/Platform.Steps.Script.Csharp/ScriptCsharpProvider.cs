@@ -45,15 +45,16 @@ namespace Platform.Steps.Script.Csharp;
 /// property of <c>script.csharp</c>: the author is trusted (it is their own test
 /// code), so the body may read any staged value — <em>including connection
 /// strings under <c>conn::…</c> that carry credentials</em> — and may write any
-/// key.  It is therefore NOT isolated from the engine's reserved keys
-/// (<c>__outcome::</c>, <c>conn::</c>, <c>svc::</c>); a malicious or buggy body
-/// could forge another step's outcome or overwrite a captured variable.  The
-/// engine's only structural guarantee is brace-balance: the author body sits
-/// inside a <c>try</c> and the engine's own outcome write follows the
-/// <c>finally</c> with an engine-derived key, so an unbalanced body fails to
-/// compile (→ Inconclusive) rather than silently clobbering engine state.
-/// Reserving those namespaces against author writes, and redacting credentials
-/// (§17 <c>SecretString</c>), are post-MVP hardening items.
+/// key.  The engine wraps the author body in an <c>async</c> local function
+/// (<c>__body_&lt;safeId&gt;</c>) so that a <c>return;</c> statement in the
+/// author code returns from the local function only, not from the entire Roslyn
+/// submission delegate — the engine's own outcome write and all downstream steps
+/// execute normally.  A brace-injection body that closes the local function early
+/// produces orphaned syntax and fails to compile (→ Inconclusive), which is still
+/// caught and does not silently clobber engine state.  Reserving the engine
+/// reserved-key namespaces (<c>__outcome::</c>, <c>conn::</c>, <c>svc::</c>)
+/// against author writes, and redacting credentials (§17 <c>SecretString</c>),
+/// are post-MVP hardening items.
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -74,6 +75,7 @@ public sealed class ScriptCsharpProvider
         {
             "System",
             "System.Diagnostics",
+            "System.Threading.Tasks",
             "Platform.Engine.Abstractions",
         };
 
@@ -153,26 +155,35 @@ public sealed class ScriptCsharpProvider
     /// scaffolding that:
     /// <list type="bullet">
     ///   <item>starts a <c>Stopwatch</c> and initialises the outcome locals;</item>
-    ///   <item>splices the author body verbatim inside a <c>try</c> block;</item>
-    ///   <item>catches any <see cref="Exception"/> thrown by the author body and
+    ///   <item>declares an <c>async</c> local function <c>__body_&lt;safeId&gt;()</c>
+    ///         and splices the author body verbatim inside it;</item>
+    ///   <item>awaits the local function inside a <c>try</c> block;</item>
+    ///   <item>catches any <see cref="Exception"/> thrown by the local function and
     ///         records it as <see cref="Verdict.Fail"/>;</item>
     ///   <item>unconditionally stops the stopwatch in <c>finally</c>;</item>
     ///   <item>writes the <see cref="StepOutcome"/> to
-    ///         <c>Vars[VarKeys.Outcome(safeId)]</c> — this write is outside the
+    ///         <c>Vars[VarKeys.Outcome(safeId)]</c> — this write is after the
     ///         try/finally and therefore always executes.</item>
     /// </list>
     /// </para>
     /// <para>
-    /// <strong>Security — brace-balance property.</strong>
-    /// The author body is spliced verbatim inside <c>try { … }</c>.  The engine
-    /// wrapper is brace-balanced: if the author body deliberately or accidentally
-    /// introduces unbalanced braces (e.g. <c>} evil; {</c>), the assembled text
-    /// will contain unbalanced braces and Roslyn will refuse to compile it
-    /// (<c>ScriptCompilationException</c> / Inconclusive verdict).  That is a
-    /// compile error — not a silent clobber of the outcome write or another step's
-    /// state.  The engine's outcome write is positioned <em>after</em> the
-    /// <c>finally</c> and therefore cannot be removed by any author-body brace
-    /// trick that still leaves the text compilable.
+    /// <strong>Security — local-function containment property (M3 fix).</strong>
+    /// The author body is spliced verbatim inside an <c>async</c> local function.
+    /// A <c>return;</c> statement in the author body returns from the local
+    /// function only — not from the Roslyn submission delegate — so the engine's
+    /// outcome write and all downstream step blocks execute normally.  A
+    /// brace-injection body that closes the local function early produces orphaned
+    /// <c>catch</c>/<c>finally</c> syntax and fails to compile
+    /// (<c>ScriptCompilationException</c> / Inconclusive verdict), which is still
+    /// caught.  The engine's outcome write is positioned after the <c>finally</c>
+    /// of the outer <c>try</c> and therefore cannot be skipped by any author-body
+    /// content that leaves the text compilable.
+    /// </para>
+    /// <para>
+    /// The leading <c>await System.Threading.Tasks.Task.CompletedTask;</c> inside
+    /// the local function guarantees the async function has an <c>await</c> (no
+    /// CS1998 warning) and is always reached, even when the author body contains
+    /// no <c>await</c> of its own.
     /// </para>
     /// <para>
     /// The author body is <strong>never</strong> placed inside a
@@ -205,12 +216,20 @@ public sealed class ScriptCsharpProvider
         // The author body is appended VERBATIM — no escaping, no interpolation hole.
         // Every other part of the wrapper is a fixed string literal appended around it.
         //
+        // M3 fix — local-function containment: the author body is placed inside an
+        // async local function (__body_<safeId>) so that a 'return;' in the author
+        // code returns from the local function only, not from the Roslyn submission
+        // delegate.  This ensures the engine's outcome write and all downstream step
+        // blocks always execute.  A brace-injection that closes __body_ early produces
+        // orphaned syntax → compile error → Inconclusive (still caught, still good).
+        //
         // All engine-introduced locals carry the safeId suffix so that two
         // script.csharp steps in the same suite never collide:
-        //   __sw_<safeId>   — Stopwatch
-        //   __v_<safeId>    — Verdict
-        //   __obs_<safeId>  — observation string
-        //   __ex_<safeId>   — caught exception (catch-clause parameter)
+        //   __sw_<safeId>    — Stopwatch
+        //   __v_<safeId>     — Verdict
+        //   __obs_<safeId>   — observation string
+        //   __body_<safeId>  — async local function containing the author body
+        //   __ex_<safeId>    — caught exception (catch-clause parameter)
         var sb = new StringBuilder();
 
         sb.Append("{\n");
@@ -218,11 +237,19 @@ public sealed class ScriptCsharpProvider
         sb.Append("    Platform.Engine.Abstractions.Verdict __v_").Append(safeId)
           .Append(" = Platform.Engine.Abstractions.Verdict.Pass;\n");
         sb.Append("    string? __obs_").Append(safeId).Append(" = null;\n");
-        sb.Append("    try\n");
+        // Declare the async local function that contains the author body verbatim.
+        // The leading 'await Task.CompletedTask;' suppresses CS1998 (no await in async
+        // method) for author bodies that contain no await, and is always a no-op.
+        sb.Append("    async System.Threading.Tasks.Task __body_").Append(safeId).Append("()\n");
         sb.Append("    {\n");
+        sb.Append("        await System.Threading.Tasks.Task.CompletedTask;\n");
         sb.Append("        // ---- begin author code (spliced verbatim) ----\n");
         sb.Append(model.Code);
         sb.Append("\n        // ---- end author code ----\n");
+        sb.Append("    }\n");
+        sb.Append("    try\n");
+        sb.Append("    {\n");
+        sb.Append("        await __body_").Append(safeId).Append("();\n");
         sb.Append("    }\n");
         sb.Append("    catch (System.Exception __ex_").Append(safeId).Append(")\n");
         sb.Append("    {\n");

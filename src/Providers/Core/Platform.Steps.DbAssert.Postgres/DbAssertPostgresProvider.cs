@@ -3,14 +3,17 @@
 // F-01 implementation: IStepProvider + IStepBinder<T> + IStepValidator<T>.
 // F-02 adds: IStepCompiler<T> + IResourceContributor<T> + ICompileReferenceContributor.
 //
-// Substitution model (S04-B-03, H1 security fix):
+// Substitution model (S04-B-03, H1 security fix — blast-radius containment):
 //   • Parameter VALUES    — Substitute_Helpers.Resolve(Vars, …); the resolved value is
 //     passed to cmd.Parameters.AddWithValue (parameterised SQL — never concatenated).
 //   • Expect-row VALUES   — Substitute_Helpers.Resolve(Vars, …); compared in-memory.
-//   • SQL query TEXT      — Substitute_Helpers.ResolveIdentifier(Vars, …); each resolved
-//     value is validated against [A-Za-z0-9_.] before being spliced into the query text.
-//     This permits dynamic table/schema identifiers (DSL §6.2) while blocking injection.
-//     Untrusted or non-identifier data MUST be bound through a SQL parameter instead.
+//   • SQL query TEXT      — emitted as a raw template literal; inside ExecuteAsync the
+//     helper calls Substitute_Helpers.ResolveIdentifier(Vars, …) in its own try so that
+//     an unsafe resolved value writes Verdict.EnvironmentError for this step only (not a
+//     scenario-level abort).  Each resolved value is validated against [A-Za-z0-9_.]
+//     before being spliced into the query text.  This permits dynamic table/schema
+//     identifiers (DSL §6.2) while blocking injection.  Untrusted or non-identifier data
+//     MUST be bound through a SQL parameter instead.
 //
 // Schema composition invariants (§13.3.1, §13.6):
 //   • SchemaFragment describes ONLY the provider's own fields (target, query,
@@ -45,12 +48,15 @@ namespace Platform.Steps.DbAssert.Postgres;
 /// The <see cref="Emit"/> method produces a <see cref="CsxFragment"/> whose emitted
 /// CSX executes a parameterised Npgsql query, evaluates row-count and/or column-value
 /// expectations, and writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for
-/// the runner to read after execution (§13.3.1).  The SQL query text supports
-/// <c>{placeholder}</c> substitution only of safe SQL identifiers (via
-/// <c>Substitute_Helpers.ResolveIdentifier</c>); parameter values and expect-row
-/// values support arbitrary substitution (via <c>Substitute_Helpers.Resolve</c>)
-/// because parameters are bound via <c>AddWithValue</c> (never concatenated into
-/// SQL) and expect values are compared in-memory only.
+/// the runner to read after execution (§13.3.1).  The SQL query text is emitted as a
+/// raw template literal; the helper resolves <c>{placeholder}</c> substitution inside
+/// its own <c>try</c> (via <c>Substitute_Helpers.ResolveIdentifier</c>), limiting the
+/// blast radius of an unsafe resolved value to a step-scoped
+/// <see cref="Verdict.EnvironmentError"/> rather than a scenario-level abort.
+/// Parameter values and expect-row values support arbitrary substitution (via
+/// <c>Substitute_Helpers.Resolve</c>) because parameters are bound via
+/// <c>AddWithValue</c> (never concatenated into SQL) and expect values are compared
+/// in-memory only.
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -300,6 +306,25 @@ public sealed class DbAssertPostgresProvider
         "                \"{\\\"error\\\":\\\"connection string not found for key '\" + connKey + \"'\\\"}\" );\n" +
         "            return;\n" +
         "        }\n" +
+        "        // H1 security fix (blast-radius containment): resolve the query template INSIDE\n" +
+        "        // its own try so an unsafe resolved value (non-identifier) writes EnvironmentError\n" +
+        "        // for THIS step only and returns normally — subsequent steps still run.\n" +
+        "        // Callers MUST NOT invoke ResolveIdentifier outside a try; exceptions must map to\n" +
+        "        // their error verdict (this is the canonical pattern for db-assert.postgres).\n" +
+        "        string resolvedQuery;\n" +
+        "        try\n" +
+        "        {\n" +
+        "            resolvedQuery = Substitute_Helpers.ResolveIdentifier(vars, query);\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
         "        var conn = new Npgsql.NpgsqlConnection(connStr);\n" +
         "        try\n" +
         "        {\n" +
@@ -307,7 +332,7 @@ public sealed class DbAssertPostgresProvider
         "            var cmd = conn.CreateCommand();\n" +
         "            try\n" +
         "            {\n" +
-        "                cmd.CommandText = query;\n" +
+        "                cmd.CommandText = resolvedQuery;\n" +
         "                for (int i = 0; i < paramNames.Length; i++)\n" +
         "                {\n" +
         "                    cmd.Parameters.AddWithValue(paramNames[i], (object)paramValues[i]);\n" +
@@ -424,15 +449,17 @@ public sealed class DbAssertPostgresProvider
     /// Substitution model (S04-B-03, H1 security fix):
     /// <list type="bullet">
     ///   <item>
-    ///     <b>Query TEXT</b> — wrapped in
-    ///     <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> at runtime.
-    ///     Each resolved placeholder value is validated against
-    ///     <c>[A-Za-z0-9_.]</c> before being spliced into the query string,
-    ///     which permits dynamic table/schema identifiers (DSL §6.2) whilst
-    ///     blocking SQL injection.  If any resolved value fails validation,
-    ///     <c>ResolveIdentifier</c> throws <see cref="InvalidOperationException"/>,
-    ///     which the helper's outer <c>catch (Exception)</c> maps to
-    ///     <see cref="Verdict.EnvironmentError"/> (§12.1).
+    ///     <b>Query TEXT</b> — emitted as a raw template literal (the static
+    ///     query string, JSON-escaped).
+    ///     <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> is called
+    ///     <em>inside</em> the <c>DbAssertPostgres_Helpers.ExecuteAsync</c> helper,
+    ///     inside its own <c>try</c>, so if any resolved placeholder value fails the
+    ///     <c>[A-Za-z0-9_.]</c> identifier check the helper writes
+    ///     <see cref="Verdict.EnvironmentError"/> for this step only and returns
+    ///     normally — subsequent steps continue to run (step-scoped blast-radius).
+    ///     This is the H1 security fix: calling <c>ResolveIdentifier</c> in the
+    ///     StatementBlock outside the helper's try would propagate the throw to the
+    ///     scenario-level handler and abort all later steps.
     ///   </item>
     ///   <item>
     ///     <b>Parameter VALUES</b> — wrapped in
@@ -496,15 +523,19 @@ public sealed class DbAssertPostgresProvider
             ? rc.ToString(CultureInfo.InvariantCulture)
             : "null";
 
-        // S04-B-03 / H1: wrap the query text in Substitute_Helpers.ResolveIdentifier so
-        // {placeholder} tokens in the SQL text resolve against Vars at runtime, but each
-        // resolved value is validated against [A-Za-z0-9_.] before being spliced into the
-        // query string.  This permits dynamic table/schema identifiers (DSL §6.2) whilst
-        // blocking SQL injection.  The JSON-escape ensures embedded quotes or backslashes in
-        // the static query text do not break the C# string literal.
+        // S04-B-03 / H1 (security fix — blast-radius containment):
+        // Pass the raw query template as a plain string literal to ExecuteAsync.
+        // ResolveIdentifier is called INSIDE the helper, inside its own try, so a
+        // non-identifier placeholder value writes Verdict.EnvironmentError for THIS step
+        // only and returns normally — subsequent steps continue to run.
+        // (Previously, ResolveIdentifier was called in the StatementBlock BEFORE entering
+        // ExecuteAsync's try, which propagated the throw to the scenario-level handler and
+        // aborted all later steps.)
+        // The JSON-escape ensures embedded quotes or backslashes in the static query text
+        // do not break the C# string literal.
         // Parameter values and expect-row values continue to use Resolve (not ResolveIdentifier)
         // because they are passed via AddWithValue (parameterised SQL) or compared in-memory.
-        var resolvedQuery = $"Substitute_Helpers.ResolveIdentifier(Vars, {JsonSerializer.Serialize(model.Query)})";
+        var resolvedQuery = JsonSerializer.Serialize(model.Query);
 
         // S04-B-03: wrap each parameter VALUE in Substitute_Helpers.Resolve.  Parameter
         // NAMES are SQL identifiers and are not subject to substitution.  The substituted

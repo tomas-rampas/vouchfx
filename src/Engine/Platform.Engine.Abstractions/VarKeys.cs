@@ -16,9 +16,9 @@ namespace Platform.Engine.Abstractions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two namespaces are reserved within the shared <c>Vars</c> dictionary.
+/// Four namespaces are reserved within the shared <c>Vars</c> dictionary.
 /// Author-defined variable names in <c>.e2e.yaml</c> must not begin with
-/// either prefix:
+/// any of these prefixes (enforced at build time by the <c>AstBuilder</c>):
 /// </para>
 /// <list type="bullet">
 ///   <item><description>
@@ -27,10 +27,20 @@ namespace Platform.Engine.Abstractions;
 ///     Retrieve with <see cref="Service(string)"/>.
 ///   </description></item>
 ///   <item><description>
+///     <c>conn::</c> — connection strings staged by the orchestration layer for
+///     managed dependencies (e.g. Postgres).
+///     Retrieve with <see cref="Connection(string)"/>.
+///   </description></item>
+///   <item><description>
 ///     <c>__outcome::</c> — per-step <see cref="StepOutcome"/> instances written
 ///     by emitted CSX step blocks and consumed by the engine runner after
 ///     <c>RunIsolatedAsync</c> returns.
 ///     Retrieve with <see cref="Outcome(string)"/>.
+///   </description></item>
+///   <item><description>
+///     <c>__capture_status::</c> — per-step capture-matched-flag records written
+///     by emitted CSX step blocks for provenance reporting (G-01).
+///     Retrieve with <see cref="CaptureStatus(string)"/>.
 ///   </description></item>
 /// </list>
 /// <para>
@@ -103,6 +113,16 @@ public static class VarKeys
     }
 
     /// <summary>
+    /// The prefix for engine-managed per-step outcome entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="Outcome(string)"/> to build the full key.
+    /// </remarks>
+    public const string OutcomePrefix = "__outcome::";
+
+    /// <summary>
     /// Returns the <c>Vars</c> key under which an emitted CSX step block writes
     /// its <see cref="StepOutcome"/> result.
     /// </summary>
@@ -121,7 +141,7 @@ public static class VarKeys
     public static string Outcome(string sanitisedStepId)
     {
         ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
-        return $"__outcome::{sanitisedStepId}";
+        return $"{OutcomePrefix}{sanitisedStepId}";
     }
 
     /// <summary>

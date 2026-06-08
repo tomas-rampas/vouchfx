@@ -106,10 +106,14 @@ public static class SubstituteHelper
         "    /// If any resolved value contains a character outside the permitted set\n" +
         "    /// (e.g. a space, semicolon, quote, or SQL keyword fragment), the method\n" +
         "    /// throws <see cref=\"System.InvalidOperationException\"/> with an actionable\n" +
-        "    /// message naming the placeholder and the offending value.  The caller's\n" +
-        "    /// <c>catch (System.Exception)</c> block maps this to\n" +
-        "    /// <c>Verdict.EnvironmentError</c> (§12.1) so the test cannot run and the\n" +
-        "    /// injection attempt is surfaced in the observation without executing SQL.\n" +
+        "    /// message naming the placeholder and the offending value.\n" +
+        "    /// <strong>Callers MUST invoke this method inside their own <c>try</c> block</strong>\n" +
+        "    /// so the exception maps to a step-scoped verdict (e.g.\n" +
+        "    /// <c>Verdict.EnvironmentError</c> in the db-assert.postgres helper — §12.1).\n" +
+        "    /// The containment is NOT automatic; it is the caller's responsibility to catch\n" +
+        "    /// and handle the exception before it propagates to the scenario-level handler.\n" +
+        "    /// Without a local catch the throw exits the Roslyn submission delegate,\n" +
+        "    /// causing a scenario-level abort that skips all subsequent steps.\n" +
         "    /// </para>\n" +
         "    /// <para>\n" +
         "    /// Untrusted or non-identifier data MUST be bound through a parameterised\n" +

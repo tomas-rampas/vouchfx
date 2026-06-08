@@ -1,12 +1,15 @@
 // S04-B-03 / H1 — DbAssertPostgresProvider substitution emit tests (non-docker).
 //
 // Verifies that DbAssertPostgresProvider.Emit:
-//   • wraps the SQL query text in Substitute_Helpers.ResolveIdentifier(Vars, …)
-//     (H1 security fix — identifier-safe substitution only for query text);
+//   • passes the raw query template as a literal to ExecuteAsync (H1 blast-radius fix);
+//   • the ResolveIdentifier call lives in RequiredHelpers (DbAssertPostgres_Helpers),
+//     inside its own try, so an unsafe identifier yields a STEP-scoped EnvironmentError
+//     rather than a scenario-level abort;
 //   • wraps each parameter value in Substitute_Helpers.Resolve(Vars, …)
 //     (values go via AddWithValue — parameterised SQL, safe for arbitrary values);
 //   • wraps each expect-row value in Substitute_Helpers.Resolve(Vars, …)
 //     (values are compared in-memory, safe for arbitrary values).
+using System.Linq;
 using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Postgres;
@@ -29,16 +32,19 @@ public sealed class DbAssertSubstituteTests
             new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
-    // ── Query text wrapped in ResolveIdentifier call (H1) ────────────────────
+    // ── Query text: raw template in StatementBlock; ResolveIdentifier in helper (H1) ──
 
     /// <summary>
-    /// <see cref="DbAssertPostgresProvider.Emit"/> must wrap the SQL query text
-    /// in <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> — not the bare
-    /// <c>Resolve</c> overload — so that only safe SQL identifiers can be spliced
-    /// into the query text at runtime (H1 security fix).
+    /// H1 blast-radius fix: the StatementBlock must pass the raw query template literal
+    /// (JSON-escaped) directly to <c>ExecuteAsync</c> — NOT via a
+    /// <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> call expression.
+    /// The <c>ResolveIdentifier</c> call must appear instead in
+    /// <see cref="CsxFragment.RequiredHelpers"/> (inside <c>DbAssertPostgres_Helpers</c>)
+    /// where it runs inside its own <c>try</c>, limiting an unsafe-identifier failure to
+    /// a step-scoped <c>Verdict.EnvironmentError</c> rather than a scenario-level abort.
     /// </summary>
     [Fact]
-    public void Emit_QueryText_IsWrappedInResolveIdentifierCall()
+    public void Emit_QueryText_IsRawTemplateInStatementBlock_NotResolveIdentifierExpression()
     {
         var provider = new DbAssertPostgresProvider();
         var model = new DbAssertPostgresModel(
@@ -54,21 +60,29 @@ public sealed class DbAssertSubstituteTests
         var fragment = provider.Emit(model, ctx);
         var block = fragment.StatementBlock;
 
-        // The query must be wrapped in ResolveIdentifier, not bare Resolve.
-        Assert.Contains("Substitute_Helpers.ResolveIdentifier(Vars,", block, StringComparison.Ordinal);
+        // (a) The StatementBlock must NOT contain a ResolveIdentifier call expression —
+        //     that call has moved into the helper.
+        Assert.DoesNotContain("ResolveIdentifier(Vars,", block, StringComparison.Ordinal);
 
-        // The {tableName} token must survive as literal text inside the JSON-escaped string.
+        // (b) The raw {tableName} template must survive as literal text inside the
+        //     JSON-escaped string argument passed to ExecuteAsync.
         Assert.Contains("{tableName}", block, StringComparison.Ordinal);
+
+        // (c) The ResolveIdentifier call must appear in RequiredHelpers
+        //     (DbAssertPostgres_Helpers), not the StatementBlock.
+        var allHelpers = string.Join("\n", fragment.RequiredHelpers);
+        Assert.Contains("Substitute_Helpers.ResolveIdentifier(vars,", allHelpers, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// The SQL query text must NOT be wrapped in the bare
-    /// <c>Substitute_Helpers.Resolve(Vars, …)</c> overload — that overload allows
-    /// arbitrary values and would re-open the SQL-injection sink (H1).
-    /// Only parameter values and expect-row values may use the bare Resolve overload.
+    /// <c>Substitute_Helpers.Resolve(Vars, …)</c> call expression in the StatementBlock —
+    /// that overload allows arbitrary values and would re-open the SQL-injection sink (H1).
+    /// The StatementBlock passes the raw JSON-escaped template; the identifier-safe
+    /// resolution happens inside the helper.
     /// </summary>
     [Fact]
-    public void Emit_QueryText_IsNotWrappedInBareResolveCall()
+    public void Emit_QueryText_StatementBlock_DoesNotContainBareResolveForQuery()
     {
         var provider = new DbAssertPostgresProvider();
         var model = new DbAssertPostgresModel(
@@ -81,15 +95,14 @@ public sealed class DbAssertSubstituteTests
         var fragment = provider.Emit(model, ctx);
         var block = fragment.StatementBlock;
 
-        // Verify the identifier-safe call IS present.
-        Assert.Contains("Substitute_Helpers.ResolveIdentifier(Vars,", block, StringComparison.Ordinal);
+        // No ResolveIdentifier expression in the block — it moved to the helper.
+        Assert.DoesNotContain("ResolveIdentifier(Vars,", block, StringComparison.Ordinal);
 
-        // Strip all ResolveIdentifier occurrences, then assert no bare Resolve remains
-        // for the query text position (the first argument to ExecuteAsync after the keys).
-        // The simplest invariant: the string "ResolveIdentifier" appears at least once.
-        var identifierCallCount = CountOccurrences(block, "ResolveIdentifier");
+        // The identifier-safe call must appear exactly in the helper source.
+        var allHelpers = string.Join("\n", fragment.RequiredHelpers);
+        var identifierCallCount = CountOccurrences(allHelpers, "ResolveIdentifier");
         Assert.True(identifierCallCount >= 1,
-            "Expected at least one ResolveIdentifier call for the query text.");
+            "Expected at least one ResolveIdentifier call inside RequiredHelpers.");
     }
 
     // ── Parameter values wrapped in Resolve call ──────────────────────────────
@@ -380,6 +393,69 @@ public sealed class DbAssertSubstituteTests
 
         // Resolve must pass the value through unchanged; no exception thrown.
         Assert.Equal("orders; DROP TABLE orders", vars["result"]);
+    }
+
+    // ── Injection → EnvironmentError (non-docker compile-and-run) ────────────
+
+    /// <summary>
+    /// H1 blast-radius fix: when a capture variable resolves to an injection value
+    /// (e.g. <c>orders; DROP TABLE x</c>), the emitted helper must catch the
+    /// <see cref="System.InvalidOperationException"/> from
+    /// <c>Substitute_Helpers.ResolveIdentifier</c> and write
+    /// <see cref="Verdict.EnvironmentError"/> for this step, before any DB connection
+    /// is opened, and return normally so subsequent steps still run.
+    /// </summary>
+    [Fact]
+    public async Task Emit_InjectionValue_WritesEnvironmentError_BeforeDbConnection()
+    {
+        const string stepId = "inject-step";
+        // Query with a {tbl} placeholder; Vars["tbl"] carries an injection string.
+        var model = new DbAssertPostgresModel(
+            Target: "orders-db",
+            Query: "SELECT * FROM {tbl}",
+            Parameters: null,
+            Expect: new PostgresExpectation(RowCount: 1, Row: null));
+        var ctx = new StubCompileContext(stepId);
+
+        var fragment = new DbAssertPostgresProvider().Emit(model, ctx);
+
+        // Assemble exactly as CsxAssembler.Assemble would.
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = Platform.Engine.Compilation.RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            // Stage a non-empty connection string so we reach the ResolveIdentifier check.
+            [Platform.Engine.Abstractions.VarKeys.Connection("orders-db")] = "Host=dummy;Database=dummy;Username=u;Password=p",
+            // Injection value — contains a semicolon, which is outside [A-Za-z0-9_.].
+            ["tbl"] = "orders; DROP TABLE x",
+        };
+        var globals = new Platform.Engine.Abstractions.ScriptGlobalVariables(vars);
+
+        // Must NOT throw — the helper catches the InvalidOperationException internally.
+        await Platform.Engine.Compilation.RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = Platform.Engine.Abstractions.VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<Platform.Engine.Abstractions.StepOutcome>(vars[outcomeKey]);
+        // The injection must yield EnvironmentError (not a propagated exception).
+        Assert.Equal(Platform.Engine.Abstractions.Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

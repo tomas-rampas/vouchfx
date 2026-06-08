@@ -7,6 +7,7 @@
 //   - Defaults Capture to an empty dict and ContinueOnFailure to false.
 //   - Attaches the YamlMappingNode for downstream provider binders.
 
+using System.Linq;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Authoring.Model;
@@ -36,6 +37,23 @@ public static class AstBuilder
     private const string DbAssertFamily = "db-assert";
 
     /// <summary>
+    /// All engine-reserved <c>Vars</c> key prefixes that authors must not use for
+    /// capture variable names or <c>variables:</c> block entries (M-A security fix).
+    /// </summary>
+    /// <remarks>
+    /// Sourced from <see cref="VarKeys"/> constants so the enforcement and the
+    /// documentation remain in sync.  Checked at AST build time so the rejection
+    /// is a deterministic compile-time error, not a silent runtime overwrite.
+    /// </remarks>
+    private static readonly string[] s_reservedPrefixes =
+    {
+        VarKeys.ServicesPrefix,
+        VarKeys.ConnectionsPrefix,
+        VarKeys.OutcomePrefix,
+        VarKeys.CaptureStatusPrefix,
+    };
+
+    /// <summary>
     /// Normalises <paramref name="doc"/> into a <see cref="ScenarioAst"/> using
     /// the provider registrations in <paramref name="registry"/>.
     /// </summary>
@@ -57,8 +75,19 @@ public static class AstBuilder
     /// </exception>
     public static ScenarioAst Build(E2eDocument doc, StepKindRegistry registry)
     {
-        var variables = doc.Variables
+        var rawVariables = doc.Variables
             ?? (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // M-A: Reject any variable name that begins with a reserved engine prefix.
+        // An author writing e.g. "conn::orders-db" into the variables block would make
+        // the engine write an arbitrary value into a connection-string key — a
+        // connection-redirection vector.  VarKeys documents the rule; AstBuilder enforces it.
+        foreach (var varName in rawVariables.Keys)
+        {
+            CheckReservedPrefix(varName, context: "variables");
+        }
+
+        var variables = rawVariables;
 
         // M3: Track sanitised ids to detect both raw-duplicate and post-sanitisation
         // collisions (e.g. "a-b" and "a_b" both fold to "a_b" via SanitiseId).
@@ -104,8 +133,20 @@ public static class AstBuilder
         var canonicalType = $"{kind.Family}.{kind.Provider}";
         var verifyMode = ResolveVerifyMode(step);
         var timeout = ResolveTimeout(step);
-        var capture = step.Capture
+        var rawCapture = step.Capture
             ?? (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // M-A: Reject any capture key that begins with a reserved engine prefix.
+        // A capture key maps an HTTP-response value into Vars; if the key begins with
+        // e.g. "conn::" the author-controlled response can overwrite a connection string
+        // that a later db-assert reads — a connection-redirection vector.
+        foreach (var captureKey in rawCapture.Keys)
+        {
+            CheckReservedPrefix(captureKey, context: "capture", stepId: step.Id,
+                line: step.RawNode.Start.Line, col: step.RawNode.Start.Column);
+        }
+
+        var capture = rawCapture;
         var continueOnFailure = step.ContinueOnFailure ?? false;
 
         return new StepNode(
@@ -217,6 +258,45 @@ public static class AstBuilder
                     col,
                     $"ambiguous step family '{raw}'; specify a provider, e.g. {raw}.{matches[0].Kind.Provider}"),
         };
+    }
+
+    // -------------------------------------------------------------------------
+    // Reserved-prefix enforcement (M-A security fix)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Throws <see cref="AstBuildException"/> when <paramref name="name"/> begins with
+    /// any engine-reserved <c>Vars</c> prefix documented in <see cref="VarKeys"/>.
+    /// </summary>
+    /// <param name="name">The capture key or variable name to check.</param>
+    /// <param name="context">Human-readable context string for the error message
+    /// (e.g. <c>"capture"</c> or <c>"variables"</c>).</param>
+    /// <param name="stepId">Optional step id for capture-key errors.</param>
+    /// <param name="line">Optional source line for the exception (capture path).</param>
+    /// <param name="col">Optional source column for the exception (capture path).</param>
+    /// <exception cref="AstBuildException">
+    /// Thrown when <paramref name="name"/> starts with a reserved prefix.
+    /// </exception>
+    private static void CheckReservedPrefix(
+        string name,
+        string context,
+        string? stepId = null,
+        long line = 0,
+        long col = 0)
+    {
+        var matchedPrefix = s_reservedPrefixes
+            .FirstOrDefault(p => name.StartsWith(p, StringComparison.Ordinal));
+
+        if (matchedPrefix is null)
+            return;
+
+        throw new AstBuildException(
+            stepId ?? "(variables)",
+            line,
+            col,
+            $"{context} key '{name}' begins with the engine-reserved prefix '{matchedPrefix}' " +
+            $"and cannot be used as an author-defined name; this prefix is reserved for " +
+            $"internal engine bookkeeping (see VarKeys).");
     }
 
     // -------------------------------------------------------------------------
