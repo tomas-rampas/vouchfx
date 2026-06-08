@@ -205,7 +205,7 @@ public sealed class StepKindRegistry
             }
             catch (ReflectionTypeLoadException ex)
             {
-                assemblyTypes = ex.Types.Where(t => t is not null)!;
+                assemblyTypes = ex.Types.OfType<Type>();
             }
 
             foreach (var type in assemblyTypes)
