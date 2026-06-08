@@ -83,6 +83,10 @@ public sealed class DbAssertPostgresDockerTests
 
         /// <inheritdoc />
         public string SuiteNamespace => "Generated";
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     /// <summary>

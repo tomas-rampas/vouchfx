@@ -287,6 +287,8 @@ public sealed class SchemaCompositionTests
         public TestCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     /// <summary>Minimal test implementation of <see cref="IBindingContext"/>.</summary>

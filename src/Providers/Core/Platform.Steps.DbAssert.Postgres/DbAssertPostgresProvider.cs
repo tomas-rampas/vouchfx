@@ -3,6 +3,11 @@
 // F-01 implementation: IStepProvider + IStepBinder<T> + IStepValidator<T>.
 // F-02 adds: IStepCompiler<T> + IResourceContributor<T> + ICompileReferenceContributor.
 //
+// S04-B-03: {placeholder} substitution is now applied to the SQL query text and each
+//   parameter VALUE at execution time via Substitute_Helpers.Resolve(Vars, …).
+//   The query stays parameterised — substitution happens on the parameter value string
+//   (and on the query text for non-parameter placeholders such as table identifiers).
+//
 // Schema composition invariants (§13.3.1, §13.6):
 //   • SchemaFragment describes ONLY the provider's own fields (target, query,
 //     parameters, expect).  The type const discriminator is injected by the
@@ -15,6 +20,8 @@ using System.Text.Json;
 using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
+
+// SubstituteHelper.Source is sourced from Platform.Sdk (S04-B-03).
 
 namespace Platform.Steps.DbAssert.Postgres;
 
@@ -454,12 +461,28 @@ public sealed class DbAssertPostgresProvider
             ? rc.ToString(CultureInfo.InvariantCulture)
             : "null";
 
+        // S04-B-03: wrap the query text in Substitute_Helpers.Resolve so {placeholder}
+        // tokens in the SQL text resolve against Vars at runtime.  The JSON-escape ensures
+        // any embedded quotes or backslashes in the SQL do not break the C# string literal.
+        var resolvedQuery = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(model.Query)})";
+
+        // S04-B-03: wrap each parameter VALUE in Substitute_Helpers.Resolve.  Parameter
+        // NAMES are SQL identifiers and are not subject to substitution.  The substituted
+        // value is still passed via AddWithValue (parameterised SQL), so the query itself
+        // is never string-concatenated — SQL injection safety is preserved.
+        var resolvedParamValues = new string[paramValues.Length];
+        for (int i = 0; i < paramValues.Length; i++)
+        {
+            resolvedParamValues[i] = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(paramValues[i])})";
+        }
+
         // Emit parameter/column/value arrays as JSON-encoded individual string literals
         // inside C# array initialisers, following the same discipline as http.rest:
         // each element is wrapped with JsonSerializer.Serialize so embedded quotes,
         // backslashes, and control characters are escaped before splicing into CSX.
         var paramNamesLiteral = BuildStringArrayLiteral(paramNames);
-        var paramValuesLiteral = BuildStringArrayLiteral(paramValues);
+        // paramValues are emitted as Substitute_Helpers.Resolve(…) call expressions.
+        var paramValuesLiteral = BuildResolvedArrayLiteral(resolvedParamValues);
         var expectColumnsLiteral = BuildStringArrayLiteral(expectColumns);
         var expectValuesLiteral = BuildStringArrayLiteral(expectValues);
 
@@ -468,17 +491,15 @@ public sealed class DbAssertPostgresProvider
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
         //
-        // Outcome key, connection key, and query are emitted via JsonSerializer.Serialize,
-        // which wraps each value in double-quotes and escapes any embedded quotes, backslashes,
-        // or control characters.  This prevents CSX-literal breakage and removes a string-
-        // injection surface.
+        // Outcome key and connection key are emitted via JsonSerializer.Serialize.
+        // Query and param values are emitted as Substitute_Helpers.Resolve(…) calls (B-03).
         var block = $$"""
             {
                 await DbAssertPostgres_Helpers.ExecuteAsync(
                     Vars,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
-                    {{JsonSerializer.Serialize(model.Query)}},
+                    {{resolvedQuery}},
                     {{paramNamesLiteral}},
                     {{paramValuesLiteral}},
                     {{rowCountLiteral}},
@@ -487,9 +508,13 @@ public sealed class DbAssertPostgresProvider
             }
             """;
 
+        // Add SubstituteHelper.Source to RequiredHelpers (B-03).
+        // CsxAssembler deduplicates by class name so it is included at most once.
+        var helpers = new List<string>(s_helpers) { SubstituteHelper.Source };
+
         return new CsxFragment(
             RequiredUsings: s_usings,
-            RequiredHelpers: s_helpers,
+            RequiredHelpers: helpers,
             StatementBlock: block);
     }
 
@@ -557,6 +582,30 @@ public sealed class DbAssertPostgresProvider
             // surrounding double-quotes, e.g. "\"hello\"" for the value hello.
             // This is a valid C# string literal so it can be spliced directly.
             sb.Append(JsonSerializer.Serialize(values[i]));
+        }
+        sb.Append(" }");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a C# array-initialiser literal from an array of pre-formed C# expression
+    /// strings (e.g. <c>Substitute_Helpers.Resolve(Vars, "…")</c>).  Unlike
+    /// <see cref="BuildStringArrayLiteral"/>, the elements are spliced directly as
+    /// code — they are already valid C# expressions, not string values to be quoted.
+    /// </summary>
+    private static string BuildResolvedArrayLiteral(string[] expressions)
+    {
+        if (expressions.Length == 0)
+        {
+            return "new string[] { }";
+        }
+
+        var sb = new System.Text.StringBuilder("new string[] { ");
+        for (int i = 0; i < expressions.Length; i++)
+        {
+            if (i > 0)
+                sb.Append(", ");
+            sb.Append(expressions[i]);
         }
         sb.Append(" }");
         return sb.ToString();

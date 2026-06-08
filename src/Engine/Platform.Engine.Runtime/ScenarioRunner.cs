@@ -24,6 +24,7 @@
 //     RespawnPostgresIsolation (or NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Authoring;
@@ -121,6 +122,12 @@ public static class ScenarioRunner
 {
     // Fixed suite namespace injected into every ICompileContext during emit.
     private const string SuiteNamespace = "VouchfxGenerated";
+
+    // Compiled-once regex that matches {identifier} placeholder tokens (S04-G-01).
+    // Identical pattern to Substitute_Helpers inside the CSX — used here for
+    // compile-time provenance derivation only; never used to read runtime values.
+    private static readonly Regex s_placeholderRegex =
+        new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -754,6 +761,13 @@ public static class ScenarioRunner
         var aggregate = Verdict.Pass;
         var counts = new int[4];
 
+        // Build a map of varName → stepId for all captures defined in this scenario,
+        // so that substitution provenance (G-01) can trace each placeholder's origin.
+        // Only steps that appear BEFORE the current step contribute (captures are
+        // forward-threading: a step can only read what a prior step captured).
+        // We build the full map once and use it as a lookup in the loop below.
+        var captureOriginMap = BuildCaptureOriginMap(ast.Steps);
+
         foreach (var node in ast.Steps)
         {
             var safeId = CsxFragment.SanitiseId(node.Id);
@@ -776,6 +790,64 @@ public static class ScenarioRunner
             var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
             var durationMs = outcome?.DurationMs ?? 0L;
 
+            // ── G-01: build Captured provenance ──────────────────────────────
+            IReadOnlyList<CapturedVar>? capturedList = null;
+            if (node.Capture.Count > 0)
+            {
+                // Read the matched-flag string written by the emitted block:
+                // format is "1,0,1" — one flag per capture in declaration order.
+                string? captureStatusRaw = null;
+                if (vars.TryGetValue(VarKeys.CaptureStatus(safeId), out var csRaw)
+                    && csRaw is string csStr)
+                {
+                    captureStatusRaw = csStr;
+                }
+
+                var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
+                var capturedVars = new List<CapturedVar>(node.Capture.Count);
+                var captureKeys = node.Capture.Keys.ToArray();
+                var captureVals = node.Capture.Values.ToArray();
+
+                for (int ci = 0; ci < captureKeys.Length; ci++)
+                {
+                    var matched = ci < flagTokens.Length && flagTokens[ci] == "1";
+                    capturedVars.Add(new CapturedVar(
+                        Name: captureKeys[ci],
+                        Path: captureVals[ci],
+                        Matched: matched));
+                }
+                capturedList = capturedVars;
+            }
+
+            // ── G-01: build Substitutions provenance (compile-time) ───────────
+            // Scan every substitutable field in the step's raw YAML for {name}
+            // tokens.  This is compile-time derivation — no runtime value is read.
+            IReadOnlyList<SubstitutionRef>? substitutionsList = null;
+            var substitutableTexts = CollectSubstitutableTexts(node);
+            if (substitutableTexts.Count > 0)
+            {
+                var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
+                var subs = new List<SubstitutionRef>();
+                foreach (var text in substitutableTexts)
+                {
+                    foreach (System.Text.RegularExpressions.Match m in
+                        s_placeholderRegex.Matches(text))
+                    {
+                        var placeholder = m.Groups[1].Value;
+                        if (!seenPlaceholders.Add(placeholder))
+                            continue; // deduplicate within step
+
+                        captureOriginMap.TryGetValue(placeholder, out var originStepId);
+                        subs.Add(new SubstitutionRef(
+                            Placeholder: placeholder,
+                            OriginStepId: originStepId,
+                            SecretDerived: false)); // no secret resolution this sprint
+                    }
+                }
+                if (subs.Count > 0)
+                    substitutionsList = subs;
+            }
+
             buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
             {
                 RunId = runId,
@@ -783,6 +855,8 @@ public static class ScenarioRunner
                 StepId = node.Id,
                 Verdict = stepVerdict,
                 DurationMs = durationMs,
+                Captured = capturedList,
+                Substitutions = substitutionsList,
             }));
 
             counts[(int)stepVerdict]++;
@@ -862,6 +936,121 @@ public static class ScenarioRunner
     };
 
     // ── Full TPA reference list for compile ───────────────────────────────────
+
+    /// <summary>
+    /// Builds a map from variable name to the step identifier that first declares
+    /// that variable in its <c>capture</c> block.  Used for G-01 provenance
+    /// (substitution origin tracing).
+    /// </summary>
+    /// <param name="steps">All steps in the scenario, in declaration order.</param>
+    /// <returns>
+    /// A dictionary mapping each captured variable name to the <c>id</c> of the
+    /// step that declares it.  When the same name is declared by multiple steps
+    /// (overwriting), the first declaration wins (it is the origin).
+    /// </returns>
+    private static Dictionary<string, string> BuildCaptureOriginMap(
+        IReadOnlyList<StepNode> steps)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var step in steps)
+        {
+            foreach (var varName in step.Capture.Keys)
+            {
+                if (!map.ContainsKey(varName))
+                    map[varName] = step.Id;
+            }
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// Returns the set of raw field values from <paramref name="node"/> that are
+    /// subject to <c>{placeholder}</c> substitution at runtime (B-03).  These are
+    /// the fields whose emitted CSX wraps the value in
+    /// <c>Substitute_Helpers.Resolve(Vars, …)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The implementation uses the raw YAML mapping node to extract the same fields
+    /// that the provider emitters wrap.  For <c>http.rest</c> this is <c>path</c>
+    /// (and header values when present); for <c>db-assert.postgres</c> this is
+    /// <c>query</c> and each parameter value.
+    /// <para>
+    /// This is a best-effort compile-time scan: it reads the known substitutable
+    /// YAML keys for recognised step types.  Unknown provider types are skipped.
+    /// </para>
+    /// </remarks>
+    private static List<string> CollectSubstitutableTexts(StepNode node)
+    {
+        var texts = new List<string>();
+        var raw = node.RawNode;
+
+        // http.rest: 'path' and each header value are substitutable (B-03).
+        if (string.Equals(node.CanonicalType, "http.rest", StringComparison.Ordinal))
+        {
+            if (TryGetScalar(raw, "path", out var path) && !string.IsNullOrEmpty(path))
+                texts.Add(path);
+
+            if (raw.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("headers"),
+                    out var headersNode)
+                && headersNode is YamlDotNet.RepresentationModel.YamlMappingNode headersMap)
+            {
+                foreach (var kv in headersMap.Children)
+                {
+                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
+                        && !string.IsNullOrEmpty(sv.Value))
+                    {
+                        texts.Add(sv.Value);
+                    }
+                }
+            }
+        }
+        // db-assert.postgres: 'query' and each parameter value are substitutable (B-03).
+        else if (string.Equals(
+            node.CanonicalType, "db-assert.postgres", StringComparison.Ordinal))
+        {
+            if (TryGetScalar(raw, "query", out var query) && !string.IsNullOrEmpty(query))
+                texts.Add(query);
+
+            if (raw.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("parameters"),
+                    out var paramsNode)
+                && paramsNode is YamlDotNet.RepresentationModel.YamlMappingNode paramsMap)
+            {
+                foreach (var kv in paramsMap.Children)
+                {
+                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
+                        && !string.IsNullOrEmpty(sv.Value))
+                    {
+                        texts.Add(sv.Value);
+                    }
+                }
+            }
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// Tries to read a scalar string value from <paramref name="mapping"/> for
+    /// <paramref name="key"/>.
+    /// </summary>
+    private static bool TryGetScalar(
+        YamlDotNet.RepresentationModel.YamlMappingNode mapping,
+        string key,
+        out string value)
+    {
+        if (mapping.Children.TryGetValue(
+                new YamlDotNet.RepresentationModel.YamlScalarNode(key), out var node)
+            && node is YamlDotNet.RepresentationModel.YamlScalarNode scalar
+            && scalar.Value is not null)
+        {
+            value = scalar.Value;
+            return true;
+        }
+        value = string.Empty;
+        return false;
+    }
 
     /// <summary>
     /// Returns the full Trusted-Platform-Assemblies (TPA) list as an

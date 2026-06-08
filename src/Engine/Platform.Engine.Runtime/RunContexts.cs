@@ -65,14 +65,28 @@ internal sealed class RunProjectContext : Platform.Sdk.IProjectContext
 /// during the <c>ScenarioRunner</c>'s emit phase.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Carries the step identifier and the suite-level namespace required by
 /// <see cref="Platform.Sdk.IStepCompiler{TModel}.Emit"/> implementations.
+/// </para>
+/// <para>
+/// Sprint-4 addition (S04-B-02): <see cref="Captures"/> carries the
+/// <c>capture</c> map from the YAML step node so that providers can emit
+/// JSONPath-based capture logic directly into the generated CSX block.
+/// </para>
 /// </remarks>
 internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
 {
     /// <summary>
+    /// An empty captures map used as the default when a step has no
+    /// <c>capture</c> section.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> s_empty =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Initialises a new <see cref="RunCompileContext"/> with the given step
-    /// identifier and suite namespace.
+    /// identifier, suite namespace, and capture map.
     /// </summary>
     /// <param name="stepId">
     /// The identifier of the step currently being compiled.
@@ -80,10 +94,18 @@ internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
     /// <param name="suiteNamespace">
     /// The C# namespace into which the compiled suite is emitted.
     /// </param>
-    public RunCompileContext(string stepId, string suiteNamespace)
+    /// <param name="captures">
+    /// The step's <c>capture</c> map (varName → JSONPath expression).
+    /// Pass <see langword="null"/> or omit to use an empty dictionary.
+    /// </param>
+    public RunCompileContext(
+        string stepId,
+        string suiteNamespace,
+        IReadOnlyDictionary<string, string>? captures = null)
     {
         StepId = stepId;
         SuiteNamespace = suiteNamespace;
+        Captures = captures ?? s_empty;
     }
 
     /// <inheritdoc />
@@ -91,4 +113,7 @@ internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
 
     /// <inheritdoc />
     public string SuiteNamespace { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, string> Captures { get; }
 }

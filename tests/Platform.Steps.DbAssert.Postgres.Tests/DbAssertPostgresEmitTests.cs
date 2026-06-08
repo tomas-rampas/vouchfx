@@ -38,6 +38,10 @@ public sealed class DbAssertPostgresEmitTests
 
         /// <inheritdoc />
         public string SuiteNamespace => "Generated";
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     // ── Shared provider instance ──────────────────────────────────────────────────
@@ -89,8 +93,11 @@ public sealed class DbAssertPostgresEmitTests
     // ── 3. Helper class name prefix ───────────────────────────────────────────────
 
     /// <summary>
-    /// <see cref="CsxFragment.RequiredHelpers"/> must contain exactly one entry
-    /// whose class name begins with <c>DbAssertPostgres_</c> (§13.3.1 provider-prefix rule).
+    /// <see cref="CsxFragment.RequiredHelpers"/> must contain an entry whose class name
+    /// begins with <c>DbAssertPostgres_</c> (§13.3.1 provider-prefix rule).
+    /// Since S04-B-03 the fragment also contains <c>Substitute_Helpers</c>; the test
+    /// therefore asserts the provider-prefixed class is present rather than requiring
+    /// exactly one helper.
     /// </summary>
     [Fact]
     public void Emit_RequiredHelpers_ContainsDbAssertPostgresPrefixedClass()
@@ -100,9 +107,8 @@ public sealed class DbAssertPostgresEmitTests
 
         var fragment = _provider.Emit(model, ctx);
 
-        Assert.Single(fragment.RequiredHelpers);
-        Assert.Contains("DbAssertPostgres_Helpers", fragment.RequiredHelpers[0],
-            StringComparison.Ordinal);
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("DbAssertPostgres_Helpers", StringComparison.Ordinal));
     }
 
     // ── 4. Step-id sanitisation ──────────────────────────────────────────────────

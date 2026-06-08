@@ -163,6 +163,8 @@ public sealed class RespawnResetProofTests
         public StubCtx(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     // ── Test ──────────────────────────────────────────────────────────────────

@@ -123,4 +123,37 @@ public static class VarKeys
         ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
         return $"__outcome::{sanitisedStepId}";
     }
+
+    /// <summary>
+    /// The prefix for engine-managed per-step capture-status entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="CaptureStatus(string)"/> to build the full key.
+    /// </remarks>
+    public const string CaptureStatusPrefix = "__capture_status::";
+
+    /// <summary>
+    /// Returns the <c>Vars</c> key under which an emitted CSX step block writes its
+    /// per-capture matched-flag record for the runner to consume when emitting
+    /// provenance events (G-01, S04-B-02).
+    /// </summary>
+    /// <param name="sanitisedStepId">
+    /// The step identifier after sanitisation (hyphens replaced with underscores
+    /// via <c>CsxFragment.SanitiseId</c>, §13.3.1).  Must not be
+    /// <see langword="null"/> or empty.
+    /// </param>
+    /// <returns>
+    /// A string of the form <c>__capture_status::&lt;sanitisedStepId&gt;</c>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="sanitisedStepId"/> is <see langword="null"/> or
+    /// empty.
+    /// </exception>
+    public static string CaptureStatus(string sanitisedStepId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
+        return $"{CaptureStatusPrefix}{sanitisedStepId}";
+    }
 }

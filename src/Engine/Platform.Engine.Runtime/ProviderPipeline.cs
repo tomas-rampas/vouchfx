@@ -154,7 +154,9 @@ internal static class ProviderPipeline
 
             var instance = rp.Instance;
             var bindingCtx = new RunBindingContext();
-            var compileCtx = new RunCompileContext(node.Id, suiteNamespace);
+            // S04-B-02: pass the step's capture map into the compile context so
+            // providers can emit JSONPath-based capture logic into the CSX block.
+            var compileCtx = new RunCompileContext(node.Id, suiteNamespace, node.Capture);
 
             // ── Bind ──────────────────────────────────────────────────────────
             var model = ReflectBind(instance, node.RawNode, bindingCtx);

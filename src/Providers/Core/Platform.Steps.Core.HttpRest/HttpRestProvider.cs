@@ -10,6 +10,15 @@
 //   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
 //     contains the full provider-id-prefixed static class definition; StatementBlock
 //     is a C# 11 $$"""…""" block; 'using var' is illegal.
+//
+// S04-B-02 additions: JSONPath capture — when ctx.Captures is non-empty the emitted
+//   block reads the response body and applies JsonPath.Net to extract named variables.
+//   A JSONPath miss → Verdict.Inconclusive (upstream-capture-unmet, §12.1).
+//   Matched flags are written to VarKeys.CaptureStatus(safeId) for G-01.
+//
+// S04-B-03 additions: {placeholder} substitution — the 'path' field (and header
+//   values if present) are wrapped in Substitute_Helpers.Resolve(Vars, …) so that
+//   {name} tokens are resolved at runtime against Vars.
 using System.Globalization;
 using System.Text.Json;
 using Platform.Engine.Abstractions;
@@ -38,6 +47,18 @@ namespace Platform.Steps.HttpRest;
 /// writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for the runner
 /// to read after execution (§13.3.1).
 /// </para>
+/// <para>
+/// Sprint-4 (S04-B-02): when the YAML step declares a <c>capture</c> block, the
+/// emitted CSX reads the response body, evaluates each JSONPath expression via
+/// JsonPath.Net, and writes matching values into <c>Vars</c>.  A path that yields
+/// no match sets the outcome to <see cref="Verdict.Inconclusive"/> with reason
+/// <c>upstream-capture-unmet</c> (§12.1).
+/// </para>
+/// <para>
+/// Sprint-4 (S04-B-03): the <c>path</c> field and any header values are wrapped
+/// at emit time in <c>Substitute_Helpers.Resolve(Vars, …)</c> so that
+/// <c>{placeholder}</c> tokens resolve against <c>Vars</c> at runtime.
+/// </para>
 /// </remarks>
 [StepProvider]
 public sealed class HttpRestProvider
@@ -45,7 +66,8 @@ public sealed class HttpRestProvider
       IStepBinder<HttpRestModel>,
       IStepValidator<HttpRestModel>,
       IStepCompiler<HttpRestModel>,
-      IResourceContributor<HttpRestModel>
+      IResourceContributor<HttpRestModel>,
+      ICompileReferenceContributor
 {
     // ── Allowed HTTP verbs ────────────────────────────────────────────────────
 
@@ -82,6 +104,15 @@ public sealed class HttpRestProvider
     /// is a <c>using</c> statement, not a <c>using var</c> declaration).
     /// </para>
     /// <para>
+    /// S04-B-02: the helper now accepts optional capture arrays (varNames,
+    /// jsonPaths) and a captureStatusKey.  When provided, the response body is
+    /// read once, each JSONPath is evaluated via JsonPath.Net, and matched values
+    /// are written to <c>Vars</c>.  Unmatched paths set the outcome to
+    /// <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).
+    /// A comma-delimited matched-flag string is written under captureStatusKey
+    /// for the G-01 provenance event.
+    /// </para>
+    /// <para>
     /// The helper must be byte-identical across every instance of the same
     /// provider within a suite (§13.3.1 dedup rule); it contains no
     /// per-step interpolation.
@@ -94,6 +125,8 @@ public sealed class HttpRestProvider
         "    /// <summary>\n" +
         "    /// Issues an HTTP request, evaluates the response status against the\n" +
         "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
+        "    /// When capture arrays are non-empty, reads the response body once and\n" +
+        "    /// applies each JSONPath via JsonPath.Net; a miss → Inconclusive.\n" +
         "    /// Uses safe URI resolution (same-authority guard) and disables\n" +
         "    /// automatic redirects to prevent SSRF via 3xx bounces (§security M1).\n" +
         "    /// Timeout verdict = Inconclusive; connection failures = EnvironmentError (§12.1).\n" +
@@ -101,10 +134,13 @@ public sealed class HttpRestProvider
         "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        string outcomeKey,\n" +
+        "        string captureStatusKey,\n" +
         "        string serviceKey,\n" +
         "        string method,\n" +
         "        string path,\n" +
-        "        int? expectedStatus)\n" +
+        "        int? expectedStatus,\n" +
+        "        string[] captureVarNames,\n" +
+        "        string[] captureJsonPaths)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Platform.Engine.Abstractions.Verdict verdict;\n" +
@@ -148,6 +184,58 @@ public sealed class HttpRestProvider
         "                        ? expectedStatus.Value.ToString(\n" +
         "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
         "                        : \"null\") + \"}\";\n" +
+        "\n" +
+        "                // ── S04-B-02: JSONPath capture ──────────────────────────────\n" +
+        "                if (captureVarNames.Length > 0 && verdict != Platform.Engine.Abstractions.Verdict.Fail)\n" +
+        "                {\n" +
+        "                    var bodyStr = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);\n" +
+        "                    var matchedFlags = new bool[captureVarNames.Length];\n" +
+        "                    for (int ci = 0; ci < captureVarNames.Length; ci++)\n" +
+        "                    {\n" +
+        "                        var varName = captureVarNames[ci];\n" +
+        "                        var jsonPath = captureJsonPaths[ci];\n" +
+        "                        bool matched = false;\n" +
+        "                        try\n" +
+        "                        {\n" +
+        "                            var node = System.Text.Json.Nodes.JsonNode.Parse(bodyStr);\n" +
+        "                            var pathResult = Json.Path.JsonPath.Parse(jsonPath).Evaluate(node);\n" +
+        "                            var matches = pathResult.Matches;\n" +
+        "                            if (matches != null && matches.Count > 0 && matches[0].Value is not null)\n" +
+        "                            {\n" +
+        "                                var firstMatch = matches[0].Value;\n" +
+        "                                string capturedStr;\n" +
+        "                                if (firstMatch is System.Text.Json.Nodes.JsonValue jv)\n" +
+        "                                {\n" +
+        "                                    // Scalar value: emit the raw string/number/bool without surrounding quotes.\n" +
+        "                                    var rawElem = jv.GetValue<System.Text.Json.JsonElement>();\n" +
+        "                                    capturedStr = rawElem.ValueKind == System.Text.Json.JsonValueKind.String\n" +
+        "                                        ? rawElem.GetString() ?? string.Empty\n" +
+        "                                        : rawElem.GetRawText();\n" +
+        "                                }\n" +
+        "                                else\n" +
+        "                                {\n" +
+        "                                    // Object or array: compact JSON.\n" +
+        "                                    capturedStr = firstMatch.ToJsonString();\n" +
+        "                                }\n" +
+        "                                vars[varName] = capturedStr;\n" +
+        "                                matched = true;\n" +
+        "                            }\n" +
+        "                        }\n" +
+        "                        catch (System.Exception)\n" +
+        "                        {\n" +
+        "                            matched = false;\n" +
+        "                        }\n" +
+        "                        matchedFlags[ci] = matched;\n" +
+        "                        if (!matched)\n" +
+        "                        {\n" +
+        "                            verdict = Platform.Engine.Abstractions.Verdict.Inconclusive;\n" +
+        "                            observation = \"{\\\"captureUnmet\\\":\" +\n" +
+        "                                System.Text.Json.JsonSerializer.Serialize(varName) + \"}\";\n" +
+        "                        }\n" +
+        "                    }\n" +
+        "                    // Write per-capture matched flags as a comma-delimited string for G-01.\n" +
+        "                    vars[captureStatusKey] = string.Join(\",\", System.Array.ConvertAll(matchedFlags, f => f ? \"1\" : \"0\"));\n" +
+        "                }\n" +
         "            }\n" +
         "        }\n" +
         "        catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException\n" +
@@ -363,20 +451,33 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// Full implementation for Sprint 3 (S03-F-01/F-02): emits a CSX block whose
-    /// execution issues an HTTP request, evaluates the response status against
-    /// <c>expect.status</c>, and writes a typed <see cref="StepOutcome"/> into
-    /// <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
-    /// after the script returns.
+    /// Sprint-3 (S03-F-01/F-02) + Sprint-4 (S04-B-02/B-03): emits a CSX block
+    /// whose execution:
+    /// <list type="bullet">
+    ///   <item>Resolves <c>{placeholder}</c> tokens in the <c>path</c> via
+    ///   <c>Substitute_Helpers.Resolve</c> (B-03).</item>
+    ///   <item>Issues the HTTP request.</item>
+    ///   <item>When <see cref="ICompileContext.Captures"/> is non-empty, reads the
+    ///   response body and evaluates each JSONPath via JsonPath.Net.  A miss →
+    ///   <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).</item>
+    ///   <item>Writes a typed <see cref="StepOutcome"/> into
+    ///   <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c>.</item>
+    ///   <item>Writes per-capture matched flags to
+    ///   <c>Vars[VarKeys.CaptureStatus(sanitisedStepId)]</c> for G-01.</item>
+    /// </list>
     /// </para>
     /// <para>
     /// CsxFragment rules observed (§13.3.1):
     /// <list type="bullet">
     ///   <item><see cref="CsxFragment.RequiredUsings"/> — bare namespace strings.</item>
-    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class HttpRest_Helpers</c> definition; byte-identical across instances.</item>
-    ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
-    ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
-    ///   <item>The <c>expect.status</c> integer (or <c>null</c>) is emitted as a bare literal, not as a string.</item>
+    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full helper class definitions;
+    ///   byte-identical across instances.</item>
+    ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block;
+    ///   no <c>using var</c>.</item>
+    ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped
+    ///   C# string literals.</item>
+    ///   <item>The <c>expect.status</c> integer (or <c>null</c>) is emitted as a bare
+    ///   literal, not as a string.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -390,30 +491,66 @@ public sealed class HttpRestProvider
             ? st.ToString(CultureInfo.InvariantCulture)
             : "null";
 
+        // S04-B-03: wrap 'path' in Substitute_Helpers.Resolve so {placeholder} tokens
+        // resolve against Vars at runtime.  The path value is JSON-escaped into a C#
+        // string literal — any {placeholder} inside it survives as LITERAL TEXT (not an
+        // emit-time interpolation hole) and is processed by the Regex at runtime.
+        // CRITICAL: we are inside a $$"""…""" block, so {{expr}} is the interpolation
+        // hole.  JsonSerializer.Serialize wraps the path in double-quotes, producing a
+        // valid C# string literal that the runtime Regex then scans for {name} tokens.
+        var resolvedPath = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(model.Path)})";
+
+        // S04-B-02: expand the captures map into parallel arrays.
+        string[] captureVarNames;
+        string[] captureJsonPaths;
+        if (ctx.Captures is { Count: > 0 } captures)
+        {
+            captureVarNames = captures.Keys.ToArray();
+            captureJsonPaths = captures.Values.ToArray();
+        }
+        else
+        {
+            captureVarNames = Array.Empty<string>();
+            captureJsonPaths = Array.Empty<string>();
+        }
+
+        var captureVarNamesLiteral = BuildStringArrayLiteral(captureVarNames);
+        var captureJsonPathsLiteral = BuildStringArrayLiteral(captureJsonPaths);
+
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
         //
-        // String arguments (outcomeKey, serviceKey, method, path) are emitted via
+        // String arguments (outcomeKey, serviceKey, method) are emitted via
         // JsonSerializer.Serialize, which wraps each value in double-quotes and
         // escapes any embedded quotes, backslashes, or control characters.
         // This prevents CSX-literal breakage and removes a string-injection surface.
+        //
+        // resolvedPath is already a Substitute_Helpers.Resolve(Vars, "…") call
+        // expression — it is spliced in directly as C# source, not as a string literal.
         var block = $$"""
             {
                 await HttpRest_Helpers.ExecuteAsync(
                     Vars,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
+                    {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
                     {{JsonSerializer.Serialize(model.Method)}},
-                    {{JsonSerializer.Serialize(model.Path)}},
-                    {{expectedLiteral}});
+                    {{resolvedPath}},
+                    {{expectedLiteral}},
+                    {{captureVarNamesLiteral}},
+                    {{captureJsonPathsLiteral}});
             }
             """;
 
+        // Build the helpers list: HttpRest_Helpers + Substitute_Helpers (B-03).
+        // SubstituteHelper.Source is byte-identical — deduplication handled by CsxAssembler.
+        var helpers = new List<string>(s_helpers) { SubstituteHelper.Source };
+
         return new CsxFragment(
             RequiredUsings: s_usings,
-            RequiredHelpers: s_helpers,
+            RequiredHelpers: helpers,
             StatementBlock: block);
     }
 
@@ -428,7 +565,55 @@ public sealed class HttpRestProvider
             Image: null);
     }
 
+    // ── ICompileReferenceContributor ──────────────────────────────────────────
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Returns the <c>System.Net.Http</c> assembly (already required for the
+    /// helper) and the <c>JsonPath.Net</c> assembly so the Roslyn compiler can
+    /// resolve <c>Json.Path.JsonPath</c> in the capture logic (S04-B-02).
+    /// Both assemblies are already loaded in the Default ALC and must never be
+    /// loaded into the collectible ALC (§5 memory-model invariant).
+    /// </remarks>
+    public IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies
+    {
+        get
+        {
+            yield return typeof(System.Net.Http.HttpClient).Assembly;
+            // JsonPath.Net: Json.Path.JsonPath is in the Json.Path namespace.
+            yield return typeof(Json.Path.JsonPath).Assembly;
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a C# array-initialiser literal from a string array, with each
+    /// element individually JSON-serialised to escape embedded quotes, backslashes,
+    /// and control characters before splicing into the CSX StatementBlock.
+    /// </summary>
+    /// <remarks>
+    /// Example: <c>["a", "b\"c"]</c> →
+    /// <c>new string[] { "a", "b\"c" }</c>
+    /// where the inner quotes are escaped by <see cref="JsonSerializer.Serialize"/>.
+    /// </remarks>
+    private static string BuildStringArrayLiteral(string[] values)
+    {
+        if (values.Length == 0)
+        {
+            return "new string[] { }";
+        }
+
+        var sb = new System.Text.StringBuilder("new string[] { ");
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (i > 0)
+                sb.Append(", ");
+            sb.Append(JsonSerializer.Serialize(values[i]));
+        }
+        sb.Append(" }");
+        return sb.ToString();
+    }
 
     private static string GetScalar(YamlMappingNode mapping, string key)
     {

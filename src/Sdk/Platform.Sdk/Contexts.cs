@@ -59,6 +59,7 @@ public interface IProjectContext
 /// The members of this interface are frozen for the v1.x engine series;
 /// evolution is additive only, via new optional interfaces.
 /// Sprint-2 additions: <see cref="StepId"/> and <see cref="SuiteNamespace"/>.
+/// Sprint-4 addition: <see cref="Captures"/> (S04-B-02).
 /// </remarks>
 public interface ICompileContext
 {
@@ -75,4 +76,26 @@ public interface ICompileContext
     /// across suites must be avoided.
     /// </summary>
     string SuiteNamespace { get; }
+
+    /// <summary>
+    /// Gets the map of variable names to JSONPath expressions declared in the
+    /// step's <c>capture</c> block (DSL §3, S04-B-02).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Keys are the author-supplied variable names (e.g. <c>"orderId"</c>);
+    /// values are JSONPath expressions (e.g. <c>"$.id"</c>) that are evaluated
+    /// against the step's response body at execution time.
+    /// </para>
+    /// <para>
+    /// The map is never <see langword="null"/>; an empty dictionary is used when
+    /// the YAML step omits the <c>capture</c> section.
+    /// </para>
+    /// <para>
+    /// When a JSONPath expression yields no match the step outcome is set to
+    /// <c>Verdict.Inconclusive</c> with reason
+    /// <c>upstream-capture-unmet</c> (§12.1).
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, string> Captures { get; }
 }
