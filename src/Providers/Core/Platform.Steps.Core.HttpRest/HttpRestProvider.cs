@@ -249,14 +249,19 @@ public sealed class HttpRestProvider
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
+        //
+        // Each model value is emitted as a fully-escaped C# string literal via
+        // JsonSerializer.Serialize, which wraps the value in double-quotes and
+        // escapes any embedded quotes, backslashes, or control characters.  This
+        // prevents CSX-literal breakage and removes a string-injection surface.
         var block = $$"""
             {
                 HttpRest_Helpers.RecordPlanned(
                     Vars,
-                    "{{safeId}}",
-                    "{{model.Target}}",
-                    "{{model.Method}}",
-                    "{{model.Path}}");
+                    {{JsonSerializer.Serialize(safeId)}},
+                    {{JsonSerializer.Serialize(model.Target)}},
+                    {{JsonSerializer.Serialize(model.Method)}},
+                    {{JsonSerializer.Serialize(model.Path)}});
             }
             """;
 
