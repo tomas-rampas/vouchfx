@@ -75,16 +75,23 @@ public sealed class DbAssertSubstituteTests
     }
 
     /// <summary>
-    /// The SQL query text must NOT be wrapped in the bare
-    /// <c>Substitute_Helpers.Resolve(Vars, …)</c> call expression in the StatementBlock —
-    /// that overload allows arbitrary values and would re-open the SQL-injection sink (H1).
-    /// The StatementBlock passes the raw JSON-escaped template; the identifier-safe
-    /// resolution happens inside the helper.
+    /// H1 regression: the SQL query text must arrive at <c>ExecuteAsync</c> as a
+    /// DIRECT, UNWRAPPED JSON-escaped string literal in the StatementBlock — NOT
+    /// preceded by a <c>Substitute_Helpers.Resolve(Vars, …)</c> or
+    /// <c>Substitute_Helpers.ResolveIdentifier(Vars, …)</c> call expression.
+    /// This positively asserts the raw template is passed through verbatim so that
+    /// identifier substitution (and its injection-safety guard) occurs inside the
+    /// helper, not at the call site.
+    /// The identifier-safe <c>ResolveIdentifier</c> call must still appear at least
+    /// once in <see cref="CsxFragment.RequiredHelpers"/> (<c>DbAssertPostgres_Helpers</c>).
     /// </summary>
     [Fact]
     public void Emit_QueryText_StatementBlock_DoesNotContainBareResolveForQuery()
     {
         var provider = new DbAssertPostgresProvider();
+        // Use a model with no parameters so no Resolve call is emitted for param
+        // values — the only Resolve-ish token in the block would come from the query
+        // argument itself, keeping the negative assertions unambiguous.
         var model = new DbAssertPostgresModel(
             Target: "orders-db",
             Query: "SELECT * FROM {tableName} WHERE id = @p",
@@ -95,10 +102,24 @@ public sealed class DbAssertSubstituteTests
         var fragment = provider.Emit(model, ctx);
         var block = fragment.StatementBlock;
 
-        // No ResolveIdentifier expression in the block — it moved to the helper.
+        // Compute the exact JSON-escaped string literal the emitter splices for the query.
+        var queryLiteral = System.Text.Json.JsonSerializer.Serialize(model.Query);
+
+        // (a) The raw query literal must appear in the StatementBlock as a direct argument.
+        Assert.Contains(queryLiteral, block, StringComparison.Ordinal);
+
+        // (b) POSITIVE assertion: the query literal must NOT be immediately preceded by
+        //     Substitute_Helpers.Resolve(Vars,  — that would re-open the SQL-injection sink.
+        Assert.DoesNotContain("Resolve(Vars, " + queryLiteral, block, StringComparison.Ordinal);
+
+        // (c) POSITIVE assertion: the query literal must NOT be immediately preceded by
+        //     Substitute_Helpers.ResolveIdentifier(Vars,  — the call must live in the helper.
+        Assert.DoesNotContain("ResolveIdentifier(Vars, " + queryLiteral, block, StringComparison.Ordinal);
+
+        // (d) No ResolveIdentifier expression in the block at all — it moved to the helper.
         Assert.DoesNotContain("ResolveIdentifier(Vars,", block, StringComparison.Ordinal);
 
-        // The identifier-safe call must appear exactly in the helper source.
+        // (e) The identifier-safe call must appear exactly in the helper source.
         var allHelpers = string.Join("\n", fragment.RequiredHelpers);
         var identifierCallCount = CountOccurrences(allHelpers, "ResolveIdentifier");
         Assert.True(identifierCallCount >= 1,

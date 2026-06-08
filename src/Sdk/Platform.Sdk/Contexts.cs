@@ -10,10 +10,17 @@ namespace Platform.Sdk;
 /// such as resolution of shared configuration or diagnostic sinks.
 /// </summary>
 /// <remarks>
-/// The members of this interface are frozen for the v1.x engine series;
-/// evolution is additive only, via new optional interfaces.
-/// Sprint-1 surface: marker only.  Additional members are introduced
-/// in Sprint 2.
+/// <para>
+/// This context is <strong>engine-supplied and provider-consumed</strong>:
+/// providers receive an instance and read its members but never implement the
+/// interface. Adding a member is therefore non-breaking for providers — only the
+/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
+/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
+/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
+/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// freezes at the M1.5 milestone (end of Phase 2).
+/// </para>
+/// <para>Sprint-1 surface: marker only.</para>
 /// </remarks>
 public interface IBindingContext { }
 
@@ -24,13 +31,17 @@ public interface IBindingContext { }
 /// </summary>
 /// <remarks>
 /// <para>
-/// The members of this interface are frozen for the v1.x engine series;
-/// evolution is additive only, via new optional interfaces.
+/// This context is <strong>engine-supplied and provider-consumed</strong>:
+/// providers receive an instance and read its members but never implement the
+/// interface. Adding a member is therefore non-breaking for providers — only the
+/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
+/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
+/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
+/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// freezes at the M1.5 milestone (end of Phase 2).
 /// </para>
 /// <para>
-/// Sprint-4 addition: <see cref="DeclaredDependencies"/>.  Context interfaces
-/// are engine-supplied and provider-consumed, so additive members are
-/// frozen-contract-compatible.
+/// Sprint-4 addition: <see cref="DeclaredDependencies"/>.
 /// </para>
 /// </remarks>
 public interface IProjectContext
@@ -56,10 +67,20 @@ public interface IProjectContext
 /// shared helper registrations.
 /// </summary>
 /// <remarks>
-/// The members of this interface are frozen for the v1.x engine series;
-/// evolution is additive only, via new optional interfaces.
+/// <para>
+/// This context is <strong>engine-supplied and provider-consumed</strong>:
+/// providers receive an instance and read its members but never implement the
+/// interface. Adding a member is therefore non-breaking for providers — only the
+/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
+/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
+/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
+/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// freezes at the M1.5 milestone (end of Phase 2).
+/// </para>
+/// <para>
 /// Sprint-2 additions: <see cref="StepId"/> and <see cref="SuiteNamespace"/>.
 /// Sprint-4 addition: <see cref="Captures"/> (S04-B-02).
+/// </para>
 /// </remarks>
 public interface ICompileContext
 {

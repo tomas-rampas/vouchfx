@@ -106,9 +106,11 @@ public sealed class HttpRestProvider
     /// <para>
     /// S04-B-02: the helper now accepts optional capture arrays (varNames,
     /// jsonPaths) and a captureStatusKey.  When provided, the response body is
-    /// read once, each JSONPath is evaluated via JsonPath.Net, and matched values
-    /// are written to <c>Vars</c>.  Unmatched paths set the outcome to
-    /// <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).
+    /// read and parsed into a <c>JsonNode</c> ONCE before the per-capture loop
+    /// (a malformed body sets the node to <c>null</c>, marking all captures unmet).
+    /// Each JSONPath is then evaluated via JsonPath.Net against the cached node;
+    /// matched values are written to <c>Vars</c>.  Unmatched paths set the outcome
+    /// to <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).
     /// A comma-delimited matched-flag string is written under captureStatusKey
     /// for the G-01 provenance event.
     /// </para>
@@ -189,15 +191,32 @@ public sealed class HttpRestProvider
         "                if (captureVarNames.Length > 0 && verdict != Platform.Engine.Abstractions.Verdict.Fail)\n" +
         "                {\n" +
         "                    var bodyStr = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);\n" +
+        "                    // Parse the response body ONCE before the per-capture loop.\n" +
+        "                    // A malformed body sets node = null, which marks every capture unmet.\n" +
+        "                    System.Text.Json.Nodes.JsonNode? node;\n" +
+        "                    try\n" +
+        "                    {\n" +
+        "                        node = System.Text.Json.Nodes.JsonNode.Parse(bodyStr);\n" +
+        "                    }\n" +
+        "                    catch (System.Exception)\n" +
+        "                    {\n" +
+        "                        node = null;\n" +
+        "                    }\n" +
         "                    var matchedFlags = new bool[captureVarNames.Length];\n" +
         "                    for (int ci = 0; ci < captureVarNames.Length; ci++)\n" +
         "                    {\n" +
         "                        var varName = captureVarNames[ci];\n" +
         "                        var jsonPath = captureJsonPaths[ci];\n" +
         "                        bool matched = false;\n" +
+        "                        if (node == null)\n" +
+        "                        {\n" +
+        "                            // Body could not be parsed — capture is unmet for every path.\n" +
+        "                            matched = false;\n" +
+        "                        }\n" +
+        "                        else\n" +
+        "                        {\n" +
         "                        try\n" +
         "                        {\n" +
-        "                            var node = System.Text.Json.Nodes.JsonNode.Parse(bodyStr);\n" +
         "                            var pathResult = Json.Path.JsonPath.Parse(jsonPath).Evaluate(node);\n" +
         "                            var matches = pathResult.Matches;\n" +
         "                            if (matches != null && matches.Count > 0 && matches[0].Value is not null)\n" +
@@ -224,6 +243,7 @@ public sealed class HttpRestProvider
         "                        catch (System.Exception)\n" +
         "                        {\n" +
         "                            matched = false;\n" +
+        "                        }\n" +
         "                        }\n" +
         "                        matchedFlags[ci] = matched;\n" +
         "                        if (!matched)\n" +

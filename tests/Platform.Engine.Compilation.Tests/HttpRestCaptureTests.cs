@@ -247,7 +247,81 @@ public sealed class HttpRestCaptureTests
         }
     }
 
-    // ── 6. Compile+run: no match → Verdict.Inconclusive ───────────────────────
+    // ── 6. Compile+run: multi-capture — two paths, one parse ─────────────────
+
+    /// <summary>
+    /// Full compile-and-run: a step with two captures (<c>$.id</c> and
+    /// <c>$.name</c>) against a single JSON response body must resolve both
+    /// correctly.  This verifies the parse-once refactor: the body is parsed
+    /// exactly once before the per-capture loop and both <c>Vars</c> values are
+    /// populated from the shared <c>JsonNode</c>.
+    /// </summary>
+    [Fact]
+    public async Task Execute_WithMultiCapture_BothJsonPathsResolveFromSingleParse()
+    {
+        const string jsonBody = "{\"id\":\"order-xyz\",\"name\":\"Alice\"}";
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartJsonResponder(jsonBody, port);
+        try
+        {
+            var provider = new HttpRestProvider();
+            var model = new HttpRestModel(
+                Target: "svc",
+                Method: "GET",
+                Path: "/",
+                Headers: null,
+                Body: null,
+                Expect: new HttpExpect(Status: 200));
+
+            var captures = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["capturedId"] = "$.id",
+                ["capturedName"] = "$.name",
+            };
+            var ctx = new StubCtx("multi-capture-run", captures);
+            var fragment = provider.Emit(model, ctx);
+
+            var assembled = CsxAssembler.Assemble(new[] { ("multi-capture-run", fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource,
+                additionalReferencePaths: s_refs);
+
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Service("svc")] = baseUrl,
+            };
+            var globals = new ScriptGlobalVariables(vars);
+            await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+            var safeId = CsxFragment.SanitiseId("multi-capture-run");
+
+            // Both captured values must be present and correct.
+            Assert.True(vars.ContainsKey("capturedId"),
+                $"Expected Vars to contain 'capturedId'. Keys: [{string.Join(", ", vars.Keys)}]");
+            Assert.Equal("order-xyz", vars["capturedId"]);
+
+            Assert.True(vars.ContainsKey("capturedName"),
+                $"Expected Vars to contain 'capturedName'. Keys: [{string.Join(", ", vars.Keys)}]");
+            Assert.Equal("Alice", vars["capturedName"]);
+
+            // CaptureStatus must indicate both matched ("1,1").
+            var statusKey = VarKeys.CaptureStatus(safeId);
+            Assert.True(vars.ContainsKey(statusKey),
+                $"Expected Vars to contain capture status key '{statusKey}'.");
+            Assert.Equal("1,1", vars[statusKey]);
+
+            // Outcome must be Pass (200 + both captures matched).
+            var outcomeKey = VarKeys.Outcome(safeId);
+            var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+        }
+        finally
+        {
+            responder.Dispose();
+        }
+    }
+
+    // ── 7. Compile+run: no match → Verdict.Inconclusive ───────────────────────
 
     /// <summary>
     /// When a JSONPath expression yields no match in the response body, the step
