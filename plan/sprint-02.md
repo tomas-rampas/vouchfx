@@ -8,6 +8,32 @@
 | **Milestone** | **M1 — Foundations proven** closes at end of sprint |
 | **Theme** | Turn the Sprint 1 proofs into durable gates: a provider-closure leak test in CI, a reference provider that exercises the whole contract, and the reporting and schema substrates the later phases build on. |
 
+## Delivery status
+
+**Implemented on `feat/sprint-02-foundations`** (PR pending; date 2026-06-08) — all **12 tasks** delivered
+with their acceptance criteria met. Build is 0-warning under `TreatWarningsAsErrors`, `dotnet format`
+is clean, and the full non-docker unit suite is green (176 tests across five projects); the Docker
+orchestration suite is green locally. Milestone **M1 "Foundations proven" is reached** — the
+phase-exit evidence and a reproducible demo are recorded (see below).
+
+Key proofs:
+
+1. **Memory model over the full Core-provider closure, gated in CI.** The closure harness
+   (`--mode closure --iterations 5000`) returns to baseline (NetDelta ≈ +1.7 KB against a 2 MB
+   threshold, 0 collectible ALCs leaked, `ContextReclaimed=true`, exit 0). The memory-leak job is now
+   **blocking** and **scheduled weekly** (S02-B-01, S02-B-02, S02-D-01).
+2. **Provider contract exercised end-to-end** by a reflectively-discovered reference provider; the
+   reflective `StepKindRegistry` is frozen at startup; a reserved-namespace guard refuses squatters
+   (S02-F-01, S02-F-02, S02-F-03).
+3. **Event-stream schema + first JSON Schema draft** with a verdict taxonomy, typed payloads, a stub
+   terminal renderer, and provider-driven schema composition (S02-G-01, S02-G-02, S02-C-01, S02-C-02).
+4. **Stub topology reliable + environment errors classified distinctly** (≥50-run clean streak;
+   Environment-error verdict carrying registry host + auth status, never Fail) (S02-A-01, S02-A-02).
+
+Reproduce from a clean checkout: `pwsh -File scripts/m1-demo.ps1` (pillars 0–3) or
+`pwsh -File scripts/m1-demo.ps1 -IncludeDocker` (adds the orchestration pillar) — both pass (exit 0).
+Full M1 evidence: [`docs/reviews/m1-exit-evidence.md`](../docs/reviews/m1-exit-evidence.md).
+
 ## Sprint goal
 
 The memory model is proven not just for a trivial script but across the **full transitive dependency
