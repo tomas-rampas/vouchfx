@@ -3,6 +3,7 @@
 // Extracted from YamlSchemaValidator so that SchemaComposer can reuse both the
 // embedded resource loader and the YAML→JsonDocument bridge without duplication.
 using System.Text.Json;
+using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -54,9 +55,17 @@ internal static class SchemaResources
     /// YamlDotNet's JSON-compatible serialisation bridge.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The caller is responsible for disposing the returned
     /// <see cref="JsonDocument"/> to release its pooled UTF-8 buffer.
     /// Evaluation of the root element must occur inside the <c>using</c> scope.
+    /// </para>
+    /// <para>
+    /// Type inference: plain YAML scalars that parse as <see cref="long"/>
+    /// or <see cref="double"/> are emitted as JSON numbers (not quoted strings),
+    /// preserving the type information required by the JSON Schema validator's
+    /// <c>type: integer</c> and <c>type: number</c> constraints.
+    /// </para>
     /// </remarks>
     /// <param name="yamlText">The raw YAML text to convert.</param>
     /// <returns>A <see cref="JsonDocument"/> representing the parsed document.</returns>
@@ -65,9 +74,12 @@ internal static class SchemaResources
     /// </exception>
     internal static JsonDocument ConvertYamlToJsonDocument(string yamlText)
     {
-        // Step 1 — parse YAML to a plain object graph.
+        // Step 1 — parse YAML to a plain object graph using the type-inferring
+        // deserialiser so that untagged integer scalars (e.g. status: 200) are
+        // returned as long/int rather than string.
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(NullNamingConvention.Instance)
+            .WithNodeTypeResolver(new YamlScalarTypeResolver())
             .Build();
 
         var graph = deserializer.Deserialize<object?>(yamlText);
@@ -82,7 +94,8 @@ internal static class SchemaResources
 
         // Step 2 — re-serialise the object graph to a JSON string using
         // YamlDotNet's JSON-compatible emitter, which correctly renders
-        // Dictionary<object,object> entries as JSON object properties.
+        // Dictionary<object,object> entries as JSON object properties and
+        // emits long/double values as JSON number literals (not quoted strings).
         var jsonSerializer = new SerializerBuilder()
             .JsonCompatible()
             .Build();
@@ -91,5 +104,51 @@ internal static class SchemaResources
 
         // Step 3 — parse the JSON string into a System.Text.Json JsonDocument.
         return JsonDocument.Parse(json);
+    }
+
+    // ── YamlScalarTypeResolver — infers integer and float types ──────────────
+
+    /// <summary>
+    /// A YamlDotNet node-type resolver that recognises plain (untagged) scalar
+    /// values that represent integers or floating-point numbers and returns their
+    /// CLR type (<see cref="long"/> or <see cref="double"/>) instead of the
+    /// default <see cref="string"/>.  This preserves the JSON Schema <c>type:
+    /// integer</c> / <c>type: number</c> constraints during YAML→JSON conversion.
+    /// </summary>
+    private sealed class YamlScalarTypeResolver : INodeTypeResolver
+    {
+        bool INodeTypeResolver.Resolve(
+            NodeEvent? nodeEvent,
+            ref Type currentType)
+        {
+            if (nodeEvent is Scalar scalar
+                && scalar.Style == YamlDotNet.Core.ScalarStyle.Plain
+                && currentType == typeof(object))
+            {
+                var value = scalar.Value;
+
+                // Prefer long for integer-shaped values (covers status codes,
+                // port numbers, counts, etc.).
+                if (long.TryParse(value, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                {
+                    currentType = typeof(long);
+                    return true;
+                }
+
+                // Fall back to double for floating-point values.
+                if (double.TryParse(value, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                {
+                    currentType = typeof(double);
+                    return true;
+                }
+
+                // Boolean values (true/false) — YamlDotNet's default resolver
+                // already handles these; no action required here.
+            }
+
+            return false;
+        }
     }
 }
