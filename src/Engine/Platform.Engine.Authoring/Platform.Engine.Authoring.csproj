@@ -10,6 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
     <ProjectReference Include="..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
   </ItemGroup>
 
