@@ -401,11 +401,15 @@ public static class RoslynScriptCompiler
         var tpaPaths = tpaData.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 
         // Names we must find (case-insensitive for cross-platform safety).
+        // System.Text.RegularExpressions.dll is required because the Substitute_Helpers
+        // CSX class (S04-B-03) uses fully-qualified Regex types, and that assembly is a
+        // separate facade in .NET 8 that Roslyn does not pull in via System.Runtime alone.
         var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "System.Private.CoreLib.dll",
             "System.Runtime.dll",
             "System.Collections.dll",
+            "System.Text.RegularExpressions.dll",
         };
 
         var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

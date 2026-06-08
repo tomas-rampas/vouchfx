@@ -27,6 +27,11 @@
     <PackageVersion Include="MongoDB.Driver" Version="3.6.0" />
     <PackageVersion Include="StackExchange.Redis" Version="2.8.58" />
   </ItemGroup>
+  <ItemGroup Label="Per-scenario isolation (S04-A-01)">
+    <!-- Respawn 6.x: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
+         then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->
+    <PackageVersion Include="Respawn" Version="6.2.1" />
+  </ItemGroup>
   <ItemGroup Label="Test stack">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageVersion Include="xunit" Version="2.9.2" />

@@ -32,6 +32,8 @@ public sealed class HttpRestEmitTests
         public StubCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────────
@@ -93,8 +95,10 @@ public sealed class HttpRestEmitTests
             typeof(System.Net.Http.HttpClient).Assembly.Location,
             typeof(System.Net.HttpStatusCode).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.Json.Nodes.JsonNode).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
             typeof(System.Uri).Assembly.Location,                  // System.Private.Uri (safe URI composition, M1)
+            typeof(Json.Path.JsonPath).Assembly.Location,          // JsonPath.Net — capture logic (S04-B-02)
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 

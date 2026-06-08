@@ -51,10 +51,18 @@ namespace Platform.Engine.Orchestration;
 /// and before plain service containers.
 /// This ordering is the §4 invariant: health-gate the database resource, not the server.
 /// </param>
+/// <param name="DependencyNames">
+/// The logical names of managed dependencies (e.g. postgres, kafka) as declared in the
+/// <c>environment.dependencies</c> section.  Used by the runner's staging step to
+/// distinguish dependency connection-string entries (keyed <c>conn::&lt;name&gt;</c>)
+/// from service endpoint entries (keyed <c>svc::&lt;name&gt;</c>) within
+/// <c>ScriptGlobalVariables.Vars</c>.
+/// </param>
 public sealed record MappedTopology(
     Action<IDistributedApplicationBuilder> Configure,
     Func<DistributedApplication, CancellationToken, Task<IReadOnlyDictionary<string, object>>> ResolveServices,
-    IReadOnlyList<string> HealthGateResourceNames);
+    IReadOnlyList<string> HealthGateResourceNames,
+    IReadOnlyList<string> DependencyNames);
 
 /// <summary>
 /// Maps the parsed <see cref="EnvironmentSpec"/> block to an Aspire resource graph.
@@ -135,7 +143,8 @@ public static class EnvironmentMapper
                 Configure: static _ => { },
                 ResolveServices: static (_, _) => Task.FromResult<IReadOnlyDictionary<string, object>>(
                     new Dictionary<string, object>()),
-                HealthGateResourceNames: Array.Empty<string>());
+                HealthGateResourceNames: Array.Empty<string>(),
+                DependencyNames: Array.Empty<string>());
         }
 
         // ----------------------------------------------------------------
@@ -366,7 +375,8 @@ public static class EnvironmentMapper
         return new MappedTopology(
             Configure: configure,
             ResolveServices: resolveServices,
-            HealthGateResourceNames: healthGateNames);
+            HealthGateResourceNames: healthGateNames,
+            DependencyNames: dependencies.Keys.ToList());
     }
 
     // -----------------------------------------------------------------------

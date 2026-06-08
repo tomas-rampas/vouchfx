@@ -42,6 +42,8 @@ public sealed class HttpRestExecutionTests
         public StubCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -59,19 +61,21 @@ public sealed class HttpRestExecutionTests
 
     /// <summary>
     /// Additional Roslyn metadata references required by the emitted CSX body.
-    /// <c>RoslynScriptCompiler.CompileOnce</c> builds TPA references for only
-    /// the core BCL subset (CoreLib / Runtime / Collections); the emitted
-    /// <c>HttpRest_Helpers</c> class references <c>System.Net.Http</c>,
-    /// <c>System.Net.Primitives</c>, <c>System.Text.Json</c>, and
-    /// <c>System.Globalization</c>, so those must be supplied explicitly.
+    /// <c>RoslynScriptCompiler.CompileOnce</c> builds TPA references for the core BCL
+    /// subset (CoreLib / Runtime / Collections / RegularExpressions); the emitted
+    /// <c>HttpRest_Helpers</c> class also references <c>System.Net.Http</c>,
+    /// <c>System.Net.Primitives</c>, <c>System.Text.Json</c>, <c>System.Globalization</c>,
+    /// and <c>JsonPath.Net</c> (for S04-B-02 capture logic), so those must be supplied.
     /// </summary>
     private static readonly IReadOnlyList<string> s_additionalRefs = new[]
     {
         typeof(System.Net.Http.HttpClient).Assembly.Location,
         typeof(System.Net.HttpStatusCode).Assembly.Location,      // System.Net.Primitives
         typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+        typeof(System.Text.Json.Nodes.JsonNode).Assembly.Location, // System.Text.Json.Nodes
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,                      // System.Private.Uri (safe URI composition, M1)
+        typeof(Json.Path.JsonPath).Assembly.Location,              // JsonPath.Net — capture logic (S04-B-02)
     };
 
     /// <summary>
@@ -702,7 +706,13 @@ public sealed class HttpRestExecutionTests
 
     /// <summary>
     /// Minimal <see cref="IProjectContext"/> stub for validation tests.
-    /// <c>IProjectContext</c> is a marker interface (Sprint 1/2 surface).
+    /// Returns an empty <see cref="IProjectContext.DeclaredDependencies"/> map
+    /// (Sprint-4 addition to the interface).
     /// </summary>
-    private sealed class StubProjectContext : IProjectContext { }
+    private sealed class StubProjectContext : IProjectContext
+    {
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
 }
