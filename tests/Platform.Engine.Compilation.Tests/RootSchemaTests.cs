@@ -146,6 +146,77 @@ public sealed class RootSchemaTests
     }
 
     // -------------------------------------------------------------------------
+    // Boolean scalar: continueOnFailure must reach the validator as a JSON bool
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A step with <c>continueOnFailure: true</c> (an unquoted YAML boolean)
+    /// must be accepted.  Before the fix, the <see cref="YamlScalarTypeResolver"/>
+    /// left booleans as strings, causing the JSON Schema <c>type: boolean</c>
+    /// constraint to reject the document with "[type] Value is 'string' but
+    /// should be 'boolean'".
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureTrue_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: true
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// Likewise, <c>continueOnFailure: false</c> must be accepted.
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureFalse_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: false
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A <em>quoted</em> <c>"true"</c> is a YAML string; the schema constrains
+    /// <c>continueOnFailure</c> to <c>type: boolean</c>, so a quoted value must
+    /// be rejected.  This confirms the resolver only coerces plain scalars and
+    /// does not affect quoted strings.
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureQuotedString_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: "true"
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "A quoted \"true\" string must be rejected for a boolean field.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    // -------------------------------------------------------------------------
     // Provider-specific extra fields are allowed
     // -------------------------------------------------------------------------
 
@@ -172,6 +243,91 @@ public sealed class RootSchemaTests
 
         Assert.True(result.IsValid,
             $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    // -------------------------------------------------------------------------
+    // M3: Step id pattern constraint
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A step whose <c>id</c> contains a space (or other character outside the
+    /// allowed pattern) must be rejected by the schema.  The pattern is
+    /// <c>^[A-Za-z_][A-Za-z0-9_-]*$</c>.
+    /// </summary>
+    [Fact]
+    public void Validate_IdWithIllegalCharacter_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: "bad id!"
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "Expected schema validation to reject an id containing spaces and '!'.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that starts with a digit must be rejected (the pattern requires
+    /// the first character to be a letter or underscore).
+    /// </summary>
+    [Fact]
+    public void Validate_IdStartingWithDigit_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: "1step"
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "Expected schema validation to reject an id starting with a digit.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that uses only letters, digits, underscores, and hyphens —
+    /// and begins with a letter — must be accepted.
+    /// </summary>
+    [Fact]
+    public void Validate_ValidIdWithHyphen_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api-v2
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid id 'call-api-v2' to be accepted; errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that starts with an underscore must be accepted (underscores are
+    /// valid as the leading character per the pattern).
+    /// </summary>
+    [Fact]
+    public void Validate_IdStartingWithUnderscore_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: _internal_step
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected id '_internal_step' to be accepted; errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
         Assert.Empty(result.Errors);
     }
 }

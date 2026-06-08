@@ -12,6 +12,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <!-- EnvironmentMapper consumes EnvironmentSpec / ServiceSpec / DependencySpec from Authoring.
+         Authoring → Abstractions + Sdk + YamlDotNet; Orchestration → Authoring is acyclic. -->
+    <ProjectReference Include="..\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />
   </ItemGroup>
 
 </Project>

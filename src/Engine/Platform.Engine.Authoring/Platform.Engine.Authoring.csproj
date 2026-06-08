@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Engine.Authoring</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

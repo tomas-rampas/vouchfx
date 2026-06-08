@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Engine.Runtime</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <ProjectReference Include="..\Platform.Engine.Orchestration\Platform.Engine.Orchestration.csproj" />
+    <ProjectReference Include="..\Platform.Engine.Reporting\Platform.Engine.Reporting.csproj" />
+    <ProjectReference Include="..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,5 +1,5 @@
-// Minimal terminal renderer stub for the vouchfx structured JSON Lines event
-// stream (§14, S02-G-02).
+// Terminal renderer v0 for the vouchfx structured JSON Lines event stream
+// (§14, S02-G-02, S03-G-01).
 //
 // Design:
 //   • Reads from IEnumerable<string> (JSON Lines) and writes to a TextWriter so
@@ -14,6 +14,10 @@
 //     and only the envelope-declared properties are mapped to typed fields.
 //   • Uses CultureInfo.InvariantCulture for all numeric formatting so that the
 //     output is locale-neutral (CA1305).
+//   • S03-G-01: step-completed lines include the duration in milliseconds
+//     (e.g. "  step 'ping': PASS (42 ms)").  When durationMs is absent the
+//     suffix is omitted rather than throwing.  step-attempt lines include tMs
+//     when present.  scenario-completed appends durationMs when present.
 
 using System.Globalization;
 using System.Text.Json;
@@ -23,7 +27,7 @@ namespace Platform.Engine.Reporting;
 
 /// <summary>
 /// Consumes the schema-versioned JSON Lines event stream and prints
-/// per-step verdicts to a <see cref="TextWriter"/>.
+/// per-step verdicts with durations to a <see cref="TextWriter"/> (v0).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -35,10 +39,11 @@ namespace Platform.Engine.Reporting;
 /// older renderers remain useful against newer engine output.
 /// </para>
 /// <para>
-/// This is a <em>stub</em> renderer.  Its purpose is to give the compiler
-/// workstream a concrete reporting surface to exercise continuously, not to
-/// provide the full terminal UX (colours, progress bars, diffing) that a
-/// production release will ship.
+/// This is the v0 renderer (S03-G-01).  It renders a single legible line per
+/// step that includes the step id, verdict token, and wall-clock duration in
+/// milliseconds, giving the compiler workstream a concrete feedback surface
+/// for Phase 2.  Colours, progress bars, and diffing are deferred to a later
+/// production release.
 /// </para>
 /// </remarks>
 public sealed class TerminalRenderer
@@ -119,12 +124,17 @@ public sealed class TerminalRenderer
                     var stepId = GetStr(envelope, "stepId") ?? "(unknown)";
                     var attempt = GetInt(envelope, "attempt");
                     var outcome = GetStr(envelope, "outcome") ?? "(pending)";
+                    var tMs = GetLong(envelope, "tMs");
+                    var attemptSuffix = tMs.HasValue
+                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", tMs.Value)
+                        : string.Empty;
                     output.WriteLine(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "    attempt {0} -> {1}  [{2}]",
+                            "    attempt {0} -> {1}{2}  [{3}]",
                             attempt,
                             outcome,
+                            attemptSuffix,
                             stepId));
                     break;
                 }
@@ -133,8 +143,17 @@ public sealed class TerminalRenderer
                 {
                     var stepId = GetStr(envelope, "stepId") ?? "(unknown)";
                     var verdict = GetStr(envelope, "verdict") ?? "(unknown)";
+                    var durationMs = GetLong(envelope, "durationMs");
+                    var durationSuffix = durationMs.HasValue
+                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", durationMs.Value)
+                        : string.Empty;
                     output.WriteLine(
-                        string.Format(CultureInfo.InvariantCulture, "  step '{0}': {1}", stepId, verdict));
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "  step '{0}': {1}{2}",
+                            stepId,
+                            verdict,
+                            durationSuffix));
                     break;
                 }
 
@@ -143,16 +162,21 @@ public sealed class TerminalRenderer
                     var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                     var verdict = GetStr(envelope, "verdict") ?? "(unknown)";
                     var counts = ReadCounts(envelope);
+                    var totalMs = GetLong(envelope, "durationMs");
+                    var totalSuffix = totalMs.HasValue
+                        ? string.Format(CultureInfo.InvariantCulture, " total={0} ms", totalMs.Value)
+                        : string.Empty;
                     output.WriteLine(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "Scenario '{0}': {1}  (pass={2} fail={3} envError={4} inconclusive={5})",
+                            "Scenario '{0}': {1}  (pass={2} fail={3} envError={4} inconclusive={5}{6})",
                             scenarioId,
                             verdict,
                             counts.Pass,
                             counts.Fail,
                             counts.EnvError,
-                            counts.Inconclusive));
+                            counts.Inconclusive,
+                            totalSuffix));
                     break;
                 }
 
@@ -218,6 +242,26 @@ public sealed class TerminalRenderer
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Returns the <see cref="long"/> value of <paramref name="key"/> from
+    /// <see cref="EventEnvelope.Extra"/>, or <see langword="null"/> when the key
+    /// is absent or not a JSON number.  Returning <see langword="null"/> rather
+    /// than a sentinel allows callers to distinguish a genuine zero from an
+    /// absent field and to omit the duration suffix gracefully.
+    /// </summary>
+    private static long? GetLong(EventEnvelope envelope, string key)
+    {
+        if (envelope.Extra is not null
+            && envelope.Extra.TryGetValue(key, out var element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt64(out var value))
+        {
+            return value;
+        }
+
+        return null;
     }
 
     /// <summary>
