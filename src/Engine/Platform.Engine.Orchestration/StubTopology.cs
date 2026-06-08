@@ -78,7 +78,8 @@ public sealed class StubTopology : IAsyncDisposable
     /// Builds, starts, and health-gates a stub topology containing:
     /// <list type="bullet">
     ///   <item>A managed Postgres server (<c>"pg"</c>) with a database (<c>"appdb"</c>).</item>
-    ///   <item>A <c>traefik/whoami</c> HTTP container (<c>"web"</c>) on port 80.</item>
+    ///   <item>An HTTP container (<c>"web"</c>) on port 80, defaulting to
+    ///   <c>traefik/whoami</c>.</item>
     /// </list>
     /// </summary>
     /// <param name="appHostAssemblyName">
@@ -100,13 +101,25 @@ public sealed class StubTopology : IAsyncDisposable
     /// gate passes.  Defaults to <paramref name="startupTimeout"/> (or 120 seconds if that is
     /// also <see langword="null"/>).
     /// </param>
+    /// <param name="webImage">
+    /// Docker image reference for the <c>"web"</c> container.  Defaults to
+    /// <c>"traefik/whoami"</c>.  Override in tests to inject a bad image and exercise
+    /// the <see cref="OrchestrationException"/> / Environment-error classification path
+    /// (§12.1, S02-A-02).
+    /// </param>
     /// <param name="cancellationToken">Propagated to the underlying host. Must be the last parameter (CA1068).</param>
     /// <returns>A fully started and health-gated <see cref="StubTopology"/>.</returns>
+    /// <exception cref="OrchestrationException">
+    /// Thrown (instead of the raw Aspire exception) when <see cref="HeadlessTopology.StartAsync"/>
+    /// fails or either health gate fails.  The <see cref="OrchestrationException.Info"/> property
+    /// carries the structured diagnosis (kind, registry host, auth status, detail).
+    /// </exception>
     public static async Task<StubTopology> StartAsync(
         string? appHostAssemblyName = null,
         TimeSpan? startupTimeout = null,
         TimeSpan? databaseHealthTimeout = null,
         TimeSpan? serviceHealthTimeout = null,
+        string webImage = "traefik/whoami",
         CancellationToken cancellationToken = default)
     {
         var timeout = startupTimeout ?? TimeSpan.FromSeconds(120);
@@ -128,42 +141,63 @@ public sealed class StubTopology : IAsyncDisposable
         using var startCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         startCts.CancelAfter(timeout);
 
-        var topology = await HeadlessTopology.StartAsync(
-            appHostAssemblyName: appHostAssemblyName,
-            configureResources: b =>
-            {
-                // ----------------------------------------------------------------
-                // Managed dependency: Postgres server → database.
-                // §4 hard invariant: WaitFor must target the DATABASE resource
-                // ("appdb"), not the server ("pg").  The server resource returns
-                // healthy before Aspire's lifecycle script finishes creating the
-                // database, which causes intermittent failures on fast hardware.
-                // See: CLAUDE.md §"Aspire (§4, §19)" — server-vs-database race.
-                // ----------------------------------------------------------------
-                var pgServer = b.AddPostgres("pg");
-                dbBuilder = pgServer.AddDatabase("appdb");
+        // ----------------------------------------------------------------
+        // Start the headless topology.  HeadlessTopology.StartAsync already
+        // disposes itself on failure and rethrows; we classify that exception
+        // as an OrchestrationException so callers always receive a typed
+        // Environment-error signal (§12.1) rather than a raw Aspire exception.
+        // ----------------------------------------------------------------
+        HeadlessTopology topology;
+        try
+        {
+            topology = await HeadlessTopology.StartAsync(
+                appHostAssemblyName: appHostAssemblyName,
+                configureResources: b =>
+                {
+                    // ----------------------------------------------------------------
+                    // Managed dependency: Postgres server → database.
+                    // §4 hard invariant: WaitFor must target the DATABASE resource
+                    // ("appdb"), not the server ("pg").  The server resource returns
+                    // healthy before Aspire's lifecycle script finishes creating the
+                    // database, which causes intermittent failures on fast hardware.
+                    // See: CLAUDE.md §"Aspire (§4, §19)" — server-vs-database race.
+                    // ----------------------------------------------------------------
+                    var pgServer = b.AddPostgres("pg");
+                    dbBuilder = pgServer.AddDatabase("appdb");
 
-                // ----------------------------------------------------------------
-                // Service container: traefik/whoami — lightweight HTTP server on
-                // port 80.  WaitFor the database so the container does not start
-                // until the full Postgres stack is confirmed healthy.
-                // Use string overload AddContainer(name, image) only — never the
-                // generic AddProject<T>() which creates compile-time coupling
-                // (§4 hard invariant, CLAUDE.md).
-                // ----------------------------------------------------------------
-                webBuilder = b.AddContainer("web", "traefik/whoami")
-                    .WithHttpEndpoint(targetPort: 80, name: "http")
-                    // Register a real HTTP health check on "/" so Aspire polls for an
-                    // actual 200 response (not merely port-mapped / Running state).
-                    // This closes the HTTP-serving race on loaded CI agents (S2).
-                    // Signature (Aspire 9.x / package 13.4.2):
-                    //   WithHttpHealthCheck(string path, int? statusCode, string endpointName)
-                    .WithHttpHealthCheck(path: "/", endpointName: "http")
-                    // §4: gate on the *database* resource, not the server,
-                    // to avoid the fast-hardware server-vs-database race.
-                    .WaitFor(dbBuilder);
-            },
-            cancellationToken: startCts.Token).ConfigureAwait(false);
+                    // ----------------------------------------------------------------
+                    // Service container — image is injected via webImage parameter
+                    // (default: traefik/whoami).  Tests can pass a bad image ref to
+                    // exercise the OrchestrationException / ENV_ERROR path (S02-A-02).
+                    // Use string overload AddContainer(name, image) only — never the
+                    // generic AddProject<T>() which creates compile-time coupling
+                    // (§4 hard invariant, CLAUDE.md).
+                    // ----------------------------------------------------------------
+                    webBuilder = b.AddContainer("web", webImage)
+                        .WithHttpEndpoint(targetPort: 80, name: "http")
+                        // Register a real HTTP health check on "/" so Aspire polls for an
+                        // actual 200 response (not merely port-mapped / Running state).
+                        // This closes the HTTP-serving race on loaded CI agents (S2).
+                        // Signature (Aspire 9.x / package 13.4.2):
+                        //   WithHttpHealthCheck(string path, int? statusCode, string endpointName)
+                        .WithHttpHealthCheck(path: "/", endpointName: "http")
+                        // §4: gate on the *database* resource, not the server,
+                        // to avoid the fast-hardware server-vs-database race.
+                        .WaitFor(dbBuilder);
+                },
+                cancellationToken: startCts.Token).ConfigureAwait(false);
+        }
+        catch (OrchestrationException)
+        {
+            // Already classified — propagate as-is.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // HeadlessTopology already disposed itself; classify and wrap.
+            var info = OrchestrationErrorClassifier.Classify(ex, webImage, "web");
+            throw new OrchestrationException(info, ex);
+        }
 
         // HeadlessTopology.StartAsync returned successfully: live containers are running.
         // If anything below throws (health-gate timeout, endpoint resolution failure) the
@@ -189,11 +223,23 @@ public sealed class StubTopology : IAsyncDisposable
             //
             // Uses dbTimeout (defaults to startupTimeout) for a bounded, per-resource window.
             // ----------------------------------------------------------------
-            using var healthCts1 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthCts1.CancelAfter(dbTimeout);
-            await app.ResourceNotifications
-                .WaitForResourceHealthyAsync("appdb", WaitBehavior.StopOnResourceUnavailable, healthCts1.Token)
-                .ConfigureAwait(false);
+            try
+            {
+                using var healthCts1 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                healthCts1.CancelAfter(dbTimeout);
+                await app.ResourceNotifications
+                    .WaitForResourceHealthyAsync("appdb", WaitBehavior.StopOnResourceUnavailable, healthCts1.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OrchestrationException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "appdb");
+                throw new OrchestrationException(info, ex);
+            }
 
             var databaseReadyElapsed = sw.Elapsed;
 
@@ -210,11 +256,23 @@ public sealed class StubTopology : IAsyncDisposable
             //
             // Uses svcTimeout (defaults to startupTimeout) for a bounded, per-resource window.
             // ----------------------------------------------------------------
-            using var healthCts2 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthCts2.CancelAfter(svcTimeout);
-            await app.ResourceNotifications
-                .WaitForResourceHealthyAsync("web", WaitBehavior.StopOnResourceUnavailable, healthCts2.Token)
-                .ConfigureAwait(false);
+            try
+            {
+                using var healthCts2 = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                healthCts2.CancelAfter(svcTimeout);
+                await app.ResourceNotifications
+                    .WaitForResourceHealthyAsync("web", WaitBehavior.StopOnResourceUnavailable, healthCts2.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OrchestrationException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var info = OrchestrationErrorClassifier.Classify(ex, imageRef: webImage, resourceName: "web");
+                throw new OrchestrationException(info, ex);
+            }
 
             sw.Stop();
             var timing = new StartupTiming(
