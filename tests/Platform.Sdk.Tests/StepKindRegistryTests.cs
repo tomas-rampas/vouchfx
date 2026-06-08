@@ -195,4 +195,23 @@ public sealed class StepKindRegistryTests
         Assert.NotNull(provider);
         Assert.IsType<ModuleOnlyProvider>(provider!.Instance);
     }
+
+    // ── 7. ReflectionTypeLoadException tolerance ──────────────────────────────
+
+    /// <summary>
+    /// A normal assembly (one whose types all load cleanly) must still be scanned
+    /// correctly after the <see cref="ReflectionTypeLoadException"/> handling was
+    /// added.  This confirms the happy-path behaviour is unchanged.
+    /// </summary>
+    [Fact]
+    public void BuildAndFreeze_CleanAssembly_StillScannedCorrectly()
+    {
+        // Use the test assembly itself — all types load cleanly.
+        var registry = StepKindRegistry.BuildAndFreeze(
+            new[] { typeof(NoopEchoProvider).Assembly });
+
+        // The reference provider must still be discoverable.
+        Assert.True(registry.TryGet("noop.echo", out var provider));
+        Assert.NotNull(provider);
+    }
 }

@@ -74,10 +74,12 @@ public static class SingletonReset
         log.Add("StackExchange.Redis: ConfigurationOptions.Parse is in-memory; no multiplexer opened, no reset needed");
 
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
-        // No TracerProvider is built anywhere in the harness or the probe script.
-        // OpenTelemetry's global singleton is never populated, so it cannot pin
-        // anything.  Documented as a constant zero overhead.
-        log.Add("OpenTelemetry: no TracerProvider built; documented constant zero overhead");
+        // OpenTelemetry is NOT part of the proven closure — no OTel package is
+        // referenced by the harness or the probe script, and no TracerProvider is
+        // ever built.  This entry is documentation-only, recorded here so future
+        // maintainers understand why OTel is absent from the reset list and that
+        // its absence is intentional (constant zero overhead, not an oversight).
+        log.Add("OpenTelemetry: not in closure — no TracerProvider built (documented for completeness)");
 
         return log;
     }
