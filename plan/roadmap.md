@@ -8,9 +8,13 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress:** Sprint 01 (marked `done` below) is **merged to `main`** via PR #126 (merge commit
-> `72d8c16`) — delivered and integrated, CI green. Milestone **M1 is not yet reached**: it closes after
-> Sprint 02 (the full Core-provider-closure leak gate and the reference provider land there).
+> **Progress (2026-06-08):** Sprints **01–04 are merged to `main`** (PR #126/#127, #128, #131, #134) —
+> delivered and integrated, CI green. Milestone **M1 — Foundations proven is reached** (closed after
+> Sprint 02: the full Core-provider-closure leak gate and the reference provider). Phase 2 (Core
+> compiler) is under way — the parser→AST→Roslyn pipeline, the provider-mediated compile pipeline, and
+> three Core providers (`http.rest`, `db-assert.postgres`, `script.csharp`) with capture, substitution
+> and Respawn isolation are in. **Sprint 05** (seed, env secrets, integrate) is next and closes
+> Milestone **M2**.
 
 ```mermaid
 gantt
@@ -21,13 +25,13 @@ gantt
 
     section P1 Foundations
     S01 De-risk (PoC, spike)        :done, s01, 2026-06-08, 14d
-    S02 Close risk (leak gate)      :s02, after s01, 14d
-    M1 Foundations proven           :milestone, crit, m1, after s02, 0d
+    S02 Close risk (leak gate)      :done, s02, after s01, 14d
+    M1 Foundations proven           :milestone, done, m1, after s02, 0d
 
     section P2 Core compiler
-    S03 Compiler real               :s03, after s02, 14d
-    S04 Provider-mediated pipeline  :s04, after s03, 14d
-    S05 Seed, secrets, integrate    :s05, after s04, 14d
+    S03 Compiler real               :done, s03, after s02, 14d
+    S04 Provider-mediated pipeline  :done, s04, after s03, 14d
+    S05 Seed, secrets, integrate    :active, s05, after s04, 14d
     M2 Core compiler runs           :milestone, crit, m2, after s05, 0d
 
     section P3 Full step set

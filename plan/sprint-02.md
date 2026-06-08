@@ -10,7 +10,7 @@
 
 ## Delivery status
 
-**Implemented on `feat/sprint-02-foundations`** (PR #128 pending; date 2026-06-08) — all **13 tasks** delivered
+**Merged to `main`** via PR #128 (2026-06-08; closed Milestone **M1**) — all **13 tasks** delivered
 with their acceptance criteria met. Build is 0-warning under `TreatWarningsAsErrors`, `dotnet format`
 is clean, and the full non-docker unit suite is green (176 tests across five projects); the Docker
 orchestration suite is green locally. Milestone **M1 "Foundations proven" is reached** — the

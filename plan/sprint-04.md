@@ -10,9 +10,9 @@
 
 ## Delivery status
 
-**Implemented on `feat/sprint-04-pipeline`** (PR pending; date 2026-06-08) — all **10 tasks** delivered
-(B-01/02/03, F-01/02/03, A-01/02, G-01, capstone) across 8 commits. Build is 0-warning under
-`TreatWarningsAsErrors`, `dotnet format` is clean, the full non-docker suite is green (**390 tests**
+**Merged to `main`** via PR #134 (2026-06-08) — all **10 tasks** delivered
+(B-01/02/03, F-01/02/03, A-01/02, G-01, capstone). Build is 0-warning under
+`TreatWarningsAsErrors`, `dotnet format` is clean, the full non-docker suite is green (**400 tests**
 across ten projects), and the Docker capstone + Respawn reset-proof + db-assert suites are green
 locally. The **sprint exit criterion is met**: a suite chaining `http.rest` (capture `$.hostname`) →
 `script.csharp` (INSERT keyed by the capture) → `db-assert.postgres` (`{hostname}` param + `{var}`
@@ -52,7 +52,10 @@ skip the engine outcome write or abort downstream steps; the previously document
 guarantee is brace-balance" claim was inaccurate for a brace-balanced `return;` — the local-function
 wrapper is the accurate guarantee). M-A reserved-prefix enforcement added: `AstBuilder` now rejects
 capture keys and `variables:` entries that begin with engine-reserved prefixes (`svc::`, `conn::`,
-`__outcome::`, `__capture_status::`) at build time. Carry-forward to Sprint 5: §17 secrets/`SecretString`
+`__outcome::`, `__capture_status::`) at build time. Two review gates were cleared before merge: an
+independent second security pass (which added the H1 blast-radius, M-A reserved-prefix and M3 `return;`
+containment fixes above) and the Copilot PR review (all four threads resolved; a JSONPath parse-once
+optimisation applied). Carry-forward to Sprint 5: §17 secrets/`SecretString`
 redaction (L1/L2), `seed`, RETRY/Polly, observation redaction at the §14 event seam.
 
 ## Sprint goal
