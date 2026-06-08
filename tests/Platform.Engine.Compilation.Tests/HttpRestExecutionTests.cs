@@ -549,6 +549,36 @@ public sealed class HttpRestExecutionTests
             $"Expected valid path to be accepted; errors: {string.Join("; ", result.Errors)}");
     }
 
+    /// <summary>
+    /// Regression guard for the Linux platform-dependency bug: on Linux,
+    /// <c>Uri.TryCreate("/foo", UriKind.Absolute, out _)</c> returns <c>true</c>
+    /// because a leading <c>/</c> is interpreted as an absolute Unix file URI
+    /// (<c>file:///foo</c>).  A rooted path such as <c>/api/health</c> must be
+    /// accepted by <see cref="HttpRestProvider.Validate"/> on every platform.
+    /// </summary>
+    [Fact]
+    public void Validate_RootedPath_AcceptedRegardlessOfPlatform()
+    {
+        var provider = new HttpRestProvider();
+
+        foreach (var path in new[] { "/", "/health", "/api/health", "/api/v1/users/123" })
+        {
+            var model = new HttpRestModel(
+                Target: "svc",
+                Method: "GET",
+                Path: path,
+                Headers: null,
+                Body: null,
+                Expect: null);
+
+            var result = provider.Validate(model, new StubProjectContext());
+
+            Assert.True(result.IsValid,
+                $"Rooted path '{path}' must be accepted on all platforms; " +
+                $"errors: {string.Join("; ", result.Errors)}");
+        }
+    }
+
     // ── M1: Runtime same-authority — normal request still passes ──────────────
 
     /// <summary>
