@@ -94,7 +94,9 @@ public sealed class HttpRestProvider
         "    /// <summary>\n" +
         "    /// Issues an HTTP request, evaluates the response status against the\n" +
         "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
-        "    /// Connection-level failures map to EnvironmentError (§12.1).\n" +
+        "    /// Uses safe URI resolution (same-authority guard) and disables\n" +
+        "    /// automatic redirects to prevent SSRF via 3xx bounces (§security M1).\n" +
+        "    /// Timeout verdict = Inconclusive; connection failures = EnvironmentError (§12.1).\n" +
         "    /// </summary>\n" +
         "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
@@ -107,13 +109,30 @@ public sealed class HttpRestProvider
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Platform.Engine.Abstractions.Verdict verdict;\n" +
         "        string observation;\n" +
-        "        var client = new System.Net.Http.HttpClient();\n" +
+        "        // AllowAutoRedirect=false: a 3xx from the target must not silently\n" +
+        "        // bounce the request to a different host (SSRF via redirect, §M1).\n" +
+        "        // disposeHandler:true so client.Dispose() in finally releases the handler too.\n" +
+        "        var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };\n" +
+        "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
+        "            // M2: cap the default stall window; per-step timeout plumbing is Sprint 6.\n" +
+        "            client.Timeout = System.TimeSpan.FromSeconds(30);\n" +
         "            var baseUrl = vars.TryGetValue(serviceKey, out var bu) && bu is string s ? s : \"\";\n" +
-        "            var url = baseUrl.TrimEnd('/') + path;\n" +
+        "            // Safe URI composition (M1): resolve path against the base URI and\n" +
+        "            // confirm the resulting authority matches the original base URI.\n" +
+        "            // An empty or invalid baseUrl throws UriFormatException → caught → EnvironmentError.\n" +
+        "            var baseUri = new System.Uri(baseUrl, System.UriKind.Absolute);\n" +
+        "            var full = new System.Uri(baseUri, path);\n" +
+        "            if (full.GetLeftPart(System.UriPartial.Authority) != baseUri.GetLeftPart(System.UriPartial.Authority))\n" +
+        "            {\n" +
+        "                throw new System.InvalidOperationException(\n" +
+        "                    \"http.rest: resolved URL authority '\" + full.Authority +\n" +
+        "                    \"' does not match base authority '\" + baseUri.Authority +\n" +
+        "                    \"'; path attempted to change host.\");\n" +
+        "            }\n" +
         "            using (var req = new System.Net.Http.HttpRequestMessage(\n" +
-        "                       new System.Net.Http.HttpMethod(method), url))\n" +
+        "                       new System.Net.Http.HttpMethod(method), full))\n" +
         "            {\n" +
         "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
         "                var actual = (int)resp.StatusCode;\n" +
@@ -131,9 +150,17 @@ public sealed class HttpRestProvider
         "                        : \"null\") + \"}\";\n" +
         "            }\n" +
         "        }\n" +
+        "        catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException\n" +
+        "                                          || ex is System.TimeoutException)\n" +
+        "        {\n" +
+        "            // Timeout = Inconclusive (§12.1): the test could not complete due to\n" +
+        "            // a stall, not because the target service responded incorrectly.\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.Inconclusive;\n" +
+        "            observation = \"{\\\"timeout\\\":true}\";\n" +
+        "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
-        "            // Connection-level failure = Environment error (§12.1), never a Fail.\n" +
+        "            // Connection / DNS / authority-change failures = EnvironmentError (§12.1).\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
@@ -286,7 +313,40 @@ public sealed class HttpRestProvider
             errors.Add($"http.rest: 'method' must be one of GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS; got '{model.Method}'.");
 
         if (string.IsNullOrWhiteSpace(model.Path))
+        {
             errors.Add("http.rest: 'path' must not be empty.");
+        }
+        else
+        {
+            // SSRF guard (M1): path must be a safe rooted relative reference.
+            // Reject absolute URLs, protocol-relative paths, backslash paths, and
+            // paths that do not start with '/' (§security hardening PR #131).
+            var path = model.Path;
+            if (Uri.TryCreate(path, UriKind.Absolute, out _))
+            {
+                errors.Add(
+                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
+                    "absolute URLs and protocol-relative paths are not allowed.");
+            }
+            else if (path.StartsWith("//", StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
+                    "absolute URLs and protocol-relative paths are not allowed.");
+            }
+            else if (path.Contains('\\', StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "http.rest: 'path' must not contain backslashes; " +
+                    "use forward slashes for URL path separators.");
+            }
+            else if (!path.StartsWith('/'))
+            {
+                errors.Add(
+                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
+                    "absolute URLs and protocol-relative paths are not allowed.");
+            }
+        }
 
         return errors.Count == 0
             ? ValidationResult.Success

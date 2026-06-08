@@ -71,6 +71,7 @@ public sealed class HttpRestExecutionTests
         typeof(System.Net.HttpStatusCode).Assembly.Location,      // System.Net.Primitives
         typeof(System.Text.Json.JsonSerializer).Assembly.Location,
         typeof(System.Globalization.CultureInfo).Assembly.Location,
+        typeof(System.Uri).Assembly.Location,                      // System.Private.Uri (safe URI composition, M1)
     };
 
     /// <summary>
@@ -431,4 +432,247 @@ public sealed class HttpRestExecutionTests
 
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
     }
+
+    // ── M1: SSRF — Validate rejects unsafe paths ──────────────────────────────
+
+    /// <summary>
+    /// <see cref="HttpRestProvider.Validate"/> must reject an absolute URL in
+    /// <c>path</c>, as this would allow an author to redirect the request off
+    /// the declared target host (SSRF).
+    /// </summary>
+    [Fact]
+    public void Validate_AbsoluteUrlPath_IsRejected()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "https://evil.example.com/steal",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+        Assert.Contains("rooted relative", string.Join(" ", result.Errors), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// <see cref="HttpRestProvider.Validate"/> must reject a protocol-relative path
+    /// that starts with <c>//</c>, which resolves to a different host.
+    /// </summary>
+    [Fact]
+    public void Validate_ProtocolRelativePath_IsRejected()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "//evil.example.com/steal",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// <see cref="HttpRestProvider.Validate"/> must reject a path that does not
+    /// start with <c>/</c> (a relative path without a leading slash would be
+    /// ambiguous and could be constructed to escape the host).
+    /// </summary>
+    [Fact]
+    public void Validate_NonRootedRelativePath_IsRejected()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "users/123",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// <see cref="HttpRestProvider.Validate"/> must reject a path containing
+    /// backslashes, which can be interpreted as path separators on some platforms
+    /// and used to construct a UNC-style host escape.
+    /// </summary>
+    [Fact]
+    public void Validate_BackslashPath_IsRejected()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "/foo\\bar",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// <see cref="HttpRestProvider.Validate"/> must accept a normal rooted
+    /// relative path starting with <c>/</c>.
+    /// </summary>
+    [Fact]
+    public void Validate_NormalRootedPath_IsAccepted()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "/api/v1/users",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, new StubProjectContext());
+
+        Assert.True(result.IsValid,
+            $"Expected valid path to be accepted; errors: {string.Join("; ", result.Errors)}");
+    }
+
+    // ── M1: Runtime same-authority — normal request still passes ──────────────
+
+    /// <summary>
+    /// A normal GET to the in-process responder using a rooted <c>/</c> path
+    /// must produce <see cref="Verdict.Pass"/> — the safe URI composition must
+    /// not break the happy path.
+    /// </summary>
+    [Fact]
+    public async Task Execute_NormalPath_SameAuthority_ReturnsPass()
+    {
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartResponder(statusCode: 200, port: port);
+        try
+        {
+            var model = new HttpRestModel(
+                Target: "whoami",
+                Method: "GET",
+                Path: "/",
+                Headers: null,
+                Body: null,
+                Expect: new HttpExpect(Status: 200));
+
+            var outcome = await RunStepAsync(model, "safe-path-step", baseUrl);
+
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+        }
+        finally
+        {
+            responder.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// When <c>baseUrl</c> is empty (service not discovered), the safe URI
+    /// composition must throw during construction, which is caught and mapped to
+    /// <see cref="Verdict.EnvironmentError"/> (§12.1).
+    /// </summary>
+    [Fact]
+    public async Task Execute_EmptyBaseUrl_ReturnsEnvironmentError()
+    {
+        var model = new HttpRestModel(
+            Target: "missing-svc",
+            Method: "GET",
+            Path: "/health",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        // Do not seed serviceKey in Vars — baseUrl will be empty string.
+        var outcome = await RunStepAsync(model, "empty-base-url", serviceBaseUrl: string.Empty);
+
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+    }
+
+    // ── M2: Timeout verdict is Inconclusive (§12.1) ───────────────────────────
+
+    /// <summary>
+    /// The helper source text must set <c>client.Timeout</c> to 30 seconds —
+    /// verify the default-timeout assignment appears in the emitted helper code.
+    /// This avoids writing a test that actually waits 30 s.
+    /// </summary>
+    [Fact]
+    public void Helper_DefaultTimeout_IsSetTo30Seconds()
+    {
+        var provider = new HttpRestProvider();
+        var ctx = new StubCompileContext("t1");
+        var model = new HttpRestModel("svc", "GET", "/", null, null, null);
+        var fragment = provider.Emit(model, ctx);
+
+        var helperSource = string.Join("\n", fragment.RequiredHelpers);
+
+        Assert.Contains("FromSeconds(30)", helperSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The helper source text must handle <see cref="System.Threading.Tasks.TaskCanceledException"/>
+    /// and <see cref="System.TimeoutException"/> as <see cref="Verdict.Inconclusive"/>
+    /// (§12.1) — verify the emitted code contains the correct verdict assignment.
+    /// </summary>
+    [Fact]
+    public void Helper_TimeoutException_MapsToInconclusive_InSource()
+    {
+        var provider = new HttpRestProvider();
+        var ctx = new StubCompileContext("t1");
+        var model = new HttpRestModel("svc", "GET", "/", null, null, null);
+        var fragment = provider.Emit(model, ctx);
+
+        var helperSource = string.Join("\n", fragment.RequiredHelpers);
+
+        Assert.Contains("Verdict.Inconclusive", helperSource, StringComparison.Ordinal);
+        Assert.Contains("TaskCanceledException", helperSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A connection failure to a closed port (not a timeout) must still
+    /// produce <see cref="Verdict.EnvironmentError"/>, confirming the general
+    /// catch still routes connection errors correctly.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ConnectionFailure_ReturnsEnvironmentError_NotInconclusive()
+    {
+        var closedPort = FindFreePort();
+        var baseUrl = $"http://localhost:{closedPort}";
+
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "/health",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var outcome = await RunStepAsync(model, "conn-fail", baseUrl);
+
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.NotNull(outcome.Observation);
+        Assert.Contains("error", outcome.Observation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Stub context for validate tests ───────────────────────────────────────
+
+    /// <summary>
+    /// Minimal <see cref="IProjectContext"/> stub for validation tests.
+    /// <c>IProjectContext</c> is a marker interface (Sprint 1/2 surface).
+    /// </summary>
+    private sealed class StubProjectContext : IProjectContext { }
 }
