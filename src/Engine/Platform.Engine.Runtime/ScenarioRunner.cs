@@ -50,6 +50,34 @@ namespace Platform.Engine.Runtime;
 /// <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c>.
 /// Only <c>Fail</c> breaks CI by default.
 /// </para>
+/// <para>
+/// <strong>Not yet implemented (future sprints):</strong>
+/// <list type="bullet">
+///   <item>
+///     <description>
+///       <c>verifyMode: RETRY</c> polling loop — scheduled for Sprint 6.
+///       Any scenario that contains a RETRY step is rejected with
+///       <see cref="Verdict.Inconclusive"/> until then.
+///     </description>
+///   </item>
+///   <item>
+///     <description>
+///       Per-step timeout enforcement — also Sprint 6+.  The authored
+///       <c>timeout</c> value is parsed and stored on the AST node but is
+///       not enforced at runtime; <c>StepStartedEvent.TimeoutMs</c> is
+///       emitted as <see langword="null"/> to avoid advertising behaviour
+///       that does not happen.
+///     </description>
+///   </item>
+///   <item>
+///     <description>
+///       <c>continueOnFailure</c> abort semantics — the field is parsed but
+///       the runner does not yet short-circuit on step failure when the flag
+///       is <see langword="false"/>.
+///     </description>
+///   </item>
+/// </list>
+/// </para>
 /// </remarks>
 public static class ScenarioRunner
 {
@@ -215,6 +243,37 @@ public static class ScenarioRunner
         // ── Step 5: Assemble fragments → AssembledScript ──────────────────────
         var assembled = CsxAssembler.Assemble(fragments);
 
+        // ── Step 5b: Reject RETRY until Sprint 6 implements the polling loop ──
+        // Emitting RETRY events when the engine runs each step exactly once is a
+        // §12.1 trust hazard: the stream would claim behaviour that does not happen.
+        // Until the RETRY loop lands (Sprint 6), reject RETRY-marked steps honestly.
+        var retryStep = ast.Steps.FirstOrDefault(
+            s => s.VerifyMode == VerifyMode.Retry);
+        if (retryStep is not null)
+        {
+            var now5b = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now5b,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now5b,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(
+                $"step '{retryStep.Id}': verifyMode RETRY is not yet supported " +
+                "(lands in Sprint 6); use IMMEDIATE.")
+                .ConfigureAwait(false);
+            TerminalRenderer.Render(buffer, output);
+            return Verdict.Inconclusive;
+        }
+
         // ── Step 6: Start Aspire topology ─────────────────────────────────────
         SuiteTopology suite;
         try
@@ -260,18 +319,56 @@ public static class ScenarioRunner
             var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
 
             // ── Step 8: Compile-once + RunIsolatedAsync ───────────────────────
+            // Failure to compile or run engine-generated code is Inconclusive
+            // (§12.1): the test could not be executed.  A compile failure is an
+            // engine/provider bug, not a product defect; propagating it as an
+            // unhandled throw would give the caller no verdict.
             var tpaPaths = BclReferencePaths();
-            var compiled = RoslynScriptCompiler.CompileOnce(
-                assembled.CsxSource,
-                additionalOptions: null,
-                additionalReferencePaths: tpaPaths);
 
-            await RoslynScriptCompiler.RunIsolatedAsync(
-                compiled,
-                globals,
-                runLabel: scenarioName,
-                cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            CompiledScript compiled;
+            try
+            {
+                compiled = RoslynScriptCompiler.CompileOnce(
+                    assembled.CsxSource,
+                    additionalOptions: null,
+                    additionalReferencePaths: tpaPaths);
+
+                await RoslynScriptCompiler.RunIsolatedAsync(
+                    compiled,
+                    globals,
+                    runLabel: scenarioName,
+                    cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                var nowCE = DateTimeOffset.UtcNow;
+                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowCE,
+                    ScenarioId = scenarioName,
+                }));
+                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowCE,
+                    ScenarioId = scenarioName,
+                    Verdict = Verdict.Inconclusive,
+                    Counts = new VerdictCounts { Inconclusive = 1 },
+                }));
+
+                var diagnosis = ex is ScriptCompilationException sce
+                    ? $"CSX compilation failed: {sce.Message}"
+                    : $"{ex.GetType().Name}: {ex.Message}";
+
+                await output.WriteLineAsync(
+                    $"Compile/run error (Inconclusive): {diagnosis}")
+                    .ConfigureAwait(false);
+
+                TerminalRenderer.Render(buffer, output);
+                return Verdict.Inconclusive;
+            }
 
             // ── Step 9: Emit events from outcomes + aggregate verdict ─────────
             var now9 = DateTimeOffset.UtcNow;
@@ -288,10 +385,11 @@ public static class ScenarioRunner
             foreach (var node in ast.Steps)
             {
                 var safeId = CsxFragment.SanitiseId(node.Id);
-                long timeoutMs = node.Timeout.HasValue
-                    ? (long)node.Timeout.Value.TotalMilliseconds
-                    : 0L;
 
+                // Per-step timeouts are not yet enforced (Sprint 6+); emitting a
+                // non-null TimeoutMs would advertise behaviour that does not
+                // happen.  All surviving steps are IMMEDIATE (RETRY is rejected
+                // above), so VerifyMode is always "IMMEDIATE" here — honest.
                 buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
                 {
                     RunId = runId,
@@ -299,7 +397,7 @@ public static class ScenarioRunner
                     StepId = node.Id,
                     Kind = node.CanonicalType,
                     VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
-                    TimeoutMs = timeoutMs > 0 ? timeoutMs : null,
+                    TimeoutMs = null,
                 }));
 
                 var outcomeKey = VarKeys.Outcome(safeId);

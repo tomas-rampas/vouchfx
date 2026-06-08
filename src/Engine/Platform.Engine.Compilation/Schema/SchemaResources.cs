@@ -144,8 +144,16 @@ internal static class SchemaResources
                     return true;
                 }
 
-                // Boolean values (true/false) — YamlDotNet's default resolver
-                // already handles these; no action required here.
+                // Recognise plain true/false (case-insensitive) as CLR bool so
+                // that the JSON Schema validator receives a JSON boolean literal
+                // (true/false, unquoted) rather than the string "true"/"false".
+                // Only strict true/false — YAML 1.1 aliases (yes/no/on/off) are
+                // deliberately excluded to avoid coercing unrelated string fields.
+                if (bool.TryParse(value, out _))
+                {
+                    currentType = typeof(bool);
+                    return true;
+                }
             }
 
             return false;

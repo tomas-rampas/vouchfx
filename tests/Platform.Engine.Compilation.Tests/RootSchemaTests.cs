@@ -146,6 +146,77 @@ public sealed class RootSchemaTests
     }
 
     // -------------------------------------------------------------------------
+    // Boolean scalar: continueOnFailure must reach the validator as a JSON bool
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A step with <c>continueOnFailure: true</c> (an unquoted YAML boolean)
+    /// must be accepted.  Before the fix, the <see cref="YamlScalarTypeResolver"/>
+    /// left booleans as strings, causing the JSON Schema <c>type: boolean</c>
+    /// constraint to reject the document with "[type] Value is 'string' but
+    /// should be 'boolean'".
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureTrue_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: true
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// Likewise, <c>continueOnFailure: false</c> must be accepted.
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureFalse_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: false
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A <em>quoted</em> <c>"true"</c> is a YAML string; the schema constrains
+    /// <c>continueOnFailure</c> to <c>type: boolean</c>, so a quoted value must
+    /// be rejected.  This confirms the resolver only coerces plain scalars and
+    /// does not affect quoted strings.
+    /// </summary>
+    [Fact]
+    public void Validate_ContinueOnFailureQuotedString_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                continueOnFailure: "true"
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "A quoted \"true\" string must be rejected for a boolean field.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    // -------------------------------------------------------------------------
     // Provider-specific extra fields are allowed
     // -------------------------------------------------------------------------
 

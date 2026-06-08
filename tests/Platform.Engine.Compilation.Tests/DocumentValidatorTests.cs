@@ -154,6 +154,34 @@ public sealed class DocumentValidatorTests
             $"Expected a positive resolved line number in message: '{errorWithLine.Message}'");
     }
 
+    // ── Boolean scalar: continueOnFailure ─────────────────────────────────────
+
+    /// <summary>
+    /// An <c>http.rest</c> document with <c>continueOnFailure: true</c> on a step
+    /// must pass the composed-schema validation.  Before the fix, the YAML scalar
+    /// resolver left the plain token <c>true</c> as a string, causing the JSON
+    /// Schema <c>type: boolean</c> constraint to reject valid documents.
+    /// </summary>
+    [Fact]
+    public void Validate_HttpRestDoc_ContinueOnFailureTrue_IsValid()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+                continueOnFailure: true
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {FormatErrors(result)}");
+        Assert.Empty(result.Errors);
+    }
+
     // ── Bad verifyMode enum ────────────────────────────────────────────────────
 
     /// <summary>
