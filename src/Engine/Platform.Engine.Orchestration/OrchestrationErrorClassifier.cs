@@ -59,11 +59,13 @@ public static class OrchestrationErrorClassifier
         string? imageRef,
         string resourceName)
     {
-        var message = exception?.Message ?? string.Empty;
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var message = exception.Message;
         var registryHost = ParseRegistryHost(imageRef);
         var detail = BuildDetail(message);
 
-        var (kind, authStatus) = ClassifyMessage(message);
+        var (kind, authStatus) = ClassifyMessage(message, imageRef);
 
         return new OrchestrationErrorInfo(
             Kind: kind,
@@ -148,25 +150,52 @@ public static class OrchestrationErrorClassifier
 
     /// <summary>
     /// Derives the <see cref="OrchestrationErrorKind"/> and optional
-    /// <c>authStatus</c> string from the raw exception message.
+    /// <c>authStatus</c> string from the raw exception message and the
+    /// (optional) image reference.
     /// </summary>
-    private static (OrchestrationErrorKind Kind, string? AuthStatus) ClassifyMessage(string message)
+    /// <param name="message">The raw exception message to classify.</param>
+    /// <param name="imageRef">
+    /// The Docker image reference that was used for the failing resource, or
+    /// <see langword="null"/> when no image reference is applicable.  When
+    /// non-null, auth keywords are treated as image-pull signals without
+    /// requiring a co-occurring pull token in the message.
+    /// </param>
+    /// <remarks>
+    /// Auth keywords (<c>unauthorized</c> / <c>401</c> / <c>authentication</c> /
+    /// <c>unauthenticated</c>, and <c>denied</c> / <c>forbidden</c> / <c>403</c>) are
+    /// only classified as <see cref="OrchestrationErrorKind.ImagePull"/> when the
+    /// message <em>also</em> contains a pull or registry token
+    /// (<c>pull</c> / <c>manifest</c> / <c>registry</c> / <c>image</c> / <c>no such image</c>),
+    /// OR when <paramref name="imageRef"/> is non-null (a resource-level image context
+    /// is already known).  This prevents messages such as
+    /// <c>"database authentication failed during health probe"</c> from being
+    /// misclassified as <see cref="OrchestrationErrorKind.ImagePull"/>.
+    /// </remarks>
+    private static (OrchestrationErrorKind Kind, string? AuthStatus) ClassifyMessage(
+        string message, string? imageRef)
     {
-        // Auth-flavoured pull signals — checked before generic pull signals so
-        // that a message containing both "pull" and "unauthorized" gets the auth
-        // path (with AuthStatus set) rather than the anonymous path.
-        if (ContainsAny(message,
+        // A pull/registry/image token in the message, OR a non-null imageRef, provides
+        // the image-pull context required to treat auth keywords as ImagePull signals.
+        var hasPullContext =
+            imageRef is not null ||
+            ContainsAny(message, "pull", "manifest", "registry", "image", "no such image");
+
+        // Auth-flavoured pull signals — only classified as ImagePull when an image-pull
+        // context is present.  Without that context the message falls through to the
+        // HealthGate / Discovery / Provision checks below, preventing misclassification
+        // of e.g. "database authentication failed during health probe".
+        if (hasPullContext && ContainsAny(message,
             "unauthorized", "401", "authentication", "unauthenticated"))
         {
             return (OrchestrationErrorKind.ImagePull, "unauthenticated");
         }
 
-        if (ContainsAny(message, "denied", "forbidden", "403"))
+        if (hasPullContext && ContainsAny(message, "denied", "forbidden", "403"))
         {
             return (OrchestrationErrorKind.ImagePull, "access-denied");
         }
 
-        // Generic pull / image-not-found signals.
+        // Generic pull / image-not-found signals (already imply an image-pull context).
         if (ContainsAny(message,
             "pull", "manifest", "not found", "no such image",
             "pull access", "toomanyrequests"))
@@ -184,7 +213,7 @@ public static class OrchestrationErrorClassifier
 
         // Timeout / cancellation — most commonly a health gate that ran out of
         // time before the container became ready.
-        if (exception_IsTimeoutOrCancellation(message))
+        if (IsTimeoutOrCancellation(message))
         {
             return (OrchestrationErrorKind.HealthGate, null);
         }
@@ -201,10 +230,11 @@ public static class OrchestrationErrorClassifier
     }
 
     /// <summary>
-    /// Treats <see cref="OperationCanceledException"/> and timeout-flavoured
-    /// messages as health-gate failures (the gate timed out waiting for ready).
+    /// Returns <see langword="true"/> when <paramref name="message"/> contains
+    /// timeout or cancellation keywords, indicating a health-gate failure
+    /// (the gate timed out waiting for a resource to become ready).
     /// </summary>
-    private static bool exception_IsTimeoutOrCancellation(string message) =>
+    private static bool IsTimeoutOrCancellation(string message) =>
         ContainsAny(message, "timeout", "timed out", "operation was cancelled",
             "operation canceled", "cancellation");
 

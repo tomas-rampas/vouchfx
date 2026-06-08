@@ -192,4 +192,54 @@ public sealed class TerminalRendererTests
         Assert.Contains("step-after-blanks", output);
         Assert.Contains("PASS", output);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 6: environment-error events render the resource name and error kind
+    //         (Fix 6, S02-G-02).  The JSON is built by hand so the Reporting
+    //         test project does not need a reference to Orchestration.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_EnvironmentErrorEvent_PrintsResourceNameAndErrorKind()
+    {
+        // Build the environment-error JSON line by hand — flat wire shape that
+        // mirrors the EnvironmentErrorEvent record without referencing
+        // Platform.Engine.Orchestration from this test project.
+        const string envErrorLine =
+            """{"v":1,"schemaVersion":"v1","type":"environment-error","ts":"2026-01-01T00:00:00Z","runId":"run-1","verdict":"ENV_ERROR","errorKind":"ImagePull","resourceName":"myapp","registryHost":"registry.example.com","authStatus":"unauthenticated","detail":"manifest not found"}""";
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => TerminalRenderer.Render(new[] { envErrorLine }, writer));
+
+        // Must not throw.
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        // Resource name and error kind must appear in the rendered output.
+        Assert.Contains("myapp", output, StringComparison.Ordinal);
+        Assert.Contains("ImagePull", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_EnvironmentErrorEvent_MissingOptionalFields_DoesNotThrow()
+    {
+        // Minimal environment-error line with only the mandatory fields present.
+        // registryHost, authStatus, and detail are absent — the renderer must
+        // tolerate missing optional fields via the defensive GetStr helper.
+        const string minimalEnvErrorLine =
+            """{"v":1,"schemaVersion":"v1","type":"environment-error","ts":"2026-01-01T00:00:00Z","runId":"run-2","verdict":"ENV_ERROR","errorKind":"HealthGate","resourceName":"appdb"}""";
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => TerminalRenderer.Render(new[] { minimalEnvErrorLine }, writer));
+
+        // Must not throw even when optional fields are absent.
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        // Resource name and error kind must still appear.
+        Assert.Contains("appdb", output, StringComparison.Ordinal);
+        Assert.Contains("HealthGate", output, StringComparison.Ordinal);
+    }
 }

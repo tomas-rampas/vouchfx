@@ -472,6 +472,79 @@ public sealed class OrchestrationErrorClassifierTests
     }
 
     // -----------------------------------------------------------------------
+    // Classify — auth keyword without image-pull context (Fix 4, S02-A-02)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// "authentication failed during health probe" — auth keyword present but no
+    /// image-pull context (no pull/manifest/registry/image token and imageRef is null).
+    /// Must classify as <see cref="OrchestrationErrorKind.HealthGate"/>, NOT ImagePull.
+    /// </summary>
+    [Fact]
+    public void Classify_AuthKeywordWithoutPullContext_ReturnsHealthGate()
+    {
+        // Arrange — "authentication" appears but refers to DB auth, not image-pull auth.
+        var ex = new InvalidOperationException(
+            "database authentication failed during health probe");
+
+        // Act — no imageRef → no image-pull context.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "appdb");
+
+        // Assert — must NOT be ImagePull; health keyword present so HealthGate is expected.
+        Assert.Equal(OrchestrationErrorKind.HealthGate, info.Kind);
+        Assert.Null(info.AuthStatus);
+    }
+
+    /// <summary>
+    /// "401 unauthorized pulling image" — auth keyword IS present AND a pull token
+    /// appears in the message.  Must still classify as ImagePull / unauthenticated.
+    /// </summary>
+    [Fact]
+    public void Classify_UnauthorizedWithPullTokenInMessage_ReturnsImagePullUnauthenticated()
+    {
+        // Arrange — classic "401 unauthorized" on a pull attempt.
+        var ex = new InvalidOperationException(
+            "401 unauthorized pulling image from registry.example.com/private:1");
+
+        // Act — imageRef null; but "pulling" contains "pull" + "image" token.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "api");
+
+        // Assert — pull token present in message → ImagePull / unauthenticated.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("unauthenticated", info.AuthStatus);
+    }
+
+    /// <summary>
+    /// Auth keyword present AND imageRef is non-null (resource-level image context).
+    /// Must classify as ImagePull / unauthenticated even without a pull token in
+    /// the message.
+    /// </summary>
+    [Fact]
+    public void Classify_UnauthorizedWithNonNullImageRef_ReturnsImagePullUnauthenticated()
+    {
+        // Arrange — the message itself does not contain "pull" or "manifest",
+        // but imageRef is non-null so the image-pull context is established.
+        var ex = new InvalidOperationException(
+            "unauthorized: access denied for user");
+
+        // Act.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "registry.example.com/private:1",
+            resourceName: "api");
+
+        // Assert — imageRef provides the context → ImagePull / unauthenticated.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("unauthenticated", info.AuthStatus);
+    }
+
+    // -----------------------------------------------------------------------
     // EnvironmentErrorEvents — ToLine round-trip
     // -----------------------------------------------------------------------
 

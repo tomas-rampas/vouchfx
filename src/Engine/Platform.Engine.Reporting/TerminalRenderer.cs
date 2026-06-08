@@ -156,6 +156,23 @@ public sealed class TerminalRenderer
                     break;
                 }
 
+            case EventTypes.EnvironmentError:
+                {
+                    var resourceName = GetStr(envelope, "resourceName") ?? "(unknown)";
+                    var errorKind = GetStr(envelope, "errorKind") ?? "(unknown)";
+                    var registryHost = GetStr(envelope, "registryHost") ?? "(none)";
+                    var detail = GetStr(envelope, "detail") ?? "(no detail)";
+                    output.WriteLine(
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "Environment error on '{0}' [{1}] registry={2}: {3}",
+                            resourceName,
+                            errorKind,
+                            registryHost,
+                            detail));
+                    break;
+                }
+
             // Unknown / unrendered event types (SuiteStarted, SuiteCompleted, and
             // any type introduced by a future engine release) are silently ignored.
             // This is the core §14 forward-compatibility guarantee.
