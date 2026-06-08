@@ -130,10 +130,22 @@ public static class ScenarioRunner
     private static readonly Regex s_placeholderRegex =
         new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 
-    // Secret-reference sources the engine can resolve (§17, S05-B-01).
-    // This sprint ships only the 'env' source; Vault adds "vault" in Sprint 8 by
-    // extending this set — no other change to the validation pass is required.
-    private static readonly string[] s_knownSecretSources = { "env" };
+    // Secret-reference sources the engine can resolve (§17, S05-B-01 / S05-B-02).
+    // This sprint ships only the 'env' source; Vault adds a resolver in Sprint 8 by
+    // extending BuildSecretResolvers() — both the pre-compile validation pass (this
+    // field) and the runtime accessor (the catalog) derive from that one factory, so
+    // they can never disagree about which sources are available.
+    private static readonly string[] s_knownSecretSources =
+        BuildSecretResolvers().Select(r => r.Source).ToArray();
+
+    /// <summary>
+    /// Builds the run's secret resolvers (§17).  Single source of truth shared by the
+    /// pre-compile validation pass (<see cref="s_knownSecretSources"/>) and the runtime
+    /// <see cref="SecretSourceCatalog"/> built per scenario, so the known-source set is
+    /// guaranteed consistent.  Vault is added here in Sprint 8 with no other change.
+    /// </summary>
+    private static ISecretResolver[] BuildSecretResolvers()
+        => new ISecretResolver[] { new EnvironmentSecretResolver() };
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -748,7 +760,16 @@ public static class ScenarioRunner
             vars[kv.Key] = kv.Value;
         }
 
-        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
+        // ── Secret subsystem (§17, S05-B-02) ──────────────────────────────────
+        // Build the catalog + accessor here, in the Default ALC, and pass them into
+        // the boundary BY REFERENCE.  No static handle bridges the boundary — the
+        // accessor is an instance the script reaches only via globals.Secrets.
+        // Resolution happens at step-execution time inside the emitted CSX, never at
+        // compile time, so no secret value is ever baked into the emitted IL.
+        var secretCatalog = new SecretSourceCatalog(BuildSecretResolvers());
+        var secretAccessor = new SecretAccessor(secretCatalog);
+
+        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices, secretAccessor);
 
         // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
         var tpaPaths = BclReferencePaths()
@@ -770,6 +791,42 @@ public static class ScenarioRunner
                 runLabel: scenarioName,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (SecretResolutionException sre)
+        {
+            // Defence-in-depth backstop (§17): every Core provider already guards its
+            // own secret resolution and maps a failure to a per-step EnvironmentError.
+            // This catch only fires if a FUTURE provider forgets that guard and lets a
+            // SecretResolutionException escape the Roslyn submission delegate. A secret
+            // that cannot be resolved is an environment/configuration problem, NOT a
+            // product defect — so we surface it as a scenario-level EnvironmentError
+            // (consistent with the verdict taxonomy §12.1; EnvironmentError is already a
+            // first-class scenario verdict used by the topology-start path above).
+            // REFERENCE-ONLY: only the source/path coordinates are written to output —
+            // never sre.Message verbatim (here Message carries only the path, but we keep
+            // the surface reference-only for consistency and future-proofing, §17).
+            var nowSE = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = nowSE,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = nowSE,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.EnvironmentError,
+                Counts = new VerdictCounts { EnvError = 1 },
+            }));
+
+            await output.WriteLineAsync(
+                "Secret resolution failed (EnvironmentError): " +
+                $"source '{sre.SecretSource}', path '{sre.SecretPath}'.")
+                .ConfigureAwait(false);
+
+            return Verdict.EnvironmentError;
         }
         catch (Exception ex)
         {

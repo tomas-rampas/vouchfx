@@ -135,11 +135,14 @@ public sealed class HttpRestProvider
         "    /// </summary>\n" +
         "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        Platform.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
         "        string outcomeKey,\n" +
         "        string captureStatusKey,\n" +
         "        string serviceKey,\n" +
         "        string method,\n" +
-        "        string path,\n" +
+        "        string pathTemplate,\n" +
+        "        string[] headerNames,\n" +
+        "        string[] headerValueTemplates,\n" +
         "        int? expectedStatus,\n" +
         "        string[] captureVarNames,\n" +
         "        string[] captureJsonPaths)\n" +
@@ -156,6 +159,14 @@ public sealed class HttpRestProvider
         "        {\n" +
         "            // M2: cap the default stall window; per-step timeout plumbing is Sprint 6.\n" +
         "            client.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "            // Resolve the path INSIDE the guarded region (§17) in a SINGLE pass:\n" +
+        "            // ResolveTemplate handles BOTH {placeholder} substitution and\n" +
+        "            // ${secret:source/path} resolution over the original template text, so a\n" +
+        "            // substituted placeholder value can never be re-scanned as a secret token\n" +
+        "            // (no secret-reference injection) and a revealed secret can never be\n" +
+        "            // re-scanned as a placeholder (no corruption). A missing secret throws\n" +
+        "            // SecretResolutionException → caught below → EnvironmentError.\n" +
+        "            var path = Secret_Helpers.ResolveTemplate(secrets, vars, pathTemplate);\n" +
         "            var baseUrl = vars.TryGetValue(serviceKey, out var bu) && bu is string s ? s : \"\";\n" +
         "            // Safe URI composition (M1): resolve path against the base URI and\n" +
         "            // confirm the resulting authority matches the original base URI.\n" +
@@ -172,6 +183,23 @@ public sealed class HttpRestProvider
         "            using (var req = new System.Net.Http.HttpRequestMessage(\n" +
         "                       new System.Net.Http.HttpMethod(method), full))\n" +
         "            {\n" +
+        "                // Resolve + set request headers INSIDE the guarded region (§17):\n" +
+        "                // each VALUE is resolved in a single pass via ResolveTemplate (both\n" +
+        "                // {placeholder} substitution and ${secret:...} resolution over the\n" +
+        "                // original template). The revealed value feeds the header sink directly\n" +
+        "                // and is never stored. Header NAMES are used VERBATIM and are\n" +
+        "                // intentionally NOT placeholder- or secret-resolved — only values are.\n" +
+        "                for (int hi = 0; hi < headerNames.Length; hi++)\n" +
+        "                {\n" +
+        "                    var headerName = headerNames[hi];\n" +
+        "                    var headerValue = Secret_Helpers.ResolveTemplate(\n" +
+        "                        secrets, vars, headerValueTemplates[hi]);\n" +
+        "                    // TryAddWithoutValidation (not Add): it permits restricted and\n" +
+        "                    // content headers, and does not throw on unusual header names —\n" +
+        "                    // Add validates the name/value and rejects content headers on a\n" +
+        "                    // request-header collection.\n" +
+        "                    req.Headers.TryAddWithoutValidation(headerName, headerValue);\n" +
+        "                }\n" +
         "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
         "                var actual = (int)resp.StatusCode;\n" +
         "                bool ok = expectedStatus.HasValue\n" +
@@ -257,6 +285,20 @@ public sealed class HttpRestProvider
         "                    vars[captureStatusKey] = string.Join(\",\", System.Array.ConvertAll(matchedFlags, f => f ? \"1\" : \"0\"));\n" +
         "                }\n" +
         "            }\n" +
+        "        }\n" +
+        "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
+        "        {\n" +
+        "            // Missing / unknown secret = EnvironmentError (§12.1): a configuration\n" +
+        "            // problem in the run environment, NOT a product defect (not Fail) and NOT\n" +
+        "            // a scenario-level abort (caught here, written as a per-step outcome).\n" +
+        "            // The observation is REFERENCE-ONLY: a fixed message plus the discrete\n" +
+        "            // source/path coordinates. The exception's own Message is deliberately\n" +
+        "            // NOT included — a future resolver's Message could embed partial value\n" +
+        "            // data, and this observation must never carry a value (§17).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
+        "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
+        "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
         "        }\n" +
         "        catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException\n" +
         "                                          || ex is System.TimeoutException)\n" +
@@ -511,14 +553,35 @@ public sealed class HttpRestProvider
             ? st.ToString(CultureInfo.InvariantCulture)
             : "null";
 
-        // S04-B-03: wrap 'path' in Substitute_Helpers.Resolve so {placeholder} tokens
-        // resolve against Vars at runtime.  The path value is JSON-escaped into a C#
-        // string literal — any {placeholder} inside it survives as LITERAL TEXT (not an
-        // emit-time interpolation hole) and is processed by the Regex at runtime.
+        // S04-B-03 + S05-B-02: the 'path' is emitted as the RAW template literal
+        // (JSON-escaped C# string literal).  Substitution + secret resolution now happen
+        // INSIDE ExecuteAsync's guarded region (so a missing secret maps to a per-step
+        // EnvironmentError, never escapes the step).  Any {placeholder} or
+        // ${secret:source/path} token inside the literal survives as LITERAL TEXT here
+        // (not an emit-time interpolation hole) and is processed at runtime.
         // CRITICAL: we are inside a $$"""…""" block, so {{expr}} is the interpolation
-        // hole.  JsonSerializer.Serialize wraps the path in double-quotes, producing a
-        // valid C# string literal that the runtime Regex then scans for {name} tokens.
-        var resolvedPath = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(model.Path)})";
+        // hole; a lone {placeholder} or ${secret:…} passes through verbatim.
+        var pathTemplateLiteral = JsonSerializer.Serialize(model.Path);
+
+        // S05-B-02: expand the headers map into parallel name/value-template arrays.
+        // Values are emitted as RAW templates; ExecuteAsync substitutes then secret-
+        // resolves each at runtime, inside the guarded region.  No secret value is ever
+        // baked into the emitted IL — only the reference token text is.
+        string[] headerNames;
+        string[] headerValueTemplates;
+        if (model.Headers is { Count: > 0 } headers)
+        {
+            headerNames = headers.Keys.ToArray();
+            headerValueTemplates = headers.Values.ToArray();
+        }
+        else
+        {
+            headerNames = Array.Empty<string>();
+            headerValueTemplates = Array.Empty<string>();
+        }
+
+        var headerNamesLiteral = BuildStringArrayLiteral(headerNames);
+        var headerValueTemplatesLiteral = BuildStringArrayLiteral(headerValueTemplates);
 
         // S04-B-02: expand the captures map into parallel arrays.
         string[] captureVarNames;
@@ -542,31 +605,36 @@ public sealed class HttpRestProvider
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
         //
-        // String arguments (outcomeKey, serviceKey, method) are emitted via
-        // JsonSerializer.Serialize, which wraps each value in double-quotes and
-        // escapes any embedded quotes, backslashes, or control characters.
-        // This prevents CSX-literal breakage and removes a string-injection surface.
-        //
-        // resolvedPath is already a Substitute_Helpers.Resolve(Vars, "…") call
-        // expression — it is spliced in directly as C# source, not as a string literal.
+        // String arguments are emitted via JsonSerializer.Serialize, which wraps each
+        // value in double-quotes and escapes embedded quotes, backslashes, or control
+        // characters — preventing CSX-literal breakage and removing a string-injection
+        // surface.  'Secrets' is the ScriptGlobalVariables.Secrets instance property.
         var block = $$"""
             {
                 await HttpRest_Helpers.ExecuteAsync(
                     Vars,
+                    Secrets,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
                     {{JsonSerializer.Serialize(model.Method)}},
-                    {{resolvedPath}},
+                    {{pathTemplateLiteral}},
+                    {{headerNamesLiteral}},
+                    {{headerValueTemplatesLiteral}},
                     {{expectedLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureJsonPathsLiteral}});
             }
             """;
 
-        // Build the helpers list: HttpRest_Helpers + Substitute_Helpers (B-03).
-        // SubstituteHelper.Source is byte-identical — deduplication handled by CsxAssembler.
-        var helpers = new List<string>(s_helpers) { SubstituteHelper.Source };
+        // Build the helpers list: HttpRest_Helpers + Substitute_Helpers (B-03) +
+        // Secret_Helpers (S05-B-02).  Both helper sources are byte-identical across
+        // providers — deduplication is handled by CsxAssembler.
+        var helpers = new List<string>(s_helpers)
+        {
+            SubstituteHelper.Source,
+            SecretHelper.Source,
+        };
 
         return new CsxFragment(
             RequiredUsings: s_usings,

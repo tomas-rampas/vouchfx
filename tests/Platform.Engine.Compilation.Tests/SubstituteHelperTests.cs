@@ -7,7 +7,8 @@
 //   4. Null value → empty string.
 //   5. Non-identifier braces (e.g. JSON syntax) pass through unchanged.
 //   6. Multiple placeholders in one template all resolve.
-//   7. HttpRestProvider.Emit wraps 'path' in Substitute_Helpers.Resolve(Vars, "…")
+//   7. HttpRestProvider.Emit emits 'path' as a raw template literal resolved at runtime
+//      via Secret_Helpers.ResolveTemplate (single-pass substitute + secret, S05-B-02),
 //      so the placeholder survives as literal text inside the JSON-escaped literal.
 //   8. DbAssertPostgresProvider.Emit wraps query + param values similarly.
 //   9. Full compile-and-run: {name}="world" in path resolves at runtime.
@@ -206,12 +207,14 @@ public sealed class SubstituteHelperTests
     // ── 7. HttpRestProvider.Emit wraps 'path' with Resolve ────────────────────
 
     /// <summary>
-    /// <see cref="HttpRestProvider.Emit"/> must emit the <c>path</c> field as
-    /// <c>Substitute_Helpers.Resolve(Vars, "…")</c> — the placeholder survives as
-    /// literal text inside the JSON-escaped string literal (not as an emit-time hole).
+    /// <see cref="HttpRestProvider.Emit"/> must emit the <c>path</c> field as a RAW
+    /// template literal passed to <c>HttpRest_Helpers.ExecuteAsync</c> (S05-B-02): the
+    /// substitution + secret resolution now happen INSIDE the helper's guarded region,
+    /// so the placeholder survives as literal text inside the JSON-escaped string
+    /// literal rather than being wrapped at the call site.
     /// </summary>
     [Fact]
-    public void HttpRestEmit_PathField_IsWrappedInResolveCall()
+    public void HttpRestEmit_PathField_IsEmittedAsRawTemplateLiteral()
     {
         var provider = new HttpRestProvider();
         var model = new HttpRestModel(
@@ -225,25 +228,30 @@ public sealed class SubstituteHelperTests
 
         var fragment = provider.Emit(model, ctx);
 
-        // The StatementBlock must contain the Resolve call...
-        Assert.Contains("Substitute_Helpers.Resolve(Vars,", fragment.StatementBlock,
-            StringComparison.Ordinal);
-
-        // ...and the placeholder text {userId} must survive as literal text inside
-        // the JSON-escaped string literal, NOT resolved at emit time.
+        // The placeholder text {userId} must survive as literal text inside the
+        // JSON-escaped string literal, NOT resolved at emit time.
         Assert.Contains("{userId}", fragment.StatementBlock, StringComparison.Ordinal);
 
-        // The full Resolve expression must appear in the block — the path is the second
-        // argument to Resolve(Vars, "…"), NOT a bare string literal passed directly to
-        // ExecuteAsync.  JsonSerializer.Serialize wraps the path value in double-quotes,
-        // so the emitted form is:  Substitute_Helpers.Resolve(Vars, "/users/{userId}/orders")
+        // The path is emitted as the raw template literal "/users/{userId}/orders" and
+        // passed directly to ExecuteAsync; the helper performs substitution + secret
+        // resolution at runtime inside its try/catch.
         Assert.Contains(
-            "Substitute_Helpers.Resolve(Vars, \"/users/{userId}/orders\")",
+            "\"/users/{userId}/orders\"",
             fragment.StatementBlock,
             StringComparison.Ordinal);
 
-        // Substitute_Helpers must be in RequiredHelpers.
+        // The helper itself must perform BOTH substitution and secret resolution in a
+        // SINGLE pass (S05-B-02 hardening): the path is resolved via
+        // Secret_Helpers.ResolveTemplate(secrets, vars, pathTemplate), which handles
+        // {placeholder} and ${secret:...} over the original template in one left-to-right
+        // pass — closing the secret-reference-injection / secret-corruption window.
         var allHelpers = string.Join("\n", fragment.RequiredHelpers);
+        Assert.Contains("Secret_Helpers", allHelpers, StringComparison.Ordinal);
+        Assert.Contains("Secret_Helpers.ResolveTemplate(secrets, vars, pathTemplate)", allHelpers,
+            StringComparison.Ordinal);
+
+        // Substitute_Helpers source remains present (it is still used by other providers
+        // and dedupes harmlessly); the no-IL-bake test also asserts on its presence.
         Assert.Contains("Substitute_Helpers", allHelpers, StringComparison.Ordinal);
     }
 
