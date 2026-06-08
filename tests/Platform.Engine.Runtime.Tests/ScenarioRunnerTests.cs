@@ -74,6 +74,45 @@ public sealed class ScenarioRunnerTests
             "Expected non-empty output containing the validation error message.");
     }
 
+    // ── Non-docker: RETRY rejection (M-2) ────────────────────────────────────
+
+    /// <summary>
+    /// A document that contains a step with <c>verifyMode: RETRY</c> must be
+    /// rejected before the topology is started, returning
+    /// <see cref="Verdict.Inconclusive"/> and a clear message explaining that
+    /// RETRY is not yet supported.  No Docker is required.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RetryStep_ReturnsInconclusive_WithMessage_NoTopology()
+    {
+        const string yaml = """
+            steps:
+              - id: poll-health
+                type: http.rest
+                target: some-api
+                method: GET
+                path: /health
+                verifyMode: RETRY
+                expect:
+                  status: 200
+            """;
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "retry-rejection-test",
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("RETRY", rendered, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not yet supported", rendered, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ── Docker-gated capstone tests ───────────────────────────────────────────
 
     /// <summary>
