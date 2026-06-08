@@ -440,6 +440,141 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
+    // M-A — Reserved-prefix rejection for capture keys and variable names
+    // =========================================================================
+
+    /// <summary>
+    /// A <c>capture</c> key beginning with the engine-reserved prefix <c>conn::</c>
+    /// must be rejected at build time with a clear error message.
+    /// This prevents an author from redirecting a connection string by writing an
+    /// HTTP-response value into the connection-string namespace.
+    /// </summary>
+    [Fact]
+    public void Build_CaptureKey_WithConnPrefix_Throws()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["conn::orders-db"] = "$.connString",
+        };
+        var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
+
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("conn::", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reserved", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A <c>capture</c> key beginning with the engine-reserved prefix <c>svc::</c>
+    /// must be rejected at build time.
+    /// </summary>
+    [Fact]
+    public void Build_CaptureKey_WithSvcPrefix_Throws()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["svc::my-service"] = "$.url",
+        };
+        var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
+
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("svc::", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reserved", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A <c>capture</c> key beginning with <c>__outcome::</c> must be rejected.
+    /// </summary>
+    [Fact]
+    public void Build_CaptureKey_WithOutcomePrefix_Throws()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["__outcome::step1"] = "$.result",
+        };
+        var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
+
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("__outcome::", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reserved", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A <c>variables</c> block entry named with the engine-reserved prefix <c>svc::</c>
+    /// must be rejected at build time.
+    /// </summary>
+    [Fact]
+    public void Build_VariableName_WithSvcPrefix_Throws()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var variables = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["svc::x"] = "http://localhost",
+        };
+        var doc = new E2eDocument(
+            Metadata: null,
+            Environment: null,
+            Variables: variables,
+            Steps: new[] { StepSpecWith(id: "s1", type: "http.rest") });
+
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("svc::", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reserved", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A <c>variables</c> block entry named with the engine-reserved prefix <c>__outcome::</c>
+    /// must be rejected at build time.
+    /// </summary>
+    [Fact]
+    public void Build_VariableName_WithOutcomePrefix_Throws()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var variables = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["__outcome::stolen"] = "forged",
+        };
+        var doc = new E2eDocument(
+            Metadata: null,
+            Environment: null,
+            Variables: variables,
+            Steps: new[] { StepSpecWith(id: "s1", type: "http.rest") });
+
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("__outcome::", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reserved", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Normal (non-reserved) capture keys and variable names must pass without error.
+    /// </summary>
+    [Fact]
+    public void Build_NormalCaptureKeyAndVariableName_DoNotThrow()
+    {
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["orderId"] = "$.id",
+            ["status"] = "$.status",
+        };
+        var variables = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["baseUrl"] = "http://localhost",
+        };
+        var doc = new E2eDocument(
+            Metadata: null,
+            Environment: null,
+            Variables: variables,
+            Steps: new[] { StepSpecWith(id: "s1", type: "http.rest", capture: capture) });
+
+        // Must not throw.
+        var ast = AstBuilder.Build(doc, registry);
+        Assert.Single(ast.Steps);
+    }
+
+    // =========================================================================
     // Helpers — document and step spec factories
     // =========================================================================
 

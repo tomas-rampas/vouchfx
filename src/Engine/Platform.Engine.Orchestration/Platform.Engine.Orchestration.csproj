@@ -8,6 +8,9 @@
     <PackageReference Include="Aspire.Hosting" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
     <PackageReference Include="Aspire.Hosting.Kafka" />
+    <!-- Respawn: per-scenario Postgres state reset (S04-A-01).
+         Brings Npgsql adapter support; Npgsql itself resolves transitively. -->
+    <PackageReference Include="Respawn" />
   </ItemGroup>
 
   <ItemGroup>

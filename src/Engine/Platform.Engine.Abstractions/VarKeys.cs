@@ -16,9 +16,9 @@ namespace Platform.Engine.Abstractions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two namespaces are reserved within the shared <c>Vars</c> dictionary.
+/// Four namespaces are reserved within the shared <c>Vars</c> dictionary.
 /// Author-defined variable names in <c>.e2e.yaml</c> must not begin with
-/// either prefix:
+/// any of these prefixes (enforced at build time by the <c>AstBuilder</c>):
 /// </para>
 /// <list type="bullet">
 ///   <item><description>
@@ -27,10 +27,20 @@ namespace Platform.Engine.Abstractions;
 ///     Retrieve with <see cref="Service(string)"/>.
 ///   </description></item>
 ///   <item><description>
+///     <c>conn::</c> — connection strings staged by the orchestration layer for
+///     managed dependencies (e.g. Postgres).
+///     Retrieve with <see cref="Connection(string)"/>.
+///   </description></item>
+///   <item><description>
 ///     <c>__outcome::</c> — per-step <see cref="StepOutcome"/> instances written
 ///     by emitted CSX step blocks and consumed by the engine runner after
 ///     <c>RunIsolatedAsync</c> returns.
 ///     Retrieve with <see cref="Outcome(string)"/>.
+///   </description></item>
+///   <item><description>
+///     <c>__capture_status::</c> — per-step capture-matched-flag records written
+///     by emitted CSX step blocks for provenance reporting (G-01).
+///     Retrieve with <see cref="CaptureStatus(string)"/>.
 ///   </description></item>
 /// </list>
 /// <para>
@@ -53,6 +63,16 @@ public static class VarKeys
     public const string ServicesPrefix = "svc::";
 
     /// <summary>
+    /// The prefix for engine-managed managed-dependency connection-string entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="Connection(string)"/> to build the full key.
+    /// </remarks>
+    public const string ConnectionsPrefix = "conn::";
+
+    /// <summary>
     /// Returns the <c>Vars</c> key under which the orchestration layer stages
     /// the discovered base URL for <paramref name="serviceName"/>.
     /// </summary>
@@ -73,6 +93,36 @@ public static class VarKeys
     }
 
     /// <summary>
+    /// Returns the <c>Vars</c> key under which the orchestration layer stages the
+    /// connection string for the managed dependency <paramref name="dependencyName"/>.
+    /// </summary>
+    /// <param name="dependencyName">
+    /// The dependency name as declared in the <c>environment.dependencies</c> section
+    /// of the <c>.e2e.yaml</c> file.  Must not be <see langword="null"/> or empty.
+    /// </param>
+    /// <returns>
+    /// A string of the form <c>conn::&lt;dependencyName&gt;</c>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="dependencyName"/> is <see langword="null"/> or empty.
+    /// </exception>
+    public static string Connection(string dependencyName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(dependencyName);
+        return ConnectionsPrefix + dependencyName;
+    }
+
+    /// <summary>
+    /// The prefix for engine-managed per-step outcome entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="Outcome(string)"/> to build the full key.
+    /// </remarks>
+    public const string OutcomePrefix = "__outcome::";
+
+    /// <summary>
     /// Returns the <c>Vars</c> key under which an emitted CSX step block writes
     /// its <see cref="StepOutcome"/> result.
     /// </summary>
@@ -91,6 +141,39 @@ public static class VarKeys
     public static string Outcome(string sanitisedStepId)
     {
         ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
-        return $"__outcome::{sanitisedStepId}";
+        return $"{OutcomePrefix}{sanitisedStepId}";
+    }
+
+    /// <summary>
+    /// The prefix for engine-managed per-step capture-status entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="CaptureStatus(string)"/> to build the full key.
+    /// </remarks>
+    public const string CaptureStatusPrefix = "__capture_status::";
+
+    /// <summary>
+    /// Returns the <c>Vars</c> key under which an emitted CSX step block writes its
+    /// per-capture matched-flag record for the runner to consume when emitting
+    /// provenance events (G-01, S04-B-02).
+    /// </summary>
+    /// <param name="sanitisedStepId">
+    /// The step identifier after sanitisation (hyphens replaced with underscores
+    /// via <c>CsxFragment.SanitiseId</c>, §13.3.1).  Must not be
+    /// <see langword="null"/> or empty.
+    /// </param>
+    /// <returns>
+    /// A string of the form <c>__capture_status::&lt;sanitisedStepId&gt;</c>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="sanitisedStepId"/> is <see langword="null"/> or
+    /// empty.
+    /// </exception>
+    public static string CaptureStatus(string sanitisedStepId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
+        return $"{CaptureStatusPrefix}{sanitisedStepId}";
     }
 }

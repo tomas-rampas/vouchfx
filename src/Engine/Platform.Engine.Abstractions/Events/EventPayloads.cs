@@ -276,6 +276,74 @@ public sealed record StepAttemptEvent
 }
 
 // ---------------------------------------------------------------------------
+// CapturedVar + SubstitutionRef — provenance metadata for G-01
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Records the provenance of a single JSONPath capture operation that was
+/// declared in a step's <c>capture</c> block (S04-G-01, DSL §3).
+/// </summary>
+/// <remarks>
+/// <para>
+/// This record carries only metadata — the captured VALUE is deliberately
+/// absent.  This is secret-safe by construction (§17): a captured value may
+/// derive from a secret reference and must never appear in the event stream.
+/// </para>
+/// </remarks>
+/// <param name="Name">
+/// The author-supplied variable name declared in the YAML <c>capture</c> block
+/// (e.g. <c>"orderId"</c>).
+/// </param>
+/// <param name="Path">
+/// The JSONPath expression used to extract the value from the step's response
+/// body (e.g. <c>"$.id"</c>).
+/// </param>
+/// <param name="Matched">
+/// <see langword="true"/> when the JSONPath expression matched at least one
+/// node in the response body; <see langword="false"/> when the expression
+/// yielded no match (which also sets the step verdict to
+/// <c>Inconclusive</c> with reason <c>upstream-capture-unmet</c>).
+/// </param>
+public sealed record CapturedVar(
+    [property: System.Text.Json.Serialization.JsonPropertyName("name")] string Name,
+    [property: System.Text.Json.Serialization.JsonPropertyName("path")] string Path,
+    [property: System.Text.Json.Serialization.JsonPropertyName("matched")] bool Matched);
+
+/// <summary>
+/// Records the provenance of a single <c>{placeholder}</c> substitution that
+/// was detected at compile time in a substitutable field of a step
+/// (S04-G-01, DSL §3, S04-B-03).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Provenance is derived <em>at compile time</em> from the field text (which
+/// placeholder names appear) — not at runtime — so no value ever flows into
+/// this record.  This is secret-safe by construction (§17).
+/// </para>
+/// </remarks>
+/// <param name="Placeholder">
+/// The placeholder name as it appeared in the template (e.g. <c>"orderId"</c>
+/// for the token <c>{orderId}</c>).
+/// </param>
+/// <param name="OriginStepId">
+/// The step identifier that first captured the variable (i.e. the step whose
+/// <c>capture</c> map declares <paramref name="Placeholder"/> as a key).
+/// <see langword="null"/> when the variable originates from the <c>variables</c>
+/// block or is otherwise not traceable to a prior capture.
+/// </param>
+/// <param name="SecretDerived">
+/// <see langword="true"/> when the placeholder name resolves to a value that
+/// was obtained from a secret reference (<c>${secret:…}</c>).  Always
+/// <see langword="false"/> in the current MVP (secret resolution is not yet
+/// implemented for this sprint); the flag is present so the wire format is
+/// stable for future sprints.
+/// </param>
+public sealed record SubstitutionRef(
+    [property: System.Text.Json.Serialization.JsonPropertyName("placeholder")] string Placeholder,
+    [property: System.Text.Json.Serialization.JsonPropertyName("originStepId")] string? OriginStepId,
+    [property: System.Text.Json.Serialization.JsonPropertyName("secretDerived")] bool SecretDerived);
+
+// ---------------------------------------------------------------------------
 // StepCompletedEvent
 // ---------------------------------------------------------------------------
 
@@ -336,6 +404,48 @@ public sealed record StepCompletedEvent
     /// </summary>
     [JsonPropertyName("durationMs")]
     public required long DurationMs { get; init; }
+
+    /// <summary>
+    /// Per-capture provenance records for this step (S04-G-01).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One entry per element in the step's <c>capture</c> block.
+    /// <see langword="null"/> (and omitted from the wire) when the step
+    /// declares no <c>capture</c> entries.
+    /// </para>
+    /// <para>
+    /// No captured VALUE is ever included — this is secret-safe by construction (§17).
+    /// </para>
+    /// <para>
+    /// Renderers that do not understand this field will ignore it via
+    /// <c>[JsonExtensionData]</c> on <see cref="EventEnvelope"/> (§14 forward-compat).
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("captured")]
+    public IReadOnlyList<CapturedVar>? Captured { get; init; }
+
+    /// <summary>
+    /// Compile-time substitution provenance records for this step (S04-G-01).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One entry per distinct <c>{placeholder}</c> token found in any
+    /// substitutable field of the step at compile time.
+    /// <see langword="null"/> (and omitted from the wire) when no substitutable
+    /// fields contain placeholders.
+    /// </para>
+    /// <para>
+    /// No runtime VALUE is ever included — provenance is derived at compile time
+    /// and is secret-safe by construction (§17).
+    /// </para>
+    /// <para>
+    /// Renderers that do not understand this field will ignore it via
+    /// <c>[JsonExtensionData]</c> on <see cref="EventEnvelope"/> (§14 forward-compat).
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("substitutions")]
+    public IReadOnlyList<SubstitutionRef>? Substitutions { get; init; }
 }
 
 // ---------------------------------------------------------------------------

@@ -9,4 +9,10 @@
     <ProjectReference Include="..\..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup Label="JSONPath evaluation for capture: (S04-B-02)">
+    <!-- JsonPath.Net is a compile-time MetadataReference only; it resolves from the
+         Default ALC and is never loaded into the collectible ALC (§5 memory-model). -->
+    <PackageReference Include="JsonPath.Net" />
+  </ItemGroup>
+
 </Project>

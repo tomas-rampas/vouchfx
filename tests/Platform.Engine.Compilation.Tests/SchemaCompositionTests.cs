@@ -287,11 +287,18 @@ public sealed class SchemaCompositionTests
         public TestCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
+        public IReadOnlyDictionary<string, string> Captures { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     /// <summary>Minimal test implementation of <see cref="IBindingContext"/>.</summary>
     private sealed class TestBindingContext : IBindingContext { }
 
     /// <summary>Minimal test implementation of <see cref="IProjectContext"/>.</summary>
-    private sealed class TestProjectContext : IProjectContext { }
+    private sealed class TestProjectContext : IProjectContext
+    {
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
 }

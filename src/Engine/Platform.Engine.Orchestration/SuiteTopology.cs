@@ -67,10 +67,12 @@ public sealed class SuiteTopology : IAsyncDisposable
 
     private SuiteTopology(
         HeadlessTopology inner,
-        IReadOnlyDictionary<string, object> discoveredServices)
+        IReadOnlyDictionary<string, object> discoveredServices,
+        IReadOnlyList<string> dependencyNames)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
+        DependencyNames = dependencyNames;
     }
 
     /// <summary>
@@ -95,6 +97,17 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// </para>
     /// </remarks>
     public IReadOnlyDictionary<string, object> DiscoveredServices { get; }
+
+    /// <summary>
+    /// Gets the logical names of the managed dependencies declared in the scenario's
+    /// <c>environment.dependencies</c> section.
+    /// </summary>
+    /// <remarks>
+    /// Used by the runner's variable-staging step to distinguish dependency
+    /// connection-string entries (staged under <c>conn::&lt;name&gt;</c>) from
+    /// service endpoint entries (staged under <c>svc::&lt;name&gt;</c>).
+    /// </remarks>
+    public IReadOnlyList<string> DependencyNames { get; }
 
     /// <summary>
     /// Gets the underlying <see cref="DistributedApplication"/> instance.
@@ -249,7 +262,7 @@ public sealed class SuiteTopology : IAsyncDisposable
                 throw new OrchestrationException(info, ex);
             }
 
-            return new SuiteTopology(topology, discoveredServices);
+            return new SuiteTopology(topology, discoveredServices, mapped.DependencyNames);
         }
         catch
         {
