@@ -375,11 +375,79 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
+    // M3 — Step id uniqueness + post-sanitisation collision (security hardening)
+    // =========================================================================
+
+    /// <summary>
+    /// Two steps with the same raw <c>id</c> must cause <see cref="AstBuildException"/>.
+    /// </summary>
+    [Fact]
+    public void Build_DuplicateRawId_Throws()
+    {
+        // Arrange — two steps share the same raw id.
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var doc = DocWith(
+            StepSpecWith(id: "call-api", type: "http.rest"),
+            StepSpecWith(id: "call-api", type: "http.rest"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("call-api", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Two steps whose ids differ by a hyphen/underscore substitution
+    /// (<c>a-b</c> vs <c>a_b</c>) collide after <c>SanitiseId</c> folds <c>-</c>→<c>_</c>.
+    /// The builder must reject this as a duplicate.
+    /// </summary>
+    [Fact]
+    public void Build_PostSanitisationCollision_Throws()
+    {
+        // Arrange — "a-b" and "a_b" both sanitise to "a_b".
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var doc = DocWith(
+            StepSpecWith(id: "a-b", type: "http.rest"),
+            StepSpecWith(id: "a_b", type: "http.rest"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Message must name both the offending id and the collision target.
+        Assert.True(
+            ex.Message.Contains("a-b", StringComparison.Ordinal) ||
+            ex.Message.Contains("a_b", StringComparison.Ordinal),
+            $"Expected message to name the colliding ids, got: {ex.Message}");
+    }
+
+    /// <summary>
+    /// Unique ids (even ones that contain hyphens) must build without error.
+    /// </summary>
+    [Fact]
+    public void Build_UniqueIds_DoNotThrow()
+    {
+        // Arrange — three steps with genuinely distinct sanitised ids.
+        var registry = RegistryWith(new StubProvider("http", "rest"));
+        var doc = DocWith(
+            StepSpecWith(id: "step-one", type: "http.rest"),
+            StepSpecWith(id: "step-two", type: "http.rest"),
+            StepSpecWith(id: "step_three", type: "http.rest"));
+
+        // Act — must not throw.
+        var ast = AstBuilder.Build(doc, registry);
+
+        Assert.Equal(3, ast.Steps.Count);
+    }
+
+    // =========================================================================
     // Helpers — document and step spec factories
     // =========================================================================
 
     private static E2eDocument DocWithStep(StepSpec step) =>
         new(Metadata: null, Environment: null, Variables: null, Steps: new[] { step });
+
+    private static E2eDocument DocWith(params StepSpec[] steps) =>
+        new(Metadata: null, Environment: null, Variables: null, Steps: steps);
 
     /// <summary>
     /// Constructs a minimal <see cref="StepSpec"/> with a synthetic

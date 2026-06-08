@@ -245,4 +245,89 @@ public sealed class RootSchemaTests
             $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
         Assert.Empty(result.Errors);
     }
+
+    // -------------------------------------------------------------------------
+    // M3: Step id pattern constraint
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A step whose <c>id</c> contains a space (or other character outside the
+    /// allowed pattern) must be rejected by the schema.  The pattern is
+    /// <c>^[A-Za-z_][A-Za-z0-9_-]*$</c>.
+    /// </summary>
+    [Fact]
+    public void Validate_IdWithIllegalCharacter_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: "bad id!"
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "Expected schema validation to reject an id containing spaces and '!'.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that starts with a digit must be rejected (the pattern requires
+    /// the first character to be a letter or underscore).
+    /// </summary>
+    [Fact]
+    public void Validate_IdStartingWithDigit_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: "1step"
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "Expected schema validation to reject an id starting with a digit.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that uses only letters, digits, underscores, and hyphens —
+    /// and begins with a letter — must be accepted.
+    /// </summary>
+    [Fact]
+    public void Validate_ValidIdWithHyphen_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api-v2
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid id 'call-api-v2' to be accepted; errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A step id that starts with an underscore must be accepted (underscores are
+    /// valid as the leading character per the pattern).
+    /// </summary>
+    [Fact]
+    public void Validate_IdStartingWithUnderscore_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: _internal_step
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected id '_internal_step' to be accepted; errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
 }

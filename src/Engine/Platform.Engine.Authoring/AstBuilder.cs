@@ -60,9 +60,30 @@ public static class AstBuilder
         var variables = doc.Variables
             ?? (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal);
 
+        // M3: Track sanitised ids to detect both raw-duplicate and post-sanitisation
+        // collisions (e.g. "a-b" and "a_b" both fold to "a_b" via SanitiseId).
+        // A HashSet<string> is sufficient because we also store raw→sanitised for
+        // the error message.
+        var seenSanitised = new Dictionary<string, string>(StringComparer.Ordinal);
+
         var nodes = new List<StepNode>(doc.Steps.Count);
         foreach (var step in doc.Steps)
         {
+            var sanitised = CsxFragment.SanitiseId(step.Id);
+            if (seenSanitised.TryGetValue(sanitised, out var collidingRaw))
+            {
+                var reason = string.Equals(step.Id, collidingRaw, StringComparison.Ordinal)
+                    ? $"duplicate step id '{step.Id}'"
+                    : $"duplicate step id '{step.Id}' (collides with '{collidingRaw}' after sanitisation)";
+
+                throw new AstBuildException(
+                    step.Id,
+                    step.RawNode.Start.Line,
+                    step.RawNode.Start.Column,
+                    reason);
+            }
+
+            seenSanitised[sanitised] = step.Id;
             nodes.Add(BuildStep(step, registry));
         }
 

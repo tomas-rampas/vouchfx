@@ -94,6 +94,7 @@ public sealed class HttpRestEmitTests
             typeof(System.Net.HttpStatusCode).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Uri).Assembly.Location,                  // System.Private.Uri (safe URI composition, M1)
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
