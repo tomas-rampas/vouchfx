@@ -44,6 +44,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Enable Pages (Actions build) via the API on first run, so no manual
+          # Settings -> Pages toggle is required. Needs `pages: write` (granted).
+          enablement: true
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
