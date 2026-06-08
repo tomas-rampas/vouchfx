@@ -10,7 +10,7 @@
 
 ## Delivery status
 
-**Implemented on `feat/sprint-03-compiler`** (PR pending; date 2026-06-08) — all **9 tasks** delivered
+**Merged to `main`** via PR #131 (2026-06-08) — all **9 tasks** delivered
 (plus the integration spine). Build is 0-warning under `TreatWarningsAsErrors`, `dotnet format` is
 clean, and the full non-docker suite is green (**265 tests** across seven projects); the Docker
 capstone suite is green locally. The **sprint exit criterion is met**: a real `.e2e.yaml` with one
