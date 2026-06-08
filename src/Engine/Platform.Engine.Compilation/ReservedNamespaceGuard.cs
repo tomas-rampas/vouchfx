@@ -201,7 +201,7 @@ public static class ReservedNamespaceGuard
             {
                 // Use whichever types did load; null entries indicate a type whose
                 // loader dependency was missing.
-                types = ex.Types.Where(t => t is not null)!;
+                types = ex.Types.OfType<Type>();
             }
 
             foreach (var type in types)
