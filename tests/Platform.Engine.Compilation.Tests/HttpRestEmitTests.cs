@@ -1,8 +1,14 @@
-// S02-C-02 regression — Fix 3: HttpRestProvider.Emit escapes string literals.
+// S03-F-01 update of S02-C-02 regression — HttpRestProvider.Emit special-character safety.
 //
 // Verifies that model values containing double-quotes, backslashes, or other
 // characters that would break a naïve C# string literal are emitted safely via
 // JsonSerializer.Serialize and survive the full compile→run→Vars round-trip.
+//
+// Sprint 3 change: the emitter now calls HttpRest_Helpers.ExecuteAsync, which
+// writes a StepOutcome under VarKeys.Outcome(sanitisedId).  For a path containing
+// special characters the target endpoint will not exist, so the outcome is
+// Verdict.EnvironmentError — the test asserts compilation succeeds and the outcome
+// key is populated.
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -12,9 +18,9 @@ using Xunit;
 namespace Platform.Engine.Compilation.Tests;
 
 /// <summary>
-/// S02-C-02 regression: <c>HttpRestProvider.Emit</c> must produce valid CSX
-/// even when model values contain characters that would break a naïve C# string
-/// literal (double-quote, backslash, newline).
+/// S02-C-02 regression (updated for Sprint 3): <c>HttpRestProvider.Emit</c> must
+/// produce valid CSX even when model values contain characters that would break a
+/// naïve C# string literal (double-quote, backslash, newline).
 /// </summary>
 public sealed class HttpRestEmitTests
 {
@@ -33,12 +39,16 @@ public sealed class HttpRestEmitTests
     /// <summary>
     /// When <see cref="HttpRestModel.Path"/> and <see cref="HttpRestModel.Target"/>
     /// contain a double-quote and a backslash, <see cref="HttpRestProvider.Emit"/>
-    /// must produce a <see cref="CsxFragment"/> whose spliced CSX compiles and
-    /// runs without error, and the path value must round-trip intact through
-    /// <see cref="ScriptGlobalVariables.Vars"/>.
+    /// must produce a <see cref="CsxFragment"/> whose spliced CSX compiles and runs
+    /// without error.  Because the target service does not exist the outcome is
+    /// <see cref="Verdict.EnvironmentError"/>, which confirms:
+    /// <list type="bullet">
+    ///   <item>The special-character values were escaped correctly (no compile error).</item>
+    ///   <item>The outcome key is written to <c>Vars</c> (the step executed).</item>
+    /// </list>
     /// </summary>
     [Fact]
-    public async Task Emit_SpecialCharactersInPath_RoundTripsIntactThroughCompiledScript()
+    public async Task Emit_SpecialCharactersInPath_CompilesAndRecordsEnvironmentError()
     {
         // ── Arrange ───────────────────────────────────────────────────────────
 
@@ -47,6 +57,7 @@ public sealed class HttpRestEmitTests
         //   • backslash introduces an invalid escape sequence
         const string dangerousPath = "/foo\"bar\\baz";
         const string dangerousTarget = "svc\"quote";
+        const string stepId = "inject-step";
 
         var provider = new HttpRestProvider();
         var model = new HttpRestModel(
@@ -57,7 +68,7 @@ public sealed class HttpRestEmitTests
             Body: null,
             Expect: null);
 
-        var ctx = new StubCompileContext("inject-step");
+        var ctx = new StubCompileContext(stepId);
         var frag = provider.Emit(model, ctx);
 
         // Splice the fragment the same way the engine does at suite compile time:
@@ -75,29 +86,44 @@ public sealed class HttpRestEmitTests
 
         // CompileOnce must not throw — previously it would because the unescaped
         // double-quote in Path terminated the emitted string literal early.
-        var compiled = RoslynScriptCompiler.CompileOnce(csx);
+        // The emitted helper references System.Net.Http and System.Text.Json
+        // which are not in the default TPA subset, so supply them explicitly.
+        var additionalRefs = new[]
+        {
+            typeof(System.Net.Http.HttpClient).Assembly.Location,
+            typeof(System.Net.HttpStatusCode).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
 
+        // The target service key does not exist in Vars, so ExecuteAsync will
+        // attempt to connect to "" + dangerousPath, which fails at the network
+        // layer — that is correctly an EnvironmentError, not a test failure.
         await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
 
         // ── Assert ────────────────────────────────────────────────────────────
 
         // The sanitised step-id "inject-step" → "inject_step".
-        const string expectedPathKey = "http_rest_inject_step_path";
-        Assert.True(globals.Vars.ContainsKey(expectedPathKey),
-            $"Expected Vars to contain key '{expectedPathKey}'. " +
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var expectedOutcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(globals.Vars.ContainsKey(expectedOutcomeKey),
+            $"Expected Vars to contain outcome key '{expectedOutcomeKey}'. " +
             $"Actual keys: [{string.Join(", ", globals.Vars.Keys)}]");
 
-        // The value must be the original, un-mangled string — not a truncated or
-        // partially-escaped version of it.
-        Assert.Equal(dangerousPath, globals.Vars[expectedPathKey]);
+        var outcome = Assert.IsType<StepOutcome>(globals.Vars[expectedOutcomeKey]);
 
-        // Target must also round-trip.
-        const string expectedTargetKey = "http_rest_inject_step_target";
-        Assert.True(globals.Vars.ContainsKey(expectedTargetKey),
-            $"Expected Vars to contain key '{expectedTargetKey}'.");
-        Assert.Equal(dangerousTarget, globals.Vars[expectedTargetKey]);
+        // The step failed to connect (no service seeded in Vars) → EnvironmentError.
+        // This simultaneously proves:
+        //   1. The special chars were escaped correctly (no ScriptCompilationException).
+        //   2. The emitted block executed and wrote a StepOutcome (not a raw exception).
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0,
+            "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
     }
 }

@@ -10,7 +10,9 @@
 //   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
 //     contains the full provider-id-prefixed static class definition; StatementBlock
 //     is a C# 11 $$"""…""" block; 'using var' is illegal.
+using System.Globalization;
 using System.Text.Json;
+using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
 
@@ -30,10 +32,11 @@ namespace Platform.Steps.HttpRest;
 /// (§13.6).
 /// </para>
 /// <para>
-/// The <see cref="Emit"/> method produces a minimal but syntactically valid
-/// <see cref="CsxFragment"/>.  Full HTTP execution is deferred to Sprint 3.
-/// This sprint proves the schema-composition mechanism and the fragment
-/// composition rules.
+/// The <see cref="Emit"/> method produces a real <see cref="CsxFragment"/>
+/// whose emitted CSX issues an HTTP GET (or other method) to the target service's
+/// base URL + path, compares the response status to <c>expect.status</c>, and
+/// writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for the runner
+/// to read after execution (§13.3.1).
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -54,26 +57,94 @@ public sealed class HttpRestProvider
 
     // ── CsxFragment components ────────────────────────────────────────────────
 
+    /// <summary>
+    /// Required namespaces for the emitted step block.  Bare strings only (§13.3.1).
+    /// </summary>
     private static readonly IReadOnlyList<string> s_usings =
-        new[] { "System", "System.Collections.Generic" };
+        new[]
+        {
+            "System",
+            "System.Collections.Generic",
+            "System.Net.Http",
+            "System.Diagnostics",
+            "System.Threading.Tasks",
+            "Platform.Engine.Abstractions",
+        };
 
     /// <summary>
     /// Full source of the provider-id-prefixed helper class (§13.3.1).
+    /// <para>
     /// The class name begins with <c>HttpRest_</c> to prevent collisions when
     /// multiple providers contribute helpers to the same Roslyn submission.
+    /// All types are fully-qualified so the helper compiles independently of
+    /// the spliced <c>using</c> ordering.  <c>using var</c> is absent — a
+    /// <c>using (…) { }</c> statement-with-parens is used where needed (which
+    /// is a <c>using</c> statement, not a <c>using var</c> declaration).
+    /// </para>
+    /// <para>
+    /// The helper must be byte-identical across every instance of the same
+    /// provider within a suite (§13.3.1 dedup rule); it contains no
+    /// per-step interpolation.
+    /// </para>
     /// </summary>
     private static readonly IReadOnlyList<string> s_helpers = new[]
     {
         "static class HttpRest_Helpers\n" +
         "{\n" +
-        "    /// <summary>Records the planned http.rest request into the Vars dictionary.</summary>\n" +
-        "    public static void RecordPlanned(\n" +
+        "    /// <summary>\n" +
+        "    /// Issues an HTTP request, evaluates the response status against the\n" +
+        "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
+        "    /// Connection-level failures map to EnvironmentError (§12.1).\n" +
+        "    /// </summary>\n" +
+        "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
-        "        string stepId, string target, string method, string path)\n" +
+        "        string outcomeKey,\n" +
+        "        string serviceKey,\n" +
+        "        string method,\n" +
+        "        string path,\n" +
+        "        int? expectedStatus)\n" +
         "    {\n" +
-        "        vars[$\"http_rest_{stepId}_target\"] = target;\n" +
-        "        vars[$\"http_rest_{stepId}_method\"] = method;\n" +
-        "        vars[$\"http_rest_{stepId}_path\"]   = path;\n" +
+        "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        Platform.Engine.Abstractions.Verdict verdict;\n" +
+        "        string observation;\n" +
+        "        var client = new System.Net.Http.HttpClient();\n" +
+        "        try\n" +
+        "        {\n" +
+        "            var baseUrl = vars.TryGetValue(serviceKey, out var bu) && bu is string s ? s : \"\";\n" +
+        "            var url = baseUrl.TrimEnd('/') + path;\n" +
+        "            using (var req = new System.Net.Http.HttpRequestMessage(\n" +
+        "                       new System.Net.Http.HttpMethod(method), url))\n" +
+        "            {\n" +
+        "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
+        "                var actual = (int)resp.StatusCode;\n" +
+        "                bool ok = expectedStatus.HasValue\n" +
+        "                    ? actual == expectedStatus.Value\n" +
+        "                    : (actual >= 200 && actual < 300);\n" +
+        "                verdict = ok\n" +
+        "                    ? Platform.Engine.Abstractions.Verdict.Pass\n" +
+        "                    : Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                observation = \"{\\\"status\\\":\" + actual +\n" +
+        "                    \",\\\"expected\\\":\" +\n" +
+        "                    (expectedStatus.HasValue\n" +
+        "                        ? expectedStatus.Value.ToString(\n" +
+        "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
+        "                        : \"null\") + \"}\";\n" +
+        "            }\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            // Connection-level failure = Environment error (§12.1), never a Fail.\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        finally\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            client.Dispose();  // explicit Dispose() in finally — 'using'-declarations are prohibited in CSX (§13.3.1).\n" +
+        "        }\n" +
+        "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "            verdict, sw.ElapsedMilliseconds, observation);\n" +
         "    }\n" +
         "}",
     };
@@ -227,17 +298,20 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// Minimal implementation for Sprint 2: records the planned request into
-    /// <c>Vars</c> so that the composed Roslyn script is syntactically and
-    /// semantically valid.  Full HTTP execution (HttpClient, response capture,
-    /// assertion evaluation) is deferred to Sprint 3.
+    /// Full implementation for Sprint 3 (S03-F-01/F-02): emits a CSX block whose
+    /// execution issues an HTTP request, evaluates the response status against
+    /// <c>expect.status</c>, and writes a typed <see cref="StepOutcome"/> into
+    /// <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
+    /// after the script returns.
     /// </para>
     /// <para>
     /// CsxFragment rules observed (§13.3.1):
     /// <list type="bullet">
     ///   <item><see cref="CsxFragment.RequiredUsings"/> — bare namespace strings.</item>
-    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class HttpRest_Helpers</c> definition.</item>
+    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class HttpRest_Helpers</c> definition; byte-identical across instances.</item>
     ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
+    ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
+    ///   <item>The <c>expect.status</c> integer (or <c>null</c>) is emitted as a bare literal, not as a string.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -245,23 +319,30 @@ public sealed class HttpRestProvider
     {
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
+        // Emit expect.status as a bare int literal or 'null' — not a quoted string.
+        // This is safe because it is a bounded integer value, not user-controlled text.
+        var expectedLiteral = model.Expect?.Status is int st
+            ? st.ToString(CultureInfo.InvariantCulture)
+            : "null";
+
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
         //
-        // Each model value is emitted as a fully-escaped C# string literal via
-        // JsonSerializer.Serialize, which wraps the value in double-quotes and
-        // escapes any embedded quotes, backslashes, or control characters.  This
-        // prevents CSX-literal breakage and removes a string-injection surface.
+        // String arguments (outcomeKey, serviceKey, method, path) are emitted via
+        // JsonSerializer.Serialize, which wraps each value in double-quotes and
+        // escapes any embedded quotes, backslashes, or control characters.
+        // This prevents CSX-literal breakage and removes a string-injection surface.
         var block = $$"""
             {
-                HttpRest_Helpers.RecordPlanned(
+                await HttpRest_Helpers.ExecuteAsync(
                     Vars,
-                    {{JsonSerializer.Serialize(safeId)}},
-                    {{JsonSerializer.Serialize(model.Target)}},
+                    {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
+                    {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
                     {{JsonSerializer.Serialize(model.Method)}},
-                    {{JsonSerializer.Serialize(model.Path)}});
+                    {{JsonSerializer.Serialize(model.Path)}},
+                    {{expectedLiteral}});
             }
             """;
 
