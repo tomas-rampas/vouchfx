@@ -47,7 +47,7 @@ public sealed class MemoryProbeTests
         var result = await MemoryProbe.RunAsync(iterations: iterations, thresholdBytes: threshold);
 
         _output.WriteLine(
-            $"MemoryProbe smoke: iterations={result.Iterations}, " +
+            $"MemoryProbe smoke: mode={result.Mode}, iterations={result.Iterations}, " +
             $"baseline={result.BaselineBytes:N0} B, " +
             $"post={result.PostBytes:N0} B, " +
             $"netDelta={result.NetDeltaBytes:+#;-#;0} B " +
@@ -77,7 +77,9 @@ public sealed class MemoryProbeTests
         // and Roslyn metadata settle alongside our measurements.  The two gate assertions
         // above (Passed, ContextReclaimed) are the authoritative correctness signals.
         _output.WriteLine(
-            $"Sanity: NetDeltaBytes={result.NetDeltaBytes:N0} B, " +
+            $"Sanity: mode={result.Mode}, " +
+            $"singletonsReset={result.SingletonsReset.Count}, " +
+            $"NetDeltaBytes={result.NetDeltaBytes:N0} B, " +
             $"threshold={result.ThresholdBytes:N0} B " +
             $"({(double)result.NetDeltaBytes / result.ThresholdBytes:P1} of threshold).");
     }

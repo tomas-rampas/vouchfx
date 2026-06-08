@@ -17,6 +17,25 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <!--
+      Reference the HttpRest Core provider placeholder so that its transitive closure
+      (and any future provider types it gains) is included in this harness's load
+      context — the closure probe must exercise the full provider graph (§5).
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Label="Canonical clients (§5.7) — closure probe forces their static initialisers">
+    <!--
+      These packages pull the full transitive closure of every Core provider's
+      canonical client into the harness's Default context so the leak test exercises
+      any singleton pinners (Npgsql pool, librdkafka handle, HttpClient handler pool).
+      Versions are managed centrally in Directory.Packages.props.
+    -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="MongoDB.Driver" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
 </Project>
