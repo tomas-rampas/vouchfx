@@ -10,7 +10,9 @@
 //   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
 //     contains the full provider-id-prefixed static class definition; StatementBlock
 //     is a C# 11 $$"""…""" block; 'using var' is illegal.
+using System.Globalization;
 using System.Text.Json;
+using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
 
@@ -30,10 +32,11 @@ namespace Platform.Steps.HttpRest;
 /// (§13.6).
 /// </para>
 /// <para>
-/// The <see cref="Emit"/> method produces a minimal but syntactically valid
-/// <see cref="CsxFragment"/>.  Full HTTP execution is deferred to Sprint 3.
-/// This sprint proves the schema-composition mechanism and the fragment
-/// composition rules.
+/// The <see cref="Emit"/> method produces a real <see cref="CsxFragment"/>
+/// whose emitted CSX issues an HTTP GET (or other method) to the target service's
+/// base URL + path, compares the response status to <c>expect.status</c>, and
+/// writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for the runner
+/// to read after execution (§13.3.1).
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -54,26 +57,121 @@ public sealed class HttpRestProvider
 
     // ── CsxFragment components ────────────────────────────────────────────────
 
+    /// <summary>
+    /// Required namespaces for the emitted step block.  Bare strings only (§13.3.1).
+    /// </summary>
     private static readonly IReadOnlyList<string> s_usings =
-        new[] { "System", "System.Collections.Generic" };
+        new[]
+        {
+            "System",
+            "System.Collections.Generic",
+            "System.Net.Http",
+            "System.Diagnostics",
+            "System.Threading.Tasks",
+            "Platform.Engine.Abstractions",
+        };
 
     /// <summary>
     /// Full source of the provider-id-prefixed helper class (§13.3.1).
+    /// <para>
     /// The class name begins with <c>HttpRest_</c> to prevent collisions when
     /// multiple providers contribute helpers to the same Roslyn submission.
+    /// All types are fully-qualified so the helper compiles independently of
+    /// the spliced <c>using</c> ordering.  <c>using var</c> is absent — a
+    /// <c>using (…) { }</c> statement-with-parens is used where needed (which
+    /// is a <c>using</c> statement, not a <c>using var</c> declaration).
+    /// </para>
+    /// <para>
+    /// The helper must be byte-identical across every instance of the same
+    /// provider within a suite (§13.3.1 dedup rule); it contains no
+    /// per-step interpolation.
+    /// </para>
     /// </summary>
     private static readonly IReadOnlyList<string> s_helpers = new[]
     {
         "static class HttpRest_Helpers\n" +
         "{\n" +
-        "    /// <summary>Records the planned http.rest request into the Vars dictionary.</summary>\n" +
-        "    public static void RecordPlanned(\n" +
+        "    /// <summary>\n" +
+        "    /// Issues an HTTP request, evaluates the response status against the\n" +
+        "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
+        "    /// Uses safe URI resolution (same-authority guard) and disables\n" +
+        "    /// automatic redirects to prevent SSRF via 3xx bounces (§security M1).\n" +
+        "    /// Timeout verdict = Inconclusive; connection failures = EnvironmentError (§12.1).\n" +
+        "    /// </summary>\n" +
+        "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
-        "        string stepId, string target, string method, string path)\n" +
+        "        string outcomeKey,\n" +
+        "        string serviceKey,\n" +
+        "        string method,\n" +
+        "        string path,\n" +
+        "        int? expectedStatus)\n" +
         "    {\n" +
-        "        vars[$\"http_rest_{stepId}_target\"] = target;\n" +
-        "        vars[$\"http_rest_{stepId}_method\"] = method;\n" +
-        "        vars[$\"http_rest_{stepId}_path\"]   = path;\n" +
+        "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        Platform.Engine.Abstractions.Verdict verdict;\n" +
+        "        string observation;\n" +
+        "        // AllowAutoRedirect=false: a 3xx from the target must not silently\n" +
+        "        // bounce the request to a different host (SSRF via redirect, §M1).\n" +
+        "        // disposeHandler:true so client.Dispose() in finally releases the handler too.\n" +
+        "        var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };\n" +
+        "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
+        "        try\n" +
+        "        {\n" +
+        "            // M2: cap the default stall window; per-step timeout plumbing is Sprint 6.\n" +
+        "            client.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "            var baseUrl = vars.TryGetValue(serviceKey, out var bu) && bu is string s ? s : \"\";\n" +
+        "            // Safe URI composition (M1): resolve path against the base URI and\n" +
+        "            // confirm the resulting authority matches the original base URI.\n" +
+        "            // An empty or invalid baseUrl throws UriFormatException → caught → EnvironmentError.\n" +
+        "            var baseUri = new System.Uri(baseUrl, System.UriKind.Absolute);\n" +
+        "            var full = new System.Uri(baseUri, path);\n" +
+        "            if (full.GetLeftPart(System.UriPartial.Authority) != baseUri.GetLeftPart(System.UriPartial.Authority))\n" +
+        "            {\n" +
+        "                throw new System.InvalidOperationException(\n" +
+        "                    \"http.rest: resolved URL authority '\" + full.Authority +\n" +
+        "                    \"' does not match base authority '\" + baseUri.Authority +\n" +
+        "                    \"'; path attempted to change host.\");\n" +
+        "            }\n" +
+        "            using (var req = new System.Net.Http.HttpRequestMessage(\n" +
+        "                       new System.Net.Http.HttpMethod(method), full))\n" +
+        "            {\n" +
+        "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
+        "                var actual = (int)resp.StatusCode;\n" +
+        "                bool ok = expectedStatus.HasValue\n" +
+        "                    ? actual == expectedStatus.Value\n" +
+        "                    : (actual >= 200 && actual < 300);\n" +
+        "                verdict = ok\n" +
+        "                    ? Platform.Engine.Abstractions.Verdict.Pass\n" +
+        "                    : Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                observation = \"{\\\"status\\\":\" + actual +\n" +
+        "                    \",\\\"expected\\\":\" +\n" +
+        "                    (expectedStatus.HasValue\n" +
+        "                        ? expectedStatus.Value.ToString(\n" +
+        "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
+        "                        : \"null\") + \"}\";\n" +
+        "            }\n" +
+        "        }\n" +
+        "        catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException\n" +
+        "                                          || ex is System.TimeoutException)\n" +
+        "        {\n" +
+        "            // Timeout = Inconclusive (§12.1): the test could not complete due to\n" +
+        "            // a stall, not because the target service responded incorrectly.\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.Inconclusive;\n" +
+        "            observation = \"{\\\"timeout\\\":true}\";\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            // Connection / DNS / authority-change failures = EnvironmentError (§12.1).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        finally\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            client.Dispose();  // explicit Dispose() in finally — 'using'-declarations are prohibited in CSX (§13.3.1).\n" +
+        "        }\n" +
+        "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "            verdict, sw.ElapsedMilliseconds, observation);\n" +
         "    }\n" +
         "}",
     };
@@ -215,7 +313,45 @@ public sealed class HttpRestProvider
             errors.Add($"http.rest: 'method' must be one of GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS; got '{model.Method}'.");
 
         if (string.IsNullOrWhiteSpace(model.Path))
+        {
             errors.Add("http.rest: 'path' must not be empty.");
+        }
+        else
+        {
+            // SSRF guard (M1): path must be a safe rooted relative reference.
+            // Reject absolute URLs, protocol-relative paths, backslash paths, and
+            // paths that do not start with '/' (§security hardening PR #131).
+            //
+            // NOTE: Uri.TryCreate(path, UriKind.Absolute, …) is intentionally absent.
+            // On Linux a leading '/' parses as a file URI (file:///foo), so that check
+            // would reject valid rooted paths on that platform.  The three guards below
+            // are fully platform-independent and together cover every unsafe form:
+            //   • !StartsWith('/')           — rejects scheme-bearing URLs (http://…) and
+            //                                  bare relative paths such as "users/123".
+            //   • StartsWith("//", …)        — rejects protocol-relative paths (//evil/…).
+            //   • Contains('\\', …)          — rejects backslash paths.
+            // A scheme-bearing absolute URL always starts with a letter, not '/', so the
+            // first guard catches it without any Uri parsing.
+            var path = model.Path;
+            if (!path.StartsWith('/'))
+            {
+                errors.Add(
+                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
+                    "absolute URLs and protocol-relative paths are not allowed.");
+            }
+            else if (path.StartsWith("//", StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "http.rest: 'path' must be a rooted relative path (start with '/'); " +
+                    "absolute URLs and protocol-relative paths are not allowed.");
+            }
+            else if (path.Contains('\\', StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "http.rest: 'path' must not contain backslashes; " +
+                    "use forward slashes for URL path separators.");
+            }
+        }
 
         return errors.Count == 0
             ? ValidationResult.Success
@@ -227,17 +363,20 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// Minimal implementation for Sprint 2: records the planned request into
-    /// <c>Vars</c> so that the composed Roslyn script is syntactically and
-    /// semantically valid.  Full HTTP execution (HttpClient, response capture,
-    /// assertion evaluation) is deferred to Sprint 3.
+    /// Full implementation for Sprint 3 (S03-F-01/F-02): emits a CSX block whose
+    /// execution issues an HTTP request, evaluates the response status against
+    /// <c>expect.status</c>, and writes a typed <see cref="StepOutcome"/> into
+    /// <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
+    /// after the script returns.
     /// </para>
     /// <para>
     /// CsxFragment rules observed (§13.3.1):
     /// <list type="bullet">
     ///   <item><see cref="CsxFragment.RequiredUsings"/> — bare namespace strings.</item>
-    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class HttpRest_Helpers</c> definition.</item>
+    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class HttpRest_Helpers</c> definition; byte-identical across instances.</item>
     ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
+    ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
+    ///   <item>The <c>expect.status</c> integer (or <c>null</c>) is emitted as a bare literal, not as a string.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -245,23 +384,30 @@ public sealed class HttpRestProvider
     {
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
+        // Emit expect.status as a bare int literal or 'null' — not a quoted string.
+        // This is safe because it is a bounded integer value, not user-controlled text.
+        var expectedLiteral = model.Expect?.Status is int st
+            ? st.ToString(CultureInfo.InvariantCulture)
+            : "null";
+
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
         //
-        // Each model value is emitted as a fully-escaped C# string literal via
-        // JsonSerializer.Serialize, which wraps the value in double-quotes and
-        // escapes any embedded quotes, backslashes, or control characters.  This
-        // prevents CSX-literal breakage and removes a string-injection surface.
+        // String arguments (outcomeKey, serviceKey, method, path) are emitted via
+        // JsonSerializer.Serialize, which wraps each value in double-quotes and
+        // escapes any embedded quotes, backslashes, or control characters.
+        // This prevents CSX-literal breakage and removes a string-injection surface.
         var block = $$"""
             {
-                HttpRest_Helpers.RecordPlanned(
+                await HttpRest_Helpers.ExecuteAsync(
                     Vars,
-                    {{JsonSerializer.Serialize(safeId)}},
-                    {{JsonSerializer.Serialize(model.Target)}},
+                    {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
+                    {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
                     {{JsonSerializer.Serialize(model.Method)}},
-                    {{JsonSerializer.Serialize(model.Path)}});
+                    {{JsonSerializer.Serialize(model.Path)}},
+                    {{expectedLiteral}});
             }
             """;
 

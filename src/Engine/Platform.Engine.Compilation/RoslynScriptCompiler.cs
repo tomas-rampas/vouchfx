@@ -270,6 +270,51 @@ public static class RoslynScriptCompiler
         }
     }
 
+    /// <summary>
+    /// Compiles an <see cref="AssembledScript"/> produced by
+    /// <see cref="CsxAssembler.Assemble"/> into a <see cref="CompiledScenario"/>
+    /// that pairs the emitted image with the originating step identifiers.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a thin convenience wrapper over <see cref="CompileOnce"/>; it adds
+    /// no new pipeline logic.  Use it when the caller wants to carry the step-id
+    /// list alongside the compiled image without maintaining a separate variable.
+    /// If you already have a <see cref="CompiledScript"/> from a prior
+    /// <see cref="CompileOnce"/> call, construct <see cref="CompiledScenario"/>
+    /// directly rather than recompiling.
+    /// </para>
+    /// </remarks>
+    /// <param name="assembled">
+    /// The assembled script produced by <see cref="CsxAssembler.Assemble"/>.
+    /// </param>
+    /// <param name="additionalReferencePaths">
+    /// Optional list of absolute paths to assemblies that should be added as
+    /// Roslyn metadata references at compile time.  See
+    /// <see cref="CompileOnce"/> for full semantics.
+    /// </param>
+    /// <returns>
+    /// A <see cref="CompiledScenario"/> whose <see cref="CompiledScenario.Compiled"/>
+    /// image is ready for <see cref="RunIsolatedAsync"/> and whose
+    /// <see cref="CompiledScenario.StepIds"/> mirrors
+    /// <see cref="AssembledScript.StepIds"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="assembled"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ScriptCompilationException">
+    /// Thrown when Roslyn reports one or more error-level diagnostics during emit.
+    /// </exception>
+    public static CompiledScenario CompileScenario(
+        AssembledScript assembled,
+        IReadOnlyList<string>? additionalReferencePaths = null)
+    {
+        ArgumentNullException.ThrowIfNull(assembled);
+
+        var compiled = CompileOnce(assembled.CsxSource, null, additionalReferencePaths);
+        return new CompiledScenario(compiled, assembled.StepIds);
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
