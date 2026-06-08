@@ -107,9 +107,14 @@ public sealed class NullScenarioIsolation : IScenarioIsolation
 /// <para>
 /// <strong>Lazy initialisation:</strong> the <see cref="Npgsql.NpgsqlConnection"/>
 /// and <see cref="Respawner"/> are created on the first call to
-/// <see cref="BeginScenarioAsync"/> and reused for the lifetime of the topology.
-/// An initial reset is performed during <see cref="BeginScenarioAsync"/> of the
-/// first invocation so that a DB left dirty by a seed or a prior run starts clean.
+/// <see cref="EndScenarioAsync"/> — not <see cref="BeginScenarioAsync"/> — and
+/// reused for the lifetime of the topology.  This deferral is deliberate: a
+/// freshly-started Aspire topology yields a clean Postgres container, so no
+/// pre-scenario reset is needed, and (critically) <see cref="Respawner.CreateAsync"/>
+/// under Respawn 6.x throws on a database with no user tables.  By deferring
+/// creation to the first <see cref="EndScenarioAsync"/>, the first scenario has
+/// had a chance to establish its schema (via <c>seed</c> or an early
+/// <c>script.csharp</c> step), so Respawn always finds tables to checkpoint.
 /// </para>
 /// <para>
 /// <strong>§12.1 invariant:</strong> any Npgsql or Respawn failure is wrapped
@@ -126,10 +131,9 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
 {
     private readonly string _connectionString;
 
-    // Guard: connection and respawner are created once, lazily, on first use.
+    // Guard: connection and respawner are created once, lazily, on first reset.
     private Npgsql.NpgsqlConnection? _connection;
     private Respawner? _respawner;
-    private bool _initialised;
     private bool _disposed;
 
     /// <summary>
@@ -152,32 +156,25 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
 
     /// <inheritdoc />
     /// <remarks>
-    /// On the first call this method opens a connection, creates the
-    /// <see cref="Respawner"/>, and performs an initial reset to flush any
-    /// dirty state left by seed scripts or a previous run.  On subsequent
-    /// calls it is a no-op (the reset happens in
-    /// <see cref="EndScenarioAsync"/>, so the next scenario begins from a
-    /// known-clean baseline).
+    /// This is a no-op.  A freshly-started Aspire topology yields a clean
+    /// Postgres container, so no pre-scenario reset is required — and under
+    /// Respawn 6.x, <see cref="Respawner.CreateAsync"/> on an empty database
+    /// throws.  The <see cref="Respawner"/> is therefore created lazily, and
+    /// state reset performed, in <see cref="EndScenarioAsync"/>; the next
+    /// scenario always begins from a known-clean baseline.
     /// </remarks>
-    public async Task BeginScenarioAsync(CancellationToken ct)
+    public Task BeginScenarioAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (_initialised)
-        {
-            // Reset was already performed by the previous EndScenarioAsync.
-            return;
-        }
-
-        // First invocation: initialise and perform the initial reset.
-        await EnsureInitialisedAsync(ct).ConfigureAwait(false);
-        await ResetAsync(ct).ConfigureAwait(false);
-        _initialised = true;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
     /// <remarks>
-    /// Resets all user-created Postgres tables via
+    /// On its first invocation this opens the connection and creates the
+    /// <see cref="Respawner"/> (by which point the first scenario has
+    /// established its schema, so Respawn finds tables to checkpoint).  It then
+    /// resets all user-created Postgres tables via
     /// <c>respawner.ResetAsync(connection)</c>.  Any failure is wrapped in
     /// <see cref="OrchestrationException"/> (§12.1: Environment error, never Fail).
     /// </remarks>
@@ -185,13 +182,7 @@ public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposa
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (!_initialised)
-        {
-            // Defensive: if Begin was never called successfully, initialise now.
-            await EnsureInitialisedAsync(ct).ConfigureAwait(false);
-            _initialised = true;
-        }
-
+        await EnsureInitialisedAsync(ct).ConfigureAwait(false);
         await ResetAsync(ct).ConfigureAwait(false);
     }
 

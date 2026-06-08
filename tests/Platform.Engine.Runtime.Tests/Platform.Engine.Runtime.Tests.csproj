@@ -33,6 +33,11 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Sprint 4 capstone compile test: db-assert.postgres and script.csharp providers. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
 </Project>

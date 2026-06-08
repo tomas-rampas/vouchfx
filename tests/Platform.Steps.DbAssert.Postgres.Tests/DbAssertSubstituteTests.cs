@@ -86,6 +86,45 @@ public sealed class DbAssertSubstituteTests
         Assert.Contains("{orderId}", block, StringComparison.Ordinal);
     }
 
+    // ── Expect-row values wrapped in Resolve call ─────────────────────────────
+
+    /// <summary>
+    /// Expected-column values must also be wrapped in
+    /// <c>Substitute_Helpers.Resolve(Vars, …)</c> so that a <c>{placeholder}</c>
+    /// in an <c>expect.row</c> value (a captured variable or a <c>variables</c>-block
+    /// constant) resolves at runtime — consistent with parameter values.
+    /// </summary>
+    [Fact]
+    public void Emit_ExpectRowValues_AreWrappedInResolveCall()
+    {
+        var provider = new DbAssertPostgresProvider();
+        var model = new DbAssertPostgresModel(
+            Target: "orders-db",
+            Query: "SELECT status FROM orders WHERE id = @p",
+            Parameters: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["p"] = "42",
+            },
+            Expect: new PostgresExpectation(
+                RowCount: 1,
+                Row: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["status"] = "{expectedStatus}",
+                }));
+        var ctx = new StubCompileContext("db-step-3");
+
+        var fragment = provider.Emit(model, ctx);
+        var block = fragment.StatementBlock;
+
+        // The expect value must be wrapped in Resolve.
+        Assert.Contains("Substitute_Helpers.Resolve(Vars,", block, StringComparison.Ordinal);
+
+        // The {expectedStatus} token in the expect value must survive as literal text,
+        // and the column name must NOT be wrapped (identifiers are not substituted).
+        Assert.Contains("{expectedStatus}", block, StringComparison.Ordinal);
+        Assert.Contains("\"status\"", block, StringComparison.Ordinal);
+    }
+
     // ── Substitute_Helpers in RequiredHelpers ─────────────────────────────────
 
     /// <summary>

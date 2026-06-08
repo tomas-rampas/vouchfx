@@ -418,7 +418,7 @@ public sealed class DbAssertPostgresProvider
     ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
     ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
     ///   <item>The step id is sanitised via <c>CsxFragment.SanitiseId</c> before splicing.</item>
-    ///   <item>Placeholder substitution of query / parameters is deferred to S04-B-03.</item>
+    ///   <item><c>{placeholder}</c> substitution (S04-B-03) wraps the query text, each parameter value, and each expect-row value in <c>Substitute_Helpers.Resolve(Vars, …)</c> — resolved at runtime against <c>Vars</c>, never at emit time.</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -476,6 +476,16 @@ public sealed class DbAssertPostgresProvider
             resolvedParamValues[i] = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(paramValues[i])})";
         }
 
+        // S04-B-03: wrap each expected-column VALUE in Substitute_Helpers.Resolve so a
+        // {placeholder} in an expect.row value (e.g. a captured var or a variables-block
+        // constant) resolves against Vars at runtime, exactly as for parameter values.
+        // Column NAMES are identifiers and are not substituted.
+        var resolvedExpectValues = new string[expectValues.Length];
+        for (int i = 0; i < expectValues.Length; i++)
+        {
+            resolvedExpectValues[i] = $"Substitute_Helpers.Resolve(Vars, {JsonSerializer.Serialize(expectValues[i])})";
+        }
+
         // Emit parameter/column/value arrays as JSON-encoded individual string literals
         // inside C# array initialisers, following the same discipline as http.rest:
         // each element is wrapped with JsonSerializer.Serialize so embedded quotes,
@@ -484,7 +494,8 @@ public sealed class DbAssertPostgresProvider
         // paramValues are emitted as Substitute_Helpers.Resolve(…) call expressions.
         var paramValuesLiteral = BuildResolvedArrayLiteral(resolvedParamValues);
         var expectColumnsLiteral = BuildStringArrayLiteral(expectColumns);
-        var expectValuesLiteral = BuildStringArrayLiteral(expectValues);
+        // expectValues are emitted as Substitute_Helpers.Resolve(…) call expressions (B-03).
+        var expectValuesLiteral = BuildResolvedArrayLiteral(resolvedExpectValues);
 
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)

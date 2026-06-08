@@ -697,6 +697,16 @@ public static class ScenarioRunner
             vars[varKey] = kv.Value;
         }
 
+        // ── Stage the `variables` block constants (DSL §3) ────────────────────
+        // Pre-loaded into the shared context under their bare names (no prefix) so
+        // {placeholder} substitution and capture reads resolve them uniformly.
+        // Staged before execution as the baseline; a capture writing the same name
+        // later in the run legitimately overrides the constant.
+        foreach (var kv in ast.Variables)
+        {
+            vars[kv.Key] = kv.Value;
+        }
+
         var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
 
         // ── Compile-once + RunIsolatedAsync ───────────────────────────────────

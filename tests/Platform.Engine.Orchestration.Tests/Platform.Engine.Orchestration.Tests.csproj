@@ -43,6 +43,18 @@
     <!-- script.csharp provider: used by RespawnResetProofTests (S04-A-01). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Sprint 4 capstone: http.rest provider + ScenarioRunner (Runtime). -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj"
+                      IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JsonPath.Net must be a direct reference so its DLL is deployed to the output
+         directory.  HttpRestProvider accesses it via Assembly.Location at runtime;
+         the transitive project-reference path alone does not guarantee deployment. -->
+    <PackageReference Include="JsonPath.Net" />
   </ItemGroup>
 
 </Project>
