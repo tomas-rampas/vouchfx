@@ -41,4 +41,13 @@ public static class EventTypes
     /// retries, timeout, or environment error.
     /// </summary>
     public const string StepCompleted = "step-completed";
+
+    /// <summary>
+    /// Emitted when the orchestration layer encounters an infrastructure failure
+    /// (image-pull error, health-gate timeout, discovery failure, or provisioning
+    /// error) that prevents the scenario from running at all (§12.1 Environment
+    /// error verdict).  This event is <em>never</em> emitted with a
+    /// <c>Fail</c> verdict — only <c>ENV_ERROR</c>.
+    /// </summary>
+    public const string EnvironmentError = "environment-error";
 }
