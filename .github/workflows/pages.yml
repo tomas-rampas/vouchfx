@@ -12,7 +12,10 @@ name: Pages
 
 on:
   push:
-    branches: [main]
+    # `main` is the production publish. The feature branch is included so the
+    # site can be previewed on the live Pages URL before merge — drop it once
+    # this lands on main.
+    branches: [main, claude/confident-mendel-4MOmW]
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
