@@ -10,8 +10,6 @@
 //   • System.Text.Json only — never Newtonsoft.
 using System.Text.Json;
 using Json.Schema;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Platform.Engine.Compilation.Schema;
 
@@ -65,7 +63,7 @@ public static class YamlSchemaValidator
         JsonDocument doc;
         try
         {
-            doc = ConvertYamlToJsonDocument(yamlText);
+            doc = SchemaResources.ConvertYamlToJsonDocument(yamlText);
         }
         catch (Exception ex)
         {
@@ -97,64 +95,8 @@ public static class YamlSchemaValidator
     /// </summary>
     private static JsonSchema LoadSchema()
     {
-        var assembly = typeof(YamlSchemaValidator).Assembly;
-
-        var resourceName = assembly
-            .GetManifestResourceNames()
-            .FirstOrDefault(n => n.EndsWith("root-language-schema.json", StringComparison.Ordinal))
-            ?? throw new InvalidOperationException(
-                "Embedded resource 'root-language-schema.json' was not found in assembly " +
-                $"'{assembly.FullName}'.  Verify the <EmbeddedResource> item in the project file.");
-
-        using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException(
-                $"Could not open manifest resource stream for '{resourceName}'.");
-
-        using var reader = new System.IO.StreamReader(stream);
-        var schemaText = reader.ReadToEnd();
+        var schemaText = SchemaResources.ReadRootLanguageSchemaJson();
         return JsonSchema.FromText(schemaText);
-    }
-
-    /// <summary>
-    /// Converts a YAML document string to a <see cref="JsonDocument"/> via
-    /// YamlDotNet's JSON-compatible serialisation bridge.
-    /// </summary>
-    /// <remarks>
-    /// The caller is responsible for disposing the returned <see cref="JsonDocument"/>
-    /// to release its pooled UTF-8 buffer.  Evaluation of the root element must
-    /// occur inside the <c>using</c> scope.
-    /// </remarks>
-    /// <param name="yamlText">The raw YAML text to convert.</param>
-    /// <returns>A <see cref="JsonDocument"/> representing the parsed document.</returns>
-    private static JsonDocument ConvertYamlToJsonDocument(string yamlText)
-    {
-        // Step 1 — parse YAML to a plain object graph.
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(NullNamingConvention.Instance)
-            .Build();
-
-        var graph = deserializer.Deserialize<object?>(yamlText);
-
-        if (graph is null)
-        {
-            // An entirely empty YAML document deserialises to null; surface this
-            // as an invalid result rather than letting the schema validator
-            // receive a null node.
-            throw new InvalidOperationException("The YAML document is empty.");
-        }
-
-        // Step 2 — re-serialise the object graph to a JSON string using
-        // YamlDotNet's JSON-compatible emitter, which correctly renders
-        // Dictionary<object,object> entries as JSON object properties.
-        var jsonSerializer = new SerializerBuilder()
-            .JsonCompatible()
-            .Build();
-
-        var json = jsonSerializer.Serialize(graph);
-
-        // Step 3 — parse the JSON string into a System.Text.Json JsonDocument.
-        // The caller must dispose the document to release its pooled UTF-8 buffer.
-        return JsonDocument.Parse(json);
     }
 
     /// <summary>
