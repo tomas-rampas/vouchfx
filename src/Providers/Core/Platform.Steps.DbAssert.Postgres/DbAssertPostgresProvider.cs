@@ -1,13 +1,18 @@
 // Platform.Steps.DbAssert.Postgres — db-assert.postgres step provider (DSL §5, §13.10).
 //
 // F-01 implementation: IStepProvider + IStepBinder<T> + IStepValidator<T>.
-// IStepCompiler<T> and IResourceContributor<T> are added in F-02.
+// F-02 adds: IStepCompiler<T> + IResourceContributor<T> + ICompileReferenceContributor.
 //
 // Schema composition invariants (§13.3.1, §13.6):
 //   • SchemaFragment describes ONLY the provider's own fields (target, query,
 //     parameters, expect).  The type const discriminator is injected by the
 //     SchemaComposer from Kind — never from the fragment text.
+//   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
+//     contains the full provider-id-prefixed static class definition; StatementBlock
+//     is a C# 11 $$"""…""" block; 'using var' is illegal.
+using System.Globalization;
 using System.Text.Json;
+using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
 
@@ -26,16 +31,21 @@ namespace Platform.Steps.DbAssert.Postgres;
 /// <see cref="Kind"/> — the fragment text never repeats that discriminator (§13.6).
 /// </para>
 /// <para>
-/// F-01 scope: bind, validate, and schema.  Emit (<see cref="IStepCompiler{TModel}"/>)
-/// and resource declaration (<see cref="IResourceContributor{TModel}"/>) are
-/// delivered in F-02.
+/// The <see cref="Emit"/> method produces a <see cref="CsxFragment"/> whose emitted
+/// CSX executes a parameterised Npgsql query, evaluates row-count and/or column-value
+/// expectations, and writes a typed <see cref="StepOutcome"/> into <c>Vars</c> for
+/// the runner to read after execution (§13.3.1).  Placeholder substitution of query
+/// and parameter values is deferred to S04-B-03; raw values are emitted here.
 /// </para>
 /// </remarks>
 [StepProvider]
 public sealed class DbAssertPostgresProvider
     : IStepProvider,
       IStepBinder<DbAssertPostgresModel>,
-      IStepValidator<DbAssertPostgresModel>
+      IStepValidator<DbAssertPostgresModel>,
+      IStepCompiler<DbAssertPostgresModel>,
+      IResourceContributor<DbAssertPostgresModel>,
+      ICompileReferenceContributor
 {
     // ── IStepProvider ─────────────────────────────────────────────────────────
 
@@ -206,7 +216,351 @@ public sealed class DbAssertPostgresProvider
             : ValidationResult.Failure(errors.ToArray());
     }
 
+    // ── CsxFragment components ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Required namespaces for the emitted step block.  Bare strings only (§13.3.1).
+    /// </summary>
+    private static readonly IReadOnlyList<string> s_usings =
+        new[]
+        {
+            "System",
+            "System.Collections.Generic",
+            "System.Diagnostics",
+            "System.Threading.Tasks",
+            "Npgsql",
+            "Platform.Engine.Abstractions",
+        };
+
+    /// <summary>
+    /// Full source of the provider-id-prefixed helper class (§13.3.1).
+    /// <para>
+    /// The class name begins with <c>DbAssertPostgres_</c> to prevent collisions when
+    /// multiple providers contribute helpers to the same Roslyn submission.
+    /// All types are fully-qualified so the helper compiles independently of
+    /// the spliced <c>using</c> ordering.  <c>using var</c> is absent — explicit
+    /// <c>.Dispose()</c> calls in <c>finally</c> blocks are used throughout.
+    /// </para>
+    /// <para>
+    /// The helper must be byte-identical across every instance of the same
+    /// provider within a suite (§13.3.1 dedup rule); it contains no
+    /// per-step interpolation.
+    /// </para>
+    /// </summary>
+    private static readonly IReadOnlyList<string> s_helpers = new[]
+    {
+        "static class DbAssertPostgres_Helpers\n" +
+        "{\n" +
+        "    /// <summary>\n" +
+        "    /// Executes a parameterised SQL query via Npgsql, evaluates the\n" +
+        "    /// row-count and/or column-value expectations, and writes a typed\n" +
+        "    /// StepOutcome into Vars.\n" +
+        "    /// Missing connection string = EnvironmentError (§12.1).\n" +
+        "    /// Row-count or column mismatch = Fail.\n" +
+        "    /// Successful assertion = Pass.\n" +
+        "    /// </summary>\n" +
+        "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        string outcomeKey,\n" +
+        "        string connKey,\n" +
+        "        string query,\n" +
+        "        string[] paramNames,\n" +
+        "        string[] paramValues,\n" +
+        "        int? expectedRowCount,\n" +
+        "        string[] expectColumns,\n" +
+        "        string[] expectValues)\n" +
+        "    {\n" +
+        "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        Platform.Engine.Abstractions.Verdict verdict;\n" +
+        "        string observation;\n" +
+        "        // Read the connection string staged by the orchestrator (VarKeys.Connection pattern).\n" +
+        "        // A null or empty string means the dependency was not discovered → EnvironmentError (§12.1).\n" +
+        "        var connStr = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        if (string.IsNullOrEmpty(connStr))\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\\\"connection string not found for key '\" + connKey + \"'\\\"}\" );\n" +
+        "            return;\n" +
+        "        }\n" +
+        "        var conn = new Npgsql.NpgsqlConnection(connStr);\n" +
+        "        try\n" +
+        "        {\n" +
+        "            await conn.OpenAsync().ConfigureAwait(false);\n" +
+        "            var cmd = conn.CreateCommand();\n" +
+        "            try\n" +
+        "            {\n" +
+        "                cmd.CommandText = query;\n" +
+        "                for (int i = 0; i < paramNames.Length; i++)\n" +
+        "                {\n" +
+        "                    cmd.Parameters.AddWithValue(paramNames[i], (object)paramValues[i]);\n" +
+        "                }\n" +
+        "                var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);\n" +
+        "                try\n" +
+        "                {\n" +
+        "                    int actualRowCount = 0;\n" +
+        "                    string? failObservation = null;\n" +
+        "                    bool firstRow = true;\n" +
+        "                    while (await reader.ReadAsync().ConfigureAwait(false))\n" +
+        "                    {\n" +
+        "                        actualRowCount++;\n" +
+        "                        // Evaluate column expectations against the first row only.\n" +
+        "                        if (firstRow && expectColumns.Length > 0 && failObservation is null)\n" +
+        "                        {\n" +
+        "                            for (int ci = 0; ci < expectColumns.Length; ci++)\n" +
+        "                            {\n" +
+        "                                var colName = expectColumns[ci];\n" +
+        "                                var expectedVal = expectValues[ci];\n" +
+        "                                object? rawVal = null;\n" +
+        "                                try\n" +
+        "                                {\n" +
+        "                                    rawVal = reader[colName];\n" +
+        "                                }\n" +
+        "                                catch (System.Exception)\n" +
+        "                                {\n" +
+        "                                    rawVal = null;\n" +
+        "                                }\n" +
+        "                                var actualVal = rawVal is System.DBNull || rawVal is null\n" +
+        "                                    ? \"null\"\n" +
+        "                                    : rawVal.ToString() ?? \"null\";\n" +
+        "                                if (!string.Equals(actualVal, expectedVal, System.StringComparison.Ordinal))\n" +
+        "                                {\n" +
+        "                                    failObservation =\n" +
+        "                                        \"{\\\"column\\\":\" + System.Text.Json.JsonSerializer.Serialize(colName) +\n" +
+        "                                        \",\\\"expected\\\":\" + System.Text.Json.JsonSerializer.Serialize(expectedVal) +\n" +
+        "                                        \",\\\"actual\\\":\" + System.Text.Json.JsonSerializer.Serialize(actualVal) + \"}\";\n" +
+        "                                    break;\n" +
+        "                                }\n" +
+        "                            }\n" +
+        "                        }\n" +
+        "                        firstRow = false;\n" +
+        "                    }\n" +
+        "                    // Evaluate row-count expectation.\n" +
+        "                    if (failObservation is null && expectedRowCount.HasValue && actualRowCount != expectedRowCount.Value)\n" +
+        "                    {\n" +
+        "                        failObservation =\n" +
+        "                            \"{\\\"rowCount\\\":{\\\"expected\\\":\" + expectedRowCount.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                            \",\\\"actual\\\":\" + actualRowCount.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}}\";\n" +
+        "                    }\n" +
+        "                    if (failObservation is not null)\n" +
+        "                    {\n" +
+        "                        verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                        observation = failObservation;\n" +
+        "                    }\n" +
+        "                    else\n" +
+        "                    {\n" +
+        "                        verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
+        "                        observation = \"{\\\"rowCount\\\":\" + actualRowCount.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    }\n" +
+        "                }\n" +
+        "                finally\n" +
+        "                {\n" +
+        "                    reader.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
+        "                }\n" +
+        "            }\n" +
+        "            finally\n" +
+        "            {\n" +
+        "                cmd.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
+        "            }\n" +
+        "        }\n" +
+        "        catch (Npgsql.NpgsqlException ex)\n" +
+        "        {\n" +
+        "            // Npgsql-specific exception: network failure, auth error, etc. = EnvironmentError (§12.1).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            // Any other connection or protocol failure = EnvironmentError (§12.1).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        finally\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            conn.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
+        "        }\n" +
+        "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "}",
+    };
+
+    // ── IStepCompiler<DbAssertPostgresModel> ──────────────────────────────────
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// Emits a CSX block whose execution opens an Npgsql connection keyed by
+    /// <c>VarKeys.Connection(model.Target)</c>, runs <c>model.Query</c> with the
+    /// declared parameters bound as <c>NpgsqlParameter</c> instances (parameterised
+    /// — never concatenated into SQL), evaluates the <c>expect.rowCount</c> and/or
+    /// <c>expect.row</c> assertions, and writes a typed <see cref="StepOutcome"/>
+    /// into <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c> for the runner to read
+    /// after the script returns.
+    /// </para>
+    /// <para>
+    /// CsxFragment rules observed (§13.3.1):
+    /// <list type="bullet">
+    ///   <item><see cref="CsxFragment.RequiredUsings"/> — bare namespace strings.</item>
+    ///   <item><see cref="CsxFragment.RequiredHelpers"/> — full <c>static class DbAssertPostgres_Helpers</c> definition; byte-identical across instances.</item>
+    ///   <item><see cref="CsxFragment.StatementBlock"/> — C# 11 <c>$$"""…"""</c> block; no <c>using var</c>.</item>
+    ///   <item>Model values are emitted as <c>JsonSerializer.Serialize</c>-escaped C# string literals.</item>
+    ///   <item>The step id is sanitised via <c>CsxFragment.SanitiseId</c> before splicing.</item>
+    ///   <item>Placeholder substitution of query / parameters is deferred to S04-B-03.</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    public CsxFragment Emit(DbAssertPostgresModel model, ICompileContext ctx)
+    {
+        var safeId = CsxFragment.SanitiseId(ctx.StepId);
+
+        // Expand the parameters map into parallel arrays for the helper signature.
+        // Using parallel arrays avoids a Dictionary dependency inside the CSX body.
+        string[] paramNames;
+        string[] paramValues;
+        if (model.Parameters is { Count: > 0 } parameters)
+        {
+            paramNames = parameters.Keys.ToArray();
+            paramValues = parameters.Values.ToArray();
+        }
+        else
+        {
+            paramNames = Array.Empty<string>();
+            paramValues = Array.Empty<string>();
+        }
+
+        // Expand the row-expectation map into parallel arrays for the helper signature.
+        string[] expectColumns;
+        string[] expectValues;
+        if (model.Expect.Row is { Count: > 0 } row)
+        {
+            expectColumns = row.Keys.ToArray();
+            expectValues = row.Values.ToArray();
+        }
+        else
+        {
+            expectColumns = Array.Empty<string>();
+            expectValues = Array.Empty<string>();
+        }
+
+        // Emit expectedRowCount as a bare integer literal or 'null' — not a quoted string.
+        // Safe because it is a bounded integer value, not user-controlled text.
+        var rowCountLiteral = model.Expect.RowCount is int rc
+            ? rc.ToString(CultureInfo.InvariantCulture)
+            : "null";
+
+        // Emit parameter/column/value arrays as JSON-encoded individual string literals
+        // inside C# array initialisers, following the same discipline as http.rest:
+        // each element is wrapped with JsonSerializer.Serialize so embedded quotes,
+        // backslashes, and control characters are escaped before splicing into CSX.
+        var paramNamesLiteral = BuildStringArrayLiteral(paramNames);
+        var paramValuesLiteral = BuildStringArrayLiteral(paramValues);
+        var expectColumnsLiteral = BuildStringArrayLiteral(expectColumns);
+        var expectValuesLiteral = BuildStringArrayLiteral(expectValues);
+
+        // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
+        //   { }       → literal brace in the emitted CSX (the block's own braces)
+        //   {{expr}}  → interpolation hole filled here at emit time.
+        // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
+        //
+        // Outcome key, connection key, and query are emitted via JsonSerializer.Serialize,
+        // which wraps each value in double-quotes and escapes any embedded quotes, backslashes,
+        // or control characters.  This prevents CSX-literal breakage and removes a string-
+        // injection surface.
+        var block = $$"""
+            {
+                await DbAssertPostgres_Helpers.ExecuteAsync(
+                    Vars,
+                    {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
+                    {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Query)}},
+                    {{paramNamesLiteral}},
+                    {{paramValuesLiteral}},
+                    {{rowCountLiteral}},
+                    {{expectColumnsLiteral}},
+                    {{expectValuesLiteral}});
+            }
+            """;
+
+        return new CsxFragment(
+            RequiredUsings: s_usings,
+            RequiredHelpers: s_helpers,
+            StatementBlock: block);
+    }
+
+    // ── IResourceContributor<DbAssertPostgresModel> ───────────────────────────
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Yields a single <see cref="ResourceRequirement"/> with
+    /// <c>Family="postgres"</c> and <c>Name=model.Target</c>.
+    /// The engine maps the <c>Name</c> to the database resource (not the server)
+    /// so the connection string is resolved from the most-specific Aspire resource
+    /// (§4 WaitFor invariant).
+    /// </remarks>
+    public IEnumerable<ResourceRequirement> Resources(DbAssertPostgresModel model)
+    {
+        yield return new ResourceRequirement(
+            Family: "postgres",
+            Name: model.Target,
+            Image: null);
+    }
+
+    // ── ICompileReferenceContributor ──────────────────────────────────────────
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Returns the <c>Npgsql</c> assembly so the Roslyn compiler can resolve
+    /// <c>NpgsqlConnection</c> and related types in the emitted helper class.
+    /// The assembly is already loaded in the Default ALC (the provider project
+    /// references it directly) and must never be loaded into the collectible ALC
+    /// (§5 memory-model invariant).
+    /// </remarks>
+    public IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies
+    {
+        get
+        {
+            yield return typeof(Npgsql.NpgsqlConnection).Assembly;
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a C# array-initialiser literal from a string array, with each
+    /// element individually JSON-serialised to escape embedded quotes, backslashes,
+    /// and control characters before splicing into the CSX StatementBlock.
+    /// </summary>
+    /// <remarks>
+    /// Example: <c>["a", "b\"c"]</c> →
+    /// <c>new string[] { "a", "b\"c" }</c>
+    /// where the inner quotes are escaped by <see cref="JsonSerializer.Serialize"/>.
+    /// </remarks>
+    private static string BuildStringArrayLiteral(string[] values)
+    {
+        if (values.Length == 0)
+        {
+            return "new string[] { }";
+        }
+
+        var sb = new System.Text.StringBuilder("new string[] { ");
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (i > 0)
+                sb.Append(", ");
+            // JsonSerializer.Serialize produces a JSON string literal including the
+            // surrounding double-quotes, e.g. "\"hello\"" for the value hello.
+            // This is a valid C# string literal so it can be spliced directly.
+            sb.Append(JsonSerializer.Serialize(values[i]));
+        }
+        sb.Append(" }");
+        return sb.ToString();
+    }
 
     private static string GetScalar(YamlMappingNode mapping, string key)
     {
