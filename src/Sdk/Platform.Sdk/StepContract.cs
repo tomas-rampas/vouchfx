@@ -249,6 +249,38 @@ public interface IProviderModule
 }
 
 /// <summary>
+/// Optional.  A provider implements this to declare the assemblies its emitted CSX
+/// references at compile time.
+/// </summary>
+/// <remarks>
+/// <para>
+/// These assemblies become Roslyn <c>MetadataReference</c>s only and <strong>must</strong>
+/// already be resolvable in the Default <see cref="System.Runtime.Loader.AssemblyLoadContext"/>
+/// at runtime (the provider assembly itself references them transitively), so they are
+/// <strong>never</strong> loaded into the collectible ALC.  This preserves the §5 memory-model
+/// invariant.
+/// </para>
+/// <para>
+/// This is a frozen-contract-compatible optional extension interface (§13.8.1).  Providers
+/// that do not need additional compile references simply omit this interface; the engine
+/// handles its absence tolerantly.
+/// </para>
+/// </remarks>
+public interface ICompileReferenceContributor
+{
+    /// <summary>
+    /// Gets the assemblies whose locations should be added to Roslyn's
+    /// <c>MetadataReference</c> list for the compiled scenario script.
+    /// </summary>
+    /// <remarks>
+    /// Each returned assembly must already be loaded in the Default ALC.  The engine
+    /// de-duplicates locations across all contributing providers before passing them to
+    /// the Roslyn compiler.
+    /// </remarks>
+    System.Collections.Generic.IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies { get; }
+}
+
+/// <summary>
 /// Applied to a class that implements one or more provider interfaces to mark
 /// it as discoverable by the engine's <c>StepKindRegistry</c> at startup.
 /// </summary>

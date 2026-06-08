@@ -4,6 +4,13 @@
     <RootNamespace>Platform.Engine.Runtime</RootNamespace>
   </PropertyGroup>
 
+  <!-- Expose internal types (ProviderPipeline, PipelineResult, …) to the Runtime test project. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Runtime.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
     <ProjectReference Include="..\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />

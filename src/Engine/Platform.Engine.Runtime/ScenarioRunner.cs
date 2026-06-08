@@ -200,48 +200,35 @@ public static class ScenarioRunner
             return Verdict.Inconclusive;
         }
 
-        // ── Step 4: Bind / validate / emit each step via reflection ──────────
-        var fragments = new List<(string StepId, CsxFragment Fragment)>(ast.Steps.Count);
-        foreach (var node in ast.Steps)
+        // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
+        // Delegates to ProviderPipeline.Compile which walks every step, dispatches
+        // the four reflection operations, collects the resource plan and compile
+        // references, then assembles all fragments into a single AssembledScript.
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+        if (pipelineResult.Failure is not null)
         {
-            if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
-                // This should not happen: AstBuilder already verified the type.
-                await output.WriteLineAsync(
-                    $"Internal error: provider '{node.CanonicalType}' missing from registry after AST build.")
-                    .ConfigureAwait(false);
-                TerminalRenderer.Render(buffer, output);
-                return Verdict.Inconclusive;
-            }
-
-            var instance = rp.Instance;
-            var bindingCtx = new RunBindingContext();
-            var projectCtx = new RunProjectContext();
-            var compileCtx = new RunCompileContext(node.Id, SuiteNamespace);
-
-            // Reflect closed generic IStepBinder<TModel> → object model
-            var model = ReflectBind(instance, node.RawNode, bindingCtx);
-
-            // Reflect closed generic IStepValidator<TModel> → ValidationResult
-            var validResult = ReflectValidate(instance, model, projectCtx);
-            if (!validResult.IsValid)
+                RunId = runId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
             {
-                // Authoring / model validation error → Inconclusive for this step.
-                await output.WriteLineAsync(
-                    $"Step '{node.Id}' model validation failed: " +
-                    string.Join("; ", validResult.Errors))
-                    .ConfigureAwait(false);
-                TerminalRenderer.Render(buffer, output);
-                return Verdict.Inconclusive;
-            }
-
-            // Reflect closed generic IStepCompiler<TModel> → CsxFragment
-            var fragment = ReflectEmit(instance, model, compileCtx);
-            fragments.Add((node.Id, fragment));
+                RunId = runId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(pipelineResult.Failure.Message)
+                .ConfigureAwait(false);
+            TerminalRenderer.Render(buffer, output);
+            return Verdict.Inconclusive;
         }
 
-        // ── Step 5: Assemble fragments → AssembledScript ──────────────────────
-        var assembled = CsxAssembler.Assemble(fragments);
+        // Assembled is guaranteed non-null when Failure is null.
+        var assembled = pipelineResult.Assembled!;
 
         // ── Step 5b: Reject RETRY until Sprint 6 implements the polling loop ──
         // Emitting RETRY events when the engine runs each step exactly once is a
@@ -309,11 +296,18 @@ public static class ScenarioRunner
 
         await using (suite.ConfigureAwait(false))
         {
-            // ── Step 7: Stage service URLs into Vars ──────────────────────────
+            // ── Step 7: Stage service URLs and dependency connection strings ──
+            // Services (image/project) → svc::<name>
+            // Managed dependencies (postgres, kafka, …) → conn::<name>
+            // The dependency name set is determined by SuiteTopology.DependencyNames,
+            // which mirrors the EnvironmentSpec.Dependencies keys.
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
             foreach (var kv in suite.DiscoveredServices)
             {
-                vars[VarKeys.Service(kv.Key)] = kv.Value;
+                var varKey = suite.DependencyNames.Contains(kv.Key, StringComparer.Ordinal)
+                    ? VarKeys.Connection(kv.Key)
+                    : VarKeys.Service(kv.Key);
+                vars[varKey] = kv.Value;
             }
 
             var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
@@ -323,7 +317,16 @@ public static class ScenarioRunner
             // (§12.1): the test could not be executed.  A compile failure is an
             // engine/provider bug, not a product defect; propagating it as an
             // unhandled throw would give the caller no verdict.
-            var tpaPaths = BclReferencePaths();
+            //
+            // Merge BCL TPA paths with any provider-contributed compile reference
+            // paths (ICompileReferenceContributor).  These are metadata-only
+            // references and must NOT be passed to RunIsolatedAsync's
+            // collectibleProbingPaths — they resolve from the Default ALC,
+            // preserving the §5 memory-model invariant.
+            var tpaPaths = BclReferencePaths()
+                .Concat(pipelineResult.CompileReferencePaths)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
 
             CompiledScript compiled;
             try
@@ -493,90 +496,4 @@ public static class ScenarioRunner
         ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 
-    // ── Reflection dispatch: Bind / Validate / Emit ───────────────────────────
-
-    /// <summary>
-    /// Reflects the closed <see cref="IStepBinder{TModel}"/> interface on
-    /// <paramref name="instance"/>, invokes <c>Bind</c>, and returns the model
-    /// as <see cref="object"/>.
-    /// </summary>
-    private static object ReflectBind(
-        IStepProvider instance,
-        YamlDotNet.RepresentationModel.YamlNode rawNode,
-        RunBindingContext ctx)
-    {
-        var binderInterface = FindGenericInterface(instance, typeof(IStepBinder<>));
-        var bindMethod = binderInterface.GetMethod(
-            nameof(IStepBinder<IStepModel>.Bind),
-            BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"Method 'Bind' not found on {binderInterface}.");
-
-        return bindMethod.Invoke(instance, new object[] { rawNode, ctx })
-            ?? throw new InvalidOperationException(
-                $"IStepBinder.Bind returned null for provider '{instance.GetType().Name}'.");
-    }
-
-    /// <summary>
-    /// Reflects the closed <see cref="IStepValidator{TModel}"/> interface on
-    /// <paramref name="instance"/>, invokes <c>Validate</c>, and returns the
-    /// <see cref="ValidationResult"/>.
-    /// </summary>
-    private static ValidationResult ReflectValidate(
-        IStepProvider instance,
-        object model,
-        RunProjectContext ctx)
-    {
-        var validatorInterface = FindGenericInterface(instance, typeof(IStepValidator<>));
-        var validateMethod = validatorInterface.GetMethod(
-            nameof(IStepValidator<IStepModel>.Validate),
-            BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"Method 'Validate' not found on {validatorInterface}.");
-
-        return (ValidationResult)(validateMethod.Invoke(instance, new object[] { model, ctx })
-            ?? throw new InvalidOperationException(
-                $"IStepValidator.Validate returned null for provider '{instance.GetType().Name}'."));
-    }
-
-    /// <summary>
-    /// Reflects the closed <see cref="IStepCompiler{TModel}"/> interface on
-    /// <paramref name="instance"/>, invokes <c>Emit</c>, and returns the
-    /// <see cref="CsxFragment"/>.
-    /// </summary>
-    private static CsxFragment ReflectEmit(
-        IStepProvider instance,
-        object model,
-        RunCompileContext ctx)
-    {
-        var compilerInterface = FindGenericInterface(instance, typeof(IStepCompiler<>));
-        var emitMethod = compilerInterface.GetMethod(
-            nameof(IStepCompiler<IStepModel>.Emit),
-            BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"Method 'Emit' not found on {compilerInterface}.");
-
-        return (CsxFragment)(emitMethod.Invoke(instance, new object[] { model, ctx })
-            ?? throw new InvalidOperationException(
-                $"IStepCompiler.Emit returned null for provider '{instance.GetType().Name}'."));
-    }
-
-    /// <summary>
-    /// Locates the first closed generic interface on <paramref name="instance"/>
-    /// whose open generic definition matches <paramref name="openGenericType"/>.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the provider does not implement the required generic interface.
-    /// </exception>
-    private static Type FindGenericInterface(IStepProvider instance, Type openGenericType)
-    {
-        return instance.GetType()
-            .GetInterfaces()
-            .FirstOrDefault(i =>
-                i.IsGenericType &&
-                i.GetGenericTypeDefinition() == openGenericType)
-            ?? throw new InvalidOperationException(
-                $"Provider '{instance.GetType().FullName}' does not implement " +
-                $"the required generic interface '{openGenericType.Name}'.");
-    }
 }

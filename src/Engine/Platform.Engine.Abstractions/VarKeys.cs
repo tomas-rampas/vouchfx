@@ -53,6 +53,16 @@ public static class VarKeys
     public const string ServicesPrefix = "svc::";
 
     /// <summary>
+    /// The prefix for engine-managed managed-dependency connection-string entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="Connection(string)"/> to build the full key.
+    /// </remarks>
+    public const string ConnectionsPrefix = "conn::";
+
+    /// <summary>
     /// Returns the <c>Vars</c> key under which the orchestration layer stages
     /// the discovered base URL for <paramref name="serviceName"/>.
     /// </summary>
@@ -70,6 +80,26 @@ public static class VarKeys
     {
         ArgumentException.ThrowIfNullOrEmpty(serviceName);
         return ServicesPrefix + serviceName;
+    }
+
+    /// <summary>
+    /// Returns the <c>Vars</c> key under which the orchestration layer stages the
+    /// connection string for the managed dependency <paramref name="dependencyName"/>.
+    /// </summary>
+    /// <param name="dependencyName">
+    /// The dependency name as declared in the <c>environment.dependencies</c> section
+    /// of the <c>.e2e.yaml</c> file.  Must not be <see langword="null"/> or empty.
+    /// </param>
+    /// <returns>
+    /// A string of the form <c>conn::&lt;dependencyName&gt;</c>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="dependencyName"/> is <see langword="null"/> or empty.
+    /// </exception>
+    public static string Connection(string dependencyName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(dependencyName);
+        return ConnectionsPrefix + dependencyName;
     }
 
     /// <summary>
