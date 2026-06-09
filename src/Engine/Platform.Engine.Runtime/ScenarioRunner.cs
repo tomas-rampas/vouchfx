@@ -27,6 +27,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
+using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
@@ -398,6 +399,7 @@ public static class ScenarioRunner
                 buffer,
                 isolation,
                 output,
+                seedBaseDirectory,
                 cancellationToken).ConfigureAwait(false);
 
             TerminalRenderer.Render(buffer, output);
@@ -685,6 +687,7 @@ public static class ScenarioRunner
                     buffer,
                     new NullScenarioIsolation(), // isolation already handled above/below
                     output,
+                    seedBaseDirectory,
                     cancellationToken).ConfigureAwait(false);
 
                 results.Add((name, scenarioVerdict));
@@ -749,6 +752,7 @@ public static class ScenarioRunner
         List<string> buffer,
         IScenarioIsolation isolation,
         TextWriter output,
+        string? seedBaseDirectory,
         CancellationToken cancellationToken)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
@@ -969,6 +973,22 @@ public static class ScenarioRunner
             EnvError = counts[(int)Verdict.EnvironmentError],
             Inconclusive = counts[(int)Verdict.Inconclusive],
         };
+
+        // ── Reproducibility envelope (§17, docs/02 §3.2.2, S05-B-03) ──────────
+        // Emitted once per scenario, alongside ScenarioCompletedEvent.  Built from
+        // reference text + fixture content ONLY — the secret resolver is never
+        // invoked here, so by construction no resolved secret value can enter the
+        // envelope.  Reuses SeedFixtures.ComputeContentHash for fixture digests.
+        var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory);
+        buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
+        {
+            RunId = runId,
+            Timestamp = DateTimeOffset.UtcNow,
+            ScenarioId = scenarioName,
+            EnvSchemaVersion = envelope.SchemaVersion,
+            SecretReferences = envelope.SecretReferences,
+            Fixtures = envelope.Fixtures,
+        }));
 
         buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
         {
@@ -1197,6 +1217,163 @@ public static class ScenarioRunner
         }
 
         return subs.Count > 0 ? subs : null;
+    }
+
+    /// <summary>
+    /// Assembles the reproducibility envelope for a scenario (§17, docs/02 §3.2.2,
+    /// S05-B-03): the hash of every distinct secret <em>reference</em> across all
+    /// steps' substitutable fields, plus the content hash of every applied seed
+    /// fixture.
+    /// </summary>
+    /// <param name="ast">The scenario whose steps and seed block are scanned.</param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative seed fixture paths are resolved
+    /// (S05-A-01).  When <see langword="null"/>, the current working directory is
+    /// used — matching <see cref="SuiteTopology.StartAsync"/>.
+    /// </param>
+    /// <returns>
+    /// The assembled <see cref="ReproducibilityEnvelope"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Secret-safe by construction (§17 — the headline guarantee):</strong>
+    /// the envelope is built from REFERENCE TEXT and FIXTURE CONTENT only.  The
+    /// secret resolver (<c>ISecretResolver</c>) is never invoked on this code path,
+    /// so there is no mechanism by which a resolved secret value can enter the
+    /// envelope.  Secret references are discovered via the same
+    /// <see cref="CollectSubstitutableTexts"/> + <see cref="SecretReference.FindAll"/>
+    /// scan used for provenance and pre-compile validation, and hashed from
+    /// <see cref="SecretReference.Raw"/> (the verbatim token) so the digest is
+    /// stable across runs (the reproducibility property).
+    /// </para>
+    /// <para>
+    /// Fixture hashing reuses <c>SeedFixtures.ComputeContentHash</c> (Orchestration)
+    /// so the envelope records the SAME hash the seed applier computes — no
+    /// duplicate hashing routine, no project cycle (the Runtime layer references
+    /// both Abstractions and Orchestration).
+    /// </para>
+    /// <para>
+    /// <strong>Missing-fixture behaviour:</strong> if a fixture file is absent at
+    /// envelope-build time, the fixture is recorded with a <see langword="null"/>
+    /// content hash rather than throwing — the envelope must never crash a run, and
+    /// a missing seed file is already classified as an Environment error by the seed
+    /// applier (§12.1).  Recording the reference without a hash keeps the envelope a
+    /// faithful, non-fatal account of what the run referenced.
+    /// </para>
+    /// <para>
+    /// Exposed as <see langword="internal"/> so the no-docker S05-B-03 tests can
+    /// assemble the envelope exactly as the runner does, without standing up a
+    /// topology.
+    /// </para>
+    /// </remarks>
+    internal static ReproducibilityEnvelope BuildReproducibilityEnvelope(
+        ScenarioAst ast,
+        string? seedBaseDirectory)
+    {
+        // ── 1. Distinct secret references across every substitutable field ──────
+        // Reuse the exact compile-time scan used for provenance + validation so the
+        // set of references in the envelope never drifts from the set the engine
+        // actually recognises.  Compute() dedupes by Raw.
+        var references = new List<SecretReference>();
+        foreach (var node in ast.Steps)
+        {
+            foreach (var text in CollectSubstitutableTexts(node))
+            {
+                references.AddRange(SecretReference.FindAll(text));
+            }
+        }
+
+        // ── 2. Fixture content hashes from the seed block ──────────────────────
+        var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory);
+
+        // Compute() is pure: reference text + fixture digests only, no resolver.
+        return ReproducibilityEnvelope.Compute(references, fixtures);
+    }
+
+    /// <summary>
+    /// Enumerates every seed fixture file referenced by <paramref name="seed"/> —
+    /// SQL files, broker-publish payload <c>from</c> files, and document <c>from</c>
+    /// files — and computes each one's content hash via
+    /// <c>SeedFixtures.ComputeContentHash</c> (S05-A-02), in declared order.
+    /// </summary>
+    /// <param name="seed">
+    /// The scenario's seed block, or <see langword="null"/> when no seed is declared
+    /// (yielding an empty fixture list).
+    /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory for relative fixture paths; the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// One <see cref="FixtureDigest"/> per referenced fixture file.  A fixture whose
+    /// file is absent is recorded with a <see langword="null"/> content hash (the
+    /// envelope never throws — see <see cref="BuildReproducibilityEnvelope"/>).
+    /// </returns>
+    private static IReadOnlyList<FixtureDigest> CollectFixtureDigests(
+        SeedSpec? seed,
+        string? seedBaseDirectory)
+    {
+        if (seed is null || seed.Dependencies.Count == 0)
+        {
+            return Array.Empty<FixtureDigest>();
+        }
+
+        var baseDir = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+        var digests = new List<FixtureDigest>();
+
+        foreach (var dependency in seed.Dependencies.Values)
+        {
+            // SQL fixtures (postgres) — A-01.
+            if (dependency.Sql is not null)
+            {
+                foreach (var sqlPath in dependency.Sql)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, sqlPath));
+                }
+            }
+
+            // Broker-publish payload fixtures — A-02 (wired-but-deferred seam).
+            if (dependency.Publish is not null)
+            {
+                foreach (var publish in dependency.Publish)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, publish.PayloadFrom));
+                }
+            }
+
+            // Document-store fixtures — A-02 (wired-but-deferred seam).
+            if (dependency.Documents is not null)
+            {
+                foreach (var document in dependency.Documents)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, document.From));
+                }
+            }
+        }
+
+        return digests;
+    }
+
+    /// <summary>
+    /// Computes a fixture's content hash via the shared
+    /// <c>SeedFixtures.ComputeContentHash</c> routine, returning a
+    /// <see cref="FixtureDigest"/> with a <see langword="null"/> hash (rather than
+    /// throwing) when the file is absent at envelope-build time.
+    /// </summary>
+    private static FixtureDigest HashFixtureOrNull(string baseDirectory, string relativePath)
+    {
+        try
+        {
+            var hash = SeedFixtures.ComputeContentHash(baseDirectory, relativePath);
+            return new FixtureDigest(relativePath, hash);
+        }
+        catch (FileNotFoundException)
+        {
+            // The envelope must never crash a run: a missing seed fixture is already
+            // classified as an Environment error by the seed applier (§12.1).  Record
+            // the reference without a hash so the envelope remains a faithful account.
+            return new FixtureDigest(relativePath, ContentHash: null);
+        }
     }
 
     /// <summary>

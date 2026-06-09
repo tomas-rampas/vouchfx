@@ -50,4 +50,12 @@ public static class EventTypes
     /// <c>Fail</c> verdict — only <c>ENV_ERROR</c>.
     /// </summary>
     public const string EnvironmentError = "environment-error";
+
+    /// <summary>
+    /// Emitted once per scenario carrying the reproducibility envelope (§17,
+    /// docs/02 §3.2.2): a hash of every distinct secret <em>reference</em> and the
+    /// content hash of every applied seed fixture.  By construction it carries no
+    /// resolved secret value (the secret resolver is never invoked to build it).
+    /// </summary>
+    public const string ReproducibilityEnvelope = "reproducibility-envelope";
 }
