@@ -8,13 +8,14 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress (2026-06-08):** Sprints **01–04 are merged to `main`** (PR #126/#127, #128, #131, #134) —
+> **Progress (2026-06-09):** Sprints **01–04 are merged to `main`** (PR #126/#127, #128, #131, #134) —
 > delivered and integrated, CI green. Milestone **M1 — Foundations proven is reached** (closed after
-> Sprint 02: the full Core-provider-closure leak gate and the reference provider). Phase 2 (Core
-> compiler) is under way — the parser→AST→Roslyn pipeline, the provider-mediated compile pipeline, and
-> three Core providers (`http.rest`, `db-assert.postgres`, `script.csharp`) with capture, substitution
-> and Respawn isolation are in. **Sprint 05** (seed, env secrets, integrate) is next and closes
-> Milestone **M2**.
+> Sprint 02: the full Core-provider-closure leak gate and the reference provider). **Sprint 05 is
+> delivered on branch `feat/sprint-05-seed-secrets`** (PR pending) — seed, env-var secret resolution,
+> and end-to-end integration complete. Milestone **M2 — Core compiler runs is reached**: three Core
+> providers (`http.rest`, `db-assert.postgres`, `script.csharp`) compile and run end-to-end against a
+> real local topology with seeding, secret resolution, captured-variable threading, reflective registry
+> discovery, and terminal renderer. Phase 2 closes. **Sprint 06** (async providers + RETRY) is next.
 
 ```mermaid
 gantt
@@ -31,8 +32,8 @@ gantt
     section P2 Core compiler
     S03 Compiler real               :done, s03, after s02, 14d
     S04 Provider-mediated pipeline  :done, s04, after s03, 14d
-    S05 Seed, secrets, integrate    :active, s05, after s04, 14d
-    M2 Core compiler runs           :milestone, crit, m2, after s05, 0d
+    S05 Seed, secrets, integrate    :done, s05, after s04, 14d
+    M2 Core compiler runs           :milestone, done, m2, after s05, 0d
 
     section P3 Full step set
     S06 Async providers + RETRY     :s06, after s05, 14d
