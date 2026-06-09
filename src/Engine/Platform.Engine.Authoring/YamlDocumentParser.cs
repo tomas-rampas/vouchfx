@@ -117,9 +117,114 @@ public static class YamlDocumentParser
 
         var services = ParseServiceMap(node);
         var dependencies = ParseDependencyMap(node);
-        TryGetMapping(node, "seed", out var seed);
+        var seed = ParseSeed(node);
 
         return new EnvironmentSpec(services, dependencies, seed, imageRegistry, imagePullPolicy);
+    }
+
+    /// <summary>
+    /// Parses the optional <c>environment.seed</c> block (docs/02 §3.2.2) into a
+    /// strongly-typed <see cref="SeedSpec"/>.
+    /// </summary>
+    /// <remarks>
+    /// Grammar:
+    /// <code>
+    /// seed:
+    ///   orders-db:
+    ///     sql: [ "fixtures/a.sql", "fixtures/b.sql" ]
+    /// </code>
+    /// Each top-level key is a logical dependency name; under it, <c>sql</c> is a
+    /// sequence of scalar file paths.  Returns <see langword="null"/> when the
+    /// <c>seed</c> block is absent, is not a mapping, or contains no usable
+    /// dependency entries.
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown when a dependency's value is not a mapping (e.g. a bare scalar file
+    /// path where a <c>{ sql: [...] }</c> mapping is expected), or when its
+    /// <c>sql</c> entry is present but is not a sequence of scalars.  Rejecting a
+    /// malformed dependency rather than dropping it prevents a later misattributed
+    /// assertion <c>Fail</c> (§12.1).
+    /// </exception>
+    private static SeedSpec? ParseSeed(YamlMappingNode environment)
+    {
+        if (!TryGetMapping(environment, "seed", out var seedNode))
+        {
+            return null;
+        }
+
+        var dependencies = new Dictionary<string, DependencySeed>(StringComparer.Ordinal);
+        foreach (var (key, value) in seedNode.Children)
+        {
+            if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
+            {
+                continue;
+            }
+
+            if (value is not YamlMappingNode depMapping)
+            {
+                // A dependency value that is not a mapping (e.g. a bare scalar file
+                // path) is a malformed shape.  Silently dropping it would later
+                // surface as a misattributed assertion Fail — the exact §12.1
+                // confusion seeding prevents — so reject it with line/column,
+                // mirroring ParseSeedSqlSequence's rigour for a malformed 'sql'.
+                throw new YamlParseException(
+                    $"Seed dependency '{keyScalar.Value}' at line {value.Start.Line} must be a " +
+                    $"mapping with a 'sql' sequence (e.g. 'sql: [ \"fixtures/a.sql\" ]'), " +
+                    $"but found {value.NodeType}.",
+                    value.Start.Line,
+                    value.Start.Column);
+            }
+
+            var sql = ParseSeedSqlSequence(keyScalar.Value, depMapping);
+            dependencies[keyScalar.Value] = new DependencySeed(sql);
+        }
+
+        return dependencies.Count > 0 ? new SeedSpec(dependencies) : null;
+    }
+
+    /// <summary>
+    /// Reads the <c>sql</c> entry of a single seed dependency mapping as a
+    /// sequence of scalar file paths.  Returns <see langword="null"/> when the
+    /// <c>sql</c> key is absent.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>sql</c> is present but is not a sequence, or when any of its
+    /// items is not a scalar.
+    /// </exception>
+    private static List<string>? ParseSeedSqlSequence(
+        string dependencyName,
+        YamlMappingNode depMapping)
+    {
+        if (!TryGetNode(depMapping, "sql", out var sqlNode))
+        {
+            return null;
+        }
+
+        if (sqlNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"Seed dependency '{dependencyName}' at line {sqlNode.Start.Line} has a " +
+                $"'sql' entry that is not a sequence; expected a list of file paths.",
+                sqlNode.Start.Line,
+                sqlNode.Start.Column);
+        }
+
+        var list = new List<string>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlScalarNode scalar || scalar.Value is null)
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {item.Start.Line} has a " +
+                    $"'sql' item that is not a scalar file path.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            list.Add(scalar.Value);
+        }
+
+        return list;
     }
 
     private static Dictionary<string, string>? ParseVariables(YamlMappingNode root)

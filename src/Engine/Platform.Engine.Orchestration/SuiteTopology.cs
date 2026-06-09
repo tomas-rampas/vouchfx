@@ -136,10 +136,15 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// The same timeout is applied individually to each resource in
     /// <see cref="MappedTopology.HealthGateResourceNames"/>.
     /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative <c>environment.seed</c> SQL file
+    /// paths are resolved (S05-A-01).  Defaults to
+    /// <see cref="Directory.GetCurrentDirectory"/> when <see langword="null"/>.
+    /// </param>
     /// <param name="cancellationToken">
-    /// Propagated to <see cref="HeadlessTopology.StartAsync"/> and to each
-    /// health-gate <c>WaitForResourceHealthyAsync</c> call.
-    /// Must be the last parameter (CA1068).
+    /// Propagated to <see cref="HeadlessTopology.StartAsync"/>, to each
+    /// health-gate <c>WaitForResourceHealthyAsync</c> call, and to the seed
+    /// applier.  Must be the last parameter (CA1068).
     /// </param>
     /// <returns>
     /// A fully started and health-gated <see cref="SuiteTopology"/> whose
@@ -156,6 +161,7 @@ public sealed class SuiteTopology : IAsyncDisposable
         EnvironmentSpec? environment,
         string? appHostAssemblyName,
         TimeSpan? startupTimeout = null,
+        string? seedBaseDirectory = null,
         CancellationToken cancellationToken = default)
     {
         var gateTimeout = startupTimeout ?? TimeSpan.FromSeconds(120);
@@ -261,6 +267,29 @@ public sealed class SuiteTopology : IAsyncDisposable
                     ex, imageRef: null, resourceName: "discovery");
                 throw new OrchestrationException(info, ex);
             }
+
+            // ----------------------------------------------------------------
+            // Step 4½: Apply declarative seed SQL — AFTER discovery, BEFORE the
+            // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01).
+            // SeedApplier throws OrchestrationException (Provision kind) on any
+            // failure; the outer catch below disposes the topology so containers
+            // do not leak, and the failure surfaces as an Environment error
+            // (§12.1) — never a misattributed assertion Fail.
+            //
+            // Respawn / multi-scenario note: this seeding runs ONCE at suite
+            // startup.  For a SINGLE-scenario run the seeded rows are present for
+            // step 1.  For a MULTI-scenario suite sharing one topology,
+            // RespawnPostgresIsolation truncates the ROWS of all user tables
+            // between scenarios (schema persists), so seeded reference rows are
+            // also truncated after the first scenario — persisting reference data
+            // across scenarios is a future enhancement, OUT OF SCOPE for A-01.
+            // ----------------------------------------------------------------
+            await SeedApplier.ApplyAsync(
+                    environment?.Seed,
+                    discoveredServices,
+                    seedBaseDirectory ?? Directory.GetCurrentDirectory(),
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             return new SuiteTopology(topology, discoveredServices, mapped.DependencyNames);
         }

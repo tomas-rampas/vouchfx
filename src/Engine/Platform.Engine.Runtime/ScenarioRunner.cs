@@ -175,6 +175,11 @@ public static class ScenarioRunner
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
     /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative <c>environment.seed</c> SQL file
+    /// paths are resolved (S05-A-01).  Defaults to the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations in the pipeline.
     /// </param>
@@ -188,6 +193,7 @@ public static class ScenarioRunner
         IEnumerable<Assembly> providerAssemblies,
         string? appHostAssemblyName,
         TextWriter output,
+        string? seedBaseDirectory = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(yamlText);
@@ -352,6 +358,7 @@ public static class ScenarioRunner
                 doc.Environment,
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
+                seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -426,6 +433,11 @@ public static class ScenarioRunner
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
     /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative <c>environment.seed</c> SQL file
+    /// paths are resolved (S05-A-01).  Defaults to the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations.
     /// </param>
@@ -458,6 +470,7 @@ public static class ScenarioRunner
         IEnumerable<Assembly> providerAssemblies,
         string? appHostAssemblyName,
         TextWriter output,
+        string? seedBaseDirectory = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -563,6 +576,7 @@ public static class ScenarioRunner
                 scenarios[0].Environment,
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
+                seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
