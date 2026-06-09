@@ -10,6 +10,12 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Platform.Engine.Orchestration.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!-- Expose SeedFixtures.ComputeContentHash (S05-A-02) to the runner so the
+         reproducibility envelope (S05-B-03) can record the SAME fixture content
+         hash the seed applier computes, without duplicating the routine. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Runtime</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

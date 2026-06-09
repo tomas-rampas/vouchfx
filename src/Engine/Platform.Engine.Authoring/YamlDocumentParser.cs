@@ -130,20 +130,31 @@ public static class YamlDocumentParser
     /// Grammar:
     /// <code>
     /// seed:
-    ///   orders-db:
+    ///   orders-db:                       # postgres → SQL (A-01)
     ///     sql: [ "fixtures/a.sql", "fixtures/b.sql" ]
+    ///   events:                          # broker → warm-up publish (A-02)
+    ///     publish:
+    ///       - topic: catalog.snapshot
+    ///         payload: { from: "fixtures/catalog.json" }
+    ///   catalog-store:                   # document store → document fixture (A-02)
+    ///     documents:
+    ///       - collection: products
+    ///         from: "fixtures/products.json"
     /// </code>
-    /// Each top-level key is a logical dependency name; under it, <c>sql</c> is a
-    /// sequence of scalar file paths.  Returns <see langword="null"/> when the
-    /// <c>seed</c> block is absent, is not a mapping, or contains no usable
-    /// dependency entries.
+    /// Each top-level key is a logical dependency name; under it the dependency
+    /// declares one seed kind (<c>sql</c>, <c>publish</c>, or <c>documents</c>).
+    /// The parser binds whichever kinds are present; the seed applier later
+    /// dispatches on the dependency's declared <c>type</c> and rejects a mismatch.
+    /// Returns <see langword="null"/> when the <c>seed</c> block is absent, is not a
+    /// mapping, or contains no usable dependency entries.
     /// </remarks>
     /// <exception cref="YamlParseException">
     /// Thrown when a dependency's value is not a mapping (e.g. a bare scalar file
-    /// path where a <c>{ sql: [...] }</c> mapping is expected), or when its
-    /// <c>sql</c> entry is present but is not a sequence of scalars.  Rejecting a
-    /// malformed dependency rather than dropping it prevents a later misattributed
-    /// assertion <c>Fail</c> (§12.1).
+    /// path where a <c>{ sql: [...] }</c> mapping is expected), when its <c>sql</c>
+    /// entry is present but is not a sequence of scalars, when a <c>publish</c> item
+    /// is missing its <c>topic</c> / <c>payload.from</c>, or when a <c>documents</c>
+    /// item is missing its <c>from</c>.  Rejecting a malformed dependency rather
+    /// than dropping it prevents a later misattributed assertion <c>Fail</c> (§12.1).
     /// </exception>
     private static SeedSpec? ParseSeed(YamlMappingNode environment)
     {
@@ -169,14 +180,16 @@ public static class YamlDocumentParser
                 // mirroring ParseSeedSqlSequence's rigour for a malformed 'sql'.
                 throw new YamlParseException(
                     $"Seed dependency '{keyScalar.Value}' at line {value.Start.Line} must be a " +
-                    $"mapping with a 'sql' sequence (e.g. 'sql: [ \"fixtures/a.sql\" ]'), " +
-                    $"but found {value.NodeType}.",
+                    $"mapping with a 'sql', 'publish', or 'documents' entry " +
+                    $"(e.g. 'sql: [ \"fixtures/a.sql\" ]'), but found {value.NodeType}.",
                     value.Start.Line,
                     value.Start.Column);
             }
 
             var sql = ParseSeedSqlSequence(keyScalar.Value, depMapping);
-            dependencies[keyScalar.Value] = new DependencySeed(sql);
+            var publish = ParseSeedPublishSequence(keyScalar.Value, depMapping);
+            var documents = ParseSeedDocumentsSequence(keyScalar.Value, depMapping);
+            dependencies[keyScalar.Value] = new DependencySeed(sql, publish, documents);
         }
 
         return dependencies.Count > 0 ? new SeedSpec(dependencies) : null;
@@ -222,6 +235,160 @@ public static class YamlDocumentParser
             }
 
             list.Add(scalar.Value);
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Reads the <c>publish</c> entry of a single seed dependency mapping as a
+    /// sequence of broker warm-up messages (docs/02 §3.2.2).  Returns
+    /// <see langword="null"/> when the <c>publish</c> key is absent.
+    /// </summary>
+    /// <remarks>
+    /// Grammar:
+    /// <code>
+    /// publish:
+    ///   - topic: catalog.snapshot
+    ///     payload: { from: "fixtures/catalog.json" }
+    /// </code>
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>publish</c> is present but is not a sequence, when an item is
+    /// not a mapping, or when an item is missing the required <c>topic</c> scalar
+    /// or <c>payload.from</c> scalar.  Rejecting a malformed entry rather than
+    /// dropping it prevents a later misattributed assertion <c>Fail</c> (§12.1).
+    /// </exception>
+    private static List<PublishSeed>? ParseSeedPublishSequence(
+        string dependencyName,
+        YamlMappingNode depMapping)
+    {
+        if (!TryGetNode(depMapping, "publish", out var publishNode))
+        {
+            return null;
+        }
+
+        if (publishNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"Seed dependency '{dependencyName}' at line {publishNode.Start.Line} has a " +
+                $"'publish' entry that is not a sequence; expected a list of warm-up messages.",
+                publishNode.Start.Line,
+                publishNode.Start.Column);
+        }
+
+        var list = new List<PublishSeed>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlMappingNode messageMapping)
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {item.Start.Line} has a " +
+                    $"'publish' item that is not a mapping; expected " +
+                    $"'{{ topic: ..., payload: {{ from: ... }} }}'.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            var topic = GetScalar(messageMapping, "topic");
+            if (string.IsNullOrEmpty(topic))
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {messageMapping.Start.Line} has a " +
+                    $"'publish' item missing the required 'topic' scalar.",
+                    messageMapping.Start.Line,
+                    messageMapping.Start.Column);
+            }
+
+            if (!TryGetMapping(messageMapping, "payload", out var payloadMapping))
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {messageMapping.Start.Line} has a " +
+                    $"'publish' item missing the required 'payload' mapping " +
+                    $"(expected 'payload: {{ from: ... }}').",
+                    messageMapping.Start.Line,
+                    messageMapping.Start.Column);
+            }
+
+            var payloadFrom = GetScalar(payloadMapping, "from");
+            if (string.IsNullOrEmpty(payloadFrom))
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {payloadMapping.Start.Line} has a " +
+                    $"'publish' item whose 'payload' is missing the required 'from' file path.",
+                    payloadMapping.Start.Line,
+                    payloadMapping.Start.Column);
+            }
+
+            list.Add(new PublishSeed(topic, payloadFrom));
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Reads the <c>documents</c> entry of a single seed dependency mapping as a
+    /// sequence of document fixtures (docs/02 §3.2.2).  Returns
+    /// <see langword="null"/> when the <c>documents</c> key is absent.
+    /// </summary>
+    /// <remarks>
+    /// Grammar:
+    /// <code>
+    /// documents:
+    ///   - collection: products       # optional target name
+    ///     from: "fixtures/products.json"
+    /// </code>
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>documents</c> is present but is not a sequence, when an item
+    /// is not a mapping, or when an item is missing the required <c>from</c>
+    /// scalar.  The <c>collection</c> scalar is optional.
+    /// </exception>
+    private static List<DocumentSeed>? ParseSeedDocumentsSequence(
+        string dependencyName,
+        YamlMappingNode depMapping)
+    {
+        if (!TryGetNode(depMapping, "documents", out var documentsNode))
+        {
+            return null;
+        }
+
+        if (documentsNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"Seed dependency '{dependencyName}' at line {documentsNode.Start.Line} has a " +
+                $"'documents' entry that is not a sequence; expected a list of document fixtures.",
+                documentsNode.Start.Line,
+                documentsNode.Start.Column);
+        }
+
+        var list = new List<DocumentSeed>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlMappingNode documentMapping)
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {item.Start.Line} has a " +
+                    $"'documents' item that is not a mapping; expected " +
+                    $"'{{ from: ..., collection: ... }}'.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            var from = GetScalar(documentMapping, "from");
+            if (string.IsNullOrEmpty(from))
+            {
+                throw new YamlParseException(
+                    $"Seed dependency '{dependencyName}' at line {documentMapping.Start.Line} has a " +
+                    $"'documents' item missing the required 'from' file path.",
+                    documentMapping.Start.Line,
+                    documentMapping.Start.Column);
+            }
+
+            // 'collection' is optional (a document store may have a single default container).
+            var collection = GetScalar(documentMapping, "collection");
+
+            list.Add(new DocumentSeed(collection, from));
         }
 
         return list;

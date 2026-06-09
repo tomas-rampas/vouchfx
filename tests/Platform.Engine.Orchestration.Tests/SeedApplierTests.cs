@@ -37,11 +37,34 @@ public sealed class SeedApplierTests
         string name = DepName, string conn = DummyConnString) =>
         new(StringComparer.Ordinal) { [name] = conn };
 
+    // Default dependency-type map: the seeded dependency is postgres so the SQL
+    // dispatch path is exercised (A-02 type-dispatch).
+    private static Dictionary<string, string> Types(
+        string name = DepName, string type = "postgres") =>
+        new(StringComparer.Ordinal) { [name] = type };
+
     private static SeedSpec SeedWith(string depName, params string[] sqlFiles) =>
         new(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
         {
             [depName] = new DependencySeed(sqlFiles),
         });
+
+    // Thin wrapper over the A-02 ApplyAsync signature so the A-01 tests below stay
+    // focused on behaviour, not the new sink/type-map parameters.  Uses recording
+    // sinks (the M2 deferred-seam default).
+    private static Task Apply(
+        SeedSpec? seed,
+        IReadOnlyDictionary<string, object> discovered,
+        IReadOnlyDictionary<string, string> types,
+        string baseDir) =>
+        SeedApplier.ApplyAsync(
+            seed,
+            discovered,
+            types,
+            baseDir,
+            brokerSink: null,
+            documentSink: null,
+            ct: CancellationToken.None);
 
     // ── Null / empty seed is a no-op ──────────────────────────────────────────
 
@@ -49,11 +72,11 @@ public sealed class SeedApplierTests
     public async Task ApplyAsync_NullSeed_IsNoOp()
     {
         // No exception even with empty discovered services.
-        await SeedApplier.ApplyAsync(
+        await Apply(
             seed: null,
-            discoveredServices: new Dictionary<string, object>(),
-            seedBaseDirectory: Path.GetTempPath(),
-            ct: CancellationToken.None);
+            discovered: new Dictionary<string, object>(),
+            types: new Dictionary<string, string>(),
+            baseDir: Path.GetTempPath());
     }
 
     // ── Missing SQL file → Provision error, no DB needed ─────────────────────
@@ -69,7 +92,7 @@ public sealed class SeedApplierTests
         // Act + Assert — throws BEFORE opening any connection (DummyConnString is
         // never dialled), so this completes without a Docker daemon.
         var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
-            SeedApplier.ApplyAsync(seed, Discovered(), baseDir, CancellationToken.None));
+            Apply(seed, Discovered(), Types(), baseDir));
 
         Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
         // Detail names the missing resolved path.
@@ -87,12 +110,14 @@ public sealed class SeedApplierTests
     [Fact]
     public async Task ApplyAsync_UnknownDependency_ThrowsProvision()
     {
-        // Arrange — the seed names a dependency absent from discovered services.
+        // Arrange — the seed names a postgres dependency that is declared (so type
+        // dispatch reaches the SQL path) but absent from discovered services (so the
+        // connection-string lookup fails).
         var seed = SeedWith("absent-db", "a.sql");
 
         // Act + Assert
         var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
-            SeedApplier.ApplyAsync(seed, Discovered(), Path.GetTempPath(), CancellationToken.None));
+            Apply(seed, Discovered(), Types("absent-db"), Path.GetTempPath()));
 
         Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
         Assert.Contains("unknown dependency", ex.Info.Detail, StringComparison.Ordinal);
@@ -129,7 +154,7 @@ public sealed class SeedApplierTests
             // mentions connecting, NOT a missing file.  This proves the relative path
             // resolved against seedBaseDirectory.
             var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
-                SeedApplier.ApplyAsync(seed, Discovered(), baseDir, CancellationToken.None));
+                Apply(seed, Discovered(), Types(), baseDir));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
             // Not a "file not found" failure — the file resolved and existed.
@@ -158,7 +183,7 @@ public sealed class SeedApplierTests
             // Act + Assert — the detail names the RESOLVED absolute path (proving the
             // relative path was combined with seedBaseDirectory).
             var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
-                SeedApplier.ApplyAsync(seed, Discovered(), baseDir, CancellationToken.None));
+                Apply(seed, Discovered(), Types(), baseDir));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
             Assert.Contains(expectedFull, ex.Info.Detail, StringComparison.Ordinal);
@@ -174,16 +199,20 @@ public sealed class SeedApplierTests
     [Fact]
     public async Task ApplyAsync_DependencyWithNullSql_IsSkipped()
     {
-        // Arrange — a seed entry with no sql list (null) is a no-op for that dep,
-        // even when the dependency itself is unknown.
+        // Arrange — a seed entry with no seed data (null sql/publish/documents) is a
+        // no-op for that dep, even when the dependency is unknown AND has no declared
+        // type: the empty-seed guard returns before any type lookup.
         var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
         {
             ["absent-db"] = new DependencySeed(Sql: null),
         });
 
-        // Act — no exception: a dependency with no SQL files is skipped before the
-        // unknown-dependency check.
-        await SeedApplier.ApplyAsync(
-            seed, new Dictionary<string, object>(), Path.GetTempPath(), CancellationToken.None);
+        // Act — no exception: a dependency with no seed data is skipped before the
+        // type-dispatch and unknown-dependency checks.
+        await Apply(
+            seed,
+            new Dictionary<string, object>(),
+            new Dictionary<string, string>(),
+            Path.GetTempPath());
     }
 }

@@ -269,12 +269,15 @@ public sealed class SuiteTopology : IAsyncDisposable
             }
 
             // ----------------------------------------------------------------
-            // Step 4½: Apply declarative seed SQL — AFTER discovery, BEFORE the
-            // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01).
-            // SeedApplier throws OrchestrationException (Provision kind) on any
-            // failure; the outer catch below disposes the topology so containers
-            // do not leak, and the failure surfaces as an Environment error
-            // (§12.1) — never a misattributed assertion Fail.
+            // Step 4½: Apply declarative seed data — AFTER discovery, BEFORE the
+            // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01/A-02).
+            // SeedApplier dispatches each seeded dependency on its declared type
+            // (postgres → SQL now; broker/document store → content-hash + record
+            // via deferred seams, no actual publish/write in M2) and throws
+            // OrchestrationException (Provision kind) on any failure; the outer
+            // catch below disposes the topology so containers do not leak, and the
+            // failure surfaces as an Environment error (§12.1) — never a
+            // misattributed assertion Fail.
             //
             // Respawn / multi-scenario note: this seeding runs ONCE at suite
             // startup.  For a SINGLE-scenario run the seeded rows are present for
@@ -284,10 +287,14 @@ public sealed class SuiteTopology : IAsyncDisposable
             // also truncated after the first scenario — persisting reference data
             // across scenarios is a future enhancement, OUT OF SCOPE for A-01.
             // ----------------------------------------------------------------
+            var dependencyTypes = BuildDependencyTypeMap(environment);
             await SeedApplier.ApplyAsync(
                     environment?.Seed,
                     discoveredServices,
+                    dependencyTypes,
                     seedBaseDirectory ?? Directory.GetCurrentDirectory(),
+                    brokerSink: null,
+                    documentSink: null,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -301,6 +308,30 @@ public sealed class SuiteTopology : IAsyncDisposable
             throw;
         }
     }
+
+    /// <summary>
+    /// Builds the logical-dependency-name → declared-<c>type</c> map the seed
+    /// applier dispatches on (S05-A-02).  Empty when no dependencies are declared.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> BuildDependencyTypeMap(EnvironmentSpec? environment)
+    {
+        var dependencies = environment?.Dependencies;
+        if (dependencies is null || dependencies.Count == 0)
+        {
+            return EmptyDependencyTypes;
+        }
+
+        var map = new Dictionary<string, string>(dependencies.Count, StringComparer.Ordinal);
+        foreach (var (name, spec) in dependencies)
+        {
+            map[name] = spec.Type;
+        }
+
+        return map;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyDependencyTypes =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     /// <summary>
     /// Disposes the inner <see cref="HeadlessTopology"/>, stopping all managed containers
