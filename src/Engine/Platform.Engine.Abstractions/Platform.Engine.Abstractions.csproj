@@ -4,6 +4,12 @@
     <RootNamespace>Platform.Engine.Abstractions</RootNamespace>
   </PropertyGroup>
 
+  <!-- Resilience (§5.7) — Polly v8 (ResiliencePipeline) backs the RETRY runner.
+       Version comes from central package management (Directory.Packages.props). -->
+  <ItemGroup>
+    <PackageReference Include="Polly.Core" />
+  </ItemGroup>
+
   <!-- Expose the internal SecretString constructor to the Abstractions test project
        so tests can mint a SecretString without an injection sink (S05-B-02). -->
   <ItemGroup>
