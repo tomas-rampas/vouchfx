@@ -113,7 +113,8 @@ incorporated.
 
 **Proof tasks:**
 - Compile companion green (non-Docker).
-- Live path Docker-gated and run in CI (not in the authoring environment, which has no Docker). The capstone simulates the webhook callback with a `script.csharp` step POSTing to the host listener; a real containerised-SUT callback over `host.docker.internal` remains the one Docker-only validation not yet automated.
+- **Full docker integration suite run locally — 28/28 `requires=docker` tests green** (~11 min), including `Sprint07Capstone_WebhookCallbackCapturedByRetryListener_Pass`, `Sprint07Capstone_FailingDbAssert_RendersRelationalDiff_Fail`, the Sprint 6 Avro capstones, M2, and the S04 Respawn capstone. The Sprint 7 webhook capstone simulates the callback with a `script.csharp` step POSTing to the host listener; a real containerised-SUT callback over `host.docker.internal` is the one path not yet automated as a test.
+- **Finding (follow-up):** the Aspire topology teardown leaks containers — a clean exit-0 docker run left `web-*`/`pg-*` containers + an orphaned `aspire-session-network-*-testhost` network behind (and a prior run's `events-sr-*`/`events-*` lingered for hours). DCP/topology dispose does not reliably reap containers after the test host process exits; worth fixing in the topology lifecycle or documenting as a known DCP limitation.
 
 ## Risks mitigated this sprint (MVP §10)
 
