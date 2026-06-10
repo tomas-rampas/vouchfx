@@ -127,7 +127,21 @@ environment:
 
 An image-pull failure — registry unreachable, authentication failed, image not found — is classified as an environment error per the verdict taxonomy, not a test failure. The report names the registry hostname and the authentication status alongside the runtime's underlying error, so an engineer can act on it without spelunking. This is the most common cause of early-pilot frustration in Docker-based testing tools, and the architecture handles it explicitly rather than letting it manifest as a generic timeout.
 
-### 3.2.2 Seeding initial state
+### 3.2.2 Schema registries for message brokers
+
+A Kafka broker can optionally be paired with a Confluent Schema Registry to provide schema governance and Avro serialisation. When Avro steps in the test need to publish or consume from a schema registry, declare the flag `schemaRegistry: true` on the Kafka dependency. The engine provisions the registry as a sidecar container and wires it to the broker; steps then reference the Kafka dependency by name to access the registry.
+
+```yaml
+environment:
+  dependencies:
+    events:
+      type: kafka
+      schemaRegistry: true    # additionally provision a Confluent Schema Registry
+```
+
+Once declared with `schemaRegistry: true`, a `mq-publish.kafka` step can include an `avro` block to publish Avro-serialised messages, and an `mq-expect.kafka` step can include an `avro` block to consume and decode them (see §5.2 and §5.3). The registry URL is automatically staged and made available to these steps. No manual configuration of registry endpoints is required.
+
+### 3.2.3 Seeding initial state
 
 Resetting a database between tests is only half of the data lifecycle; the other half is establishing the state a test needs **before** it runs. An optional `seed` block inside the environment section declares that work declaratively. It can apply reference SQL files to a relational dependency, load document fixtures into a document store, and publish warm-up messages to a broker. The engine applies the seed after the topology is healthy and before the first step executes, so a step never races the data it depends on.
 
@@ -148,7 +162,7 @@ environment:
 
 Declarative fixtures are the recommended default because they live in source control beside the test, are visible in review, and produce the same baseline on every machine. When data must be created through the system's own APIs rather than injected directly — because the creation path is itself part of what is under test — a `script` step early in the scenario is the right tool instead, constructing entities and capturing their identifiers for later steps. A seed that fails to apply produces an environment error, not an assertion failure, so a broken fixture is never mistaken for a broken system. The reproducibility envelope records the content hash of every applied fixture.
 
-### 3.2.3 Test doubles
+### 3.2.4 Test doubles
 
 When a dependency cannot be exercised for real — a payment gateway that costs money, a third-party API with no sandbox, a service that does not yet exist — the platform's position is that a test double is provisioned like any other dependency: as a container running a stubbing tool such as WireMock or Mountebank, declared in this same section and addressed through the same logical name. The platform ships no built-in mocking; a double is a deliberate, visible entry in the environment rather than a hidden behaviour. Because the double speaks the real protocol, the steps that call it are written identically to steps that call the real service, and swapping one for the other later requires no change to the test logic — only to this declaration.
 
@@ -174,7 +188,7 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 | Field | Required | Meaning |
 |---|---|---|
 | **id** | Yes | A unique identifier for the step within the file. Used in reporting and as the anchor for any failure message. |
-| **type** | Yes | The kind of step: http, kafka-publish, kafka-expect, db-assert, webhook-listen, or script. Determines which additional fields are valid. |
+| **type** | Yes | The kind of step: http, mq-publish, mq-expect, db-assert, webhook-listen, or script. Determines which additional fields are valid. Each can be a bare family name (if the family has one provider) or a dotted family.provider name. |
 | **description** | No | A short human-readable explanation shown in test output. |
 | **capture** | No | A map of variable names to extractor expressions; writes values from this step's result into the shared context (see section 6). |
 | **verifyMode** | No | Either IMMEDIATE (the default) or RETRY. RETRY instructs the engine to poll until the step's assertions hold or a timeout expires (see section 7). |
@@ -193,7 +207,7 @@ Together the six shipped families are sufficient to express the platform's refer
 
 ## 5.1 The http family
 
-An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The Indie layer ships `http.rest` as the default provider for this family, which is what the example below uses; `http.soap` and `http.graphql` are provided by the wider provider catalogue (section 5.7).
+An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The Core provider is `http.rest`, which is what the example below uses. Additional providers such as `http.soap` and `http.graphql` may be added to the provider catalogue in future releases (section 5.7).
 
 | Field | Meaning |
 |---|---|
@@ -224,21 +238,96 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The Indie layer ships `mq-publish.kafka` with full schema-registry and Avro support, and the wider provider catalogue adds `mq-publish.rabbitmq`, `mq-publish.servicebus`, `mq-publish.sqs`, and others. The example below uses the Kafka provider; the field set differs between providers and is defined by each provider's schema fragment. Existing files that wrote `type: kafka-publish` continue to work as an alias for `type: mq-publish.kafka` so that no migration is required.
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The Core provider is `mq-publish.kafka`, which ships with full schema-registry and Avro support. Bare-family alias: `type: mq-publish` resolves to `mq-publish.kafka` (the single provider in this family).
 
-| Field | Meaning |
-|---|---|
-| target | Logical name of the Kafka dependency declared under environment.dependencies. |
-| topic | The topic to publish to. |
-| key | An optional message key, used for partitioning. |
-| payload | The message body, given inline; serialised as JSON or Avro according to the schema setting. |
-| schema | An optional reference to a registered Avro schema; when present the payload is validated before sending. |
+### 5.2.1 mq-publish.kafka: plain payload
 
-Schema-registry semantics matter in real Kafka use, so the Core provider commits to a default behaviour and exposes the alternatives explicitly. The `mq-publish.kafka` provider uses the **TopicNameStrategy** subject-naming strategy by default (the subject is `<topic>-value` or `<topic>-key`), with **backward** compatibility on schema evolution. `RecordNameStrategy` and `TopicRecordNameStrategy` are configurable through a provider-level option for teams whose Kafka governance requires them. The provider auto-registers schemas at publish time when the suite runs against an ephemeral Kafka and refuses to auto-register against a non-ephemeral one (the registration must be deliberate). Compatibility level on schema evolution is configurable per dependency.
+The Kafka provider ships with two distinct paths. The plain-payload path publishes a UTF-8 string (a literal value or inline JSON) as the message value. The field set is as follows:
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the kafka dependency declared under environment.dependencies. |
+| topic | Yes | The Kafka topic to publish to. May contain {placeholder} and ${secret:...} tokens. |
+| key | No | Optional message key. May contain {placeholder} and ${secret:...} tokens. |
+| payload | Yes | The message body as a UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:...} tokens. |
+| headers | No | Optional map of message-header names to their string values. Each value may contain {placeholder} and ${secret:...} tokens. |
+
+Example (plain publish):
+
+```yaml
+- id: publish-order
+  type: mq-publish.kafka
+  target: events
+  topic: orders.created
+  key: "{orderId}"
+  payload: |
+    {
+      "orderId": "{orderId}",
+      "customerId": "{customerId}",
+      "amount": 99.99
+    }
+  headers:
+    x-trace-id: "{traceId}"
+```
+
+### 5.2.2 mq-publish.kafka: Avro with schema registry
+
+The Avro path publishes a message whose value is built as an Avro GenericRecord from an inline Avro schema and a field map, and serialises it through a provisioned Confluent Schema Registry. The schema is auto-registered under the declared subject. When the `avro` block is present, the plain `payload` field is ignored.
+
+| Field | Location | Required | Meaning |
+|---|---|---|---|
+| avro | root | No | When present, switches to the Avro path. Absent → plain path. |
+| schemaRegistry | avro | Yes | Logical name of the kafka dependency whose schema registry to publish through (its schemaRegistry-enabled registry URL is provisioned under `environment.dependencies`). |
+| subject | avro | Yes | The schema-registry subject under which the inline schema is registered. |
+| schema | avro | Yes | The inline Avro schema as avsc JSON. Must be a record schema. |
+| record | avro | Yes | Map of Avro field names to their values. Each value may contain {placeholder} and ${secret:...} tokens; field names are used verbatim. Values are coerced to the schema's primitive field types at execution time. |
+
+Example (Avro publish):
+
+```yaml
+- id: publish-billing-event
+  type: mq-publish.kafka
+  target: events
+  topic: billing.events
+  avro:
+    schemaRegistry: events
+    subject: billing-value
+    schema: |
+      {
+        "type": "record",
+        "name": "BillingEvent",
+        "namespace": "com.example",
+        "fields": [
+          { "name": "userId", "type": "string" },
+          { "name": "amount", "type": "double" }
+        ]
+      }
+    record:
+      userId: "{newUserId}"
+      amount: "99.99"
+```
+
+The `mq-publish.kafka` provider auto-registers the supplied inline schema under the declared subject via the Confluent `AvroSerializer`'s default auto-registration at publish time. No subject-naming-strategy configuration, compatibility-level options, or ephemeral-vs-non-ephemeral distinction are currently implemented.
 
 ## 5.3 The mq-expect family
 
-An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. As with `mq-publish`, `mq-expect.kafka` is the Core provider; `type: kafka-expect` is preserved as an alias.
+An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The Core provider is `mq-expect.kafka`; bare-family alias: `type: mq-expect` resolves to `mq-expect.kafka` (the single provider in this family).
+
+### 5.3.1 mq-expect.kafka: plain payload
+
+The Kafka provider ships with two distinct paths. The plain-payload path evaluates assertion criteria against the UTF-8 message value (a literal string or inline JSON). At least one criterion must be declared.
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the kafka dependency to consume from, as declared under environment.dependencies. |
+| topic | Yes | The Kafka topic to consume the message from. |
+| match | Yes | An assertion-criteria block (see below). |
+| match.key | No | Expected message key (ordinal string equality). May contain {placeholder} and ${secret:...} tokens. |
+| match.headers | No | Optional map of expected header names to their expected string values. Each value may contain {placeholder} and ${secret:...} tokens. |
+| match.payloadContains | No | Optional substring that the UTF-8 message value must contain (ordinal). May contain {placeholder} and ${secret:...} tokens. |
+| match.json | No | Optional map of JSONPath expressions to their expected string values. The message value is parsed as JSON; each JSONPath must select a node whose stringified value equals the expected value. Each expected value may contain {placeholder} and ${secret:...} tokens. |
+
+Example (plain expect with RETRY):
 
 ```yaml
 - id: expect-billing-event
@@ -249,11 +338,39 @@ An `mq-expect` step consumes from a broker and asserts that a matching message a
   timeout: 30s
   match:
     key: "{newUserId}"
-    payload:
-      userId: "{newUserId}"
-      status: "PENDING"
+    json:
+      $.userId: "{newUserId}"
+      $.status: "PENDING"
   capture:
-    billingAccountId: "$.payload.accountId"
+    billingAccountId: "$.accountId"
+```
+
+### 5.3.2 mq-expect.kafka: Avro with schema registry
+
+The Avro path decodes the consumed message as an Avro GenericRecord (fetching the writer schema from the registry by the message's embedded schema id), converts it to a JSON string, and evaluates the same `match` criteria against that JSON. The decoded JSON is transparent to the author: they write the same match criteria as they would for a plain JSON payload.
+
+| Field | Location | Required | Meaning |
+|---|---|---|---|
+| avro | root | No | When present, switches to the Avro path. Absent → plain path. |
+| schemaRegistry | avro | Yes | Logical name of the kafka dependency whose schema registry to decode through (its schemaRegistry-enabled registry URL is provisioned under `environment.dependencies`). |
+| subject | avro | No | Optional schema-registry subject (informational; the writer schema is fetched by the message's embedded schema id). |
+| schema | avro | No | Optional inline reader schema as avsc JSON (informational for the expect side). |
+
+Example (Avro expect with RETRY):
+
+```yaml
+- id: expect-billing-avro-event
+  type: mq-expect.kafka
+  target: events
+  topic: billing.events
+  verifyMode: RETRY
+  timeout: 30s
+  avro:
+    schemaRegistry: events
+  match:
+    json:
+      $.userId: "{newUserId}"
+      $.amount: "99.99"
 ```
 
 ## 5.4 The db-assert family
@@ -299,7 +416,7 @@ A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that 
 
 ## 5.6 The script family
 
-A `script` step is the escape hatch. It contains a block of code in a chosen language — the Indie layer ships `script.csharp`, the embedded CSX described in the architecture document — with full access to the shared variable context, the discovered service endpoints, and any referenced customer libraries. It is used when declarative steps cannot express the required logic: conditional branching, iteration, a non-trivial transformation of captured data, or an assertion that depends on a proprietary object model. The script reads and writes the same variables that declarative steps use, so it composes seamlessly with the rest of the file. Because C# is at the moment the only registered script provider, the bare `type: script` form is accepted as an alias for `type: script.csharp`.
+A `script` step is the escape hatch. It contains a block of code in a chosen language — the Core provider is `script.csharp`, the embedded CSX described in the architecture document — with full access to the shared variable context, the discovered service endpoints, and any referenced customer libraries. It is used when declarative steps cannot express the required logic: conditional branching, iteration, a non-trivial transformation of captured data, or an assertion that depends on a proprietary object model. The script reads and writes the same variables that declarative steps use, so it composes seamlessly with the rest of the file. Because C# is at the moment the only registered script provider, the bare `type: script` form is accepted as an alias for `type: script.csharp`.
 
 ```yaml
 - id: derive-and-check
@@ -327,17 +444,17 @@ The sections above introduced each family with the provider used in its example,
 
 Every step type in the language is the combination of a **family** and a **provider**. The family names the abstract operation; the provider names the concrete technology that performs it. The author writes the dotted form — `type: db-assert.postgres`, `type: mq-publish.rabbitmq` — and the engine resolves the dotted name to a registered implementation. When a family has exactly one registered provider, or when an installation has configured a default for the family, the bare family name resolves to that default; the editor still renders the canonical dotted form in suggestions and errors.
 
-The community catalogue at platform launch is summarised in the table below. The Core column lists what the Indie layer ships under Apache 2.0 with the engine; the Verified column lists providers that have passed community review and ship in the same repository; the Community column lists providers maintained outside the main repository by their authors.
+The community catalogue at platform launch is summarised in the table below. The Core column lists what ships under Apache 2.0 with the engine; the Verified column lists planned providers that will have passed community review and ship in the same repository; the Community column lists planned providers to be maintained outside the main repository by their authors.
 
-| Family | Core (ships with the engine) | Verified (community, reviewed) | Community (author-maintained) |
+| Family | Core (ships with the engine) | Verified (planned) | Community (planned) |
 |---|---|---|---|
 | http | http.rest | http.soap, http.graphql | http.signalr, http.long-polling |
 | rpc | — | rpc.grpc | rpc.thrift, rpc.json-rpc |
-| mq-publish | mq-publish.kafka | mq-publish.rabbitmq, mq-publish.servicebus, mq-publish.sqs | mq-publish.nats, mq-publish.pulsar, mq-publish.eventhub |
-| mq-expect | mq-expect.kafka | mq-expect.rabbitmq, mq-expect.servicebus, mq-expect.sqs | mq-expect.nats, mq-expect.pulsar, mq-expect.eventhub |
-| db-assert | db-assert.postgres | db-assert.sqlserver, db-assert.oracle, db-assert.mysql, db-assert.mongodb, db-assert.elasticsearch, db-assert.redis | db-assert.cockroachdb, db-assert.clickhouse, db-assert.duckdb, db-assert.opensearch |
-| webhook-listen | webhook-listen.http | — | webhook-listen.grpc |
-| script | script.csharp | — | script.javascript, script.bash, script.python |
+| mq-publish | mq-publish.kafka | — | — |
+| mq-expect | mq-expect.kafka | — | — |
+| db-assert | db-assert.postgres | — | — |
+| webhook-listen | webhook-listen.http | — | — |
+| script | script.csharp | — | — |
 
 *Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine.*
 
@@ -349,9 +466,9 @@ A contributor adding a new provider — say `db-assert.scylladb` — forks the p
 
 Two patterns make the choice explicit and reviewable. First, the provider is named in every step — reading the file makes it immediately clear that a test is running against Postgres rather than Oracle. Second, the file's `environment.dependencies` section declares the technology of every store and broker, and the validator refuses a step whose provider does not match the dependency's declared type. A `db-assert.postgres` step pointed at a MongoDB dependency is therefore a static error caught before any container starts, not a runtime exception buried in a test log.
 
-> **Backward compatibility for early files**
+> **Bare-family aliases**
 >
-> Existing files that wrote type: kafka-publish, kafka-expect, http, or script continue to validate and run; the engine treats them as aliases for the corresponding Core providers (mq-publish.kafka, mq-expect.kafka, http.rest, script.csharp). Migration to canonical names is recommended but not required. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> Families with a single registered provider accept a bare family name as a convenient alias. For example, `type: http` is equivalent to `type: http.rest`, `type: mq-publish` to `type: mq-publish.kafka`, `type: mq-expect` to `type: mq-expect.kafka`, and `type: script` to `type: script.csharp`. The canonical dotted form is always valid and is preferred in new test files. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
 
 # 6. Variable Capture and Substitution
 
@@ -372,7 +489,7 @@ The three steps below show the full lifecycle of a single value. The reference s
 | Step | Writes to context | Reads from context |
 |---|---|---|
 | create-user (http) | newUserId, captured from $.id of the response. | tenantId, basePath (seeded constants). |
-| expect-billing-event (kafka-expect) | billingAccountId, captured from the message payload. | newUserId, matched against the message key and payload. |
+| expect-billing-event (mq-expect) | billingAccountId, captured from the message payload. | newUserId, matched against the message key and payload. |
 | assert-mongo-projection (db-assert) | — | newUserId and billingAccountId, both asserted against the stored document. |
 
 *Table 6.1 — One identifier threaded across three heterogeneous steps via the shared context.*
@@ -410,15 +527,19 @@ Every step runs in one of two verification modes. `IMMEDIATE`, the default, eval
 
 ## 7.2 What RETRY compiles to
 
-A `RETRY` step does not compile to a loop with a fixed sleep. As the architecture document describes, the compiler emits a Polly resilience policy that performs bounded exponential-backoff polling. The interval between attempts grows — short at first, then longer — so a condition that becomes true quickly is detected quickly, while a slow condition does not generate excessive load. The author never sees this machinery; they write `verifyMode: RETRY` and a `timeout`, and the engine guarantees the same behaviour on a fast laptop and a loaded CI runner.
+A `RETRY` step does not compile to a loop with a fixed sleep. As the architecture document describes, the compiler emits a Polly v8 resilience policy that performs bounded exponential-backoff polling. The interval between attempts grows — short at first, then longer — so a condition that becomes true quickly is detected quickly, while a slow condition does not generate excessive load. The author never sees this machinery; they write `verifyMode: RETRY` and a `timeout`, and the engine guarantees the same behaviour on a fast laptop and a loaded CI runner.
+
+The engine polls the step's underlying assertion (re-running its query or consume operation) and records each attempt as a separate `step-attempt` event in the verdict stream, including the attempt index and timing. This makes the polling timeline visible in reporting without requiring the suite to re-run. When an assertion passes, the step succeeds immediately. When the step's `timeout` elapses without the assertion passing, the verdict is **Inconclusive** (not Fail — see the verdict taxonomy in §12.1), because the timeout reflects only the bounded polling window, not a defect in the system under test. An environment error encountered during an attempt — such as an unreachable broker — is terminal and not retried; it writes an EnvironmentError verdict for the step.
 
 > **Why this matters**
 >
 > Hand-rolled waits — a fixed sleep, or a while loop — are the single largest source of flaky integration tests, because the right delay differs on every machine. Making RETRY a first-class language construct removes the temptation to write them and is the practical expression of the design objective “determinism by default”.
 
-## 7.3 Tuning the polling window
+## 7.3 Tuning the polling window and backoff
 
-Two optional fields refine RETRY behaviour. `timeout` sets the outer bound — the longest the engine will keep trying. An optional `pollInterval` hint sets the initial backoff interval; if omitted the engine chooses a sensible default. Authors are encouraged to set a `timeout` that reflects a realistic worst case for the system under test rather than an arbitrarily large value, because an over-long timeout turns a genuine failure into a slow failure.
+The `timeout` field sets the outer bound for the polling window — the longest the engine will keep trying before resolving the step's verdict. Within that window, the engine applies exponential backoff with these defaults: initial delay of 200 milliseconds, doubling on each attempt with random jitter, and a maximum interval of 5 seconds. These defaults are chosen to be conservative — quick on fast systems, gentle on slow ones — and do not require author configuration.
+
+An optional `pollInterval` field is reserved in the schema as documentation of intent, but it is not yet parsed or honoured by the execution engine; the `timeout` is the real bound. A future release may expose `pollInterval` to allow authors to tune the base delay or backoff strategy. For now, authors should rely on the default backoff and set a `timeout` that reflects a realistic worst case for the system under test rather than an arbitrarily large value, because an over-long timeout turns a genuine failure into a slow failure.
 
 # 8. The JSON Schema Contract
 
@@ -439,6 +560,8 @@ The schema is consumed by three independent parts of the platform, and the fact 
 The schema is organised so that the editor can give precise, context-aware suggestions. The root object defines the four top-level sections. The `steps` array uses a discriminated union keyed on the `type` field: once the author writes `type: http.rest`, the schema constrains the remaining fields to those valid for that step kind, which is what lets the editor autocomplete `method` and `expect` but not `topic`. Shared definitions — the common step fields, the assertion block, the duration format — are factored into reusable schema fragments referenced from each step kind.
 
 Crucially, the unified schema is assembled rather than authored. The platform's compiler walks the registered providers at startup, collects each provider's JSON Schema fragment, and merges those fragments into the discriminated union. This is how a new provider becomes visible to the editor without any change to the editor itself: the contributor adds the provider, its fragment joins the union, and the next time the editor fetches the schema the new step kind appears in autocomplete with its provider-specific field set. The mechanism is described in detail in the Technical Architecture & Engineering Blueprint; the relevant point for DSL authors is that the schema they validate against is always exactly the schema the installed engine will execute.
+
+Each provider's schema fragment contributes the fields specific to that step type. For example, the `mq-publish.kafka` provider contributes fields for `target`, `topic`, `key`, `payload`, `headers`, and the optional `avro` block; the `mq-expect.kafka` provider contributes `target`, `topic`, `match`, and the optional `avro` block. Dependencies in the environment section may also declare provider-specific flags — for example, a kafka dependency's `schemaRegistry: true` flag is a Kafka-specific extra that signals the provisioning of a Confluent Schema Registry sidecar.
 
 ```json
 {
@@ -554,12 +677,12 @@ The most valuable feature of the extension is also the most ambitious. Schema va
 
 ## 12.1 What semantic validation checks
 
-Through the Language Server Protocol, the extension parses the workspace and cross-references the test file against the project's contracts. It compares an `http` step's `path` and `method` against the service's OpenAPI specification, and flags a call to an endpoint that the specification does not define. It checks a `kafka-publish` or `kafka-expect` step against the project's AsyncAPI contracts and the registered Avro schemas, and flags a payload that violates the schema for that topic. It checks a `db-assert` step against the known SQL schema, and flags a query against a table or column that does not exist.
+Through the Language Server Protocol, the extension parses the workspace and cross-references the test file against the project's contracts. It compares an `http` step's `path` and `method` against the service's OpenAPI specification, and flags a call to an endpoint that the specification does not define. It checks an `mq-publish` or `mq-expect` step against the project's AsyncAPI contracts and the registered Avro schemas, and flags a payload that violates the schema for that topic. It checks a `db-assert` step against the known SQL schema, and flags a query against a table or column that does not exist.
 
 | Test construct | Validated against | Error caught |
 |---|---|---|
 | http step path and method | The service's OpenAPI / Swagger specification. | A call to a REST endpoint that the API does not expose. |
-| kafka-publish / kafka-expect payload | AsyncAPI contracts and registered Avro schemas. | A message that violates the schema for the topic. |
+| mq-publish / mq-expect payload | AsyncAPI contracts and registered Avro schemas. | A message that violates the schema for the topic. |
 | db-assert query | The database's SQL schema. | A reference to a table or column that does not exist. |
 | environment logical names | The names declared in the file's own environment section. | A step targeting a dependency that was never declared. |
 

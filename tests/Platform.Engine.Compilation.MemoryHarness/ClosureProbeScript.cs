@@ -55,6 +55,31 @@ public static class ClosureProbeScript
     ///     a trivial property, then disposes it explicitly in a <c>finally</c> block (no
     ///     <c>using var</c> per CSX rules).  No request is sent.
     ///   </description></item>
+    ///   <item><description>
+    ///     <b>Confluent.Kafka native handles (Sprint 6)</b> — builds a REAL
+    ///     <c>ProducerBuilder&lt;string,string&gt;().Build()</c> producer and a
+    ///     <c>ConsumerBuilder&lt;string,string&gt;().Build()</c> consumer (each allocates
+    ///     a native librdkafka handle — the exact discipline mq-publish/mq-expect rely on),
+    ///     reads <c>Name.Length</c>, then <c>Dispose()</c>s each in a <c>finally</c>.  No
+    ///     <c>ProduceAsync</c> / <c>Subscribe</c> / <c>Consume</c> — there is no broker.
+    ///     The handle build is gated to <c>Vars["__iter"] % 50 == 0</c> because each
+    ///     <c>Build()</c> churns native threads; a per-iteration pin would still surface
+    ///     across the few-hundred real builds over the run.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Confluent.SchemaRegistry Avro serdes (Sprint 6)</b> — constructs a
+    ///     <c>CachedSchemaRegistryClient</c> (lazy; no network), an
+    ///     <c>AvroSerializer&lt;GenericRecord&gt;</c> + <c>AvroDeserializer&lt;GenericRecord&gt;</c>,
+    ///     parses a tiny Avro schema and builds a <c>GenericRecord</c>, writes a length to
+    ///     <c>Vars</c>, then <c>Dispose()</c>s the registry client in a <c>finally</c>.
+    ///     Runs every iteration (cheap — no native handle).  No serialize (needs a registry).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Polly RETRY runner (Sprint 6)</b> — invokes
+    ///     <c>RetryRunner.PollAsync</c> with an immediately-passing attempt (one attempt),
+    ///     exercising the Polly <c>ResiliencePipeline</c> construction and the cross-boundary
+    ///     lambda pass.  Writes the outcome + attempt timeline into <c>Vars</c>.
+    ///   </description></item>
     /// </list>
     /// </summary>
     /// <remarks>
@@ -70,7 +95,7 @@ public static class ClosureProbeScript
         };
         Vars["npgsql_cs_len"] = npgsqlBuilder.ConnectionString.Length;
 
-        // ── Confluent.Kafka touch ─────────────────────────────────────────────
+        // ── Confluent.Kafka config touch ──────────────────────────────────────
         var kafkaConfig = new Confluent.Kafka.ProducerConfig
         {
             BootstrapServers = "localhost:9092"
@@ -96,5 +121,99 @@ public static class ClosureProbeScript
         {
             http.Dispose();
         }
+
+        // ── Sprint-6: REAL native Confluent producer + consumer handles ──────
+        // librdkafka allocates a native handle (and background threads) on Build().
+        // This is the EXACT create-and-dispose discipline mq-publish/mq-expect rely on:
+        // Build → read a trivial property → Dispose() in finally.  No ProduceAsync /
+        // Subscribe / Consume — there is no broker; we only allocate and free the handle.
+        // The handle build is GATED to Vars["__iter"] % 50 == 0 (HandleBuildEveryN cadence):
+        // each Build() churns native threads, so building one EVERY iteration would dominate
+        // the wall-clock.  A pin accumulates, so a few-hundred real builds across the run is
+        // ample to catch a per-iteration ALC pin.  Warm-up passes __iter == 0, so it builds.
+        var iter = Vars.TryGetValue("__iter", out var iterObj) && iterObj is long il ? il : 0L;
+        if (iter % 50 == 0)
+        {
+            Confluent.Kafka.IProducer<string, string> producer =
+                new Confluent.Kafka.ProducerBuilder<string, string>(
+                    new Confluent.Kafka.ProducerConfig { BootstrapServers = "localhost:9092" }).Build();
+            try
+            {
+                Vars["kafka_producer_name_len"] = producer.Name.Length;
+            }
+            finally
+            {
+                // Explicit Dispose() in finally (CSX disallows 'using var').  No Flush —
+                // nothing was produced.  Dispose releases the native librdkafka handle.
+                producer.Dispose();
+            }
+
+            Confluent.Kafka.IConsumer<string, string> consumer =
+                new Confluent.Kafka.ConsumerBuilder<string, string>(
+                    new Confluent.Kafka.ConsumerConfig
+                    {
+                        BootstrapServers = "localhost:9092",
+                        GroupId = "probe"
+                    }).Build();
+            try
+            {
+                Vars["kafka_consumer_name_len"] = consumer.Name.Length;
+            }
+            finally
+            {
+                // No Close() — Close() requires a subscription/group join (a network op).
+                // Dispose() alone releases the native handle, which is all the leak gate needs.
+                consumer.Dispose();
+            }
+        }
+
+        // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─
+        // Construction is lazy (no network): CachedSchemaRegistryClient does not contact
+        // the registry until a serialize/lookup, and AvroSerializer/AvroDeserializer just
+        // capture the client + config.  This exercises the serdes static initialisers and
+        // the IDisposable registry client (its in-memory schema cache is per-instance and
+        // released on Dispose).  We do NOT serialize — that would need the live registry.
+        var sr = new Confluent.SchemaRegistry.CachedSchemaRegistryClient(
+            new Confluent.SchemaRegistry.SchemaRegistryConfig { Url = "http://localhost:8081" });
+        try
+        {
+            var avroSerializer =
+                new Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>(
+                    sr, new Confluent.SchemaRegistry.Serdes.AvroSerializerConfig());
+            var avroDeserializer =
+                new Confluent.SchemaRegistry.Serdes.AvroDeserializer<Avro.Generic.GenericRecord>(sr);
+
+            // Parse a tiny schema and build a GenericRecord (exercises Apache.Avro init).
+            var avroSchema = (Avro.RecordSchema)Avro.Schema.Parse(
+                "{\"type\":\"record\",\"name\":\"P\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"}]}");
+            var record = new Avro.Generic.GenericRecord(avroSchema);
+            record.Add("id", "probe-id");
+            object idValue;
+            record.TryGetValue("id", out idValue);
+            Vars["avro_id_len"] = ((idValue as string) ?? string.Empty).Length;
+            Vars["avro_serdes_built"] =
+                (avroSerializer is not null && avroDeserializer is not null) ? 1L : 0L;
+        }
+        finally
+        {
+            // Explicit Dispose() in finally (CSX disallows 'using var').  Releases the
+            // registry client's per-instance in-memory schema cache.
+            sr.Dispose();
+        }
+
+        // ── Sprint-6: Polly-backed RETRY runner (cheap — every iter) ─────────
+        // An immediately-passing attempt → exactly one attempt.  This exercises the Polly
+        // ResiliencePipeline construction (a fresh pipeline per call — stateless RetryRunner)
+        // and the cross-ALC-boundary lambda pass.  The result + per-attempt timeline land in
+        // Vars under the keys below; the lambda returns a Pass StepOutcome on first try.
+        await Platform.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+            Vars,
+            "rr_outcome",
+            "rr_attempts",
+            1000L,
+            1L,
+            async (System.Threading.CancellationToken __ct) =>
+                new Platform.Engine.Abstractions.StepOutcome(
+                    Platform.Engine.Abstractions.Verdict.Pass, 0L, null));
         """;
 }

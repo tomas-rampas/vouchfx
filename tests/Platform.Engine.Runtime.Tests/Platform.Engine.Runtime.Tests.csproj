@@ -38,6 +38,22 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Sprint 6 capstone (docker) + compile twin: the two Avro Kafka providers. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj"
+                      IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <ItemGroup Label="Sprint 6 Kafka client libs — direct refs so the DLLs deploy to output">
+    <!-- The Avro Kafka providers resolve these via Assembly.Location at runtime; the
+         transitive project-reference path alone does not guarantee deployment to the
+         output directory.  Confluent.Kafka may already be transitive — referenced
+         directly here so its DLL (and the Avro/registry serde DLLs) ship with the tests. -->
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
   </ItemGroup>
 
 </Project>

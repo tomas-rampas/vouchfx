@@ -5,8 +5,11 @@
 // first-class production type.  This is the canonical form of the splice and
 // the single place where §13.3.1 dedup rules are enforced.
 using System.Buffers;
+using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using Platform.Engine.Abstractions;
 using Platform.Sdk;
 
 namespace Platform.Engine.Compilation;
@@ -28,6 +31,58 @@ namespace Platform.Engine.Compilation;
 /// correlate compiled artefacts back to the originating YAML steps.
 /// </param>
 public sealed record AssembledScript(string CsxSource, IReadOnlyList<string> StepIds);
+
+/// <summary>
+/// A single step's compilation plan: the provider's <see cref="CsxFragment"/>
+/// contribution plus the RETRY parameters the engine needs to decide whether the
+/// fragment's statement block is spliced directly (IMMEDIATE) or wrapped in the
+/// engine-owned RETRY polling loop (<c>verifyMode: RETRY</c>, §7).
+/// </summary>
+/// <remarks>
+/// <para>
+/// When <see cref="Retry"/> is <see langword="false"/> the
+/// <see cref="CsxFragment.StatementBlock"/> is appended verbatim, exactly as the
+/// legacy tuple-based <see cref="CsxAssembler.Assemble(IReadOnlyList{ValueTuple{string, CsxFragment}})"/>
+/// overload does.  When <see cref="Retry"/> is <see langword="true"/> the block is
+/// wrapped in a per-step local <c>async</c> attempt function and an
+/// <c>await Platform.Engine.Abstractions.Retry.RetryRunner.PollAsync(...)</c> call so
+/// the engine owns the backoff timeline — authors never write <c>Thread.Sleep</c>
+/// (§7).  The provider block writes its <see cref="StepOutcome"/> into
+/// <c>Vars[VarKeys.Outcome(sanitisedId)]</c> on every attempt; the generated wrapper
+/// reads it back, removes it (clean slate for the next poll), and returns it so the
+/// runner can classify the verdict (§12.1).
+/// </para>
+/// </remarks>
+/// <param name="StepId">
+/// The raw step identifier from the YAML source (may contain hyphens).  It is
+/// sanitised via <see cref="CsxFragment.SanitiseId"/> before being spliced into any
+/// generated identifier, and preserved un-sanitised in
+/// <see cref="AssembledScript.StepIds"/>.
+/// </param>
+/// <param name="Fragment">
+/// The provider's CSX contribution for this step.
+/// </param>
+/// <param name="Retry">
+/// <see langword="true"/> to wrap <paramref name="Fragment"/>'s statement block in the
+/// engine-owned RETRY polling loop; <see langword="false"/> to splice it directly
+/// (IMMEDIATE).
+/// </param>
+/// <param name="TimeoutMs">
+/// The overall RETRY polling window in milliseconds, or <see langword="null"/> to let
+/// <see cref="Platform.Engine.Abstractions.Retry.RetryRunner"/> apply its engine
+/// default.  Ignored when <paramref name="Retry"/> is <see langword="false"/>.
+/// </param>
+/// <param name="PollIntervalMs">
+/// The base delay between RETRY attempts in milliseconds, or <see langword="null"/> to
+/// let <see cref="Platform.Engine.Abstractions.Retry.RetryRunner"/> apply its engine
+/// default.  Ignored when <paramref name="Retry"/> is <see langword="false"/>.
+/// </param>
+public sealed record StepCompilePlan(
+    string StepId,
+    CsxFragment Fragment,
+    bool Retry,
+    long? TimeoutMs,
+    long? PollIntervalMs);
 
 /// <summary>
 /// Merges a sequence of per-step <see cref="CsxFragment"/> contributions into a
@@ -114,6 +169,47 @@ public static class CsxAssembler
     {
         ArgumentNullException.ThrowIfNull(steps);
 
+        // Back-compat shim: every legacy tuple maps to an IMMEDIATE (non-retry) plan,
+        // then defers to the StepCompilePlan overload — the single real implementation.
+        var plans = new List<StepCompilePlan>(steps.Count);
+        foreach (var (stepId, fragment) in steps)
+        {
+            plans.Add(new StepCompilePlan(
+                stepId, fragment, Retry: false, TimeoutMs: null, PollIntervalMs: null));
+        }
+
+        return Assemble(plans);
+    }
+
+    /// <summary>
+    /// Merges <paramref name="steps"/> into a single <see cref="AssembledScript"/>,
+    /// enforcing the §13.3.1 dedup and validation rules for usings and helpers, and —
+    /// for each plan with <see cref="StepCompilePlan.Retry"/> set — wrapping the
+    /// provider's statement block in the engine-owned RETRY polling loop (§7).
+    /// </summary>
+    /// <param name="steps">
+    /// Ordered sequence of <see cref="StepCompilePlan"/> entries.  The order determines
+    /// both the statement-block concatenation order and the
+    /// <see cref="AssembledScript.StepIds"/> list.  May be empty; an empty input
+    /// produces a no-op script with empty <see cref="AssembledScript.StepIds"/>.
+    /// </param>
+    /// <returns>
+    /// An <see cref="AssembledScript"/> whose <see cref="AssembledScript.CsxSource"/>
+    /// is ready to pass to <see cref="RoslynScriptCompiler.CompileOnce"/> and whose
+    /// <see cref="AssembledScript.StepIds"/> preserves the input order (un-sanitised).
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="steps"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="CsxAssemblyException">
+    /// Thrown when a <see cref="CsxFragment.RequiredUsings"/> entry is not a bare
+    /// namespace string, or when two <see cref="CsxFragment.RequiredHelpers"/>
+    /// entries share a class name but have different source text.
+    /// </exception>
+    public static AssembledScript Assemble(IReadOnlyList<StepCompilePlan> steps)
+    {
+        ArgumentNullException.ThrowIfNull(steps);
+
         if (steps.Count == 0)
             return new AssembledScript(string.Empty, Array.Empty<string>());
 
@@ -133,8 +229,11 @@ public static class CsxAssembler
         var blocks = new List<string>(steps.Count);
         var stepIds = new List<string>(steps.Count);
 
-        foreach (var (stepId, fragment) in steps)
+        foreach (var plan in steps)
         {
+            var stepId = plan.StepId;
+            var fragment = plan.Fragment;
+
             stepIds.Add(stepId);
 
             // ── Process usings ─────────────────────────────────────────────
@@ -182,7 +281,11 @@ public static class CsxAssembler
             }
 
             // ── Collect block ──────────────────────────────────────────────
-            blocks.Add(fragment.StatementBlock);
+            // IMMEDIATE: splice the provider block verbatim.
+            // RETRY: wrap it in the engine-owned polling loop (§7).
+            blocks.Add(plan.Retry
+                ? WrapForRetry(stepId, fragment.StatementBlock, plan.TimeoutMs, plan.PollIntervalMs)
+                : fragment.StatementBlock);
         }
 
         // ── Assemble final source ─────────────────────────────────────────────
@@ -210,6 +313,93 @@ public static class CsxAssembler
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Wraps a provider's IMMEDIATE statement block in the engine-owned RETRY polling
+    /// loop (<c>verifyMode: RETRY</c>, §7).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The wrapper is built with a <see cref="StringBuilder"/> — <em>not</em> a
+    /// <c>$$"""…"""</c> interpolation hole — because the spliced provider block may
+    /// itself contain raw strings; nesting raw strings inside an interpolated raw string
+    /// is brittle.  Pure concatenation keeps the braces correct.
+    /// </para>
+    /// <para>
+    /// Every local identifier carries the sanitised step id as a suffix so concurrent
+    /// steps never collide.  Fully-qualified type names are used throughout so the
+    /// wrapper introduces no new <c>using</c> directives, and the body contains no
+    /// <c>using var</c> (illegal in a Roslyn script body, §13.3.1).
+    /// </para>
+    /// <para>
+    /// The provider block writes <c>Vars[outcomeKey]</c> on each attempt.  The generated
+    /// local function reads it back, removes it (clean slate for the next poll), and
+    /// returns it so <c>RetryRunner.PollAsync</c> can classify the verdict.  After
+    /// <c>PollAsync</c> returns, <c>Vars[outcomeKey]</c> holds the FINAL outcome and
+    /// <c>Vars[attemptsKey]</c> holds the <c>List&lt;AttemptRecord&gt;</c> — both consumed
+    /// later by the runner (§14).
+    /// </para>
+    /// </remarks>
+    private static string WrapForRetry(
+        string stepId, string statementBlock, long? timeoutMs, long? pollIntervalMs)
+    {
+        var safe = CsxFragment.SanitiseId(stepId);
+
+        var outcomeKey = VarKeys.Outcome(safe);
+        var attemptsKey = VarKeys.Attempts(safe);
+
+        // Emit the keys as quoted, escaped C# string literals (same idiom providers use).
+        var outcomeLit = JsonSerializer.Serialize(outcomeKey);
+        var attemptsLit = JsonSerializer.Serialize(attemptsKey);
+
+        // Emit the long? parameters as C# numeric literals or 'null'.
+        var timeoutLit = timeoutMs is { } t
+            ? t.ToString(CultureInfo.InvariantCulture) + "L"
+            : "null";
+        var pollLit = pollIntervalMs is { } p
+            ? p.ToString(CultureInfo.InvariantCulture) + "L"
+            : "null";
+
+        var sb = new StringBuilder();
+        sb.Append('{').Append('\n');
+
+        // Per-step attempt local function.  Fully-qualified types — no new usings.
+        sb.Append("    async System.Threading.Tasks.Task<Platform.Engine.Abstractions.StepOutcome> __attempt_")
+          .Append(safe)
+          .Append("(System.Threading.CancellationToken __ct_")
+          .Append(safe)
+          .Append(")\n");
+        sb.Append("    {\n");
+
+        // The provider's original statement block, verbatim — it is already a { … } block.
+        // Note: this block re-executes on every poll, so RETRY is intended for idempotent
+        // assertion/expectation providers; a side-effecting block under verifyMode: RETRY
+        // fires once per attempt (by design, §7).
+        sb.Append(statementBlock).Append('\n');
+
+        // Read the outcome the provider block wrote, remove it (clean slate), return it.
+        sb.Append("        var __o_").Append(safe)
+          .Append(" = Vars.TryGetValue(").Append(outcomeLit)
+          .Append(", out var __raw_").Append(safe)
+          .Append(") && __raw_").Append(safe)
+          .Append(" is Platform.Engine.Abstractions.StepOutcome __so_").Append(safe).Append('\n');
+        sb.Append("            ? __so_").Append(safe).Append('\n');
+        sb.Append("            : new Platform.Engine.Abstractions.StepOutcome(Platform.Engine.Abstractions.Verdict.Inconclusive, 0L, null);\n");
+        sb.Append("        Vars.Remove(").Append(outcomeLit).Append(");\n");
+        sb.Append("        return __o_").Append(safe).Append(";\n");
+        sb.Append("    }\n");
+
+        // The engine-owned poll: writes the final StepOutcome + List<AttemptRecord> back
+        // into Vars under outcomeKey / attemptsKey.  Method group → Func<CT, Task<…>>.
+        sb.Append("    await Platform.Engine.Abstractions.Retry.RetryRunner.PollAsync(\n");
+        sb.Append("        Vars, ").Append(outcomeLit).Append(", ").Append(attemptsLit)
+          .Append(", ").Append(timeoutLit).Append(", ").Append(pollLit)
+          .Append(", __attempt_").Append(safe).Append(");\n");
+
+        sb.Append('}');
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Validates that <paramref name="ns"/> is a bare namespace string.

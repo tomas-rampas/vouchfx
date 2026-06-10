@@ -296,6 +296,7 @@ The compiler and runtime layer depends on a small number of external libraries w
 | YAML parsing | YamlDotNet. | The de facto choice; stable and feature-complete for the DSL's grammar. |
 | JSON Schema validation | JsonSchema.Net (the JsonEverything family), draft 2020-12. | Aligns with the JSONPath choice; supports the if/then/else-with-const-discriminator composition pattern Section 13.6 specifies. |
 | Container clients (Core providers) | Npgsql, Confluent.Kafka, MongoDB.Driver, StackExchange.Redis, NEST/OpenSearch.Client. | Each is the .NET-canonical client for its technology. Pinned to specific majors; provider authors target the same majors so the engine can guarantee one version per package across the closure. |
+| Avro serialisation and schema governance (message publishing) | Confluent.SchemaRegistry, Confluent.SchemaRegistry.Serdes.Avro, Apache.Avro. | Version-locked in lockstep with Confluent.Kafka (2.14.2); the Serdes.Avro adapter integrates Avro publishing/consuming with the schema registry, and Apache.Avro is pinned to the exact transitive version Serdes.Avro requires to avoid downgrade warnings under strict compilation flags. |
 
 *Table 5.1 — Library and version commitments at v1.0. The platform pins majors and selects minors to track upstream security patches; providers target the same majors so the engine's load context never serves two versions of the same package.*
 
@@ -1196,6 +1197,9 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | Polly | Provides the bounded exponential-backoff resilience policies behind VERIFYMODE: RETRY. |
 | System.Threading.Channels | Bounded producer/consumer queues giving backpressure in the Performance LAB. |
 | Confluent Kafka client | Producer and consumer delegates with Avro and schema-registry support. |
+| Confluent.SchemaRegistry | Subject registration and schema governance for Avro-published messages; version-locked with Confluent.Kafka (2.14.2). |
+| Confluent.SchemaRegistry.Serdes.Avro | Serialiser/deserialiser adapters integrating Avro publishing/consuming with the schema registry; version-matched with Confluent.Kafka (2.14.2). |
+| Apache.Avro | The Apache Avro codec; pinned to the exact version transitively required by Confluent.SchemaRegistry.Serdes.Avro (1.12.1) to prevent version downgrades under strict compilation flags. |
 | Microsoft Agent Framework | Hosts the Planner, Generator, and Healer agents and their graph-based workflows. |
 | grafana/k6 | Containerised load generator orchestrated by the Performance LAB. |
 | SSH tunnelling / reverse port forwarding | Carries traffic between the local runner and the cloud fabric, including inbound webhooks. |

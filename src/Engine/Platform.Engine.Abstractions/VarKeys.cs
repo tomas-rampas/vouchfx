@@ -16,7 +16,7 @@ namespace Platform.Engine.Abstractions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Four namespaces are reserved within the shared <c>Vars</c> dictionary.
+/// Five namespaces are reserved within the shared <c>Vars</c> dictionary.
 /// Author-defined variable names in <c>.e2e.yaml</c> must not begin with
 /// any of these prefixes (enforced at build time by the <c>AstBuilder</c>):
 /// </para>
@@ -41,6 +41,12 @@ namespace Platform.Engine.Abstractions;
 ///     <c>__capture_status::</c> — per-step capture-matched-flag records written
 ///     by emitted CSX step blocks for provenance reporting (G-01).
 ///     Retrieve with <see cref="CaptureStatus(string)"/>.
+///   </description></item>
+///   <item><description>
+///     <c>__attempts::</c> — per-step list of <c>AttemptRecord</c> written by the
+///     engine-owned RETRY runner for the runner to emit one <c>step-attempt</c>
+///     event per attempt (§7, §14).
+///     Retrieve with <see cref="Attempts(string)"/>.
 ///   </description></item>
 /// </list>
 /// <para>
@@ -175,5 +181,38 @@ public static class VarKeys
     {
         ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
         return $"{CaptureStatusPrefix}{sanitisedStepId}";
+    }
+
+    /// <summary>
+    /// The prefix for engine-managed per-step attempt-timeline entries in
+    /// <c>ScriptGlobalVariables.Vars</c>.
+    /// </summary>
+    /// <remarks>
+    /// Author variables must not begin with this prefix.
+    /// Use <see cref="Attempts(string)"/> to build the full key.
+    /// </remarks>
+    public const string AttemptsPrefix = "__attempts::";
+
+    /// <summary>
+    /// Returns the <c>Vars</c> key under which the engine-owned RETRY runner writes
+    /// the per-step list of attempt records for the runner to consume when emitting
+    /// one <c>step-attempt</c> event per attempt (§7, §14).
+    /// </summary>
+    /// <param name="sanitisedStepId">
+    /// The step identifier after sanitisation (hyphens replaced with underscores
+    /// via <c>CsxFragment.SanitiseId</c>, §13.3.1).  Must not be
+    /// <see langword="null"/> or empty.
+    /// </param>
+    /// <returns>
+    /// A string of the form <c>__attempts::&lt;sanitisedStepId&gt;</c>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="sanitisedStepId"/> is <see langword="null"/> or
+    /// empty.
+    /// </exception>
+    public static string Attempts(string sanitisedStepId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sanitisedStepId);
+        return $"{AttemptsPrefix}{sanitisedStepId}";
     }
 }
