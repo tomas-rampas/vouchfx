@@ -24,10 +24,12 @@
 //     RespawnPostgresIsolation (or NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Abstractions.Reproducibility;
+using Platform.Engine.Abstractions.Retry;
 using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
@@ -97,20 +99,19 @@ public sealed record SuiteResult(
 /// Only <c>Fail</c> breaks CI by default.
 /// </para>
 /// <para>
+/// <strong>Engine-owned RETRY (Sprint 6):</strong> a step declaring
+/// <c>verifyMode: RETRY</c> is now compiled (its <see cref="Verdict"/> threads
+/// through <c>StepCompilePlan.Retry</c> into the <c>CsxAssembler</c> polling
+/// loop) and executed like any other step.  Each poll emits one
+/// <c>step-attempt</c> event so the backoff timeline is renderable offline
+/// (§14).  A RETRY step that never satisfies its assertion within the polling
+/// window aggregates as <see cref="Verdict.Inconclusive"/> (not
+/// <see cref="Verdict.Fail"/>), because the RETRY runner writes
+/// <c>Inconclusive</c> as its final outcome on timeout.
+/// </para>
+/// <para>
 /// <strong>Not yet implemented (future sprints):</strong>
 /// <list type="bullet">
-///   <item>
-///     <description>
-///       <c>verifyMode: RETRY</c> polling loop — scheduled for Sprint 6.
-///       Any scenario that contains a RETRY step is rejected with
-///       <see cref="Verdict.Inconclusive"/> until then.
-///     </description>
-///   </item>
-///   <item>
-///     <description>
-///       Per-step timeout enforcement — also Sprint 6+.
-///     </description>
-///   </item>
 ///   <item>
 ///     <description>
 ///       <c>continueOnFailure</c> abort semantics — the field is parsed but
@@ -291,34 +292,6 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
             await output.WriteLineAsync(pipelineResult.Failure.Message)
-                .ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.Inconclusive;
-        }
-
-        // ── Step 5b: Reject RETRY until Sprint 6 implements the polling loop ──
-        var retryStep = ast.Steps.FirstOrDefault(
-            s => s.VerifyMode == VerifyMode.Retry);
-        if (retryStep is not null)
-        {
-            var now5b = DateTimeOffset.UtcNow;
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-            {
-                RunId = runId,
-                Timestamp = now5b,
-                ScenarioId = scenarioName,
-            }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now5b,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
-            await output.WriteLineAsync(
-                $"step '{retryStep.Id}': verifyMode RETRY is not yet supported " +
-                "(lands in Sprint 6); use IMMEDIATE.")
                 .ConfigureAwait(false);
             TerminalRenderer.Render(buffer, output);
             return Verdict.Inconclusive;
@@ -538,15 +511,6 @@ public static class ScenarioRunner
             {
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
                     string.Join("; ", validationResult.Errors.Select(e => e.Message))));
-                continue;
-            }
-
-            // RETRY guard.
-            var retryStep = ast.Steps.FirstOrDefault(s => s.VerifyMode == VerifyMode.Retry);
-            if (retryStep is not null)
-            {
-                compilations.Add((name, ast, null, Verdict.Inconclusive,
-                    $"step '{retryStep.Id}': verifyMode RETRY is not yet supported (lands in Sprint 6); use IMMEDIATE."));
                 continue;
             }
 
@@ -905,7 +869,7 @@ public static class ScenarioRunner
                 StepId = node.Id,
                 Kind = node.CanonicalType,
                 VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
-                TimeoutMs = null,
+                TimeoutMs = node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
             }));
 
             var outcomeKey = VarKeys.Outcome(safeId);
@@ -950,6 +914,13 @@ public static class ScenarioRunner
             // placeholder tokens AND ${secret:source/path} references.  This is
             // compile-time derivation — no runtime value is ever read.
             var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
+
+            // ── RETRY (Sprint 6): one step-attempt event per recorded poll ────
+            // The engine-owned RETRY runner writes a List<AttemptRecord> to
+            // Vars[VarKeys.Attempts(safeId)]; emit one step-attempt event per
+            // record so the polling timeline is renderable offline (§14).  An
+            // IMMEDIATE step writes no attempts list, so this is a no-op for it.
+            buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars));
 
             buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
             {
@@ -1080,6 +1051,100 @@ public static class ScenarioRunner
             }
         }
         return map;
+    }
+
+    /// <summary>
+    /// Builds the ordered <c>step-attempt</c> event lines for a single step from
+    /// the per-step <see cref="AttemptRecord"/> list written by the engine-owned
+    /// RETRY runner (§7, §14).
+    /// </summary>
+    /// <param name="runId">The run identifier stamped onto every emitted event.</param>
+    /// <param name="timestamp">
+    /// The timestamp stamped onto every emitted event (the runner emits the whole
+    /// step batch with one shared timestamp).
+    /// </param>
+    /// <param name="stepId">
+    /// The author-facing (un-sanitised) step identifier; sanitised internally to
+    /// form the <c>Vars</c> lookup key and emitted verbatim on the wire.
+    /// </param>
+    /// <param name="vars">
+    /// The shared <c>ScriptGlobalVariables.Vars</c> dictionary after the isolated
+    /// run, read for <c>VarKeys.Attempts(safeId)</c>.
+    /// </param>
+    /// <returns>
+    /// One JSON Lines <c>step-attempt</c> string per <see cref="AttemptRecord"/>,
+    /// in list order; an empty list when the step recorded no attempts (e.g. an
+    /// IMMEDIATE step, which writes no attempts list).
+    /// </returns>
+    /// <remarks>
+    /// Extracted as an <see langword="internal static"/> helper so the no-docker
+    /// RETRY-event tests can exercise the attempt-event construction directly,
+    /// without standing up a topology.  The observation string recorded by the
+    /// RETRY runner is parsed via <see cref="ParseObservation"/> into a
+    /// <see cref="JsonElement"/> so the wire field is a structured object rather
+    /// than an escaped string; an unparseable observation degrades to omission
+    /// rather than crashing the run.
+    /// </remarks>
+    internal static IReadOnlyList<string> BuildAttemptEventLines(
+        string runId,
+        DateTimeOffset timestamp,
+        string stepId,
+        IReadOnlyDictionary<string, object?> vars)
+    {
+        var safeId = CsxFragment.SanitiseId(stepId);
+
+        if (!vars.TryGetValue(VarKeys.Attempts(safeId), out var raw)
+            || raw is not List<AttemptRecord> attempts)
+        {
+            return Array.Empty<string>();
+        }
+
+        var lines = new List<string>(attempts.Count);
+        foreach (var a in attempts)
+        {
+            lines.Add(EventStreamJson.ToLine(new StepAttemptEvent
+            {
+                RunId = runId,
+                Timestamp = timestamp,
+                StepId = stepId,
+                Attempt = a.Attempt,
+                TMs = a.TMs,
+                Outcome = a.Verdict,
+                Observation = ParseObservation(a.Observation),
+            }));
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// Parses a RETRY-runner observation string into a <see cref="JsonElement"/>
+    /// for inclusion in a <see cref="StepAttemptEvent.Observation"/>.
+    /// </summary>
+    /// <param name="json">
+    /// The small JSON string recorded by the RETRY runner for an attempt (e.g.
+    /// <c>{"matched":false}</c>), or <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// A cloned <see cref="JsonElement"/> when <paramref name="json"/> is non-empty
+    /// and parses as JSON; otherwise <see langword="null"/> (for a null/empty input
+    /// or a parse failure — the observation is best-effort diagnostic context and
+    /// must never crash event emission).
+    /// </returns>
+    internal static JsonElement? ParseObservation(string? json)
+    {
+        if (string.IsNullOrEmpty(json))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
