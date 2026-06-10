@@ -15,6 +15,7 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Platform.Engine.Authoring.Model;
+using YamlDotNet.RepresentationModel;
 
 namespace Platform.Engine.Orchestration;
 
@@ -103,6 +104,12 @@ public sealed record MappedTopology(
 ///     <c>Type == "kafka"</c> →
 ///     <c>AddKafka(name)</c> [optionally <c>.WithImageTag(version)</c>].
 ///     Health gate is on the Kafka server resource itself (there is no finer-grained resource).
+///     When <c>Extra</c> carries <c>schemaRegistry: true</c>, an auxiliary
+///     <c>confluentinc/cp-schema-registry</c> container <c>&lt;name&gt;-sr</c> is also added:
+///     it reaches the broker over the container network via the broker's
+///     <c>InternalEndpoint</c>, <c>WaitFor</c>s the broker, exposes HTTP port 8081, and is
+///     health-gated immediately after the broker.  Its host-mapped URL is staged under
+///     <c>svc::&lt;name&gt;-sr</c>.
 ///   </item>
 ///   <item>Unknown type → <see cref="ArgumentException"/>.</item>
 /// </list>
@@ -223,7 +230,15 @@ public static class EnvironmentMapper
                     healthGateNames.Add(name + "db");
                     break;
                 case "kafka":
+                    // Broker first…
                     healthGateNames.Add(name);
+                    // …then, when requested, the auxiliary schema-registry container,
+                    // which depends on (and starts after) the broker.
+                    if (KafkaWantsSchemaRegistry(spec.Extra))
+                    {
+                        healthGateNames.Add(name + "-sr");
+                    }
+
                     break;
             }
         }
@@ -284,8 +299,68 @@ public static class EnvironmentMapper
                                 (IResourceBuilder<IResource>)(object)kafkaBuilder;
 
                             // Kafka has no finer-grained resource; gate on the server itself.
+                            // The broker stays the most-specific resource that existing
+                            // publish/expect steps WaitFor — the registry below is an
+                            // auxiliary resource and is intentionally NOT added here.
                             mostSpecificDependencyResources.Add(
                                 (IResourceBuilder<IResource>)(object)kafkaBuilder);
+
+                            // ----------------------------------------------------------------
+                            // Optional Confluent Schema Registry (Sprint 6).
+                            // When the dependency declares `schemaRegistry: true`, hand-roll a
+                            // cp-schema-registry container (Aspire.Hosting.Kafka 13.4.2 has no
+                            // built-in schema-registry resource — verified against the pinned
+                            // package's public surface).
+                            // ----------------------------------------------------------------
+                            if (KafkaWantsSchemaRegistry(spec.Extra))
+                            {
+                                var srName = name + "-sr";
+
+                                // The registry reaches the broker over the CONTAINER network.
+                                //
+                                // Broker-internal-address mechanism (decision, Sprint 6):
+                                // Aspire.Hosting.Kafka 13.4.2 *does* expose the broker's
+                                // container-network endpoint as a typed reference —
+                                // `KafkaServerResource.InternalEndpoint` is the `EndpointReference`
+                                // for the endpoint named "internal" on the container network
+                                // (target port 9093); the external, host-mapped endpoint is named
+                                // "tcp" (port 9092). We therefore PREFER a
+                                // `ReferenceExpression` over that endpoint rather than hardcoding
+                                // "<name>:9092": DCP resolves the host/port in the registry
+                                // container's network context, so this is robust to any future
+                                // change in how the broker is named/addressed on the network.
+                                //
+                                // Built as: PLAINTEXT://{internal.Host}:{internal.Port}
+                                // (EndpointReference.Property(EndpointProperty.Host|Port) yields an
+                                // EndpointReferenceExpression, which the ReferenceExpression
+                                // interpolation handler accepts via IValueProvider).
+                                var internalEndpoint = kafkaBuilder.Resource.InternalEndpoint;
+                                var bootstrapServers = ReferenceExpression.Create(
+                                    $"PLAINTEXT://{internalEndpoint.Property(EndpointProperty.Host)}:{internalEndpoint.Property(EndpointProperty.Port)}");
+
+                                var srContainerBuilder = builder
+                                    .AddContainer(srName, "confluentinc/cp-schema-registry", "7.6.1")
+                                    .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", "0.0.0.0")
+                                    .WithEnvironment(
+                                        "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
+                                        bootstrapServers)
+                                    .WithEnvironment("SCHEMA_REGISTRY_LISTENERS", "http://0.0.0.0:8081")
+                                    .WithHttpEndpoint(targetPort: 8081, name: "http")
+                                    // /subjects → 200 once the registry is serving (default 200 gate).
+                                    .WithHttpHealthCheck(path: "/subjects", endpointName: "http")
+                                    // Auxiliary resource: it must start AFTER the broker.
+                                    .WaitFor(kafkaBuilder);
+
+                                // Retain the HTTP endpoint so ResolveServices stages its
+                                // host-mapped URL. The key is the bare logical name "<name>-sr";
+                                // the runner stages service endpoints under VarKeys.Service (svc::),
+                                // and "<name>-sr" is NOT a DependencyName, so the registry lands in
+                                // Vars as `svc::<name>-sr` automatically (verified against
+                                // ScenarioRunner's staging loop, which keys non-dependency
+                                // DiscoveredServices entries via VarKeys.Service).
+                                serviceEndpoints[srName] = srContainerBuilder.GetEndpoint("http");
+                            }
+
                             break;
                         }
                 }
@@ -390,6 +465,35 @@ public static class EnvironmentMapper
     private static bool IsSupportedDependencyType(string type) =>
         string.Equals(type, "postgres", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(type, "kafka", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Returns <see langword="true"/> when a kafka dependency's <see cref="DependencySpec.Extra"/>
+    /// mapping carries a scalar <c>schemaRegistry</c> whose value is <c>true</c>
+    /// (case-insensitive), requesting an auxiliary Confluent Schema Registry container.
+    /// </summary>
+    /// <param name="extra">
+    /// The raw YAML mapping node from <see cref="DependencySpec.Extra"/>; may be
+    /// <see langword="null"/> (no extra fields → no registry).
+    /// </param>
+    /// <remarks>
+    /// Only a scalar value equal to <c>true</c> opts in; a missing key, a non-scalar value,
+    /// or any other scalar (including <c>false</c>) returns <see langword="false"/>.
+    /// </remarks>
+    private static bool KafkaWantsSchemaRegistry(YamlMappingNode? extra)
+    {
+        if (extra is null)
+        {
+            return false;
+        }
+
+        if (!extra.Children.TryGetValue(new YamlScalarNode("schemaRegistry"), out var node))
+        {
+            return false;
+        }
+
+        return node is YamlScalarNode { Value: { } value } &&
+               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Resolves the fully-qualified image reference by applying <paramref name="registry"/>

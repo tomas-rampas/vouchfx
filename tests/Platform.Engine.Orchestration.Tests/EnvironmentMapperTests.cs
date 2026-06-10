@@ -19,6 +19,7 @@ using Aspire.Hosting.ApplicationModel;
 using Platform.Engine.Authoring.Model;
 using Platform.Engine.Orchestration;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Platform.Engine.Orchestration.Tests;
 
@@ -317,6 +318,154 @@ public sealed class EnvironmentMapperTests
 
         // Assert — gate list contains the kafka resource
         Assert.Contains("mq", mapped.HealthGateResourceNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_KafkaWithSchemaRegistry_AddsRegistryContainer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A kafka dependency whose <see cref="DependencySpec.Extra"/> carries
+    /// <c>schemaRegistry: true</c> additionally provisions a
+    /// <c>confluentinc/cp-schema-registry</c> container named <c>&lt;kafka&gt;-sr</c>.
+    /// The registry exposes an <c>http</c> endpoint, waits for the broker, and is
+    /// health-gated immediately after (not before) the broker.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a non-Docker test: it inspects the in-memory resource graph after
+    /// <c>Configure</c> but before <c>StartAsync</c>, so it asserts the container's
+    /// image/tag, endpoint annotation, WaitAnnotation target, and gate ordering — all
+    /// of which are set at builder time.
+    /// </para>
+    /// <para>
+    /// What is NOT asserted here (deferred to the Docker capstone): the resolved value
+    /// of <c>SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS</c>.  That env var is wired
+    /// from a <c>ReferenceExpression</c> over the broker's <c>InternalEndpoint</c>,
+    /// whose host/port are only materialised by DCP once the container network exists;
+    /// reading it pre-start would require running the live environment callbacks.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Map_KafkaWithSchemaRegistry_AddsRegistryContainer()
+    {
+        // Arrange — Extra = { schemaRegistry: true }
+        var extra = new YamlMappingNode
+        {
+            { new YamlScalarNode("schemaRegistry"), new YamlScalarNode("true") },
+        };
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: extra),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — the broker itself is still present and unchanged.
+        var kafkaResource = builder.Resources.SingleOrDefault(r => r.Name == "events");
+        Assert.NotNull(kafkaResource);
+
+        // Assert — a schema-registry ContainerResource named "events-sr" was added.
+        var srResource = builder.Resources
+            .OfType<ContainerResource>()
+            .SingleOrDefault(r => r.Name == "events-sr");
+        Assert.NotNull(srResource);
+
+        // Assert — it uses the cp-schema-registry image (image + tag annotation).
+        var imageAnnotation = srResource!.Annotations
+            .OfType<ContainerImageAnnotation>()
+            .SingleOrDefault();
+        Assert.NotNull(imageAnnotation);
+        Assert.Equal("confluentinc/cp-schema-registry", imageAnnotation!.Image);
+        Assert.Equal("7.6.1", imageAnnotation.Tag);
+
+        // Assert — it has an 'http' EndpointAnnotation (WithHttpEndpoint targetPort 8081).
+        var httpEndpoint = srResource.Annotations
+            .OfType<EndpointAnnotation>()
+            .SingleOrDefault(a => a.Name == "http");
+        Assert.NotNull(httpEndpoint);
+        Assert.Equal(8081, httpEndpoint!.TargetPort);
+
+        // Assert — it WaitFor the broker resource "events".
+        var waitsForBroker = srResource.Annotations
+            .OfType<WaitAnnotation>()
+            .Any(a => a.Resource.Name == "events");
+        Assert.True(
+            waitsForBroker,
+            "The schema-registry container must WaitFor the broker 'events'.");
+
+        // Assert — "events-sr" is health-gated AFTER the broker "events".
+        var gateList = mapped.HealthGateResourceNames.ToList();
+        Assert.Contains("events", gateList);
+        Assert.Contains("events-sr", gateList);
+        var brokerIndex = gateList.IndexOf("events");
+        var srIndex = gateList.IndexOf("events-sr");
+        Assert.True(
+            brokerIndex < srIndex,
+            $"Broker gate 'events' (index {brokerIndex}) must precede registry gate " +
+            $"'events-sr' (index {srIndex}) — the registry depends on the broker.");
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_KafkaWithoutSchemaRegistry_AddsNoRegistry
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A kafka dependency without <c>schemaRegistry: true</c> in <see cref="DependencySpec.Extra"/>
+    /// (whether <c>Extra</c> is null or carries <c>schemaRegistry: false</c>) provisions
+    /// only the broker — no <c>*-sr</c> container, no extra gate.  Pins that the existing
+    /// plain-kafka behaviour is unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("false")]
+    public void Map_KafkaWithoutSchemaRegistry_AddsNoRegistry(string? schemaRegistryValue)
+    {
+        // Arrange
+        YamlMappingNode? extra = schemaRegistryValue is null
+            ? null
+            : new YamlMappingNode
+            {
+                { new YamlScalarNode("schemaRegistry"), new YamlScalarNode(schemaRegistryValue) },
+            };
+
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: extra),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — the broker is present.
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "events"));
+
+        // Assert — no schema-registry container was added.
+        var srResource = builder.Resources
+            .OfType<ContainerResource>()
+            .SingleOrDefault(r => r.Name == "events-sr");
+        Assert.Null(srResource);
+
+        // Assert — no "-sr" gate exists.
+        Assert.DoesNotContain("events-sr", mapped.HealthGateResourceNames);
+        Assert.Contains("events", mapped.HealthGateResourceNames);
     }
 
     // -----------------------------------------------------------------------
