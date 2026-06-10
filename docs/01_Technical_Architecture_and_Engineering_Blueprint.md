@@ -243,7 +243,7 @@ The emitted byte array is loaded into a custom class that inherits from `Assembl
 
 ### 5.3.3 Global context as the only bridge
 
-The compiled script reaches the orchestrated environment exclusively through a strongly-typed `ScriptGlobalVariables` host object. It carries pre-configured HTTP clients, active Kafka consumers, database connection strings, and a mutable dictionary of variables captured from earlier steps. Because this object is the single, narrow channel between the durable engine and the disposable script, unloading the load context severs every reference cleanly — there are no stray static handles to keep an assembly alive.
+The compiled script reaches the orchestrated environment exclusively through a strongly-typed `ScriptGlobalVariables` host object. It carries pre-configured HTTP clients, active Kafka consumers, database connection strings, a mutable dictionary of variables captured from earlier steps, a secrets accessor, and a webhook-capture accessor. Because this object is the single, narrow channel between the durable engine and the disposable script, unloading the load context severs every reference cleanly — there are no stray static handles to keep an assembly alive. The script reads captured inbound webhook requests (for `webhook-listen.http` steps) through `ScriptGlobalVariables.Webhooks` (`IWebhookCaptureAccessor.GetCaptured(listenerName)` → captured requests), an instance member exactly like `Secrets`, so the collectible AssemblyLoadContext boundary remains clean: no static handle crosses it.
 
 ```csharp
 // The compile-once / isolate / unload contract (illustrative)
@@ -1197,6 +1197,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | Roslyn Scripting API | Compiles generated CSX into a reusable in-memory delegate (compile-once pattern). |
 | Collectible AssemblyLoadContext | Isolates dynamically generated assemblies so they can be unloaded and reclaimed. |
 | Respawn | Resets relational databases to a pristine state between tests, honouring foreign-key order. |
+| System.CommandLine | Argument parsing and command dispatch for the headless vouchfx CLI runner (vouchfx run and the tag, owner, path, change-set, and prior-verdict selection flags). Pinned to 2.0 (GA). |
 | Polly | Provides the bounded exponential-backoff resilience policies behind VERIFYMODE: RETRY. |
 | System.Threading.Channels | Bounded producer/consumer queues giving backpressure in the Performance LAB. |
 | Confluent Kafka client | Producer and consumer delegates with Avro and schema-registry support. |
