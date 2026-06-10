@@ -609,7 +609,16 @@ public static class YamlDocumentParser
         {
             if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
             {
-                continue;
+                // Reject a malformed capture key rather than silently dropping the
+                // entry: a skipped capture leaves a {placeholder} unresolved or sends
+                // the step Inconclusive later, misattributing the cause (§12.1).  The
+                // 1-based line/column are derived from the offending key node, mirroring
+                // the seed parsers and the ParseCaptureEntry diagnostics.
+                throw new YamlParseException(
+                    $"capture key at line {key.Start.Line} must be a scalar (the variable " +
+                    $"name to bind), but found {key.NodeType}.",
+                    key.Start.Line,
+                    key.Start.Column);
             }
 
             dict[keyScalar.Value] = ParseCaptureEntry(keyScalar.Value, value);

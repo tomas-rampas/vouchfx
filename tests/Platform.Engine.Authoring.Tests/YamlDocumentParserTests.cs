@@ -434,6 +434,55 @@ public sealed class YamlDocumentParserTests
     }
 
     [Fact]
+    public void Parse_StepCapture_NonScalarKey_ThrowsRatherThanSilentlySkipping()
+    {
+        // Arrange — a capture block whose KEY is a YAML complex (sequence) key
+        // rather than a scalar variable name.  The parser must REJECT this per its
+        // own contract (a silently-dropped capture later misattributes an
+        // assertion Fail / leaves a {placeholder} unresolved, §12.1), not skip it.
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http.rest
+                capture:
+                  ? [a, b]
+                  : "$.id"
+            """;
+
+        // Act + Assert — the malformed key must surface as a YamlParseException.
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The message must name the requirement (a scalar variable name).
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // 1-based position is derived from the offending key node (mirrors siblings).
+        Assert.True(ex.Line > 0, "Line should be populated from the offending key node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending key node.");
+    }
+
+    [Fact]
+    public void Parse_StepCapture_ScalarKey_StillParsesUnchanged()
+    {
+        // Arrange — back-compat: a normal scalar capture key must keep working
+        // exactly as before the malformed-key rejection was added.
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http.rest
+                capture:
+                  newUserId: "$.id"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var step = doc.Steps[0];
+        Assert.NotNull(step.Capture);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture!["newUserId"].Format);
+        Assert.Equal("$.id", step.Capture["newUserId"].Expression);
+    }
+
+    [Fact]
     public void Parse_StepVerifyModeAndTimeout_AreDeserialised()
     {
         // Arrange
