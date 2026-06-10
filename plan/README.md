@@ -142,7 +142,7 @@ This list is the architect's standing review checklist:
   strings; cross-step state only through the `Vars` global.
 - **Aspire (§4, §19):** `DisableDashboard = true`; `AddContainer`/`AddProject` (never `AddProject<T>()`);
   connection strings ≠ endpoints; `WaitFor` the *most specific* resource; suppress HealthChecks logs
-  below `Warning`.
+  below `Warning`; teardown sets `DcpPublisher:WaitForResourceCleanup = "true"` and calls a bounded `StopAsync` before `DisposeAsync` (§4.5 — else DCP orphans containers + the `aspire-session-network-*` network).
 - **Verdict taxonomy (§12.1):** Pass / Fail / Environment error / Inconclusive kept separate
   everywhere; only `Fail` breaks CI by default.
 - **Reporting (§14):** one schema-versioned JSON Lines event stream feeds every renderer; each
