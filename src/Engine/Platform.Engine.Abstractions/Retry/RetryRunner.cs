@@ -148,7 +148,7 @@ public static class RetryRunner
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linked.CancelAfter(window);
 
-        var pipeline = BuildPipeline(baseDelay, attempts);
+        var pipeline = BuildPipeline(baseDelay);
 
         StepOutcome finalOutcome;
         try
@@ -218,8 +218,7 @@ public static class RetryRunner
     // Builds a fresh generic retry pipeline.  ShouldHandle retries only on the
     // retryable verdicts (Fail, Inconclusive); Pass and EnvironmentError stop the
     // loop.  MaxRetryAttempts is bounded by MaxAttemptsHardCap (attempts = retries+1).
-    private static ResiliencePipeline<StepOutcome> BuildPipeline(
-        TimeSpan baseDelay, List<AttemptRecord> attempts)
+    private static ResiliencePipeline<StepOutcome> BuildPipeline(TimeSpan baseDelay)
     {
         return new ResiliencePipelineBuilder<StepOutcome>()
             .AddRetry(new RetryStrategyOptions<StepOutcome>
