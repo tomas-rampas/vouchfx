@@ -121,6 +121,31 @@ public sealed class MqPublishKafkaProvider
               "description": "Optional map of message header names to their string values.",
               "type": "object",
               "additionalProperties": { "type": "string" }
+            },
+            "avro": {
+              "description": "Optional Avro / schema-registry encoding.  When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored.",
+              "type": "object",
+              "required": ["schemaRegistry", "subject", "schema", "record"],
+              "properties": {
+                "schemaRegistry": {
+                  "description": "Logical name of the kafka dependency whose schema registry to publish through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
+                  "type": "string"
+                },
+                "subject": {
+                  "description": "The schema-registry subject under which the inline schema is registered.",
+                  "type": "string"
+                },
+                "schema": {
+                  "description": "The inline Avro schema (avsc JSON) for the message value.",
+                  "type": "string"
+                },
+                "record": {
+                  "description": "Map of Avro field names to their values.  Each value may contain {placeholder} and ${secret:source/path} tokens; field names are used verbatim.",
+                  "type": "object",
+                  "additionalProperties": { "type": "string" }
+                }
+              },
+              "additionalProperties": true
             }
           },
           "additionalProperties": true
@@ -137,7 +162,8 @@ public sealed class MqPublishKafkaProvider
                 Topic: string.Empty,
                 Key: null,
                 Payload: string.Empty,
-                Headers: null);
+                Headers: null,
+                Avro: null);
         }
 
         var target = GetScalar(mapping, "target");
@@ -165,12 +191,51 @@ public sealed class MqPublishKafkaProvider
             headers = dict;
         }
 
+        // 'avro' block (additive, §13): present → bind schemaRegistry/subject/schema/record.
+        var avro = BindAvro(mapping);
+
         return new MqPublishKafkaModel(
             Target: target,
             Topic: topic,
             Key: key,
             Payload: payload,
-            Headers: headers);
+            Headers: headers,
+            Avro: avro);
+    }
+
+    /// <summary>
+    /// Binds the optional nested <c>avro</c> mapping into a <see cref="KafkaAvro"/>.
+    /// Returns <see langword="null"/> when the <c>avro</c> field is absent or not a
+    /// mapping (selecting the PLAIN-payload path).
+    /// </summary>
+    private static KafkaAvro? BindAvro(YamlMappingNode mapping)
+    {
+        if (!mapping.Children.TryGetValue(new YamlScalarNode("avro"), out var avroNode)
+            || avroNode is not YamlMappingNode avroMap)
+        {
+            return null;
+        }
+
+        var schemaRegistry = GetScalar(avroMap, "schemaRegistry");
+        var subject = GetScalar(avroMap, "subject");
+        var schema = GetScalar(avroMap, "schema");
+
+        var record = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (avroMap.Children.TryGetValue(new YamlScalarNode("record"), out var recordNode)
+            && recordNode is YamlMappingNode recordMap)
+        {
+            foreach (var (k, v) in recordMap.Children)
+            {
+                if (k is YamlScalarNode ks && v is YamlScalarNode vs)
+                    record[ks.Value ?? string.Empty] = vs.Value ?? string.Empty;
+            }
+        }
+
+        return new KafkaAvro(
+            SchemaRegistryTarget: schemaRegistry,
+            Subject: subject,
+            Schema: schema,
+            Record: record);
     }
 
     // ── IStepValidator<MqPublishKafkaModel> ───────────────────────────────────
@@ -209,6 +274,38 @@ public sealed class MqPublishKafkaProvider
             }
         }
 
+        // (e) avro block (when present): schemaRegistry must name a declared kafka
+        //     dependency (same reconciliation as 'target' — the registry is provisioned
+        //     from that dep's schemaRegistry Extra); subject/schema/record must be present.
+        if (model.Avro is { } avro)
+        {
+            if (string.IsNullOrWhiteSpace(avro.SchemaRegistryTarget))
+            {
+                errors.Add("mq-publish.kafka: 'avro.schemaRegistry' must not be empty.");
+            }
+            else if (!ctx.DeclaredDependencies.TryGetValue(avro.SchemaRegistryTarget, out var srType))
+            {
+                errors.Add(
+                    $"mq-publish.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is not a " +
+                    "kafka dependency declared in environment.dependencies.");
+            }
+            else if (!string.Equals(srType, "kafka", StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add(
+                    $"mq-publish.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is declared as a " +
+                    $"'{srType}' dependency, not the required kafka dependency.");
+            }
+
+            if (string.IsNullOrWhiteSpace(avro.Subject))
+                errors.Add("mq-publish.kafka: 'avro.subject' must not be empty.");
+
+            if (string.IsNullOrWhiteSpace(avro.Schema))
+                errors.Add("mq-publish.kafka: 'avro.schema' must not be empty.");
+
+            if (avro.Record.Count == 0)
+                errors.Add("mq-publish.kafka: 'avro.record' must declare at least one field.");
+        }
+
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
@@ -229,6 +326,11 @@ public sealed class MqPublishKafkaProvider
             "Confluent.Kafka",
             "Platform.Engine.Abstractions",
         };
+
+    // NOTE: the Avro branch in the helper fully-qualifies every Confluent.SchemaRegistry,
+    // Confluent.Kafka.SyncOverAsync, and Avro type (e.g. Confluent.SchemaRegistry.
+    // CachedSchemaRegistryClient, Avro.Generic.GenericRecord), so no extra using is needed
+    // here — the helper compiles independently of using ordering (§13.3.1).
 
     /// <summary>
     /// Full source of the provider-id-prefixed helper class (§13.3.1).
@@ -281,8 +383,23 @@ public sealed class MqPublishKafkaProvider
         "        string? keyTemplate,\n" +
         "        string payloadTemplate,\n" +
         "        string[] headerNames,\n" +
-        "        string[] headerValueTemplates)\n" +
+        "        string[] headerValueTemplates,\n" +
+        "        string? avroRegistrySvcKey,\n" +
+        "        string? avroSubject,\n" +
+        "        string? avroSchemaJson,\n" +
+        "        string[] avroFieldNames,\n" +
+        "        string[] avroFieldValueTemplates)\n" +
         "    {\n" +
+        "        // AVRO path is selected when the avro args are present (avroSubject non-null).\n" +
+        "        // Otherwise the PLAIN string path runs, byte-identical to the committed slice.\n" +
+        "        if (avroSubject is not null)\n" +
+        "        {\n" +
+        "            await PublishAvroAsync(vars, secrets, outcomeKey, connKey, topicTemplate,\n" +
+        "                keyTemplate, headerNames, headerValueTemplates, avroRegistrySvcKey,\n" +
+        "                avroSubject, avroSchemaJson, avroFieldNames, avroFieldValueTemplates)\n" +
+        "                .ConfigureAwait(false);\n" +
+        "            return;\n" +
+        "        }\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Read the bootstrap-servers string staged by the orchestrator\n" +
         "        // (VarKeys.Connection pattern).  A null or empty string means the\n" +
@@ -375,6 +492,218 @@ public sealed class MqPublishKafkaProvider
         "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
         "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// AVRO publish path: builds an Avro GenericRecord from the inline schema and the\n" +
+        "    /// resolved record field map and produces it via the Confluent Schema Registry\n" +
+        "    /// Avro serializer (which auto-registers the schema under the subject — the\n" +
+        "    /// 'registry-validated' acceptance).  Bootstrap-missing OR registry-URL-missing OR\n" +
+        "    /// any serialize/produce failure = EnvironmentError (§12.1); a missing secret in a\n" +
+        "    /// record value = EnvironmentError.  Success = Pass (topic/partition/offset).\n" +
+        "    /// </summary>\n" +
+        "    /// <remarks>\n" +
+        "    /// LEAK GATE (§5): the producer owns a native librdkafka handle and the registry\n" +
+        "    /// client is IDisposable; BOTH are Flush()ed/Dispose()d (producer) and Dispose()d\n" +
+        "    /// (registry) in the finally so nothing survives the collectible ALC unload.\n" +
+        "    /// using-var is illegal in CSX (§13.3.1) — disposal is explicit.\n" +
+        "    /// The registry-URL check precedes any client construction, so the missing-URL path\n" +
+        "    /// is reachable WITHOUT a live registry or broker.\n" +
+        "    /// </remarks>\n" +
+        "    private static async System.Threading.Tasks.Task PublishAvroAsync(\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        Platform.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        string outcomeKey,\n" +
+        "        string connKey,\n" +
+        "        string topicTemplate,\n" +
+        "        string? keyTemplate,\n" +
+        "        string[] headerNames,\n" +
+        "        string[] headerValueTemplates,\n" +
+        "        string? avroRegistrySvcKey,\n" +
+        "        string avroSubject,\n" +
+        "        string? avroSchemaJson,\n" +
+        "        string[] avroFieldNames,\n" +
+        "        string[] avroFieldValueTemplates)\n" +
+        "    {\n" +
+        "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        // Bootstrap (broker) must be present, exactly as the plain path requires.\n" +
+        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        if (string.IsNullOrEmpty(bootstrap))\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
+        "        // Schema-registry URL is staged under svc::<sr>-sr (VarKeys.Service pattern).\n" +
+        "        // This check runs BEFORE any registry/producer client is constructed, so the\n" +
+        "        // missing-URL path needs no live registry or broker.\n" +
+        "        var registryUrl = (avroRegistrySvcKey is not null\n" +
+        "                && vars.TryGetValue(avroRegistrySvcKey, out var rv) && rv is string rs) ? rs : null;\n" +
+        "        if (string.IsNullOrEmpty(registryUrl))\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"schema registry URL not found for key '\" + (avroRegistrySvcKey ?? string.Empty) + \"'\") + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
+        "        Platform.Engine.Abstractions.Verdict verdict;\n" +
+        "        string observation;\n" +
+        "        Confluent.SchemaRegistry.CachedSchemaRegistryClient? registry = null;\n" +
+        "        Confluent.Kafka.IProducer<string, Avro.Generic.GenericRecord>? producer = null;\n" +
+        "        try\n" +
+        "        {\n" +
+        "            // Resolve topic / key INSIDE the guarded region (§17). Record field NAMES are\n" +
+        "            // verbatim; only VALUES are resolved (single pass: {placeholder}+${secret}).\n" +
+        "            var topic = Secret_Helpers.ResolveTemplate(secrets, vars, topicTemplate);\n" +
+        "            var key = keyTemplate is null\n" +
+        "                ? null\n" +
+        "                : Secret_Helpers.ResolveTemplate(secrets, vars, keyTemplate);\n" +
+        "            var schema = (Avro.RecordSchema)Avro.Schema.Parse(avroSchemaJson);\n" +
+        "            var record = new Avro.Generic.GenericRecord(schema);\n" +
+        "            for (int fi = 0; fi < avroFieldNames.Length; fi++)\n" +
+        "            {\n" +
+        "                var fieldName = avroFieldNames[fi];\n" +
+        "                var resolvedValue = Secret_Helpers.ResolveTemplate(secrets, vars, avroFieldValueTemplates[fi]);\n" +
+        "                Avro.Field field;\n" +
+        "                if (!schema.TryGetField(fieldName, out field))\n" +
+        "                    throw new System.InvalidOperationException(\n" +
+        "                        \"avro record field '\" + fieldName + \"' is not present in the schema\");\n" +
+        "                record.Add(fieldName, CoerceField(fieldName, field.Schema, resolvedValue));\n" +
+        "            }\n" +
+        "            registry = new Confluent.SchemaRegistry.CachedSchemaRegistryClient(\n" +
+        "                new Confluent.SchemaRegistry.SchemaRegistryConfig { Url = registryUrl });\n" +
+        "            // AvroSerializer<T> has no single-arg ctor in 2.14.x: pass a default config.\n" +
+        "            // AsSyncOverAsync() (Confluent.Kafka.SyncOverAsync) adapts the async serializer\n" +
+        "            // to the ISerializer<T> a ProducerBuilder.SetValueSerializer expects.\n" +
+        "            var serializer = new Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>(\n" +
+        "                registry, new Confluent.SchemaRegistry.Serdes.AvroSerializerConfig());\n" +
+        "            var config = new Confluent.Kafka.ProducerConfig { BootstrapServers = bootstrap };\n" +
+        "            producer = new Confluent.Kafka.ProducerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
+        "                .SetValueSerializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncSerializerExtensionMethods.AsSyncOverAsync(serializer))\n" +
+        "                .Build();\n" +
+        "            var msg = new Confluent.Kafka.Message<string, Avro.Generic.GenericRecord>\n" +
+        "            {\n" +
+        "                Key = key ?? string.Empty,\n" +
+        "                Value = record,\n" +
+        "            };\n" +
+        "            if (headerNames.Length > 0)\n" +
+        "            {\n" +
+        "                var msgHeaders = new Confluent.Kafka.Headers();\n" +
+        "                for (int hi = 0; hi < headerNames.Length; hi++)\n" +
+        "                {\n" +
+        "                    var headerValue = Secret_Helpers.ResolveTemplate(\n" +
+        "                        secrets, vars, headerValueTemplates[hi]);\n" +
+        "                    msgHeaders.Add(headerNames[hi], System.Text.Encoding.UTF8.GetBytes(headerValue));\n" +
+        "                }\n" +
+        "                msg.Headers = msgHeaders;\n" +
+        "            }\n" +
+        "            var dr = await producer.ProduceAsync(topic, msg).ConfigureAwait(false);\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
+        "            observation = \"{\\\"topic\\\":\" + System.Text.Json.JsonSerializer.Serialize(dr.Topic) +\n" +
+        "                \",\\\"partition\\\":\" + dr.Partition.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                \",\\\"offset\\\":\" + dr.Offset.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "        }\n" +
+        "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
+        "        {\n" +
+        "            // Missing secret in a record value / topic / key = EnvironmentError (§17).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
+        "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
+        "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            // SchemaRegistry / Avro parse-or-coerce / Produce / any other failure =\n" +
+        "            // EnvironmentError (§12.1): an infrastructure/configuration problem.\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        finally\n" +
+        "        {\n" +
+        "            // LEAK GATE (§5): release the native producer handle AND the registry client\n" +
+        "            // within this step, before the collectible ALC unloads.\n" +
+        "            if (producer is not null)\n" +
+        "            {\n" +
+        "                try { producer.Flush(System.TimeSpan.FromSeconds(10)); } catch { }\n" +
+        "                producer.Dispose();\n" +
+        "            }\n" +
+        "            if (registry is not null)\n" +
+        "                registry.Dispose();\n" +
+        "            sw.Stop();\n" +
+        "        }\n" +
+        "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Coerces a resolved STRING value to the Avro field's primitive type.  Supports\n" +
+        "    /// string, int, long, float, double, boolean, and null (where the schema permits).\n" +
+        "    /// A nullable union [null, T] is unwrapped to its non-null branch; the literal\n" +
+        "    /// 'null' (or an empty string against a nullable union) yields a null value.\n" +
+        "    /// An unsupported type or an unparseable value throws InvalidOperationException,\n" +
+        "    /// which the caller maps to EnvironmentError (§12.1).\n" +
+        "    /// </summary>\n" +
+        "    /// <remarks>\n" +
+        "    /// SECRET SAFETY (§17): the resolved 'value' may be a revealed ${secret:…} value, so\n" +
+        "    /// no coercion-failure message EVER embeds 'value' — only the (author-declared,\n" +
+        "    /// non-secret) field NAME and the EXPECTED Avro type are reported, so a secret that\n" +
+        "    /// fails coercion can never reach the observation / event stream.\n" +
+        "    /// </remarks>\n" +
+        "    private static object? CoerceField(string fieldName, Avro.Schema fieldSchema, string value)\n" +
+        "    {\n" +
+        "        var schema = fieldSchema;\n" +
+        "        var nullable = false;\n" +
+        "        // Unwrap a union to its single non-null branch (the common nullable pattern).\n" +
+        "        if (schema.Tag == Avro.Schema.Type.Union && schema is Avro.UnionSchema union)\n" +
+        "        {\n" +
+        "            Avro.Schema? nonNull = null;\n" +
+        "            for (int i = 0; i < union.Schemas.Count; i++)\n" +
+        "            {\n" +
+        "                if (union.Schemas[i].Tag == Avro.Schema.Type.Null)\n" +
+        "                    nullable = true;\n" +
+        "                else if (nonNull is null)\n" +
+        "                    nonNull = union.Schemas[i];\n" +
+        "                else\n" +
+        "                    throw new System.InvalidOperationException(\n" +
+        "                        \"avro union with more than one non-null branch is not supported\");\n" +
+        "            }\n" +
+        "            if (nonNull is null)\n" +
+        "                return null;  // union of only null.\n" +
+        "            schema = nonNull;\n" +
+        "        }\n" +
+        "        if (nullable && (value is null || string.Equals(value, \"null\", System.StringComparison.Ordinal)))\n" +
+        "            return null;\n" +
+        "        switch (schema.Tag)\n" +
+        "        {\n" +
+        "            case Avro.Schema.Type.Null:\n" +
+        "                return null;\n" +
+        "            case Avro.Schema.Type.String:\n" +
+        "                return value;\n" +
+        "            case Avro.Schema.Type.Boolean:\n" +
+        "                if (bool.TryParse(value, out var b)) return b;\n" +
+        "                throw new System.InvalidOperationException(\"avro field '\" + fieldName + \"' could not be coerced to boolean\");\n" +
+        "            case Avro.Schema.Type.Int:\n" +
+        "                if (int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var iv)) return iv;\n" +
+        "                throw new System.InvalidOperationException(\"avro field '\" + fieldName + \"' could not be coerced to int\");\n" +
+        "            case Avro.Schema.Type.Long:\n" +
+        "                if (long.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var lv)) return lv;\n" +
+        "                throw new System.InvalidOperationException(\"avro field '\" + fieldName + \"' could not be coerced to long\");\n" +
+        "            case Avro.Schema.Type.Float:\n" +
+        "                if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var fv)) return fv;\n" +
+        "                throw new System.InvalidOperationException(\"avro field '\" + fieldName + \"' could not be coerced to float\");\n" +
+        "            case Avro.Schema.Type.Double:\n" +
+        "                if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dv)) return dv;\n" +
+        "                throw new System.InvalidOperationException(\"avro field '\" + fieldName + \"' could not be coerced to double\");\n" +
+        "            default:\n" +
+        "                throw new System.InvalidOperationException(\n" +
+        "                    \"unsupported avro field type '\" + schema.Tag.ToString() + \"' for field '\" + fieldName + \"' (string, int, long, float, double, boolean, null only)\");\n" +
+        "        }\n" +
+        "    }\n" +
         "}",
     };
 
@@ -438,6 +767,28 @@ public sealed class MqPublishKafkaProvider
         var headerNamesLiteral = BuildStringArrayLiteral(headerNames);
         var headerValueTemplatesLiteral = BuildStringArrayLiteral(headerValueTemplates);
 
+        // Avro args: emitted as the bare 'null' literals when no avro block is declared
+        // (selecting the PLAIN path in the helper), or as the resolved svc-key / subject /
+        // schema literals plus parallel field-name / value-template arrays when present.
+        // Record field VALUES are emitted as RAW templates (resolved at runtime, §17);
+        // field NAMES and the inline schema are emitted verbatim (JSON-escaped literals).
+        string avroRegistrySvcKeyLiteral = "null";
+        string avroSubjectLiteral = "null";
+        string avroSchemaLiteral = "null";
+        string avroFieldNamesLiteral = "new string[] { }";
+        string avroFieldValueTemplatesLiteral = "new string[] { }";
+        if (model.Avro is { } avro)
+        {
+            // The schema-registry URL is staged under svc::<sr>-sr; read it via
+            // VarKeys.Service(<sr>-sr) at runtime (the helper looks up vars[svcKey]).
+            avroRegistrySvcKeyLiteral =
+                JsonSerializer.Serialize(VarKeys.Service(avro.SchemaRegistryTarget + "-sr"));
+            avroSubjectLiteral = JsonSerializer.Serialize(avro.Subject);
+            avroSchemaLiteral = JsonSerializer.Serialize(avro.Schema);
+            avroFieldNamesLiteral = BuildStringArrayLiteral(avro.Record.Keys.ToArray());
+            avroFieldValueTemplatesLiteral = BuildStringArrayLiteral(avro.Record.Values.ToArray());
+        }
+
         // Topic / payload are emitted as RAW template literals (JSON-escaped C# string
         // literals).  Any {placeholder} or ${secret:…} token inside survives as LITERAL
         // TEXT here (not an emit-time interpolation hole) and is processed at runtime.
@@ -468,7 +819,12 @@ public sealed class MqPublishKafkaProvider
                     {{keyTemplateLiteral}},
                     {{payloadTemplateLiteral}},
                     {{headerNamesLiteral}},
-                    {{headerValueTemplatesLiteral}});
+                    {{headerValueTemplatesLiteral}},
+                    {{avroRegistrySvcKeyLiteral}},
+                    {{avroSubjectLiteral}},
+                    {{avroSchemaLiteral}},
+                    {{avroFieldNamesLiteral}},
+                    {{avroFieldValueTemplatesLiteral}});
             }
             """;
 
@@ -510,15 +866,24 @@ public sealed class MqPublishKafkaProvider
     /// <remarks>
     /// Returns the <c>Confluent.Kafka</c> assembly so the Roslyn compiler can resolve
     /// <c>ProducerConfig</c>, <c>ProducerBuilder&lt;,&gt;</c>, <c>Message&lt;,&gt;</c>,
-    /// and related types in the emitted helper class.  The assembly is already loaded
-    /// in the Default ALC (the provider project references it directly) and must never
-    /// be loaded into the collectible ALC (§5 memory-model invariant).
+    /// and related types, PLUS the <c>Confluent.SchemaRegistry</c>,
+    /// <c>Confluent.SchemaRegistry.Serdes.Avro</c>, and <c>Apache.Avro</c> assemblies so
+    /// the emitted CSX <em>always</em> compiles whether or not the Avro branch is taken
+    /// (the helper class references all three unconditionally).  Every assembly is already
+    /// loaded in the Default ALC (the provider project references them directly) and must
+    /// never be loaded into the collectible ALC (§5 memory-model invariant).
     /// </remarks>
     public IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies
     {
         get
         {
             yield return typeof(Confluent.Kafka.ProducerConfig).Assembly;
+            // Confluent.SchemaRegistry — CachedSchemaRegistryClient / SchemaRegistryConfig.
+            yield return typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly;
+            // Confluent.SchemaRegistry.Serdes.Avro — AvroSerializer<T>.
+            yield return typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly;
+            // Apache.Avro — Avro.Schema / Avro.Generic.GenericRecord.
+            yield return typeof(Avro.Schema).Assembly;
         }
     }
 

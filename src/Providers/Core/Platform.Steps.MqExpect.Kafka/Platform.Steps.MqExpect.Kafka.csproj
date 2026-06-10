@@ -19,4 +19,12 @@
     <PackageReference Include="JsonPath.Net" />
   </ItemGroup>
 
+  <ItemGroup Label="Avro / schema-registry (S06) — Avro expect branch">
+    <!-- These are compile-time MetadataReferences only; they resolve from the Default
+         ALC and are never loaded into the collectible ALC (§5 memory-model). -->
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
+  </ItemGroup>
+
 </Project>

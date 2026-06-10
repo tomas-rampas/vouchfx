@@ -1,10 +1,13 @@
 // Platform.Steps.MqExpect.Kafka — mq-expect.kafka step model (DSL §5, §13).
 // Strongly-typed records; Dictionary<string,object> is explicitly prohibited (§13).
 //
-// PLAIN-payload slice (string / JSON matching). Avro / schema-registry decoding is a
-// SEPARATE later task and is intentionally ABSENT from these records.  The
-// KafkaMatch record is shaped so an optional schema-aware criterion could be appended
-// without churning callers — but it is NOT added here.
+// Two consume paths:
+//   • PLAIN (Avro == null): the message value is a UTF-8 string and the match criteria are
+//     evaluated against that string.  This path is unchanged from the committed slice.
+//   • AVRO (Avro != null): the consumed message is Avro-decoded to a GenericRecord, converted
+//     to a JSON string, and the EXISTING match criteria run against that JSON string — so
+//     key/headers/payloadContains/json criteria all work unchanged against the decoded JSON.
+//     Avro is an ADDITIVE trailing field; the plain path is identical when it is null.
 using Platform.Sdk;
 
 namespace Platform.Steps.MqExpect.Kafka;
@@ -47,10 +50,50 @@ namespace Platform.Steps.MqExpect.Kafka;
 /// <see cref="KafkaMatch.PayloadContains"/>, or a non-empty <see cref="KafkaMatch.Json"/>)
 /// must be declared; an empty match is rejected by validation.
 /// </param>
+/// <param name="Avro">
+/// The optional Avro / schema-registry decoding spec.  <see langword="null"/> selects the
+/// PLAIN-payload path (the match criteria run against the UTF-8 message value).  When
+/// non-<see langword="null"/>, the consumed message is Avro-decoded to a
+/// <c>GenericRecord</c>, converted to a JSON string, and the same <see cref="Match"/>
+/// criteria run against that JSON string.  Additive trailing field (§13).
+/// </param>
 public sealed record MqExpectKafkaModel(
     string Target,
     string Topic,
-    KafkaMatch Match) : IStepModel;
+    KafkaMatch Match,
+    KafkaAvro? Avro = null) : IStepModel;
+
+/// <summary>
+/// The Avro / schema-registry decoding spec for an <c>mq-expect.kafka</c> step
+/// (DSL §5, §13).  Present (non-<see langword="null"/> on the model) only when the author
+/// declares an <c>avro</c> block; its presence switches the provider from the PLAIN
+/// string-consumer path to the Avro <c>GenericRecord</c> path.
+/// </summary>
+/// <remarks>
+/// <para>
+/// For the expect side the deserializer fetches the writer schema from the registry by the
+/// message's embedded schema id, so <see cref="Subject"/> and <see cref="Schema"/> are
+/// optional (carried for symmetry / future reader-schema use).  The decoded
+/// <c>GenericRecord</c> is converted to a JSON string and the existing
+/// <see cref="MqExpectKafkaModel.Match"/> criteria run against it unchanged.
+/// </para>
+/// </remarks>
+/// <param name="SchemaRegistryTarget">
+/// Logical name of the kafka dependency whose schema registry this step consumes through.
+/// The registry URL is staged by the orchestrator under <c>svc::&lt;target&gt;-sr</c> and
+/// read at execution time via <c>VarKeys.Service(SchemaRegistryTarget + "-sr")</c>.
+/// </param>
+/// <param name="Subject">
+/// Optional schema-registry subject (informational for the expect side; the writer schema
+/// is fetched by the message's embedded schema id).
+/// </param>
+/// <param name="Schema">
+/// Optional inline reader schema as avsc JSON (informational for the expect side).
+/// </param>
+public sealed record KafkaAvro(
+    string SchemaRegistryTarget,
+    string? Subject,
+    string? Schema);
 
 /// <summary>
 /// The criteria a consumed Kafka message must satisfy for the

@@ -284,14 +284,20 @@ public sealed class MqPublishKafkaEmitTests
         var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
 
         // The emitted helper references Confluent.Kafka, System.Text.Json, System.Text
-        // (Encoding), and System.Globalization — supply each as compile-time metadata.
-        // None is ever loaded into the collectible ALC (§5 memory-model invariant).
+        // (Encoding), System.Globalization — AND (because the helper class is now
+        // unconditionally Avro-aware) the Avro serdes assemblies, even though THIS step is
+        // a plain-payload step.  Supply each as compile-time metadata.  None is ever loaded
+        // into the collectible ALC (§5 memory-model invariant).
         var additionalRefs = new[]
         {
             typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+            typeof(Avro.Schema).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Text.Encoding).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
@@ -358,11 +364,15 @@ public sealed class MqPublishKafkaEmitTests
             var helpers = string.Join("\n", fragment.RequiredHelpers);
             var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
 
-            // Same reference set as test 11, plus System.Text.RegularExpressions which
-            // Secret_Helpers / Substitute_Helpers use for token scanning.
+            // Same reference set as test 11 (Confluent.Kafka + Avro serdes + BCL facades),
+            // plus System.Text.RegularExpressions which Secret_Helpers / Substitute_Helpers
+            // use for token scanning.
             var additionalRefs = new[]
             {
                 typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+                typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+                typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+                typeof(Avro.Schema).Assembly.Location,
                 typeof(System.Text.Json.JsonSerializer).Assembly.Location,
                 typeof(System.Text.Encoding).Assembly.Location,
                 typeof(System.Globalization.CultureInfo).Assembly.Location,
@@ -418,6 +428,257 @@ public sealed class MqPublishKafkaEmitTests
         }
     }
 
+    // ── 13. Emit (avro): RequiredHelpers contain the avro publish + CoerceField paths ─
+
+    /// <summary>
+    /// When the model carries an avro spec, the emitted helper text contains the Avro
+    /// publish path (CachedSchemaRegistryClient / AvroSerializer / GenericRecord) and the
+    /// <c>CoerceField</c> coercion method.  The fragment also still contains no
+    /// <c>using var</c> (CSX parse-error guard, §13.3.1).
+    /// </summary>
+    [Fact]
+    public void Emit_AvroModel_HelperContainsAvroPathAndCoerceField()
+    {
+        var model = MakeAvroModel();
+        var ctx = new StubCompileContext("pub-avro");
+
+        var fragment = _provider.Emit(model, ctx);
+        var fullSource = fragment.StatementBlock + "\n" + string.Join("\n", fragment.RequiredHelpers);
+
+        Assert.Contains("CachedSchemaRegistryClient", fullSource, StringComparison.Ordinal);
+        Assert.Contains("AvroSerializer", fullSource, StringComparison.Ordinal);
+        Assert.Contains("GenericRecord", fullSource, StringComparison.Ordinal);
+        Assert.Contains("CoerceField", fullSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("using var", fullSource, StringComparison.Ordinal);
+
+        // The svc::<sr>-sr registry key is spliced into the call (VarKeys.Service pattern).
+        Assert.Contains("svc::events-bus-sr", fragment.StatementBlock, StringComparison.Ordinal);
+    }
+
+    // ── 14. CompileReferenceAssemblies includes the Avro serdes assemblies ───────
+
+    /// <summary>
+    /// <see cref="ICompileReferenceContributor.CompileReferenceAssemblies"/> must include
+    /// the Confluent.SchemaRegistry, Confluent.SchemaRegistry.Serdes.Avro, and Apache.Avro
+    /// (Avro) assemblies so the emitted Avro CSX compiles.
+    /// </summary>
+    [Fact]
+    public void CompileReferenceAssemblies_ContainsAvroSerdesAssemblies()
+    {
+        var contributor = (ICompileReferenceContributor)_provider;
+        var names = contributor.CompileReferenceAssemblies
+            .Select(a => a.GetName().Name)
+            .ToList();
+
+        Assert.Contains("Confluent.SchemaRegistry", names, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Confluent.SchemaRegistry.Serdes.Avro", names, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Avro", names, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // ── 15. Avro compile round-trip: EnvironmentError when registry URL absent ───
+
+    /// <summary>
+    /// An avro publish step emits CSX that COMPILES against the real Avro serdes metadata,
+    /// and — with a kafka bootstrap staged but NO <c>svc::&lt;sr&gt;-sr</c> registry URL
+    /// staged — writes <see cref="Verdict.EnvironmentError"/> ("schema registry URL not
+    /// found").  This proves the Avro CSX compiles AND that the missing-registry path is
+    /// reachable WITHOUT a live registry or broker: the registry-URL check precedes any
+    /// CachedSchemaRegistryClient / producer construction, so neither a registry nor a
+    /// broker is ever contacted and the test cannot hang.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_Avro_AbsentRegistryUrl_ReturnsEnvironmentError()
+    {
+        const string stepId = "pub-avro-step";
+        const string target = "events-bus";
+        var model = MakeAvroModel();
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        // Supply the serdes + supporting assemblies as compile-time metadata.  The emitted
+        // Avro path references Confluent.SchemaRegistry(.Serdes.Avro), Avro, Confluent.Kafka,
+        // System.Text.Json, System.Text (Encoding), System.Globalization, and (via shared
+        // helpers) System.Text.RegularExpressions.
+        var additionalRefs = new[]
+        {
+            typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+            typeof(Avro.Schema).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.Encoding).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        // Stage a bootstrap value so the helper passes the bootstrap check and reaches the
+        // registry-URL check — but DO NOT stage the svc::<sr>-sr key.  The registry-URL
+        // check runs BEFORE any client is built, so no broker/registry is contacted.
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(target)] = "localhost:9092",
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected outcome key '{outcomeKey}'. Actual: [{string.Join(", ", vars.Keys)}]");
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.NotNull(outcome.Observation);
+        Assert.Contains("schema registry URL not found", outcome.Observation!, StringComparison.Ordinal);
+    }
+
+    // ── 16. Avro compile round-trip: EnvironmentError when bootstrap absent ──────
+
+    /// <summary>
+    /// An avro publish step with NO kafka bootstrap staged writes
+    /// <see cref="Verdict.EnvironmentError"/> ("kafka bootstrap not found") — the bootstrap
+    /// check precedes the registry-URL check, so this path is also broker-free.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_Avro_AbsentBootstrap_ReturnsEnvironmentError()
+    {
+        const string stepId = "pub-avro-nb";
+        var model = MakeAvroModel();
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+            typeof(Avro.Schema).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.Encoding).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        // No bootstrap, no registry URL — the bootstrap check fires first.
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.Contains("kafka bootstrap not found", outcome.Observation!, StringComparison.Ordinal);
+    }
+
+    // ── 17. Avro compile round-trip: coercion failure is value-free (§17) ─────────
+
+    /// <summary>
+    /// SECRET-LEAK GUARD (§17): when an avro record value fails type coercion (here a
+    /// non-numeric literal against an <c>int</c> field), the emitted helper's
+    /// <c>CoerceField</c> throws an <see cref="InvalidOperationException"/> that the
+    /// catch-all maps to <see cref="Verdict.EnvironmentError"/> — and the resulting
+    /// observation must name only the (author-declared, non-secret) FIELD NAME and the
+    /// EXPECTED Avro type, NEVER the offending value.  Because a <c>${secret:…}</c> field
+    /// is secret-resolved BEFORE coercion runs, echoing the value would place a revealed
+    /// secret onto the event stream; this test pins that it does not (a plain non-numeric
+    /// value exercises the identical throw path and proves the message is value-free).
+    /// <para>
+    /// BROKER-FREE: BOTH a kafka bootstrap AND the <c>svc::&lt;sr&gt;-sr</c> registry URL
+    /// are staged so the helper passes the bootstrap and registry-URL checks and reaches
+    /// record-building.  <c>CoerceField</c> throws during <c>GenericRecord</c> construction
+    /// — BEFORE the <c>CachedSchemaRegistryClient</c> is constructed and BEFORE any
+    /// <c>ProduceAsync</c>/registry HTTP call — so neither a live registry nor a broker is
+    /// ever contacted and the test cannot hang.  (CachedSchemaRegistryClient is lazy in any
+    /// case: it connects only on first serialize/register, which is never reached here.)
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_Avro_CoercionFailure_ObservationIsValueFree()
+    {
+        const string stepId = "pub-avro-coerce";
+        const string target = "events-bus";
+
+        // A recognisable sentinel value that fails int coercion.  If the (now-fixed) bug
+        // regressed, this literal would appear verbatim in the observation; the assertions
+        // below prove it does not.
+        const string sentinel = "NOT_A_NUMBER_SENTINEL_a1b2c3d4";
+
+        // Avro schema declaring a single 'amount' field of type int; the record supplies a
+        // non-numeric value for it, so CoerceField's int branch throws during record build.
+        var model = new MqPublishKafkaModel(
+            Target: target,
+            Topic: "orders.created",
+            Key: null,
+            Payload: "ignored-when-avro",
+            Headers: null,
+            Avro: new KafkaAvro(
+                SchemaRegistryTarget: target,
+                Subject: "orders.created-value",
+                Schema: "{\"type\":\"record\",\"name\":\"Order\",\"fields\":[" +
+                        "{\"name\":\"amount\",\"type\":\"int\"}]}",
+                Record: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["amount"] = sentinel,
+                }));
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+            typeof(Avro.Schema).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.Encoding).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        // Stage BOTH the bootstrap AND the registry URL so the helper gets PAST both guards
+        // and into record-building, where CoerceField throws BEFORE any client construction.
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(target)] = "localhost:9092",
+            [VarKeys.Service(target + "-sr")] = "http://localhost:8081",
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        // Must NOT throw or hang — CoerceField throws inside the step's guarded region,
+        // before any registry/broker network call.
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected outcome key '{outcomeKey}'. Actual: [{string.Join(", ", vars.Keys)}]");
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+        // The coercion failure is an EnvironmentError (§12.1), reached without a broker.
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.NotNull(outcome.Observation);
+
+        // The observation names the (non-secret) field and the expected type — but NEVER
+        // the offending value.  This is the §17 secret-leak pin.
+        Assert.Contains("amount", outcome.Observation!, StringComparison.Ordinal);
+        Assert.Contains("int", outcome.Observation!, StringComparison.Ordinal);
+        Assert.DoesNotContain(sentinel, outcome.Observation!, StringComparison.Ordinal);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────────
 
     private static MqPublishKafkaModel MakeModel(
@@ -432,4 +693,27 @@ public sealed class MqPublishKafkaEmitTests
             Key: key,
             Payload: payload,
             Headers: headers);
+
+    private static MqPublishKafkaModel MakeAvroModel()
+        => new(
+            Target: "events-bus",
+            Topic: "orders.created",
+            Key: "order-42",
+            Payload: "ignored-when-avro",
+            Headers: new Dictionary<string, string>(StringComparer.Ordinal) { ["h"] = "v" },
+            Avro: new KafkaAvro(
+                SchemaRegistryTarget: "events-bus",
+                Subject: "orders.created-value",
+                Schema: "{\"type\":\"record\",\"name\":\"Order\",\"fields\":[" +
+                        "{\"name\":\"id\",\"type\":\"int\"}," +
+                        "{\"name\":\"amount\",\"type\":\"double\"}," +
+                        "{\"name\":\"name\",\"type\":\"string\"}," +
+                        "{\"name\":\"active\",\"type\":\"boolean\"}]}",
+                Record: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["id"] = "42",
+                    ["amount"] = "19.99",
+                    ["name"] = "widget",
+                    ["active"] = "true",
+                }));
 }

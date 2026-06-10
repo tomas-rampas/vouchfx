@@ -392,6 +392,165 @@ public sealed class MqExpectKafkaProviderTests
             StringComparison.Ordinal);
     }
 
+    // ── 12. Bind: avro block → populated Avro spec ─────────────────────────────
+
+    /// <summary>
+    /// A step with an <c>avro</c> mapping binds <c>schemaRegistry</c> (and optional
+    /// <c>subject</c>/<c>schema</c>) into <see cref="MqExpectKafkaModel.Avro"/>.
+    /// </summary>
+    [Fact]
+    public void Bind_AvroBlock_PopulatesAvroSpec()
+    {
+        var yaml = new YamlMappingNode
+        {
+            { "target", new YamlScalarNode("events-bus") },
+            { "topic",  new YamlScalarNode("orders.created") },
+            {
+                "match", new YamlMappingNode
+                {
+                    { "payloadContains", new YamlScalarNode("widget") },
+                }
+            },
+            {
+                "avro", new YamlMappingNode
+                {
+                    { "schemaRegistry", new YamlScalarNode("events-bus") },
+                    { "subject",        new YamlScalarNode("orders.created-value") },
+                }
+            },
+        };
+
+        var model = _provider.Bind(yaml, s_bindCtx);
+
+        Assert.NotNull(model.Avro);
+        Assert.Equal("events-bus", model.Avro!.SchemaRegistryTarget);
+        Assert.Equal("orders.created-value", model.Avro.Subject);
+        Assert.Null(model.Avro.Schema);  // schema omitted → null (optional for expect).
+    }
+
+    /// <summary>
+    /// A step with no <c>avro</c> mapping binds <see cref="MqExpectKafkaModel.Avro"/>
+    /// as <see langword="null"/> (the PLAIN-payload path).
+    /// </summary>
+    [Fact]
+    public void Bind_NoAvroBlock_AvroIsNull()
+    {
+        var yaml = new YamlMappingNode
+        {
+            { "target", new YamlScalarNode("events-bus") },
+            { "topic",  new YamlScalarNode("t") },
+            {
+                "match", new YamlMappingNode
+                {
+                    { "payloadContains", new YamlScalarNode("x") },
+                }
+            },
+        };
+
+        var model = _provider.Bind(yaml, s_bindCtx);
+
+        Assert.Null(model.Avro);
+    }
+
+    // ── 13. Validate: avro path ────────────────────────────────────────────────
+
+    /// <summary>
+    /// A valid avro expect step (schemaRegistry is a kafka dep; ≥1 match criterion)
+    /// passes validation.  subject/schema are optional for the expect side.
+    /// </summary>
+    [Fact]
+    public void Validate_ValidAvro_IsValid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["events-bus"] = "kafka",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new MqExpectKafkaModel(
+            Target: "events-bus", Topic: "orders.created",
+            Match: new KafkaMatch(Key: null, Headers: null, PayloadContains: "widget", Json: null),
+            Avro: new KafkaAvro(SchemaRegistryTarget: "events-bus", Subject: null, Schema: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <summary>
+    /// An avro expect step whose <c>avro.schemaRegistry</c> is not a declared kafka
+    /// dependency fails validation.
+    /// </summary>
+    [Fact]
+    public void Validate_AvroSchemaRegistryNotKafkaDep_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["events-bus"] = "kafka",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new MqExpectKafkaModel(
+            Target: "events-bus", Topic: "orders.created",
+            Match: new KafkaMatch(Key: null, Headers: null, PayloadContains: "widget", Json: null),
+            Avro: new KafkaAvro(SchemaRegistryTarget: "no-such-registry", Subject: null, Schema: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("avro.schemaRegistry", StringComparison.Ordinal) &&
+            e.Contains("no-such-registry", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// An avro expect step whose <c>avro.schemaRegistry</c> names a postgres (not kafka)
+    /// dependency fails validation.
+    /// </summary>
+    [Fact]
+    public void Validate_AvroSchemaRegistryWrongType_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["events-bus"] = "kafka",
+            ["orders-db"] = "postgres",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new MqExpectKafkaModel(
+            Target: "events-bus", Topic: "orders.created",
+            Match: new KafkaMatch(Key: null, Headers: null, PayloadContains: "widget", Json: null),
+            Avro: new KafkaAvro(SchemaRegistryTarget: "orders-db", Subject: null, Schema: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("avro.schemaRegistry", StringComparison.Ordinal) &&
+            e.Contains("kafka dependency", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The plain-path validation is unchanged by the additive avro field: a valid plain
+    /// model (no avro) still passes.
+    /// </summary>
+    [Fact]
+    public void Validate_PlainPath_StillValid_WithAvroFieldAdded()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["events-bus"] = "kafka",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = MakeModel("events-bus", "orders.created",
+            new KafkaMatch(Key: null, Headers: null, PayloadContains: "widget", Json: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private static MqExpectKafkaModel MakeModel(

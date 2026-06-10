@@ -148,6 +148,26 @@ public sealed class MqExpectKafkaProvider
                 }
               },
               "additionalProperties": true
+            },
+            "avro": {
+              "description": "Optional Avro / schema-registry decoding.  When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON.",
+              "type": "object",
+              "required": ["schemaRegistry"],
+              "properties": {
+                "schemaRegistry": {
+                  "description": "Logical name of the kafka dependency whose schema registry to decode through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
+                  "type": "string"
+                },
+                "subject": {
+                  "description": "Optional schema-registry subject (informational; the writer schema is fetched by the message's embedded schema id).",
+                  "type": "string"
+                },
+                "schema": {
+                  "description": "Optional inline reader schema (avsc JSON); informational for the expect side.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
             }
           },
           "additionalProperties": true
@@ -162,18 +182,57 @@ public sealed class MqExpectKafkaProvider
             return new MqExpectKafkaModel(
                 Target: string.Empty,
                 Topic: string.Empty,
-                Match: new KafkaMatch(Key: null, Headers: null, PayloadContains: null, Json: null));
+                Match: new KafkaMatch(Key: null, Headers: null, PayloadContains: null, Json: null),
+                Avro: null);
         }
 
         var target = GetScalar(mapping, "target");
         var topic = GetScalar(mapping, "topic");
 
         var match = BindMatch(mapping);
+        var avro = BindAvro(mapping);
 
         return new MqExpectKafkaModel(
             Target: target,
             Topic: topic,
-            Match: match);
+            Match: match,
+            Avro: avro);
+    }
+
+    /// <summary>
+    /// Binds the optional nested <c>avro</c> mapping into a <see cref="KafkaAvro"/>.
+    /// Returns <see langword="null"/> when the <c>avro</c> field is absent or not a
+    /// mapping (selecting the PLAIN-payload path).  For the expect side <c>subject</c>
+    /// and <c>schema</c> are optional and bound as <see langword="null"/> when absent.
+    /// </summary>
+    private static KafkaAvro? BindAvro(YamlMappingNode mapping)
+    {
+        if (!mapping.Children.TryGetValue(new YamlScalarNode("avro"), out var avroNode)
+            || avroNode is not YamlMappingNode avroMap)
+        {
+            return null;
+        }
+
+        var schemaRegistry = GetScalar(avroMap, "schemaRegistry");
+
+        string? subject = null;
+        if (avroMap.Children.TryGetValue(new YamlScalarNode("subject"), out var subjectNode)
+            && subjectNode is YamlScalarNode subjectScalar)
+        {
+            subject = subjectScalar.Value ?? string.Empty;
+        }
+
+        string? schema = null;
+        if (avroMap.Children.TryGetValue(new YamlScalarNode("schema"), out var schemaNode)
+            && schemaNode is YamlScalarNode schemaScalar)
+        {
+            schema = schemaScalar.Value ?? string.Empty;
+        }
+
+        return new KafkaAvro(
+            SchemaRegistryTarget: schemaRegistry,
+            Subject: subject,
+            Schema: schema);
     }
 
     /// <summary>
@@ -277,6 +336,29 @@ public sealed class MqExpectKafkaProvider
             }
         }
 
+        // (e) avro block (when present): schemaRegistry must name a declared kafka
+        //     dependency (same reconciliation as 'target').  subject/schema are optional
+        //     for the expect side — the writer schema is fetched by the embedded id.
+        if (model.Avro is { } avro)
+        {
+            if (string.IsNullOrWhiteSpace(avro.SchemaRegistryTarget))
+            {
+                errors.Add("mq-expect.kafka: 'avro.schemaRegistry' must not be empty.");
+            }
+            else if (!ctx.DeclaredDependencies.TryGetValue(avro.SchemaRegistryTarget, out var srType))
+            {
+                errors.Add(
+                    $"mq-expect.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is not a " +
+                    "kafka dependency declared in environment.dependencies.");
+            }
+            else if (!string.Equals(srType, "kafka", StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add(
+                    $"mq-expect.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is declared as a " +
+                    $"'{srType}' dependency, not the required kafka dependency.");
+            }
+        }
+
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
@@ -372,8 +454,20 @@ public sealed class MqExpectKafkaProvider
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        string[] jsonPaths,\n" +
-        "        string[] jsonValueTemplates)\n" +
+        "        string[] jsonValueTemplates,\n" +
+        "        bool avro,\n" +
+        "        string? avroRegistrySvcKey)\n" +
         "    {\n" +
+        "        // AVRO path is selected when 'avro' is true.  Otherwise the PLAIN string\n" +
+        "        // consumer path runs, byte-identical to the committed slice.\n" +
+        "        if (avro)\n" +
+        "        {\n" +
+        "            await ExpectAvroAsync(vars, secrets, outcomeKey, connKey, topic,\n" +
+        "                expectKeyTemplate, payloadContainsTemplate, headerNames,\n" +
+        "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey)\n" +
+        "                .ConfigureAwait(false);\n" +
+        "            return;\n" +
+        "        }\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Read the bootstrap-servers string staged by the orchestrator\n" +
         "        // (VarKeys.Connection pattern).  A null or empty string means the\n" +
@@ -504,11 +598,9 @@ public sealed class MqExpectKafkaProvider
         "    }\n" +
         "\n" +
         "    /// <summary>\n" +
-        "    /// Evaluates one consumed message against the (already-resolved) criteria.\n" +
-        "    /// All criteria are conjunctive (logical AND); an absent criterion imposes\n" +
-        "    /// no constraint.  A non-JSON payload or a path that selects nothing fails the\n" +
-        "    /// JSON criteria WITHOUT raising — JSON parse / JSONPath failures are guarded\n" +
-        "    /// so a malformed payload simply yields no match.\n" +
+        "    /// PLAIN-path adapter: extracts the payload / key / headers from a string-valued\n" +
+        "    /// ConsumeResult and delegates to the shared MatchesDecoded core.  Unchanged\n" +
+        "    /// behaviour from the committed slice.\n" +
         "    /// </summary>\n" +
         "    private static bool MatchesMessage(\n" +
         "        Confluent.Kafka.ConsumeResult<string, string> cr,\n" +
@@ -519,10 +611,33 @@ public sealed class MqExpectKafkaProvider
         "        string[] jsonPaths,\n" +
         "        string[] jsonValues)\n" +
         "    {\n" +
-        "        var message = cr.Message;\n" +
-        "        var payload = message.Value ?? string.Empty;\n" +
+        "        return MatchesDecoded(cr.Message.Value ?? string.Empty, cr.Message.Key,\n" +
+        "            cr.Message.Headers, expectKey, payloadContains, headerNames, headerValues,\n" +
+        "            jsonPaths, jsonValues);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Evaluates one decoded message against the (already-resolved) criteria.\n" +
+        "    /// All criteria are conjunctive (logical AND); an absent criterion imposes\n" +
+        "    /// no constraint.  A non-JSON payload or a path that selects nothing fails the\n" +
+        "    /// JSON criteria WITHOUT raising — JSON parse / JSONPath failures are guarded\n" +
+        "    /// so a malformed payload simply yields no match.  Shared by the PLAIN string\n" +
+        "    /// path (payload = message value) and the AVRO path (payload = GenericRecord\n" +
+        "    /// converted to JSON); key and headers come from the ConsumeResult either way.\n" +
+        "    /// </summary>\n" +
+        "    private static bool MatchesDecoded(\n" +
+        "        string payload,\n" +
+        "        string? messageKey,\n" +
+        "        Confluent.Kafka.Headers? messageHeaders,\n" +
+        "        string? expectKey,\n" +
+        "        string? payloadContains,\n" +
+        "        string[] headerNames,\n" +
+        "        string[] headerValues,\n" +
+        "        string[] jsonPaths,\n" +
+        "        string[] jsonValues)\n" +
+        "    {\n" +
         "        // (1) key equality (ordinal) when an expected key is set.\n" +
-        "        if (expectKey is not null && !string.Equals(message.Key ?? string.Empty, expectKey, System.StringComparison.Ordinal))\n" +
+        "        if (expectKey is not null && !string.Equals(messageKey ?? string.Empty, expectKey, System.StringComparison.Ordinal))\n" +
         "            return false;\n" +
         "        // (2) payload substring (ordinal) when set.\n" +
         "        if (payloadContains is not null && !payload.Contains(payloadContains, System.StringComparison.Ordinal))\n" +
@@ -533,10 +648,10 @@ public sealed class MqExpectKafkaProvider
         "            var headerName = headerNames[hi];\n" +
         "            var expectedValue = headerValues[hi];\n" +
         "            string? actualValue = null;\n" +
-        "            if (message.Headers is not null)\n" +
+        "            if (messageHeaders is not null)\n" +
         "            {\n" +
         "                // TryGetLastBytes returns the latest value when a header is repeated.\n" +
-        "                if (message.Headers.TryGetLastBytes(headerName, out var bytes) && bytes is not null)\n" +
+        "                if (messageHeaders.TryGetLastBytes(headerName, out var bytes) && bytes is not null)\n" +
         "                    actualValue = System.Text.Encoding.UTF8.GetString(bytes);\n" +
         "            }\n" +
         "            if (actualValue is null || !string.Equals(actualValue, expectedValue, System.StringComparison.Ordinal))\n" +
@@ -594,6 +709,204 @@ public sealed class MqExpectKafkaProvider
         "            }\n" +
         "        }\n" +
         "        return true;\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// AVRO expect path: performs ONE idempotent poll over the topic using an Avro\n" +
+        "    /// GenericRecord deserializer (writer schema fetched from the registry by the\n" +
+        "    /// message's embedded schema id), converts each decoded record to a JSON string,\n" +
+        "    /// and runs the EXISTING match criteria (key/headers/payloadContains/json) against\n" +
+        "    /// that JSON.  matched = Pass; no match this attempt = Fail (RetryRunner keeps\n" +
+        "    /// polling); broker/registry/deserialize failure = EnvironmentError.  Never Inconclusive.\n" +
+        "    /// </summary>\n" +
+        "    /// <remarks>\n" +
+        "    /// LEAK GATE (§5): the consumer (native librdkafka handle) is Close()ed + Dispose()d\n" +
+        "    /// AND the registry client Dispose()d in the finally.  using-var is illegal in CSX.\n" +
+        "    /// Expected values are resolved BEFORE the consumer/registry are built, so a missing\n" +
+        "    /// secret OR a missing registry URL is reachable with no broker contacted.\n" +
+        "    /// </remarks>\n" +
+        "    private static async System.Threading.Tasks.Task ExpectAvroAsync(\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        Platform.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        string outcomeKey,\n" +
+        "        string connKey,\n" +
+        "        string topic,\n" +
+        "        string? expectKeyTemplate,\n" +
+        "        string? payloadContainsTemplate,\n" +
+        "        string[] headerNames,\n" +
+        "        string[] headerValueTemplates,\n" +
+        "        string[] jsonPaths,\n" +
+        "        string[] jsonValueTemplates,\n" +
+        "        string? avroRegistrySvcKey)\n" +
+        "    {\n" +
+        "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        if (string.IsNullOrEmpty(bootstrap))\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
+        "        // Schema-registry URL staged under svc::<sr>-sr; checked BEFORE any client build\n" +
+        "        // so the missing-URL path needs no live registry or broker.\n" +
+        "        var registryUrl = (avroRegistrySvcKey is not null\n" +
+        "                && vars.TryGetValue(avroRegistrySvcKey, out var rv) && rv is string rs) ? rs : null;\n" +
+        "        if (string.IsNullOrEmpty(registryUrl))\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"schema registry URL not found for key '\" + (avroRegistrySvcKey ?? string.Empty) + \"'\") + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
+        "        Platform.Engine.Abstractions.Verdict verdict;\n" +
+        "        string observation;\n" +
+        "        Confluent.SchemaRegistry.CachedSchemaRegistryClient? registry = null;\n" +
+        "        Confluent.Kafka.IConsumer<string, Avro.Generic.GenericRecord>? consumer = null;\n" +
+        "        try\n" +
+        "        {\n" +
+        "            // Resolve every expected value BEFORE building the consumer/registry (§17).\n" +
+        "            var expectKey = expectKeyTemplate is null\n" +
+        "                ? null\n" +
+        "                : Secret_Helpers.ResolveTemplate(secrets, vars, expectKeyTemplate);\n" +
+        "            var payloadContains = payloadContainsTemplate is null\n" +
+        "                ? null\n" +
+        "                : Secret_Helpers.ResolveTemplate(secrets, vars, payloadContainsTemplate);\n" +
+        "            var headerValues = new string[headerValueTemplates.Length];\n" +
+        "            for (int hi = 0; hi < headerValueTemplates.Length; hi++)\n" +
+        "                headerValues[hi] = Secret_Helpers.ResolveTemplate(secrets, vars, headerValueTemplates[hi]);\n" +
+        "            var jsonValues = new string[jsonValueTemplates.Length];\n" +
+        "            for (int ji = 0; ji < jsonValueTemplates.Length; ji++)\n" +
+        "                jsonValues[ji] = Secret_Helpers.ResolveTemplate(secrets, vars, jsonValueTemplates[ji]);\n" +
+        "            registry = new Confluent.SchemaRegistry.CachedSchemaRegistryClient(\n" +
+        "                new Confluent.SchemaRegistry.SchemaRegistryConfig { Url = registryUrl });\n" +
+        "            // AvroDeserializer<T> has a single-arg ctor; AsSyncOverAsync() adapts the\n" +
+        "            // async deserializer to the IDeserializer<T> ConsumerBuilder expects.\n" +
+        "            var deserializer = new Confluent.SchemaRegistry.Serdes.AvroDeserializer<Avro.Generic.GenericRecord>(registry);\n" +
+        "            var config = new Confluent.Kafka.ConsumerConfig\n" +
+        "            {\n" +
+        "                BootstrapServers = bootstrap,\n" +
+        "                GroupId = \"vouchfx-expect-\" + System.Guid.NewGuid().ToString(\"n\"),\n" +
+        "                AutoOffsetReset = Confluent.Kafka.AutoOffsetReset.Earliest,\n" +
+        "                EnableAutoCommit = false,\n" +
+        "                EnablePartitionEof = true,\n" +
+        "            };\n" +
+        "            consumer = new Confluent.Kafka.ConsumerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
+        "                .SetValueDeserializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncDeserializerExtensionMethods.AsSyncOverAsync(deserializer))\n" +
+        "                .Build();\n" +
+        "            consumer.Subscribe(topic);\n" +
+        "            int scanned = 0;\n" +
+        "            bool matched = false;\n" +
+        "            var deadline = System.DateTime.UtcNow.AddSeconds(1);\n" +
+        "            while (System.DateTime.UtcNow < deadline && !matched)\n" +
+        "            {\n" +
+        "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(200));\n" +
+        "                if (cr is null)\n" +
+        "                    continue;\n" +
+        "                if (cr.IsPartitionEOF)\n" +
+        "                    break;\n" +
+        "                scanned++;\n" +
+        "                var json = RecordToJson(cr.Message.Value);\n" +
+        "                if (MatchesDecoded(json, cr.Message.Key, cr.Message.Headers, expectKey,\n" +
+        "                        payloadContains, headerNames, headerValues, jsonPaths, jsonValues))\n" +
+        "                    matched = true;\n" +
+        "            }\n" +
+        "            if (matched)\n" +
+        "            {\n" +
+        "                verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
+        "                observation = \"{\\\"matched\\\":true,\\\"scanned\\\":\" +\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "            }\n" +
+        "            else\n" +
+        "            {\n" +
+        "                verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                observation = \"{\\\"matched\\\":false,\\\"scanned\\\":\" +\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "            }\n" +
+        "        }\n" +
+        "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
+        "        {\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
+        "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
+        "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.Exception ex)\n" +
+        "        {\n" +
+        "            // Broker / registry / deserialize / any other failure = EnvironmentError (§12.1).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"error\\\":\" +\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "        }\n" +
+        "        finally\n" +
+        "        {\n" +
+        "            if (consumer is not null)\n" +
+        "            {\n" +
+        "                try { consumer.Close(); } catch { }\n" +
+        "                consumer.Dispose();\n" +
+        "            }\n" +
+        "            if (registry is not null)\n" +
+        "                registry.Dispose();\n" +
+        "            sw.Stop();\n" +
+        "        }\n" +
+        "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
+        "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Converts a decoded Avro GenericRecord to a JSON string by iterating its schema\n" +
+        "    /// fields into a JsonObject (primitives only for MVP: string/int/long/float/double/\n" +
+        "    /// boolean/null).  Non-primitive field values are stringified via ToString().\n" +
+        "    /// A null record yields the empty JSON object.\n" +
+        "    /// </summary>\n" +
+        "    private static string RecordToJson(Avro.Generic.GenericRecord record)\n" +
+        "    {\n" +
+        "        var obj = new System.Text.Json.Nodes.JsonObject();\n" +
+        "        if (record is null)\n" +
+        "            return obj.ToJsonString();\n" +
+        "        var fields = record.Schema.Fields;\n" +
+        "        for (int i = 0; i < fields.Count; i++)\n" +
+        "        {\n" +
+        "            var name = fields[i].Name;\n" +
+        "            object? val;\n" +
+        "            if (!record.TryGetValue(name, out val))\n" +
+        "                val = null;\n" +
+        "            obj[name] = ToJsonNode(val);\n" +
+        "        }\n" +
+        "        return obj.ToJsonString();\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Maps a decoded Avro primitive value to a JsonNode.  Numbers and booleans are\n" +
+        "    /// emitted as JSON primitives so JSONPath value comparisons match the raw form;\n" +
+        "    /// anything else is stringified.\n" +
+        "    /// </summary>\n" +
+        "    private static System.Text.Json.Nodes.JsonNode? ToJsonNode(object? val)\n" +
+        "    {\n" +
+        "        switch (val)\n" +
+        "        {\n" +
+        "            case null:\n" +
+        "                return null;\n" +
+        "            case string sv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(sv);\n" +
+        "            case bool bv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(bv);\n" +
+        "            case int iv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(iv);\n" +
+        "            case long lv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(lv);\n" +
+        "            case float fv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(fv);\n" +
+        "            case double dv:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(dv);\n" +
+        "            default:\n" +
+        "                return System.Text.Json.Nodes.JsonValue.Create(\n" +
+        "                    System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);\n" +
+        "        }\n" +
         "    }\n" +
         "}",
     };
@@ -695,6 +1008,14 @@ public sealed class MqExpectKafkaProvider
             ? "null"
             : JsonSerializer.Serialize(match.PayloadContains);
 
+        // Avro args: 'false' + bare 'null' literals when no avro block is declared
+        // (selecting the PLAIN path), or 'true' + the resolved svc-key literal when present.
+        // The registry URL is staged under svc::<sr>-sr; read via VarKeys.Service at runtime.
+        var avroFlagLiteral = model.Avro is null ? "false" : "true";
+        var avroRegistrySvcKeyLiteral = model.Avro is { } avro
+            ? JsonSerializer.Serialize(VarKeys.Service(avro.SchemaRegistryTarget + "-sr"))
+            : "null";
+
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
@@ -713,7 +1034,9 @@ public sealed class MqExpectKafkaProvider
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     {{jsonPathsLiteral}},
-                    {{jsonValueTemplatesLiteral}});
+                    {{jsonValueTemplatesLiteral}},
+                    {{avroFlagLiteral}},
+                    {{avroRegistrySvcKeyLiteral}});
             }
             """;
 
@@ -755,10 +1078,12 @@ public sealed class MqExpectKafkaProvider
     /// <remarks>
     /// Returns the <c>Confluent.Kafka</c> assembly (so the Roslyn compiler can resolve
     /// <c>ConsumerConfig</c>, <c>ConsumerBuilder&lt;,&gt;</c>, <c>ConsumeResult&lt;,&gt;</c>,
-    /// and related types) and the <c>JsonPath.Net</c> assembly (so it can resolve
-    /// <c>Json.Path.JsonPath</c> used by the JSON match criteria).  Both assemblies are
-    /// already loaded in the Default ALC (the provider project references them directly)
-    /// and must never be loaded into the collectible ALC (§5 memory-model invariant).
+    /// and related types), the <c>JsonPath.Net</c> assembly (<c>Json.Path.JsonPath</c>),
+    /// and the <c>Confluent.SchemaRegistry</c>, <c>Confluent.SchemaRegistry.Serdes.Avro</c>,
+    /// and <c>Apache.Avro</c> assemblies so the emitted CSX <em>always</em> compiles whether
+    /// or not the Avro branch is taken (the helper references all of them unconditionally).
+    /// Every assembly is already loaded in the Default ALC (the provider project references
+    /// them directly) and must never be loaded into the collectible ALC (§5 memory-model).
     /// </remarks>
     public IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies
     {
@@ -767,6 +1092,12 @@ public sealed class MqExpectKafkaProvider
             yield return typeof(Confluent.Kafka.ConsumerConfig).Assembly;
             // JsonPath.Net: Json.Path.JsonPath is in the Json.Path namespace.
             yield return typeof(Json.Path.JsonPath).Assembly;
+            // Confluent.SchemaRegistry — CachedSchemaRegistryClient / SchemaRegistryConfig.
+            yield return typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly;
+            // Confluent.SchemaRegistry.Serdes.Avro — AvroDeserializer<T>.
+            yield return typeof(Confluent.SchemaRegistry.Serdes.AvroDeserializer<Avro.Generic.GenericRecord>).Assembly;
+            // Apache.Avro — Avro.Generic.GenericRecord.
+            yield return typeof(Avro.Schema).Assembly;
         }
     }
 
