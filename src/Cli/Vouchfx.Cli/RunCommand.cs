@@ -25,6 +25,7 @@ using Platform.Engine.Abstractions;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Runtime;
 using Platform.Sdk;
+using Vouchfx.Cli.Selection;
 
 namespace Vouchfx.Cli;
 
@@ -51,18 +52,87 @@ internal static class RunCommand
         var pathArgument = BuildPathArgument();
         command.Add(pathArgument);
 
+        // Selection options (S07-C-02): tag / owner / path / change-set. These bind into a
+        // SelectionCriteria that filters the discovered scenarios BEFORE the runner sees
+        // them — `metadata` (tag/owner) drives selection only, never execution (BP §16).
+        var tagOption = BuildTagOption();
+        var ownerOption = BuildOwnerOption();
+        var pathOption = BuildPathOption();
+        var changedSinceOption = BuildChangedSinceOption();
+        command.Add(tagOption);
+        command.Add(ownerOption);
+        command.Add(pathOption);
+        command.Add(changedSinceOption);
+
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
         command.SetAction((parseResult, cancellationToken) =>
         {
             var path = parseResult.GetValue(pathArgument) ?? ".";
-            return ExecuteAsync(path, Console.Out, cancellationToken);
+            var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
+            return ExecuteAsync(path, criteria, Console.Out, cancellationToken);
         });
 
-        // TODO(S08+): add selection options here (--tag / --owner / --changed / …); they
-        // bind from parseResult and filter the discovered scenarios before RunSuiteAsync.
         return command;
     }
+
+    /// <summary>The repeatable <c>--tag</c> option: keep scenarios carrying any listed tag.</summary>
+    internal static Option<string[]> BuildTagOption() => new("--tag")
+    {
+        Description =
+            "Select scenarios whose metadata.tags contains this tag. Repeatable; a scenario "
+            + "matches if it has ANY of the supplied tags (OR).",
+        AllowMultipleArgumentsPerToken = true,
+    };
+
+    /// <summary>The repeatable <c>--owner</c> option: keep scenarios with any listed owner.</summary>
+    internal static Option<string[]> BuildOwnerOption() => new("--owner")
+    {
+        Description =
+            "Select scenarios whose metadata.owner is this value. Repeatable; a scenario "
+            + "matches if its owner is ANY of the supplied owners (OR).",
+        AllowMultipleArgumentsPerToken = true,
+    };
+
+    /// <summary>The <c>--path</c> option: a glob (or substring) over the scenario's path.</summary>
+    internal static Option<string?> BuildPathOption() => new("--path")
+    {
+        Description =
+            "Select scenarios whose (normalised) absolute path matches this glob. Supports "
+            + "*, ** and ?; a pattern with no wildcard is matched as a substring.",
+    };
+
+    /// <summary>The <c>--changed-since</c> option: a git ref bounding the change-set.</summary>
+    internal static Option<string?> BuildChangedSinceOption() => new("--changed-since")
+    {
+        Description =
+            "Select only scenarios whose file changed since this git ref (committed diff vs "
+            + "the ref plus the dirty working tree). Requires a git repository.",
+    };
+
+    /// <summary>
+    /// Folds the four selection options out of a <see cref="ParseResult"/> into the
+    /// immutable <see cref="SelectionCriteria"/> the selector consumes.
+    /// </summary>
+    /// <remarks>Exposed as <see langword="internal"/> for the arg-parsing test.</remarks>
+    internal static SelectionCriteria BuildCriteria(
+        ParseResult parseResult,
+        Option<string[]> tagOption,
+        Option<string[]> ownerOption,
+        Option<string?> pathOption,
+        Option<string?> changedSinceOption)
+    {
+        var tags = parseResult.GetValue(tagOption) ?? Array.Empty<string>();
+        var owners = parseResult.GetValue(ownerOption) ?? Array.Empty<string>();
+        var pathGlob = Normalise(parseResult.GetValue(pathOption));
+        var changedSince = Normalise(parseResult.GetValue(changedSinceOption));
+
+        return new SelectionCriteria(tags, owners, pathGlob, changedSince);
+    }
+
+    /// <summary>Treats an empty/whitespace option value as "not supplied".</summary>
+    private static string? Normalise(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 
     /// <summary>
     /// Builds the optional positional <c>&lt;path&gt;</c> argument that defaults to the
@@ -99,6 +169,7 @@ internal static class RunCommand
     /// </remarks>
     internal static async Task<int> ExecuteAsync(
         string path,
+        SelectionCriteria criteria,
         TextWriter output,
         CancellationToken cancellationToken)
     {
@@ -123,6 +194,32 @@ internal static class RunCommand
             // Nothing ran; nothing failed. Success per §12.1 (only Fail breaks CI).
             return ExitCodes.Success;
         }
+
+        // Apply the test-selection language BEFORE the runner: narrow the discovered
+        // scenarios by tag/owner/path/change-set (BP §16). A bad --changed-since (no repo,
+        // git missing, bad ref) is a usage error (exit 2), not a crash.
+        IReadOnlyList<DiscoveredScenario> selected;
+        try
+        {
+            selected = SelectScenarios(discovered, criteria, path);
+        }
+        catch (ChangeSetException ex)
+        {
+            await output.WriteLineAsync(ex.Message).ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        if (selected.Count == 0)
+        {
+            await output.WriteLineAsync(
+                $"No scenarios matched the selection criteria (of {discovered.Count} discovered "
+                + $"under '{path}').")
+                .ConfigureAwait(false);
+            // Nothing selected is not a failure — there was simply nothing to run.
+            return ExitCodes.Success;
+        }
+
+        discovered = selected;
 
         // Split into runnable scenarios and parse-failures.
         var parsed = new List<DiscoveredScenario>(discovered.Count);
@@ -176,6 +273,56 @@ internal static class RunCommand
         // reflects the whole discovery, not just the scenarios that compiled.
         var aggregate = AggregateVerdict(suiteVerdict, failures.Count);
         return ExitCodes.FromVerdict(aggregate);
+    }
+
+    /// <summary>
+    /// Applies the <see cref="SelectionCriteria"/> to the discovered scenarios, constructing
+    /// a git-backed <see cref="GitChangeSet"/> only when a <c>--changed-since</c> ref is set
+    /// (otherwise the change-set dimension is inert via <see cref="NullChangeSet"/>).
+    /// </summary>
+    /// <param name="discovered">The discovered scenarios (parsed and parse-failures).</param>
+    /// <param name="criteria">The selection criteria parsed from the CLI options.</param>
+    /// <param name="discoveryRoot">
+    /// The discovery root, used as git's working directory so <c>--changed-since</c> resolves
+    /// against the repository the scenarios live in.
+    /// </param>
+    /// <returns>The selected subset, in discovery order.</returns>
+    /// <exception cref="ChangeSetException">
+    /// Thrown when <c>--changed-since</c> is set but the change-set cannot be computed.
+    /// </exception>
+    /// <remarks>
+    /// Exposed as <see langword="internal"/> so the no-docker test can assert that an empty
+    /// criteria selects everything and that the change-set is only built on demand.
+    /// </remarks>
+    internal static IReadOnlyList<DiscoveredScenario> SelectScenarios(
+        IReadOnlyList<DiscoveredScenario> discovered,
+        SelectionCriteria criteria,
+        string discoveryRoot)
+    {
+        IChangeSet changeSet = NullChangeSet.Instance;
+        if (criteria.ChangedSinceRef is { } changedSinceRef)
+        {
+            var workingDirectory = ResolveWorkingDirectory(discoveryRoot);
+            changeSet = new GitChangeSet(changedSinceRef, workingDirectory, SystemProcessRunner.Instance);
+        }
+
+        return ScenarioSelector.Apply(discovered, criteria, changeSet);
+    }
+
+    /// <summary>
+    /// Resolves the directory git should run in: the discovery root if it is itself a
+    /// directory, else its containing directory, falling back to the current directory.
+    /// </summary>
+    private static string ResolveWorkingDirectory(string discoveryRoot)
+    {
+        var full = Path.GetFullPath(discoveryRoot);
+        if (Directory.Exists(full))
+        {
+            return full;
+        }
+
+        var parent = Path.GetDirectoryName(full);
+        return string.IsNullOrEmpty(parent) ? Directory.GetCurrentDirectory() : parent;
     }
 
     /// <summary>
