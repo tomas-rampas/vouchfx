@@ -1,6 +1,6 @@
 // Regression test for the container-teardown leak defect (fix/aspire-teardown-leak).
 //
-// Root cause (§4.4 container lifetime / teardown discipline): vouchfx teardown called only
+// Root cause (§4.5 teardown discipline): vouchfx teardown called only
 // DistributedApplication.DisposeAsync(), which in Aspire 13.4.2 does NOT call StopAsync and
 // does NOT wait for DCP to delete containers (DcpPublisher:WaitForResourceCleanup defaults to
 // false → DCP's stop fires a "Stopping" PATCH and returns immediately). The process then exits

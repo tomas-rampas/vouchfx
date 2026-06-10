@@ -88,7 +88,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         var builder = DistributedApplication.CreateBuilder(options);
 
         // Make DCP's stop synchronous so it deletes containers/networks before the host exits
-        // (§4.4 teardown discipline). The default is false: DCP fires a "Stopping" PATCH and
+        // (§4.5 teardown discipline). The default is false: DCP fires a "Stopping" PATCH and
         // returns immediately, so the detached DCP apiserver finishes deletion AFTER the process
         // exits → orphaned containers + the aspire-session-network-* network. Setting this to true
         // mirrors Aspire 13.4.2's own Aspire.Hosting.Testing.DistributedApplicationFactory, which
@@ -134,7 +134,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // both delegate their DisposeAsync to this HeadlessTopology, so the fix below covers every
         // production teardown path. Stop the application (graceful, bounded) BEFORE disposing so
         // DCP — with WaitForResourceCleanup=true set in StartAsync — synchronously deletes the
-        // containers and the session network instead of racing process exit (§4.4 teardown
+        // containers and the session network instead of racing process exit (§4.5 teardown
         // discipline). This mirrors Aspire's own DistributedApplicationFactory, which calls
         // StopAsync before DisposeAsync; DisposeAsync alone does NOT call StopAsync in Aspire 13.4.2.
         // The 15s bound sits above DCP's own internal ~10s dispose/cleanup timeout, so under normal
