@@ -8,6 +8,46 @@
 | **Milestone** | Contributes to **M3** (closes Sprint 8) |
 | **Theme** | Add the asynchronous channel — Kafka publish and expect — and the RETRY verification mode that makes asynchronous propagation a first-class, engine-owned concern (authors never write `Thread.Sleep`). Begin the non-code Phase 3 obligations: pilot recruitment and naming. |
 
+## Delivery status
+
+**Delivered on branch `claude/sprint-06`** — all **8 code tasks delivered**
+(S06-B-01/02, S06-F-01/02/03, S06-G-01, plus capstone). Build is 0-warning under
+`TreatWarningsAsErrors`, `dotnet format` is clean, the full non-docker suite is green (**550+ tests**
+across the project), the memory-leak gate is green with the new Kafka/Avro/Polly closure exercised
+(5000-iteration harness, thresholds met, collectible contexts reclaimed), and the Docker capstone
+(live Avro publish → RETRY mq-expect Poll) is green in CI/locally (discovered and compiled). The
+**sprint exit criterion is met**: a suite publishes an Avro message to Kafka via `mq-publish.kafka`,
+a RETRY `mq-expect.kafka` step polls until it observes the matching message — rendering Pass — while
+a never-satisfied variant renders Inconclusive and does not break CI. Pilot recruitment opened
+(S06-E-01) and product-naming decision process started (S06-E-02) on schedule.
+
+Key proofs:
+
+1. **RETRY runner (B-01):** `RetryRunner` — stateless, provider-agnostic `ResiliencePipeline` (Polly v8)
+   in `Platform.Engine.Abstractions`; `CsxAssembler` wraps RETRY steps' provider blocks in the polling
+   loop; a never-satisfied condition resolves to **Inconclusive** (timeout), never Fail.
+2. **Per-attempt events (B-02):** one `step-attempt` event per poll with attempt index + timing; via
+   `AttemptRecord` written to `Vars[__attempts::id]` and emitted by `ScenarioRunner`.
+3. **Inconclusive wiring (G-01):** RETRY timeout renders Inconclusive in terminal + event stream;
+   does not break CI; flows through existing verdict precedence.
+4. **Kafka provider pair (F-01/02/03):** `Platform.Steps.MqPublish.Kafka` (publishes with per-step
+   producer disposal) and `Platform.Steps.MqExpect.Kafka` (idempotent single-poll consumer, fresh group,
+   earliest offset, bounded drain); both include Avro paths (Confluent.SchemaRegistry.Serdes.Avro
+   2.14.2 + Apache.Avro 1.12.1); AvroSerializer auto-registers the subject.
+5. **Schema Registry integration (F-02):** `EnvironmentMapper` provisions Confluent Schema Registry
+   when a kafka dependency declares `schemaRegistry: true`; broker-internal bootstrap via typed Aspire
+   `InternalEndpoint` reference.
+6. **Kafka match logic (F-03):** Match by key/headers/payloadContains/JSONPath; Avro decode → JSON →
+   same match logic; Fail-on-no-match (so RETRY keeps polling), Pass-on-match, EnvironmentError on
+   broker/registry failure.
+
+The leak gate now exercises real Confluent producer/consumer handles + Avro serdes + the Polly RETRY
+runner inside the collectible ALC and stays green. **Carry-forwards:** `pollInterval` is documented
+DSL hint but not yet parsed (RETRY backoff derives from `timeout` alone); seed broker-warmup Avro
+pre-load seam is wired but not yet lit up for Avro (separable follow-up); open MEDIUM follow-up:
+catch-all `{"error": ex.Message}` observations on Kafka/Avro paths could echo un-redacted library
+exception text (same class as known script.csharp observation follow-up) — track.
+
 ## Sprint goal
 
 `mq-publish.kafka` and `mq-expect.kafka` (with schema-registry + Avro) work end-to-end, and

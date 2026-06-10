@@ -38,4 +38,21 @@
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
+  <ItemGroup Label="Sprint-6 Kafka serdes (§5.7) — closure probe exercises the real Avro / schema-registry code paths">
+    <!--
+      The Sprint-6 mq-publish.kafka / mq-expect.kafka providers reference these three
+      assemblies (Confluent.SchemaRegistry, its Avro serdes, and Apache.Avro).  The
+      closure probe builds the same CachedSchemaRegistryClient + AvroSerializer/
+      AvroDeserializer + GenericRecord those providers rely on, so the assemblies must
+      be in this harness's output dir for typeof(...).Assembly.Location to resolve at
+      compile time and for the runtime types to load into the Default ALC.  Versions are
+      pinned centrally in Directory.Packages.props (lockstep with Confluent.Kafka 2.14.2).
+      Polly.Core is NOT listed here: it arrives transitively via Platform.Engine.Abstractions
+      (the probe drives RetryRunner, not Polly types directly) and is already in the output.
+    -->
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
+  </ItemGroup>
+
 </Project>

@@ -51,6 +51,7 @@ public static class AstBuilder
         VarKeys.ConnectionsPrefix,
         VarKeys.OutcomePrefix,
         VarKeys.CaptureStatusPrefix,
+        VarKeys.AttemptsPrefix,
     };
 
     /// <summary>

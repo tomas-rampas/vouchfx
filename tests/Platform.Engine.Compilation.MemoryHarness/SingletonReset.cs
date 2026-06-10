@@ -39,7 +39,7 @@ public static class SingletonReset
     /// </returns>
     public static IReadOnlyList<string> ResetAll()
     {
-        var log = new List<string>(4);
+        var log = new List<string>(8);
 
         // ── Npgsql connection pool ────────────────────────────────────────────
         // NpgsqlConnection.ClearAllPools() is synchronous void (verified against
@@ -56,11 +56,18 @@ public static class SingletonReset
         // is disposed.  No additional harness-level reset is required.
         log.Add("HttpClient: disposed per cycle in ClosureProbeScript finally block");
 
-        // ── Confluent.Kafka producer cache ────────────────────────────────────
-        // The closure probe creates only a ProducerConfig (a plain POCO) — no
-        // producer or broker connection is built.  librdkafka's internal handle is
-        // never allocated, so there is no pool to reset.
-        log.Add("Confluent.Kafka: ProducerConfig is a plain POCO; no handle allocated, no reset needed");
+        // ── Confluent.Kafka native producer/consumer handles ──────────────────
+        // Sprint 6: the closure probe now builds REAL native librdkafka handles — a
+        // ProducerBuilder<>.Build() producer and a ConsumerBuilder<>.Build() consumer —
+        // on a bounded cadence (HandleBuildEveryN), and Dispose()s EACH inside the
+        // probe's own finally on every cycle it builds them.  Disposal releases the
+        // native handle (and joins its background threads) per cycle, so no handle
+        // accumulates across iterations and there is nothing for the harness to reset
+        // here.  librdkafka's native library itself loads ONCE into the process (the
+        // Default ALC) and is shared — that is a constant, non-growing, intentional
+        // overhead, NOT a per-cycle pin of the collectible context.  No global
+        // Confluent.Kafka reset API exists or is needed.
+        log.Add("Confluent.Kafka: native producer/consumer handles Built+Disposed per cycle in the probe finally; native lib loads once into the Default ALC (constant overhead), no global reset needed");
 
         // ── MongoDB.Driver cluster registry ───────────────────────────────────
         // The closure probe creates a MongoClientSettings object but never builds a
@@ -72,6 +79,23 @@ public static class SingletonReset
         // ConfigurationOptions.Parse is a pure in-memory parse; no multiplexer or
         // socket is opened.  There is no connection pool to reset.
         log.Add("StackExchange.Redis: ConfigurationOptions.Parse is in-memory; no multiplexer opened, no reset needed");
+
+        // ── Confluent.SchemaRegistry / Apache.Avro ────────────────────────────
+        // Sprint 6: the closure probe constructs a CachedSchemaRegistryClient every
+        // iteration and Dispose()s it inside the probe's own finally.  Its schema cache
+        // is an in-memory, PER-INSTANCE cache released on Dispose() — no process-wide
+        // singleton accumulates.  The Avro serdes (AvroSerializer/AvroDeserializer) and
+        // GenericRecord are ordinary objects collected with the per-cycle graph; their
+        // assembly static initialisers run once into the Default ALC (constant overhead).
+        // No global reset exists or is needed.
+        log.Add("Confluent.SchemaRegistry/Avro: CachedSchemaRegistryClient Disposed per cycle (per-instance schema cache); serdes/GenericRecord are plain per-cycle objects, no global reset needed");
+
+        // ── Polly v8 RetryRunner ──────────────────────────────────────────────
+        // Sprint 6: the closure probe drives Platform.Engine.Abstractions.Retry.RetryRunner,
+        // which is STATELESS — it builds a FRESH ResiliencePipeline per PollAsync call and
+        // holds no mutable static state (§5).  Nothing roots the collectible ALC, so there
+        // is nothing to reset.  This entry is documentation-only.
+        log.Add("Polly/RetryRunner: stateless — a fresh ResiliencePipeline is built per call, no static state, no reset needed");
 
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is

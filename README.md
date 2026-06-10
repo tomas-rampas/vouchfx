@@ -25,12 +25,12 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 > **Milestone M2 (Core compiler) reached.** The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
-> with Aspire and Testcontainers, executes the three Core providers (`http.rest`, `db-assert.postgres`,
-> `script.csharp`) end-to-end with declarative seeding and `${secret:env/…}` resolution, and emits
-> a schema-versioned JSON Lines event stream rendered to the terminal. Still to come: the remaining
-> provider families (Kafka, MongoDB, Redis, webhook, with async and RETRY support) and the VSCode
-> extension/LSP — see the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine
-> targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
+> with Aspire and Testcontainers, executes five Core providers (`http.rest`, `db-assert.postgres`,
+> `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`) end-to-end with declarative seeding,
+> `${secret:env/…}` resolution, and engine-owned RETRY polling (Polly v8), emitting a schema-versioned
+> JSON Lines event stream rendered to the terminal. Still to come: the webhook provider, VSCode
+> extension/LSP, and community tiers — see the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md).
+> The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -50,9 +50,9 @@ The contract that makes a suite run unchanged across local / SaaS / CI: the comp
 Steps are typed `<family>.<provider>` — *family* is intent, *provider* is technology
 (`db-assert.postgres`, `mq-publish.kafka`). Providers are **compile-time, source-level plugins**: add
 a project, implement the contract, and a reflective registry discovers it at startup — no runtime
-loader, no sandbox. The six planned **Core** providers are `http.rest`, `mq-publish.kafka`,
-`mq-expect.kafka`, `db-assert.postgres`, `webhook-listen.http`, and `script.csharp`, governed across
-three tiers (Core / Verified / Community), all Apache-2.0.
+loader, no sandbox. Five of the six planned **Core** providers are now delivered (`http.rest`,
+`db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`); `webhook-listen.http`
+is planned for Sprint 7. All are governed across three tiers (Core / Verified / Community), all Apache-2.0.
 
 ## A test, in shape
 

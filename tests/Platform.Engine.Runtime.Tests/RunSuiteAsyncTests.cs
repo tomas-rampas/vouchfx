@@ -186,38 +186,4 @@ public sealed class RunSuiteAsyncTests
         Assert.False(string.IsNullOrWhiteSpace(sw.ToString()),
             "Expected non-empty output containing the validation error.");
     }
-
-    /// <summary>
-    /// <see cref="ScenarioRunner.RunAsync"/> still returns
-    /// <see cref="Verdict.Inconclusive"/> when the YAML contains a RETRY step,
-    /// proving the RETRY-rejection path survived the S04-A-02 refactor.
-    /// </summary>
-    [Fact]
-    public async Task RunAsync_AfterRefactor_RetryStep_StillReturnsInconclusive()
-    {
-        const string yaml = """
-            steps:
-              - id: poll
-                type: http.rest
-                target: api
-                method: GET
-                path: /health
-                verifyMode: RETRY
-                expect:
-                  status: 200
-            """;
-
-        var sw = new StringWriter();
-
-        var verdict = await ScenarioRunner.RunAsync(
-            yamlText: yaml,
-            scenarioName: "regression-retry-rejection",
-            providerAssemblies: ProviderAssemblies,
-            appHostAssemblyName: AppHostAssemblyName,
-            output: sw);
-
-        Assert.Equal(Verdict.Inconclusive, verdict);
-        var rendered = sw.ToString();
-        Assert.Contains("RETRY", rendered, StringComparison.OrdinalIgnoreCase);
-    }
 }

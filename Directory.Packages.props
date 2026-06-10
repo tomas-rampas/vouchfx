@@ -27,6 +27,14 @@
     <PackageVersion Include="MongoDB.Driver" Version="3.6.0" />
     <PackageVersion Include="StackExchange.Redis" Version="2.8.58" />
   </ItemGroup>
+  <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
+    <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
+         Apache.Avro is pinned to exactly the version Serdes.Avro 2.14.2 transitively
+         requires, to avoid an NU1605 downgrade warning under TreatWarningsAsErrors. -->
+    <PackageVersion Include="Confluent.SchemaRegistry" Version="2.14.2" />
+    <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.14.2" />
+    <PackageVersion Include="Apache.Avro" Version="1.12.1" />
+  </ItemGroup>
   <ItemGroup Label="Per-scenario isolation (S04-A-01)">
     <!-- Respawn 6.x: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
          then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->

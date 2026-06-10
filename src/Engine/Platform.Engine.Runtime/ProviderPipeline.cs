@@ -10,12 +10,15 @@
 //   • ICompileReferenceContributor is also TOLERANT: providers that omit it
 //     contribute no extra compile references.
 //   • All other reflectors (Bind / Validate / Emit) throw on missing interface.
-//   • RETRY rejection stays in ScenarioRunner — it is an execution-policy
-//     decision, not a compilation concern.
+//   • RETRY is COMPILED, not rejected (Sprint 6): each step's VerifyMode and
+//     Timeout are threaded into a StepCompilePlan so CsxAssembler can wrap RETRY
+//     steps in the engine-owned polling loop (§7).  The execution-time rejection
+//     guard that previously lived in ScenarioRunner has been removed.
 //   • The ValidationFailure path mirrors the existing ScenarioRunner Inconclusive
 //     pattern so callers need no conditional logic change.
 
 using System.Reflection;
+using Platform.Engine.Abstractions;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -128,7 +131,7 @@ internal static class ProviderPipeline
         StepKindRegistry registry,
         string suiteNamespace)
     {
-        var fragments = new List<(string StepId, CsxFragment Fragment)>(ast.Steps.Count);
+        var fragments = new List<StepCompilePlan>(ast.Steps.Count);
         var resourcePlan = new List<ResourcePlanEntry>();
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
@@ -199,7 +202,12 @@ internal static class ProviderPipeline
 
             // ── Emit ──────────────────────────────────────────────────────────
             var fragment = ReflectEmit(instance, model, compileCtx);
-            fragments.Add((node.Id, fragment));
+            fragments.Add(new StepCompilePlan(
+                StepId: node.Id,
+                Fragment: fragment,
+                Retry: node.VerifyMode == VerifyMode.Retry,
+                TimeoutMs: node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
+                PollIntervalMs: null));
         }
 
         var assembled = CsxAssembler.Assemble(fragments);
