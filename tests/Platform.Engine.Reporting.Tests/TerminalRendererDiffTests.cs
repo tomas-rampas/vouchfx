@@ -177,6 +177,61 @@ public sealed class TerminalRendererDiffTests
         Assert.False(invoked, "Diff lookup must not be called when there is no observation.");
     }
 
+    // ── Interleaved multi-RUN stream: kind must be keyed by (runId, stepId) ────────
+    //
+    // Two runs ("A", "B") share the same stepId ("s1") but declare different kinds
+    // (A = db-assert.postgres, B = http.rest).  The events arrive interleaved:
+    //   A:step-started(s1), B:step-started(s1),
+    //   A:step-completed(s1, FAIL), B:step-completed(s1, FAIL).
+    // With a stepId-only cache, B's step-started overwrites the kind for "s1", so A's
+    // step-completed resolves B's kind (http.rest) — the wrong diff.  Keying by
+    // (runId, stepId) keeps the two runs' kinds separate.
+
+    [Fact]
+    public void Render_InterleavedRunsSharingStepId_ResolveTheirOwnKind()
+    {
+        // Each run's observation carries a distinct marker so the lookup can record
+        // which kind was resolved for which run.
+        var lines = new[]
+        {
+            Line(new StepStartedEvent { RunId = "A", StepId = "s1", Kind = "db-assert.postgres" }),
+            Line(new StepStartedEvent { RunId = "B", StepId = "s1", Kind = "http.rest" }),
+            Line(new StepCompletedEvent
+            {
+                RunId       = "A",
+                StepId      = "s1",
+                Verdict     = Verdict.Fail,
+                DurationMs  = 10,
+                Observation = Parse("""{"run":"A"}"""),
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId       = "B",
+                StepId      = "s1",
+                Verdict     = Verdict.Fail,
+                DurationMs  = 11,
+                Observation = Parse("""{"run":"B"}"""),
+            }),
+        };
+
+        // Record the (run -> kind) pairing the renderer resolved at each diff call.
+        var resolvedKindByRun = new Dictionary<string, string>(StringComparer.Ordinal);
+        Func<string, JsonElement, string?> lookup = (kind, observation) =>
+        {
+            var run = observation.GetProperty("run").GetString()!;
+            resolvedKindByRun[run] = kind;
+            return DiffMarker;
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer, lookup);
+
+        // Run A's FAIL diff must use A's kind; run B's must use B's kind.  With the
+        // stepId-only cache, A resolves http.rest (B's later overwrite) and this fails.
+        Assert.Equal("db-assert.postgres", resolvedKindByRun["A"]);
+        Assert.Equal("http.rest", resolvedKindByRun["B"]);
+    }
+
     // ── Back-compat: the diff overload with null lookup matches the 2-arg overload ──
 
     [Fact]

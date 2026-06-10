@@ -123,9 +123,15 @@ public sealed class TerminalRenderer
         ArgumentNullException.ThrowIfNull(jsonLines);
         ArgumentNullException.ThrowIfNull(output);
 
-        // Step-id → kind map, populated from step-started events as the stream is read.
-        // A step-completed event does not carry its own kind, so we thread it forward.
-        var stepKinds = new Dictionary<string, string>(StringComparer.Ordinal);
+        // (runId, stepId) → kind map, populated from step-started events as the stream
+        // is read.  A step-completed event does not carry its own kind, so we thread it
+        // forward.  Keying by (runId, stepId) — not stepId alone — disambiguates an
+        // aggregated multi-RUN stream where two runs reuse the same step id: without the
+        // runId, a later run's step-started would overwrite the earlier run's kind and
+        // its step-completed would resolve the wrong diff.  FULL interleaving correctness
+        // for multiple SCENARIOS within ONE run still needs scenarioId on the step events
+        // (they don't carry it today) and is tracked for the S8 parallelism work.
+        var stepKinds = new Dictionary<(string RunId, string StepId), string>();
 
         foreach (var line in jsonLines)
         {
@@ -151,11 +157,14 @@ public sealed class TerminalRenderer
             // Record step kinds so step-completed events can resolve their kind.
             if (envelope.Type == EventTypes.StepStarted)
             {
+                // runId is a typed envelope field (mapped from the wire "runId"); it does
+                // not ride in Extra, so it is read directly rather than via GetStr.
+                var startedRunId = envelope.RunId;
                 var startedStepId = GetStr(envelope, "stepId");
                 var startedKind = GetStr(envelope, "kind");
-                if (startedStepId is not null && startedKind is not null)
+                if (!string.IsNullOrEmpty(startedRunId) && startedStepId is not null && startedKind is not null)
                 {
-                    stepKinds[startedStepId] = startedKind;
+                    stepKinds[(startedRunId, startedStepId)] = startedKind;
                 }
             }
 
@@ -170,7 +179,7 @@ public sealed class TerminalRenderer
     private static void RenderEnvelope(
         EventEnvelope envelope,
         TextWriter output,
-        IReadOnlyDictionary<string, string> stepKinds,
+        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
         Func<string, JsonElement, string?>? diffLookup)
     {
         switch (envelope.Type)
@@ -295,7 +304,7 @@ public sealed class TerminalRenderer
         TextWriter output,
         string stepId,
         string verdict,
-        IReadOnlyDictionary<string, string> stepKinds,
+        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
         Func<string, JsonElement, string?>? diffLookup)
     {
         // Only failed steps get a diff, and only when a lookup is wired in.
@@ -314,9 +323,13 @@ public sealed class TerminalRenderer
             return;
         }
 
-        // Resolve the step kind threaded forward from the step-started event.  Without
-        // a kind we cannot select a provider's diff renderer, so we skip the diff.
-        if (!stepKinds.TryGetValue(stepId, out var kind))
+        // Resolve the step kind threaded forward from the step-started event, keyed by
+        // (runId, stepId) so an aggregated multi-run stream does not cross-resolve a
+        // shared step id.  runId is a typed envelope field (read directly, not via Extra).
+        // Without a runId or a recorded kind we cannot select a provider's diff renderer,
+        // so we skip the diff.
+        var runId = envelope.RunId;
+        if (string.IsNullOrEmpty(runId) || !stepKinds.TryGetValue((runId, stepId), out var kind))
         {
             return;
         }
