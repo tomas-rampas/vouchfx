@@ -83,7 +83,7 @@ public sealed class SecretAccessor : ISecretAccessor
         // is the only place the syntax is defined.
         var token = reference.StartsWith(SecretReference.Sigil, StringComparison.Ordinal)
             ? reference
-            : $"{SecretReference.Sigil}{reference}}}";
+            : SecretReference.Sigil + reference + "}";
 
         if (!SecretReference.TryParse(token, out var parsed) || parsed is null)
         {

@@ -19,8 +19,8 @@ namespace Platform.Engine.Abstractions.Secrets;
 /// value is absent at the source.
 /// </summary>
 /// <remarks>
-/// The exception exposes <see cref="Source"/> and <see cref="Path"/> so callers
-/// can compose an actionable message, but it never carries a secret <em>value</em>
+/// The exception exposes <see cref="SecretSource"/> and <see cref="SecretPath"/> so
+/// callers can compose an actionable message, but it never carries a secret <em>value</em>
 /// (none exists when resolution fails). Providers map this to a per-step
 /// <see cref="Verdict.EnvironmentError"/> (§12.1).
 /// </remarks>

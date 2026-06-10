@@ -145,8 +145,12 @@ public static class YamlDocumentParser
     /// declares one seed kind (<c>sql</c>, <c>publish</c>, or <c>documents</c>).
     /// The parser binds whichever kinds are present; the seed applier later
     /// dispatches on the dependency's declared <c>type</c> and rejects a mismatch.
-    /// Returns <see langword="null"/> when the <c>seed</c> block is absent, is not a
-    /// mapping, or contains no usable dependency entries.
+    /// Returns <see langword="null"/> only when the <c>seed</c> block is absent, is
+    /// not a mapping, or declares no dependency keys at all; otherwise returns a
+    /// <see cref="SeedSpec"/> containing every declared dependency. A dependency
+    /// mapping that names none of the seed kinds is retained as a no-op (a
+    /// <see cref="DependencySeed"/> with all kinds <see langword="null"/>), which the
+    /// seed applier later skips.
     /// </remarks>
     /// <exception cref="YamlParseException">
     /// Thrown when a dependency's value is not a mapping (e.g. a bare scalar file
