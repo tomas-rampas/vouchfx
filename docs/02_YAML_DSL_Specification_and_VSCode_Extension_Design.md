@@ -317,6 +317,10 @@ A `script` step is the escape hatch. It contains a block of code in a chosen lan
 >
 > Reach for a script step only when the declarative types genuinely cannot express the intent. Declarative steps are validated by the schema, are readable by non-engineers, and are the unit the agentic Generator produces. A file that is mostly script steps has lost most of the DSL's benefits.
 
+> **Security caution: Secret handling in script.csharp**
+>
+> Because `script.csharp` runs author-trusted code in the shared variable context, it can read any staged value — including connection strings and secret values accessed via `Vars.Secrets.Resolve(...).Reveal()`. The engine's redaction cannot guarantee that a value an author explicitly writes into a captured variable, a returned observation, or an exception message stays out of the report. Authors must not surface secrets from script bodies; prefer keeping credentials in `${secret:…}` references consumed by typed provider fields.
+
 ## 5.7 Step families and the provider extension model
 
 The sections above introduced each family with the provider used in its example, and noted in passing that other providers exist. This subsection collects the model into one place from the DSL author's perspective. The engineering view of the same model — interfaces, registry, compilation lifecycle — lives in section 13 of the Technical Architecture & Engineering Blueprint.

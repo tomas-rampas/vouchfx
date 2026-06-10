@@ -14,6 +14,7 @@
 using System.IO;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Runtime;
+using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.HttpRest;
 using Xunit;
 using Xunit.Abstractions;
@@ -35,6 +36,17 @@ public sealed class ScenarioRunnerTests
     // Provider assemblies: the http.rest Core provider.
     private static readonly System.Reflection.Assembly[] ProviderAssemblies =
         new[] { typeof(HttpRestProvider).Assembly };
+
+    // Provider assemblies including db-assert.postgres — used by the secret-validation
+    // test that places a ${secret:…} reference in a db-assert expect.row value (the
+    // registry must know the db-assert.postgres kind for the step to pass schema and
+    // provider validation, so the secret-validation pass is what rejects it).
+    private static readonly System.Reflection.Assembly[] HttpAndDbProviderAssemblies =
+        new[]
+        {
+            typeof(HttpRestProvider).Assembly,
+            typeof(DbAssertPostgresProvider).Assembly,
+        };
 
     // ── Non-docker: schema-validation early-return ────────────────────────────
 
@@ -111,6 +123,144 @@ public sealed class ScenarioRunnerTests
         var rendered = sw.ToString();
         Assert.Contains("RETRY", rendered, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("not yet supported", rendered, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Non-docker: secret-reference validation (S05-B-01) ──────────────────
+
+    /// <summary>
+    /// A step whose substitutable field references an unknown secret source must
+    /// be rejected by the central secret-validation pass before the topology is
+    /// started, returning <see cref="Verdict.Inconclusive"/> (the test never ran)
+    /// with a message naming the unknown source.  No Docker is required.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_UnknownSecretSource_ReturnsInconclusive_NoTopology()
+    {
+        const string yaml = """
+            environment:
+              services:
+                whoami:
+                  image: traefik/whoami
+            steps:
+              - id: get-with-secret
+                type: http.rest
+                target: whoami
+                method: GET
+                path: /search?key=${secret:vault/api-key}
+                expect:
+                  status: 200
+            """;
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "unknown-secret-source",
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("get-with-secret", rendered, StringComparison.Ordinal);
+        Assert.Contains("vault", rendered, StringComparison.Ordinal);
+        // It must never be reported as a product defect.
+        Assert.NotEqual(Verdict.Fail, verdict);
+    }
+
+    /// <summary>
+    /// A step whose substitutable field contains a malformed secret sigil (missing
+    /// the <c>/path</c> segment) must be rejected before the topology is started,
+    /// returning <see cref="Verdict.Inconclusive"/>.  No Docker is required.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MalformedSecretReference_ReturnsInconclusive_NoTopology()
+    {
+        const string yaml = """
+            environment:
+              services:
+                whoami:
+                  image: traefik/whoami
+            steps:
+              - id: get-malformed-secret
+                type: http.rest
+                target: whoami
+                method: GET
+                path: /search?key=${secret:env}
+                expect:
+                  status: 200
+            """;
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "malformed-secret",
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("get-malformed-secret", rendered, StringComparison.Ordinal);
+        Assert.Contains("malformed", rendered, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A <c>db-assert.postgres</c> step whose <c>expect.row</c> value references an
+    /// unknown secret source must be rejected by the central secret-validation pass
+    /// before the topology is started, returning <see cref="Verdict.Inconclusive"/>.
+    /// </summary>
+    /// <remarks>
+    /// Regression guard for the S05-B-01 SHOULD-FIX: <c>db-assert.postgres</c> wraps
+    /// its <c>expect.row</c> values in <c>Substitute_Helpers.Resolve</c> at runtime, so
+    /// a <c>${secret:…}</c> there is substituted at execution time.  Before this fix,
+    /// <c>CollectSubstitutableTexts</c> under-collected (query + parameters only) and an
+    /// unknown-source secret in an expect-row value reached execution un-caught.  The
+    /// scenario is otherwise fully valid (declared <c>capdb</c> postgres dependency,
+    /// non-empty query, a row assertion), so the secret-validation pass — not schema or
+    /// provider validation — is what produces the <see cref="Verdict.Inconclusive"/>.
+    /// No Docker is required.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_UnknownSecretSource_InDbAssertExpectRow_ReturnsInconclusive_NoTopology()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                capdb:
+                  type: postgres
+            steps:
+              - id: assert-secret-row
+                type: db-assert.postgres
+                target: capdb
+                query: "SELECT status FROM orders WHERE id = 1"
+                expect:
+                  rowCount: 1
+                  row:
+                    status: ${secret:vault/expected-status}
+            """;
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "unknown-secret-source-db-assert-expect",
+            providerAssemblies: HttpAndDbProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("assert-secret-row", rendered, StringComparison.Ordinal);
+        Assert.Contains("vault", rendered, StringComparison.Ordinal);
+        // It must never be reported as a product defect, and must be caught
+        // pre-topology (no EnvironmentError from a failed container start).
+        Assert.NotEqual(Verdict.Fail, verdict);
+        Assert.NotEqual(Verdict.EnvironmentError, verdict);
     }
 
     // ── Docker-gated capstone tests ───────────────────────────────────────────

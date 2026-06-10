@@ -4,13 +4,32 @@
     <RootNamespace>Platform.Engine.Orchestration</RootNamespace>
   </PropertyGroup>
 
+  <!-- Expose internal helpers (e.g. SeedApplier, S05-A-01) to the Orchestration
+       test project so the no-docker tests can exercise them directly. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Orchestration.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <!-- Expose SeedFixtures.ComputeContentHash (S05-A-02) to the runner so the
+         reproducibility envelope (S05-B-03) can record the SAME fixture content
+         hash the seed applier computes, without duplicating the routine. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Runtime</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
     <PackageReference Include="Aspire.Hosting.Kafka" />
     <!-- Respawn: per-scenario Postgres state reset (S04-A-01).
-         Brings Npgsql adapter support; Npgsql itself resolves transitively. -->
+         Brings Npgsql adapter support. -->
     <PackageReference Include="Respawn" />
+    <!-- Npgsql: explicit reference for SeedApplier (S05-A-01) — applies seed SQL
+         against Postgres dependencies after the topology is healthy. Previously
+         resolved transitively via Respawn; pinned directly so the dependency is
+         not silently lost if Respawn's transitive graph changes. -->
+    <PackageReference Include="Npgsql" />
   </ItemGroup>
 
   <ItemGroup>

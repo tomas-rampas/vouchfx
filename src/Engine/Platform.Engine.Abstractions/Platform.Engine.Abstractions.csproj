@@ -4,4 +4,12 @@
     <RootNamespace>Platform.Engine.Abstractions</RootNamespace>
   </PropertyGroup>
 
+  <!-- Expose the internal SecretString constructor to the Abstractions test project
+       so tests can mint a SecretString without an injection sink (S05-B-02). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Abstractions.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

@@ -23,13 +23,14 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Pre-release — Sprint 1 (Foundations) complete.** The project's two defining risks are now
-> empirically retired: memory-safe dynamic compilation (compile-once into a collectible
-> `AssemblyLoadContext` that unloads to baseline) and predictable, health-gated Aspire orchestration.
-> A buildable .NET 8 LTS solution exists under `src/` and `tests/`; the compiler, provider set, test
-> runner, reporting renderers and VSCode extension are still to come — see the
-> [delivery plan](plan/README.md). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global
-> tool plus a VSCode extension.
+> **Milestone M2 (Core compiler) reached.** The engine compiles `.e2e.yaml` declarative integration
+> tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
+> with Aspire and Testcontainers, executes the three Core providers (`http.rest`, `db-assert.postgres`,
+> `script.csharp`) end-to-end with declarative seeding and `${secret:env/…}` resolution, and emits
+> a schema-versioned JSON Lines event stream rendered to the terminal. Still to come: the remaining
+> provider families (Kafka, MongoDB, Redis, webhook, with async and RETRY support) and the VSCode
+> extension/LSP — see the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine
+> targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 

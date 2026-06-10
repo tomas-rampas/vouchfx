@@ -2,6 +2,8 @@
 // This is the SOLE typed bridge between the vouchfx host and any emitted script delegate.
 // Rule: no static members — the boundary must stay clean so the collectible AssemblyLoadContext
 // has nothing rooting the emitted assembly back into the Default context.
+using Platform.Engine.Abstractions.Secrets;
+
 namespace Platform.Engine.Abstractions;
 
 /// <summary>
@@ -29,7 +31,46 @@ public sealed class ScriptGlobalVariables
     public IReadOnlyDictionary<string, object> Services { get; }
 
     /// <summary>
-    /// Initialises a new instance with caller-supplied dictionaries.
+    /// The execution-time secret accessor (§17).  Emitted step blocks resolve
+    /// <c>${secret:source/path}</c> references through this member at the moment a
+    /// value is fed into an injection sink — never at compile time, so no secret
+    /// value is ever baked into the emitted IL.
+    /// </summary>
+    /// <remarks>
+    /// This is an <em>instance</em> property by design: the secrets subsystem must
+    /// never expose a static handle across the boundary, as a static would root the
+    /// collectible <see cref="System.Runtime.Loader.AssemblyLoadContext"/> back into
+    /// the Default context and defeat the memory model (§5).  Legacy constructors
+    /// populate this with a <see cref="NullSecretAccessor"/> that throws on use.
+    /// </remarks>
+    public ISecretAccessor Secrets { get; }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries and secret accessor.
+    /// </summary>
+    /// <param name="vars">
+    /// Mutable state map; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="services">
+    /// Read-only typed-client surface; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="secrets">
+    /// The execution-time secret accessor; must not be <see langword="null"/>.
+    /// </param>
+    public ScriptGlobalVariables(
+        IDictionary<string, object?> vars,
+        IReadOnlyDictionary<string, object> services,
+        ISecretAccessor secrets)
+    {
+        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+    }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries and no configured
+    /// secret sources.  <see cref="Secrets"/> is a <see cref="NullSecretAccessor"/>
+    /// that throws on any resolution attempt.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
@@ -40,20 +81,19 @@ public sealed class ScriptGlobalVariables
     public ScriptGlobalVariables(
         IDictionary<string, object?> vars,
         IReadOnlyDictionary<string, object> services)
+        : this(vars, services, NullSecretAccessor.Instance)
     {
-        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
     }
 
     /// <summary>
     /// Convenience constructor for tests and simple PoC invocations that do not need
-    /// a pre-populated service map.
+    /// a pre-populated service map or configured secret sources.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
     /// </param>
     public ScriptGlobalVariables(IDictionary<string, object?> vars)
-        : this(vars, new Dictionary<string, object>(StringComparer.Ordinal))
+        : this(vars, new Dictionary<string, object>(StringComparer.Ordinal), NullSecretAccessor.Instance)
     {
     }
 }
