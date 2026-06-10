@@ -790,8 +790,20 @@ public static class ScenarioRunner
                     listeners.Add(listener);
                     buffers[req.VarName] = capBuffer;
 
-                    // Stage the listener URL as a discovered service BEFORE step 1.
+                    // Stage the listener URL under TWO keys BEFORE step 1, so an EARLIER
+                    // step can hand the callback URL to the SUT via either access path:
+                    //   • svc::<VarName>  — the discovered-service slot an http.rest step
+                    //     reaches via target:, identical to any orchestrated endpoint.
+                    //   • <VarName>       — a PLAIN Vars entry so {placeholder} substitution
+                    //     can reach it: an author writes {<listener>} in a request body/field
+                    //     to interpolate the callback URL.  {placeholder} substitution scans
+                    //     bare identifiers ([A-Za-z_]…) only and CANNOT reach a svc:: key, so
+                    //     this second staging is what makes the URL author-interpolable.
+                    // Both point at the same listener.Url.  The plain key is staged here,
+                    // before the `variables` block, so an author-declared variable of the
+                    // same name (rare) deliberately overrides it (forward-only Vars threading).
                     vars[VarKeys.Service(req.VarName)] = listener.Url;
+                    vars[req.VarName] = listener.Url;
                 }
 
                 if (buffers.Count > 0)
