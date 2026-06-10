@@ -97,6 +97,17 @@ public static class SingletonReset
         // is nothing to reset.  This entry is documentation-only.
         log.Add("Polly/RetryRunner: stateless — a fresh ResiliencePipeline is built per call, no static state, no reset needed");
 
+        // ── Webhook capture accessor (Sprint 7) ───────────────────────────────
+        // Sprint 7: the closure probe reads ScriptGlobalVariables.Webhooks (an
+        // IWebhookCaptureAccessor) inside the collectible ALC.  The accessor handed in by
+        // the harness is a by-reference Default-ALC STUB (ProbeWebhookAccessor) carrying an
+        // immutable, pre-seeded snapshot of CapturedWebhookRequest records and NO mutable or
+        // static state — exactly like the real host-owned accessor is a long-lived Default-ALC
+        // instance.  The CSX only READS it (GetCaptured → iterate); it can never mutate or pin
+        // it.  Nothing accumulates across iterations, so there is nothing to reset.  This entry
+        // is documentation-only (mirroring the Polly/SchemaRegistry "stateless, no reset" notes).
+        log.Add("Webhooks/IWebhookCaptureAccessor: by-reference Default-ALC stub with an immutable pre-seeded snapshot, read-only from the CSX, no global state — nothing to reset");
+
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is
         // referenced by the harness or the probe script, and no TracerProvider is
