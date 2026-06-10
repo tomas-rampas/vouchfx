@@ -58,6 +58,7 @@ public sealed class SubstituteHelperTests
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,
         typeof(Json.Path.JsonPath).Assembly.Location,
+        typeof(System.Xml.XmlDocument).Assembly.Location,          // System.Private.Xml — XPath capture logic (S07-B-01b)
     };
 
     // ── 1. SubstituteHelper.Source compiles standalone ─────────────────────────

@@ -104,15 +104,27 @@ public sealed class HttpRestProvider
     /// is a <c>using</c> statement, not a <c>using var</c> declaration).
     /// </para>
     /// <para>
-    /// S04-B-02: the helper now accepts optional capture arrays (varNames,
-    /// jsonPaths) and a captureStatusKey.  When provided, the response body is
-    /// read and parsed into a <c>JsonNode</c> ONCE before the per-capture loop
-    /// (a malformed body sets the node to <c>null</c>, marking all captures unmet).
-    /// Each JSONPath is then evaluated via JsonPath.Net against the cached node;
-    /// matched values are written to <c>Vars</c>.  Unmatched paths set the outcome
-    /// to <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).
-    /// A comma-delimited matched-flag string is written under captureStatusKey
-    /// for the G-01 provenance event.
+    /// S04-B-02 + S07-B-01b: the helper accepts three parallel capture arrays
+    /// (varNames, exprs, kinds) and a captureStatusKey.  Each capture's
+    /// <c>kind</c> token (<c>"json"</c> or <c>"xpath"</c>) selects the evaluator:
+    /// <list type="bullet">
+    ///   <item><c>"json"</c> — the body is parsed into a <c>JsonNode</c> ONCE
+    ///   (lazily, on the first JSONPath capture) and each JSONPath is evaluated via
+    ///   JsonPath.Net against the cached node.</item>
+    ///   <item><c>"xpath"</c> — the body is parsed into an <c>XPathNavigator</c> ONCE
+    ///   (lazily, on the first XPath capture) through a hardened <c>XmlReader</c>:
+    ///   <c>DtdProcessing.Prohibit</c> defeats inline-DTD entity-expansion DoS
+    ///   (billion laughs), <c>XmlResolver=null</c> blocks external entities (XXE),
+    ///   and <c>MaxCharactersInDocument</c> caps a hostile body. Each XPath is then
+    ///   evaluated via <c>SelectSingleNode</c>, taking the selected node's string value.</item>
+    /// </list>
+    /// A malformed/non-matching body (JSON or XML) sets the corresponding cached
+    /// handle to <c>null</c>, marking those captures unmet — never a crash.  An
+    /// invalid expression (bad JSONPath or bad XPath) is caught per-capture and also
+    /// marks a miss.  Matched values are written to <c>Vars</c>; any unmatched
+    /// capture sets the outcome to <see cref="Verdict.Inconclusive"/>
+    /// (upstream-capture-unmet, §12.1).  A comma-delimited matched-flag string is
+    /// written under captureStatusKey for the G-01 provenance event.
     /// </para>
     /// <para>
     /// The helper must be byte-identical across every instance of the same
@@ -127,8 +139,10 @@ public sealed class HttpRestProvider
         "    /// <summary>\n" +
         "    /// Issues an HTTP request, evaluates the response status against the\n" +
         "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
-        "    /// When capture arrays are non-empty, reads the response body once and\n" +
-        "    /// applies each JSONPath via JsonPath.Net; a miss → Inconclusive.\n" +
+        "    /// When capture arrays are non-empty, reads the response body once (capped)\n" +
+        "    /// and dispatches each capture by kind: a \"json\" capture is applied via\n" +
+        "    /// JsonPath.Net and an \"xpath\" capture via a hardened XmlReader/XPath load;\n" +
+        "    /// a miss (either kind) → Inconclusive.\n" +
         "    /// Uses safe URI resolution (same-authority guard) and disables\n" +
         "    /// automatic redirects to prevent SSRF via 3xx bounces (§security M1).\n" +
         "    /// Timeout verdict = Inconclusive; connection failures = EnvironmentError (§12.1).\n" +
@@ -145,7 +159,8 @@ public sealed class HttpRestProvider
         "        string[] headerValueTemplates,\n" +
         "        int? expectedStatus,\n" +
         "        string[] captureVarNames,\n" +
-        "        string[] captureJsonPaths)\n" +
+        "        string[] captureExprs,\n" +
+        "        string[] captureKinds)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Platform.Engine.Abstractions.Verdict verdict;\n" +
@@ -159,6 +174,14 @@ public sealed class HttpRestProvider
         "        {\n" +
         "            // M2: cap the default stall window; per-step timeout plumbing is Sprint 6.\n" +
         "            client.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "            // §security S07: bound the untrusted response body. The default\n" +
+        "            // MaxResponseContentBufferSize is ~2 GB, so a hostile target could stream a\n" +
+        "            // huge body and OOM the runner before the JSON/XPath branch even parses it.\n" +
+        "            // 16 MiB is generous for an assertion/capture body; an oversize response\n" +
+        "            // overflows the buffer and ReadAsStringAsync throws HttpRequestException →\n" +
+        "            // caught by the general catch below → EnvironmentError (a graceful miss, no\n" +
+        "            // unhandled throw). This bounds BOTH the JSON and XPath capture branches.\n" +
+        "            client.MaxResponseContentBufferSize = 16 * 1024 * 1024;\n" +
         "            // Resolve the path INSIDE the guarded region (§17) in a SINGLE pass:\n" +
         "            // ResolveTemplate handles BOTH {placeholder} substitution and\n" +
         "            // ${secret:source/path} resolution over the original template text, so a\n" +
@@ -215,63 +238,142 @@ public sealed class HttpRestProvider
         "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
         "                        : \"null\") + \"}\";\n" +
         "\n" +
-        "                // ── S04-B-02: JSONPath capture ──────────────────────────────\n" +
+        "                // ── S04-B-02 + S07-B-01b: format-aware capture (JSONPath / XPath) ──\n" +
         "                if (captureVarNames.Length > 0 && verdict != Platform.Engine.Abstractions.Verdict.Fail)\n" +
         "                {\n" +
         "                    var bodyStr = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);\n" +
-        "                    // Parse the response body ONCE before the per-capture loop.\n" +
-        "                    // A malformed body sets node = null, which marks every capture unmet.\n" +
-        "                    System.Text.Json.Nodes.JsonNode? node;\n" +
-        "                    try\n" +
-        "                    {\n" +
-        "                        node = System.Text.Json.Nodes.JsonNode.Parse(bodyStr);\n" +
-        "                    }\n" +
-        "                    catch (System.Exception)\n" +
-        "                    {\n" +
-        "                        node = null;\n" +
-        "                    }\n" +
+        "                    // Parse the JSON body ONCE before the per-capture loop (lazily — only\n" +
+        "                    // when the first JSONPath capture is hit). A malformed body sets the\n" +
+        "                    // cached node to null, which marks every JSONPath capture unmet.\n" +
+        "                    System.Text.Json.Nodes.JsonNode? jsonNode = null;\n" +
+        "                    bool jsonParsed = false;\n" +
+        "                    // Parse the XML body ONCE (lazily — only when the first XPath capture\n" +
+        "                    // is hit). A parse failure / non-XML body sets the navigator to null,\n" +
+        "                    // which marks every XPath capture unmet (NOT a crash).\n" +
+        "                    System.Xml.XPath.XPathNavigator? xmlNav = null;\n" +
+        "                    bool xmlParsed = false;\n" +
         "                    var matchedFlags = new bool[captureVarNames.Length];\n" +
         "                    for (int ci = 0; ci < captureVarNames.Length; ci++)\n" +
         "                    {\n" +
         "                        var varName = captureVarNames[ci];\n" +
-        "                        var jsonPath = captureJsonPaths[ci];\n" +
+        "                        var captureExpr = captureExprs[ci];\n" +
+        "                        var captureKind = captureKinds[ci];\n" +
         "                        bool matched = false;\n" +
-        "                        if (node == null)\n" +
+        "                        if (string.Equals(captureKind, \"xpath\", System.StringComparison.Ordinal))\n" +
         "                        {\n" +
-        "                            // Body could not be parsed — capture is unmet for every path.\n" +
-        "                            matched = false;\n" +
+        "                            // ── XPath branch (S07-B-01b) ─────────────────────────────\n" +
+        "                            if (!xmlParsed)\n" +
+        "                            {\n" +
+        "                                xmlParsed = true;\n" +
+        "                                // Hardened XML load (§security S07): a hostile body must not be\n" +
+        "                                // able to OOM/CPU-pin the runner via inline-DTD entity expansion\n" +
+        "                                // (billion laughs) or fetch external resources (XXE). XmlResolver=null\n" +
+        "                                // alone blocks EXTERNAL entities but NOT inline-DTD expansion, so the\n" +
+        "                                // body is loaded through an XmlReader whose settings prohibit DTD\n" +
+        "                                // processing outright, cap entity characters, and bound the document\n" +
+        "                                // size. A DTD-bearing / oversized / malformed body throws → caught\n" +
+        "                                // → xmlNav stays null → every XPath capture misses (unchanged\n" +
+        "                                // 'malformed body = miss = Inconclusive' contract).\n" +
+        "                                System.Xml.XmlReader xmlReader = null;\n" +
+        "                                try\n" +
+        "                                {\n" +
+        "                                    var xmlSettings = new System.Xml.XmlReaderSettings();\n" +
+        "                                    xmlSettings.DtdProcessing = System.Xml.DtdProcessing.Prohibit;   // inline DTD -> XmlException -> clean miss\n" +
+        "                                    xmlSettings.XmlResolver = null;                                  // no external fetch (defence in depth)\n" +
+        "                                    xmlSettings.MaxCharactersFromEntities = 0;                       // belt-and-braces\n" +
+        "                                    xmlSettings.MaxCharactersInDocument = 10_000_000;                // hard ceiling on a hostile body\n" +
+        "                                    xmlReader = System.Xml.XmlReader.Create(new System.IO.StringReader(bodyStr), xmlSettings);\n" +
+        "                                    var xmlDoc = new System.Xml.XmlDocument();\n" +
+        "                                    xmlDoc.XmlResolver = null;\n" +
+        "                                    xmlDoc.Load(xmlReader);\n" +
+        "                                    xmlNav = xmlDoc.CreateNavigator();\n" +
+        "                                }\n" +
+        "                                catch (System.Exception)\n" +
+        "                                {\n" +
+        "                                    // Non-XML / malformed / DTD-bearing / oversized body — every\n" +
+        "                                    // XPath capture misses (never a crash). A using-declaration is\n" +
+        "                                    // prohibited in a CSX body, so the reader is disposed in the\n" +
+        "                                    // finally below instead.\n" +
+        "                                    xmlNav = null;\n" +
+        "                                }\n" +
+        "                                finally\n" +
+        "                                {\n" +
+        "                                    if (xmlReader != null) { xmlReader.Dispose(); }\n" +
+        "                                }\n" +
+        "                            }\n" +
+        "                            if (xmlNav != null)\n" +
+        "                            {\n" +
+        "                                try\n" +
+        "                                {\n" +
+        "                                    // SelectSingleNode evaluates the XPath and returns the first\n" +
+        "                                    // matching node (element / attribute / text). A syntactically\n" +
+        "                                    // invalid expression throws System.Xml.XPath.XPathException,\n" +
+        "                                    // caught below → miss (never escapes the helper).\n" +
+        "                                    var picked = xmlNav.SelectSingleNode(captureExpr);\n" +
+        "                                    if (picked != null)\n" +
+        "                                    {\n" +
+        "                                        var capturedStr = picked.Value;\n" +
+        "                                        if (!string.IsNullOrEmpty(capturedStr))\n" +
+        "                                        {\n" +
+        "                                            vars[varName] = capturedStr;\n" +
+        "                                            matched = true;\n" +
+        "                                        }\n" +
+        "                                    }\n" +
+        "                                }\n" +
+        "                                catch (System.Exception)\n" +
+        "                                {\n" +
+        "                                    // Invalid XPath expression / evaluation error → miss.\n" +
+        "                                    matched = false;\n" +
+        "                                }\n" +
+        "                            }\n" +
         "                        }\n" +
         "                        else\n" +
         "                        {\n" +
-        "                        try\n" +
-        "                        {\n" +
-        "                            var pathResult = Json.Path.JsonPath.Parse(jsonPath).Evaluate(node);\n" +
-        "                            var matches = pathResult.Matches;\n" +
-        "                            if (matches != null && matches.Count > 0 && matches[0].Value is not null)\n" +
+        "                            // ── JSONPath branch (S04-B-02, unchanged behaviour) ──────\n" +
+        "                            if (!jsonParsed)\n" +
         "                            {\n" +
-        "                                var firstMatch = matches[0].Value;\n" +
-        "                                string capturedStr;\n" +
-        "                                if (firstMatch is System.Text.Json.Nodes.JsonValue jv)\n" +
+        "                                jsonParsed = true;\n" +
+        "                                try\n" +
         "                                {\n" +
-        "                                    // Scalar value: emit the raw string/number/bool without surrounding quotes.\n" +
-        "                                    var rawElem = jv.GetValue<System.Text.Json.JsonElement>();\n" +
-        "                                    capturedStr = rawElem.ValueKind == System.Text.Json.JsonValueKind.String\n" +
-        "                                        ? rawElem.GetString() ?? string.Empty\n" +
-        "                                        : rawElem.GetRawText();\n" +
+        "                                    jsonNode = System.Text.Json.Nodes.JsonNode.Parse(bodyStr);\n" +
         "                                }\n" +
-        "                                else\n" +
+        "                                catch (System.Exception)\n" +
         "                                {\n" +
-        "                                    // Object or array: compact JSON.\n" +
-        "                                    capturedStr = firstMatch.ToJsonString();\n" +
+        "                                    jsonNode = null;\n" +
         "                                }\n" +
-        "                                vars[varName] = capturedStr;\n" +
-        "                                matched = true;\n" +
         "                            }\n" +
-        "                        }\n" +
-        "                        catch (System.Exception)\n" +
-        "                        {\n" +
-        "                            matched = false;\n" +
-        "                        }\n" +
+        "                            if (jsonNode != null)\n" +
+        "                            {\n" +
+        "                            try\n" +
+        "                            {\n" +
+        "                                var pathResult = Json.Path.JsonPath.Parse(captureExpr).Evaluate(jsonNode);\n" +
+        "                                var matches = pathResult.Matches;\n" +
+        "                                if (matches != null && matches.Count > 0 && matches[0].Value is not null)\n" +
+        "                                {\n" +
+        "                                    var firstMatch = matches[0].Value;\n" +
+        "                                    string capturedStr;\n" +
+        "                                    if (firstMatch is System.Text.Json.Nodes.JsonValue jv)\n" +
+        "                                    {\n" +
+        "                                        // Scalar value: emit the raw string/number/bool without surrounding quotes.\n" +
+        "                                        var rawElem = jv.GetValue<System.Text.Json.JsonElement>();\n" +
+        "                                        capturedStr = rawElem.ValueKind == System.Text.Json.JsonValueKind.String\n" +
+        "                                            ? rawElem.GetString() ?? string.Empty\n" +
+        "                                            : rawElem.GetRawText();\n" +
+        "                                    }\n" +
+        "                                    else\n" +
+        "                                    {\n" +
+        "                                        // Object or array: compact JSON.\n" +
+        "                                        capturedStr = firstMatch.ToJsonString();\n" +
+        "                                    }\n" +
+        "                                    vars[varName] = capturedStr;\n" +
+        "                                    matched = true;\n" +
+        "                                }\n" +
+        "                            }\n" +
+        "                            catch (System.Exception)\n" +
+        "                            {\n" +
+        "                                matched = false;\n" +
+        "                            }\n" +
+        "                            }\n" +
         "                        }\n" +
         "                        matchedFlags[ci] = matched;\n" +
         "                        if (!matched)\n" +
@@ -583,22 +685,41 @@ public sealed class HttpRestProvider
         var headerNamesLiteral = BuildStringArrayLiteral(headerNames);
         var headerValueTemplatesLiteral = BuildStringArrayLiteral(headerValueTemplates);
 
-        // S04-B-02: expand the captures map into parallel arrays.
+        // S04-B-02 + S07-B-01b: expand the FORMAT-AWARE captures map into THREE
+        // parallel arrays — var-names, expressions, and kinds ("json"/"xpath") — in
+        // the same declaration (iteration) order.  ctx.CaptureExprs supersedes the
+        // back-compat ctx.Captures view: it carries CaptureExpr.Format so http.rest
+        // can dispatch JSONPath vs XPath at runtime.  Keys/order match ctx.Captures
+        // exactly (both are projections of one capture map, §ICompileContext).
         string[] captureVarNames;
-        string[] captureJsonPaths;
-        if (ctx.Captures is { Count: > 0 } captures)
+        string[] captureExprs;
+        string[] captureKinds;
+        if (ctx.CaptureExprs is { Count: > 0 } captureMap)
         {
-            captureVarNames = captures.Keys.ToArray();
-            captureJsonPaths = captures.Values.ToArray();
+            captureVarNames = new string[captureMap.Count];
+            captureExprs = new string[captureMap.Count];
+            captureKinds = new string[captureMap.Count];
+            var ci = 0;
+            foreach (var (name, expr) in captureMap)
+            {
+                captureVarNames[ci] = name;
+                captureExprs[ci] = expr.Expression;
+                // Kind tokens are a FIXED closed vocabulary ("json"/"xpath"), never
+                // author-controlled text — emitted verbatim and matched in the helper.
+                captureKinds[ci] = expr.Format == CaptureFormat.XPath ? "xpath" : "json";
+                ci++;
+            }
         }
         else
         {
             captureVarNames = Array.Empty<string>();
-            captureJsonPaths = Array.Empty<string>();
+            captureExprs = Array.Empty<string>();
+            captureKinds = Array.Empty<string>();
         }
 
         var captureVarNamesLiteral = BuildStringArrayLiteral(captureVarNames);
-        var captureJsonPathsLiteral = BuildStringArrayLiteral(captureJsonPaths);
+        var captureExprsLiteral = BuildStringArrayLiteral(captureExprs);
+        var captureKindsLiteral = BuildStringArrayLiteral(captureKinds);
 
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
@@ -623,7 +744,8 @@ public sealed class HttpRestProvider
                     {{headerValueTemplatesLiteral}},
                     {{expectedLiteral}},
                     {{captureVarNamesLiteral}},
-                    {{captureJsonPathsLiteral}});
+                    {{captureExprsLiteral}},
+                    {{captureKindsLiteral}});
             }
             """;
 
@@ -658,9 +780,12 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     /// <remarks>
     /// Returns the <c>System.Net.Http</c> assembly (already required for the
-    /// helper) and the <c>JsonPath.Net</c> assembly so the Roslyn compiler can
-    /// resolve <c>Json.Path.JsonPath</c> in the capture logic (S04-B-02).
-    /// Both assemblies are already loaded in the Default ALC and must never be
+    /// helper), the <c>JsonPath.Net</c> assembly so the Roslyn compiler can
+    /// resolve <c>Json.Path.JsonPath</c> in the JSONPath capture logic (S04-B-02),
+    /// and <c>System.Private.Xml</c> so it can resolve
+    /// <c>System.Xml.XmlDocument</c> / <c>System.Xml.XPath.XPathNavigator</c> in the
+    /// XPath capture logic (S07-B-01b).
+    /// All assemblies are already loaded in the Default ALC and must never be
     /// loaded into the collectible ALC (§5 memory-model invariant).
     /// </remarks>
     public IEnumerable<System.Reflection.Assembly> CompileReferenceAssemblies
@@ -670,6 +795,8 @@ public sealed class HttpRestProvider
             yield return typeof(System.Net.Http.HttpClient).Assembly;
             // JsonPath.Net: Json.Path.JsonPath is in the Json.Path namespace.
             yield return typeof(Json.Path.JsonPath).Assembly;
+            // System.Private.Xml: XmlDocument + XPathNavigator (XPath capture, S07-B-01b).
+            yield return typeof(System.Xml.XmlDocument).Assembly;
         }
     }
 

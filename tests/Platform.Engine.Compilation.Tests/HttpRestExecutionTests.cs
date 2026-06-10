@@ -78,6 +78,7 @@ public sealed class HttpRestExecutionTests
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,                      // System.Private.Uri (safe URI composition, M1)
         typeof(Json.Path.JsonPath).Assembly.Location,              // JsonPath.Net — capture logic (S04-B-02)
+        typeof(System.Xml.XmlDocument).Assembly.Location,          // System.Private.Xml — XPath capture logic (S07-B-01b)
     };
 
     /// <summary>
