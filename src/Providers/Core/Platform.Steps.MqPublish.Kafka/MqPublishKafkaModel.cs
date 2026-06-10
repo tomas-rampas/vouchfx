@@ -18,11 +18,13 @@ namespace Platform.Steps.MqPublish.Kafka;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the PLAIN-payload model: the <see cref="Payload"/> is a UTF-8 string
-/// (a literal value or a JSON document authored inline).  Avro / schema-registry
-/// encoding is a separate later task and is deliberately not represented here; the
-/// record may gain an optional trailing <c>Avro</c> field in a future slice without
-/// affecting existing call sites.
+/// The model supports two payload paths: PLAIN (when <see cref="Avro"/> is <see langword="null"/>,
+/// the <see cref="Payload"/> is a UTF-8 string sent verbatim) and AVRO (when
+/// <see cref="Avro"/> is non-<see langword="null"/>, the message is built as an Avro
+/// <c>GenericRecord</c> from the inline schema and field map, registered with a Confluent
+/// Schema Registry, and the plain <see cref="Payload"/> is ignored).  The optional
+/// <see cref="Avro"/> field is an additive trailing field that does not affect existing
+/// call sites when <see langword="null"/>.
 /// </para>
 /// <para>
 /// The <see cref="Topic"/>, <see cref="Key"/>, <see cref="Payload"/>, and each

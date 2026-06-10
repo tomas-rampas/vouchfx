@@ -17,10 +17,12 @@ namespace Platform.Steps.MqExpect.Kafka;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the PLAIN-payload model: the message value is a UTF-8 string (a literal
-/// value or an inline JSON document) and the assertion criteria are expressed against
-/// that string.  Avro / schema-registry decoding is a separate later task and is
-/// deliberately not represented here.
+/// The model supports two consume paths: PLAIN (when <see cref="Avro"/> is <see langword="null"/>,
+/// the message value is a UTF-8 string and assertion criteria run against it directly) and
+/// AVRO (when <see cref="Avro"/> is non-<see langword="null"/>, each message is Avro-decoded
+/// to a <c>GenericRecord</c>, converted to a JSON string, and the same assertion criteria
+/// run against that JSON string).  The optional <see cref="Avro"/> field is an additive
+/// trailing field that does not affect existing call sites when <see langword="null"/>.
 /// </para>
 /// <para>
 /// This provider is the primary <c>verifyMode: RETRY</c> consumer: the engine wraps a

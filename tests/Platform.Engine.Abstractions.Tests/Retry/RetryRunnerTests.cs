@@ -165,6 +165,12 @@ public sealed class RetryRunnerTests
         Assert.Single(attempts);
         Assert.Equal(Verdict.EnvironmentError, attempts[0].Verdict);
         Assert.NotNull(attempts[0].Observation);
+
+        // Assert — the observation is REDACTED to the exception TYPE name only; the raw
+        // message ("connection refused") must never reach the author-visible observation
+        // (it could carry connection strings / credentials / hostnames — §17 spirit).
+        Assert.Equal("{\"error\":\"InvalidOperationException\"}", attempts[0].Observation);
+        Assert.DoesNotContain("connection refused", attempts[0].Observation);
     }
 
     // -------------------------------------------------------------------------

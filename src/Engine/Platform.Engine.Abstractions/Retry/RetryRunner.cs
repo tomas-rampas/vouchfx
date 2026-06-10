@@ -142,8 +142,9 @@ public static class RetryRunner
         var attempts = new List<AttemptRecord>();
         var overall = Stopwatch.StartNew();
 
-        // Link the caller's token with the overall-window timer.  Cancellation from
-        // either source terminates the loop; we classify it as Inconclusive (timeout).
+        // Link the caller's token with the overall-window timer.  A cancellation from the
+        // caller's own token is rethrown (the async cancellation contract — see the filtered
+        // catch below); only the internal window timer elapsing maps to Inconclusive (timeout).
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linked.CancelAfter(window);
 
@@ -165,16 +166,21 @@ public static class RetryRunner
                         }
                         catch (OperationCanceledException)
                         {
-                            // Window (or caller) cancellation — surface to the outer
-                            // catch, which classifies it as Inconclusive (timeout).
+                            // Cancellation (caller token or window timer) — surface to the
+                            // outer handlers: caller-cancellation is rethrown verbatim, while
+                            // a window-timer elapse is classified as Inconclusive (timeout).
                             throw;
                         }
                         catch (Exception ex)
                         {
                             // A thrown attempt is a terminal EnvironmentError: record
-                            // it and return it so ShouldHandle stops the loop.
+                            // it and return it so ShouldHandle stops the loop.  Emit only
+                            // the exception TYPE name — a raw ex.Message can leak connection
+                            // strings, credentials or hostnames into the author-visible
+                            // observation / event stream / terminal output.  Full exception
+                            // detail belongs in structured logging, not here (§17 spirit).
                             var observation = JsonSerializer.Serialize(
-                                new Dictionary<string, string> { ["error"] = ex.Message });
+                                new Dictionary<string, string> { ["error"] = ex.GetType().Name });
                             outcome = new StepOutcome(
                                 Verdict.EnvironmentError, perAttempt.ElapsedMilliseconds, observation);
                             attempts.Add(new AttemptRecord(

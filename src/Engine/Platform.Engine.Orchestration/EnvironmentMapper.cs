@@ -340,10 +340,17 @@ public static class EnvironmentMapper
 
                                 var srContainerBuilder = builder
                                     .AddContainer(srName, "confluentinc/cp-schema-registry", "7.6.1")
-                                    .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", "0.0.0.0")
+                                    // HOST_NAME is the registry's *advertised* (routable) hostname,
+                                    // NOT a bind address: it must be a name resolvable by clients and
+                                    // peer instances on the container network. The container's network
+                                    // hostname IS its resource name, so advertise `srName`. (A bind-all
+                                    // 0.0.0.0 here would advertise an unusable URL — that belongs only
+                                    // in LISTENERS below.)
+                                    .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", srName)
                                     .WithEnvironment(
                                         "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
                                         bootstrapServers)
+                                    // LISTENERS is the bind address — 0.0.0.0 (all interfaces) is correct.
                                     .WithEnvironment("SCHEMA_REGISTRY_LISTENERS", "http://0.0.0.0:8081")
                                     .WithHttpEndpoint(targetPort: 8081, name: "http")
                                     // /subjects → 200 once the registry is serving (default 200 gate).
