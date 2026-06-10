@@ -16,6 +16,14 @@
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.6.6" />
   </ItemGroup>
+  <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
+    <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
+         DefaultValueFactory properties; Command(name, description); SetAction(Func&lt;ParseResult,
+         CancellationToken, Task&lt;int&gt;&gt;); rootCommand.Parse(args).InvokeAsync(ct). The pre-GA
+         betas exposed different ctor overloads (e.g. Argument&lt;T&gt;(name, () =&gt; default, desc)),
+         so the version is pinned to keep the API surface this CLI compiles against stable. -->
+    <PackageVersion Include="System.CommandLine" Version="2.0.0" />
+  </ItemGroup>
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
     <PackageVersion Include="JsonPath.Net" Version="3.0.2" />
     <PackageVersion Include="JsonSchema.Net" Version="9.2.1" />
