@@ -173,7 +173,15 @@ public static class YamlDocumentParser
         {
             if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
             {
-                continue;
+                // Reject a malformed seed dependency key rather than silently dropping it: a
+                // skipped dependency leaves a fixture unloaded, surfacing later as a
+                // misattributed assertion Fail/EnvironmentError — the exact §12.1 confusion
+                // seeding prevents.  Mirrors the value-side throw below and ParseCaptureMap.
+                throw new YamlParseException(
+                    $"seed dependency key at line {key.Start.Line} must be a scalar (the logical " +
+                    $"dependency name), but found {key.NodeType}.",
+                    key.Start.Line,
+                    key.Start.Column);
             }
 
             if (value is not YamlMappingNode depMapping)
