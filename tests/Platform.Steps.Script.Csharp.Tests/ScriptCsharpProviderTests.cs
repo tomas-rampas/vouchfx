@@ -42,6 +42,10 @@ file sealed class StubCompileContext : ICompileContext
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> Captures { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+        new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
 }
 
 /// <summary>Minimal <see cref="IProjectContext"/> for validator tests.</summary>

@@ -80,6 +80,8 @@ public interface IProjectContext
 /// <para>
 /// Sprint-2 additions: <see cref="StepId"/> and <see cref="SuiteNamespace"/>.
 /// Sprint-4 addition: <see cref="Captures"/> (S04-B-02).
+/// Sprint-7 addition: <see cref="CaptureExprs"/> (S07-B-01a) — the
+/// format-aware view that supersedes <see cref="Captures"/>.
 /// </para>
 /// </remarks>
 public interface ICompileContext
@@ -99,24 +101,54 @@ public interface ICompileContext
     string SuiteNamespace { get; }
 
     /// <summary>
-    /// Gets the map of variable names to JSONPath expressions declared in the
-    /// step's <c>capture</c> block (DSL §3, S04-B-02).
+    /// Gets the map of variable names to capture <em>expression strings</em>
+    /// declared in the step's <c>capture</c> block (DSL §6.1, S04-B-02).
     /// </summary>
     /// <remarks>
     /// <para>
     /// Keys are the author-supplied variable names (e.g. <c>"orderId"</c>);
-    /// values are JSONPath expressions (e.g. <c>"$.id"</c>) that are evaluated
+    /// values are the raw extractor strings (e.g. <c>"$.id"</c>) evaluated
     /// against the step's response body at execution time.
+    /// </para>
+    /// <para>
+    /// This is the <strong>format-agnostic, back-compatible view</strong>: it
+    /// exposes only the expression text and is retained so that a provider that
+    /// only ever evaluates JSONPath (the pre-S07 behaviour) compiles and behaves
+    /// unchanged.  A provider that needs to dispatch on the extractor language
+    /// (JSONPath vs XPath) must read <see cref="CaptureExprs"/> instead, whose
+    /// <see cref="CaptureExpr.Expression"/> values are identical to these entries
+    /// in the same order.
     /// </para>
     /// <para>
     /// The map is never <see langword="null"/>; an empty dictionary is used when
     /// the YAML step omits the <c>capture</c> section.
     /// </para>
     /// <para>
-    /// When a JSONPath expression yields no match the step outcome is set to
+    /// When an expression yields no match the step outcome is set to
     /// <c>Verdict.Inconclusive</c> with reason
     /// <c>upstream-capture-unmet</c> (§12.1).
     /// </para>
     /// </remarks>
     IReadOnlyDictionary<string, string> Captures { get; }
+
+    /// <summary>
+    /// Gets the map of variable names to typed <see cref="CaptureExpr"/> values
+    /// declared in the step's <c>capture</c> block (DSL §6.1, S07-B-01a).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each value carries both the extractor <see cref="CaptureExpr.Format"/>
+    /// (<see cref="CaptureFormat.JsonPath"/> or <see cref="CaptureFormat.XPath"/>)
+    /// and the raw <see cref="CaptureExpr.Expression"/> string.  This is the
+    /// authoritative, format-aware view: a provider that supports more than one
+    /// extractor language dispatches on <see cref="CaptureExpr.Format"/>.
+    /// </para>
+    /// <para>
+    /// Iteration order and keys match <see cref="Captures"/> exactly; the two
+    /// views are projections of the same underlying capture map.  The map is
+    /// never <see langword="null"/>; an empty dictionary is used when the YAML
+    /// step omits the <c>capture</c> section.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; }
 }

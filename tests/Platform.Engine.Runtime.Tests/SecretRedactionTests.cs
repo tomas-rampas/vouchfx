@@ -76,7 +76,7 @@ public sealed class SecretRedactionTests
         if (node.Capture.Count > 0)
         {
             captured = node.Capture
-                .Select(kv => new CapturedVar(kv.Key, kv.Value, Matched: true))
+                .Select(kv => new CapturedVar(kv.Key, kv.Value.Expression, Matched: true))
                 .ToList();
         }
 

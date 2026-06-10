@@ -17,6 +17,7 @@
 
 using System.Globalization;
 using Platform.Engine.Authoring.Model;
+using Platform.Sdk;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -560,24 +561,175 @@ public static class YamlDocumentParser
         return new StepSpec(id, type, description, capture, verifyMode, timeout, continueOnFailure, stepMapping);
     }
 
-    private static Dictionary<string, string>? ParseCaptureMap(YamlMappingNode stepMapping)
+    /// <summary>
+    /// Parses the optional <c>capture:</c> block of a step (DSL §6.1) into a map
+    /// of variable name to a typed <see cref="CaptureExpr"/> (S07-B-01a).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two authoring forms are accepted per entry and are 100% interchangeable
+    /// with respect to the bare-scalar form's prior behaviour:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     A <strong>bare scalar</strong> (<c>name: "$.id"</c>) is bound to a
+    ///     <see cref="CaptureExpr"/> with <see cref="CaptureFormat.JsonPath"/>,
+    ///     preserving the exact pre-S07 semantics (every existing scalar capture
+    ///     parses and behaves identically).
+    ///   </description></item>
+    ///   <item><description>
+    ///     A <strong>single-key mapping</strong> selects the format explicitly:
+    ///     <c>name: { jsonpath: "$.id" }</c> →
+    ///     <see cref="CaptureFormat.JsonPath"/>, or
+    ///     <c>name: { xpath: "//id" }</c> → <see cref="CaptureFormat.XPath"/>.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The format is never inferred from the shape of the expression string; an
+    /// author who needs XPath must say so via the mapping form.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown, with 1-based line/column context mirroring the seed parsers, when a
+    /// capture value is neither a scalar nor a mapping, when the mapping declares
+    /// neither <c>jsonpath</c> nor <c>xpath</c>, declares both, declares an
+    /// unknown key, or carries a non-scalar expression value.  Rejecting a
+    /// malformed capture rather than silently dropping it prevents a later
+    /// misattributed assertion <c>Fail</c> (§12.1).
+    /// </exception>
+    private static Dictionary<string, CaptureExpr>? ParseCaptureMap(YamlMappingNode stepMapping)
     {
         if (!TryGetMapping(stepMapping, "capture", out var captureNode))
         {
             return null;
         }
 
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        var dict = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
         foreach (var (key, value) in captureNode.Children)
         {
-            if (key is YamlScalarNode keyScalar && keyScalar.Value is not null
-                && value is YamlScalarNode valueScalar && valueScalar.Value is not null)
+            if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
             {
-                dict[keyScalar.Value] = valueScalar.Value;
+                continue;
             }
+
+            dict[keyScalar.Value] = ParseCaptureEntry(keyScalar.Value, value);
         }
 
         return dict.Count > 0 ? dict : null;
+    }
+
+    // The two recognised keys of the explicit single-key capture mapping form.
+    private const string CaptureKeyJsonPath = "jsonpath";
+    private const string CaptureKeyXPath = "xpath";
+
+    /// <summary>
+    /// Binds a single <c>capture:</c> entry value (either a bare scalar or an
+    /// explicit single-key mapping) to a <see cref="CaptureExpr"/>.
+    /// </summary>
+    /// <param name="captureName">
+    /// The author-supplied variable name (the mapping key), used only for
+    /// diagnostics.
+    /// </param>
+    /// <param name="value">The YAML node holding the entry's value.</param>
+    /// <returns>The typed extractor for this entry.</returns>
+    /// <exception cref="YamlParseException">See <see cref="ParseCaptureMap"/>.</exception>
+    private static CaptureExpr ParseCaptureEntry(string captureName, YamlNode value)
+    {
+        // ── Bare-scalar form (back-compat): defaults to JSONPath ──────────────
+        if (value is YamlScalarNode scalar && scalar.Value is not null)
+        {
+            return new CaptureExpr(CaptureFormat.JsonPath, scalar.Value);
+        }
+
+        // ── Explicit single-key mapping form: { jsonpath: … } | { xpath: … } ──
+        if (value is not YamlMappingNode mapping)
+        {
+            throw new YamlParseException(
+                $"capture entry '{captureName}' at line {value.Start.Line} must be either a " +
+                $"scalar expression (e.g. '\"$.id\"', which defaults to JSONPath) or a single-key " +
+                $"mapping selecting the format (e.g. '{{ xpath: \"//id\" }}' or " +
+                $"'{{ jsonpath: \"$.id\" }}'), but found {value.NodeType}.",
+                value.Start.Line,
+                value.Start.Column);
+        }
+
+        string? jsonPath = null;
+        string? xPath = null;
+
+        foreach (var (mapKey, mapValue) in mapping.Children)
+        {
+            if (mapKey is not YamlScalarNode mapKeyScalar || mapKeyScalar.Value is null)
+            {
+                continue;
+            }
+
+            switch (mapKeyScalar.Value)
+            {
+                case CaptureKeyJsonPath:
+                    jsonPath = RequireCaptureExpressionScalar(captureName, CaptureKeyJsonPath, mapValue);
+                    break;
+
+                case CaptureKeyXPath:
+                    xPath = RequireCaptureExpressionScalar(captureName, CaptureKeyXPath, mapValue);
+                    break;
+
+                default:
+                    throw new YamlParseException(
+                        $"capture entry '{captureName}' at line {mapKeyScalar.Start.Line} has an " +
+                        $"unknown key '{mapKeyScalar.Value}'; the only recognised keys are " +
+                        $"'{CaptureKeyJsonPath}' and '{CaptureKeyXPath}'.",
+                        mapKeyScalar.Start.Line,
+                        mapKeyScalar.Start.Column);
+            }
+        }
+
+        if (jsonPath is null && xPath is null)
+        {
+            throw new YamlParseException(
+                $"capture entry '{captureName}' at line {mapping.Start.Line} is an empty mapping; it " +
+                $"must declare exactly one of '{CaptureKeyJsonPath}' or '{CaptureKeyXPath}' " +
+                $"(e.g. '{{ jsonpath: \"$.id\" }}' or '{{ xpath: \"//id\" }}').",
+                mapping.Start.Line,
+                mapping.Start.Column);
+        }
+
+        if (jsonPath is not null && xPath is not null)
+        {
+            throw new YamlParseException(
+                $"capture entry '{captureName}' at line {mapping.Start.Line} declares both " +
+                $"'{CaptureKeyJsonPath}' and '{CaptureKeyXPath}'; declare exactly one so the " +
+                $"extractor format is unambiguous.",
+                mapping.Start.Line,
+                mapping.Start.Column);
+        }
+
+        return jsonPath is not null
+            ? new CaptureExpr(CaptureFormat.JsonPath, jsonPath)
+            : new CaptureExpr(CaptureFormat.XPath, xPath!);
+    }
+
+    /// <summary>
+    /// Reads the scalar expression value of a capture mapping key
+    /// (<c>jsonpath</c> / <c>xpath</c>), rejecting a non-scalar value.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <paramref name="value"/> is not a non-null scalar.
+    /// </exception>
+    private static string RequireCaptureExpressionScalar(
+        string captureName,
+        string formatKey,
+        YamlNode value)
+    {
+        if (value is YamlScalarNode scalar && scalar.Value is not null)
+        {
+            return scalar.Value;
+        }
+
+        throw new YamlParseException(
+            $"capture entry '{captureName}' at line {value.Start.Line} has a '{formatKey}' value " +
+            $"that is not a scalar expression string.",
+            value.Start.Line,
+            value.Start.Column);
     }
 
     // -------------------------------------------------------------------------

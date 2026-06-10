@@ -37,11 +37,16 @@ public sealed class SubstituteHelperTests
         {
             StepId = stepId;
             Captures = captures ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            CaptureExprs = Captures.ToDictionary(
+                kv => kv.Key,
+                kv => new CaptureExpr(CaptureFormat.JsonPath, kv.Value),
+                StringComparer.Ordinal);
         }
 
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; }
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; }
     }
 
     // Additional Roslyn metadata references required by the emitted helpers.

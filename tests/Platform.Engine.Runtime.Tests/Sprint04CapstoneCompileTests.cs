@@ -218,7 +218,8 @@ public sealed class Sprint04CapstoneCompileTests
         Assert.Equal("fetch-id", fetchStep.Id);
         Assert.True(fetchStep.Capture.ContainsKey("hostname"),
             "fetch-id step must declare a capture for 'hostname'.");
-        Assert.Equal("$.hostname", fetchStep.Capture["hostname"]);
+        Assert.Equal(CaptureFormat.JsonPath, fetchStep.Capture["hostname"].Format);
+        Assert.Equal("$.hostname", fetchStep.Capture["hostname"].Expression);
 
         //  (b) The db-assert step declares parameters with a {hostname} placeholder.
         var assertStep = ast.Steps[2];

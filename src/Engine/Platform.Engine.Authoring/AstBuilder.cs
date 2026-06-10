@@ -135,7 +135,7 @@ public static class AstBuilder
         var verifyMode = ResolveVerifyMode(step);
         var timeout = ResolveTimeout(step);
         var rawCapture = step.Capture
-            ?? (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal);
+            ?? (IReadOnlyDictionary<string, CaptureExpr>)new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
 
         // M-A: Reject any capture key that begins with a reserved engine prefix.
         // A capture key maps an HTTP-response value into Vars; if the key begins with

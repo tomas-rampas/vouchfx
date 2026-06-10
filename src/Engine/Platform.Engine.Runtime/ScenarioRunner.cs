@@ -906,7 +906,14 @@ public static class ScenarioRunner
                 var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
                 var capturedVars = new List<CapturedVar>(node.Capture.Count);
                 var captureKeys = node.Capture.Keys.ToArray();
-                var captureVals = node.Capture.Values.ToArray();
+
+                // S07-B-01a: node.Capture values are now typed CaptureExpr records.
+                // The CapturedVar.Path provenance field carries the raw expression
+                // string (format-agnostic), so read .Expression — the event payload
+                // is unchanged for a JSONPath capture (byte-for-byte back-compatible).
+                var captureVals = node.Capture.Values
+                    .Select(e => e.Expression)
+                    .ToArray();
 
                 for (int ci = 0; ci < captureKeys.Length; ci++)
                 {

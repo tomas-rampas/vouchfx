@@ -3,6 +3,7 @@
 // Strongly-typed record for a single step entry in the `steps` sequence of a
 // .e2e.yaml file (docs/02 §4).
 
+using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
 
 namespace Platform.Engine.Authoring.Model;
@@ -37,9 +38,13 @@ namespace Platform.Engine.Authoring.Model;
 /// Optional short human-readable explanation shown in test output (§4).
 /// </param>
 /// <param name="Capture">
-/// Optional map of variable name to extractor expression (JSONPath / XPath).
-/// After the step completes, each expression is evaluated against the result
-/// and the value is written into the shared context (§4, §6.1).
+/// Optional map of variable name to a typed extractor
+/// (<see cref="CaptureExpr"/>, carrying both the query language and the raw
+/// expression string).  After the step completes, each expression is evaluated
+/// against the result and the value is written into the shared context (§4,
+/// §6.1).  The bare-scalar authoring form (<c>name: "$.id"</c>) is parsed to a
+/// <see cref="CaptureExpr"/> with <see cref="CaptureFormat.JsonPath"/>,
+/// preserving pre-S07 behaviour.
 /// </param>
 /// <param name="VerifyMode">
 /// Raw token: <c>IMMEDIATE</c> (default) or <c>RETRY</c>.  <see langword="null"/>
@@ -63,7 +68,7 @@ public sealed record StepSpec(
     string Id,
     string Type,
     string? Description,
-    IReadOnlyDictionary<string, string>? Capture,
+    IReadOnlyDictionary<string, CaptureExpr>? Capture,
     string? VerifyMode,
     string? Timeout,
     bool? ContinueOnFailure,

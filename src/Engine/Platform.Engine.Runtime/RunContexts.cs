@@ -74,15 +74,22 @@ internal sealed class RunProjectContext : Platform.Sdk.IProjectContext
 /// <c>capture</c> map from the YAML step node so that providers can emit
 /// JSONPath-based capture logic directly into the generated CSX block.
 /// </para>
+/// <para>
+/// Sprint-7 addition (S07-B-01a): the context is constructed from the
+/// format-aware <see cref="Platform.Sdk.CaptureExpr"/> map and exposes it via
+/// <see cref="CaptureExprs"/>; <see cref="Captures"/> is derived from it as an
+/// order-preserving expression-string projection so that JSONPath-only providers
+/// keep working unchanged.
+/// </para>
 /// </remarks>
 internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
 {
     /// <summary>
-    /// An empty captures map used as the default when a step has no
+    /// An empty format-aware captures map used as the default when a step has no
     /// <c>capture</c> section.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> s_empty =
-        new Dictionary<string, string>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, Platform.Sdk.CaptureExpr> s_empty =
+        new Dictionary<string, Platform.Sdk.CaptureExpr>(StringComparer.Ordinal);
 
     /// <summary>
     /// Initialises a new <see cref="RunCompileContext"/> with the given step
@@ -95,17 +102,18 @@ internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
     /// The C# namespace into which the compiled suite is emitted.
     /// </param>
     /// <param name="captures">
-    /// The step's <c>capture</c> map (varName → JSONPath expression).
+    /// The step's <c>capture</c> map (varName → <see cref="Platform.Sdk.CaptureExpr"/>).
     /// Pass <see langword="null"/> or omit to use an empty dictionary.
     /// </param>
     public RunCompileContext(
         string stepId,
         string suiteNamespace,
-        IReadOnlyDictionary<string, string>? captures = null)
+        IReadOnlyDictionary<string, Platform.Sdk.CaptureExpr>? captures = null)
     {
         StepId = stepId;
         SuiteNamespace = suiteNamespace;
-        Captures = captures ?? s_empty;
+        CaptureExprs = captures ?? s_empty;
+        Captures = ProjectExpressions(CaptureExprs);
     }
 
     /// <inheritdoc />
@@ -116,4 +124,34 @@ internal sealed class RunCompileContext : Platform.Sdk.ICompileContext
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> Captures { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, Platform.Sdk.CaptureExpr> CaptureExprs { get; }
+
+    /// <summary>
+    /// Projects a format-aware capture map to the back-compatible expression-string
+    /// view (<see cref="Platform.Sdk.ICompileContext.Captures"/>), preserving iteration order so
+    /// the two views stay key- and value-aligned for providers that materialise
+    /// parallel arrays from each.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ProjectExpressions(
+        IReadOnlyDictionary<string, Platform.Sdk.CaptureExpr> exprs)
+    {
+        if (exprs.Count == 0)
+        {
+            return EmptyStringMap;
+        }
+
+        var projected = new Dictionary<string, string>(exprs.Count, StringComparer.Ordinal);
+        foreach (var (name, expr) in exprs)
+        {
+            projected[name] = expr.Expression;
+        }
+
+        return projected;
+    }
+
+    /// <summary>An empty string-valued capture view (the projection of <see cref="s_empty"/>).</summary>
+    private static readonly IReadOnlyDictionary<string, string> EmptyStringMap =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 }

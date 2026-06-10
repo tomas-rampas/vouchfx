@@ -34,6 +34,8 @@ public sealed class HttpRestEmitTests
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+            new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────────
