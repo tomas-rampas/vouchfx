@@ -195,6 +195,119 @@ public interface IResourceContributor<TModel> where TModel : IStepModel
 }
 
 /// <summary>
+/// Optional.  A provider implements this to declare the <em>host-side</em>
+/// ephemeral resources it needs the engine to stand up — inside the
+/// <strong>Default</strong> <see cref="System.Runtime.Loader.AssemblyLoadContext"/>,
+/// owned by the topology/runner — <em>before any step runs</em> (§5, §13.8.1).
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is the host-side counterpart to <see cref="IResourceContributor{TModel}"/>:
+/// where <see cref="IResourceContributor{TModel}"/> declares <em>containerised</em>
+/// Aspire resources (a Postgres server, a Kafka broker), this interface declares
+/// <em>in-process</em> resources the engine host must own — the canonical example
+/// being the ephemeral local HTTP listener that backs the <c>webhook-listen.http</c>
+/// family.  The engine reflects this interface exactly as it reflects
+/// <see cref="IResourceContributor{TModel}"/> (tolerantly: a provider that does not
+/// implement it contributes nothing), and starts each declared resource at
+/// topology-up in the Default ALC.
+/// </para>
+/// <para>
+/// <strong>Memory model (§5):</strong> the resources started for these requirements
+/// live wholly in the Default ALC and are reached by the emitted script only through
+/// a typed instance accessor on <c>ScriptGlobalVariables</c> (mirroring how the script
+/// reaches the secrets subsystem).  No static handle bridges the collectible boundary,
+/// so the requirement carries only the logical names the engine needs — never a live
+/// object.  The host stages the started resource's coordinates (e.g. a listener's URL)
+/// into the shared <c>Vars</c> map under <c>svc::&lt;VarName&gt;</c> before step 1, so
+/// an earlier step can hand that URL to the system under test (forward-only <c>Vars</c>
+/// threading is preserved).
+/// </para>
+/// <para>
+/// This is a frozen-contract-compatible optional extension interface (§13.8.1):
+/// adding it does not change the v1 provider contract, which remains frozen for the
+/// v1.x engine series.  Providers that need no host resources simply omit it.
+/// </para>
+/// </remarks>
+/// <typeparam name="TModel">
+/// The strongly-typed record that represents the provider's step model.
+/// Must implement <see cref="IStepModel"/>.
+/// </typeparam>
+public interface IHostResourceContributor<TModel> where TModel : IStepModel
+{
+    /// <summary>
+    /// Returns the host-side resources the engine must stand up (in the Default ALC)
+    /// before any step runs, on behalf of the given step model.
+    /// </summary>
+    /// <param name="model">
+    /// The validated step model whose host-resource requirements are to be declared.
+    /// </param>
+    /// <returns>
+    /// Zero or more <see cref="HostResourceRequirement"/> instances.  The engine
+    /// de-duplicates by <see cref="HostResourceRequirement.VarName"/> across all
+    /// contributing steps before starting the resources.
+    /// </returns>
+    IEnumerable<HostResourceRequirement> HostResources(TModel model);
+}
+
+/// <summary>
+/// A declared host-side resource requirement (§5, §13.8.1): a logical request for the
+/// engine to stand up an in-process resource in the Default
+/// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> before any step runs.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is a pure, strongly-typed record carrying only logical names — never a live
+/// object — so it can never root the collectible script context (§5).  The engine
+/// interprets <see cref="Kind"/> to decide which host resource to start, and stages
+/// that resource's coordinates into the shared <c>Vars</c> map under
+/// <c>svc::&lt;VarName&gt;</c> (i.e. as a discovered service) before step 1, so a step
+/// can resolve the resource via the same <c>{placeholder}</c> mechanism it uses for any
+/// other discovered service.
+/// </para>
+/// <para>
+/// For the <c>webhook-listen.http</c> family, <see cref="Kind"/> is
+/// <c>"webhook-listener"</c>: the engine starts an ephemeral local HTTP listener,
+/// stages its bound URL at <c>svc::&lt;VarName&gt;</c>, and exposes the listener's
+/// captured inbound requests to a later assertion step through the typed
+/// <c>ScriptGlobalVariables.Webhooks</c> accessor, keyed by <see cref="VarName"/>.
+/// </para>
+/// </remarks>
+/// <param name="Kind">
+/// The host-resource kind discriminator the engine dispatches on (e.g.
+/// <c>"webhook-listener"</c>).  Must not be <see langword="null"/> or empty.
+/// </param>
+/// <param name="VarName">
+/// The logical name under which the started resource's coordinates are staged
+/// (at <c>svc::&lt;VarName&gt;</c>) and under which a later step reads its captures
+/// (via <c>ScriptGlobalVariables.Webhooks.GetCaptured(VarName)</c>).  Must not be
+/// <see langword="null"/> or empty.
+/// </param>
+public sealed record HostResourceRequirement(string Kind, string VarName)
+{
+    /// <summary>
+    /// The host-resource kind discriminator the engine dispatches on.  Guaranteed non-empty:
+    /// an empty value fails here at the contract, not later at <c>VarKeys</c>.
+    /// </summary>
+    public string Kind { get; } =
+        Validated(Kind, nameof(Kind));
+
+    /// <summary>
+    /// The logical name under which the started resource's coordinates are staged and read.
+    /// Guaranteed non-empty: an empty value fails here at the contract, not later at
+    /// <c>VarKeys</c>.
+    /// </summary>
+    public string VarName { get; } =
+        Validated(VarName, nameof(VarName));
+
+    private static string Validated(string value, string name)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value, name);
+        return value;
+    }
+}
+
+/// <summary>
 /// Allows a provider to register runtime services with the engine's internal
 /// DI container.  This interface is intentionally non-generic because service
 /// registration is independent of any particular step model (§13).

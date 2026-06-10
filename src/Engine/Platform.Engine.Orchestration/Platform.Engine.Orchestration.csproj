@@ -18,6 +18,20 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- Kestrel for the host-owned ephemeral webhook listener (S07-F-01a).
+       WebhookListener binds Kestrel to http://0.0.0.0:0 so a containerised SUT can later
+       reach it via host.docker.internal WITHOUT a Windows admin URL-ACL (which HttpListener
+       on a non-loopback prefix would require).  Aspire transitively framework-references
+       Microsoft.AspNetCore.App, but a class library does not carry the shared framework in
+       its own output closure; declaring it explicitly here makes the Kestrel types resolve
+       at compile time and documents the dependency, independent of Aspire's transitive graph.
+       The host executables that consume this library (the CLI runner and the Aspire-host test
+       projects, all <IsAspireHost>true</IsAspireHost>) carry the ASP.NET Core shared framework
+       at runtime, so the types resolve when the listener actually runs. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />

@@ -31,12 +31,14 @@ using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Abstractions.Retry;
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Authoring.Model;
 using Platform.Engine.Compilation;
 using Platform.Engine.Compilation.Schema;
 using Platform.Engine.Orchestration;
+using Platform.Engine.Orchestration.HostResources;
 using Platform.Engine.Reporting;
 using Platform.Sdk;
 
@@ -375,6 +377,7 @@ public static class ScenarioRunner
                 suite,
                 pipelineResult.Assembled!,
                 pipelineResult.CompileReferencePaths,
+                pipelineResult.HostResourcePlan,
                 buffer,
                 isolation,
                 output,
@@ -658,6 +661,7 @@ public static class ScenarioRunner
                     suite,
                     pipeline!.Assembled!,
                     pipeline.CompileReferencePaths,
+                    pipeline.HostResourcePlan,
                     buffer,
                     new NullScenarioIsolation(), // isolation already handled above/below
                     output,
@@ -723,6 +727,7 @@ public static class ScenarioRunner
         SuiteTopology suite,
         AssembledScript assembled,
         IReadOnlyList<string> compileReferencePaths,
+        IReadOnlyList<HostResourcePlanEntry> hostResourcePlan,
         List<string> buffer,
         IScenarioIsolation isolation,
         TextWriter output,
@@ -742,6 +747,117 @@ public static class ScenarioRunner
             vars[varKey] = kv.Value;
         }
 
+        // ── Host resources (S07-F-01a, §5) ────────────────────────────────────
+        // BEFORE staging the `variables` block and BEFORE running any step, start each
+        // host-side resource declared by a provider (e.g. an ephemeral webhook listener)
+        // IN THE DEFAULT ALC, owned here by the runner.  Stage each listener's bound URL
+        // at svc::<VarName> so it is available before step 1 — an EARLIER step can hand
+        // that URL to the SUT (forward-only Vars threading preserved) — and register its
+        // buffer so a LATER assertion step can read captures via globals.Webhooks.
+        //
+        // Off the hot path: when no step contributes a host resource, no listener starts
+        // and Webhooks stays the Null accessor.  Listeners are disposed in the finally
+        // below; because each scenario run starts FRESH listeners+buffers and disposes
+        // them at the end, a webhook captured in scenario A can never satisfy an assertion
+        // in scenario B within a shared topology (strictly stronger than a buffer clear).
+        var listeners = new List<WebhookListener>();
+        IWebhookCaptureAccessor webhookAccessor = NullWebhookCaptureAccessor.Instance;
+        try
+        {
+            if (hostResourcePlan.Count > 0)
+            {
+                var buffers = new Dictionary<string, WebhookCaptureBuffer>(StringComparer.Ordinal);
+                // De-duplicate by VarName: many steps may reference the same logical listener.
+                foreach (var entry in hostResourcePlan)
+                {
+                    var req = entry.Requirement;
+                    if (!string.Equals(req.Kind, WebhookListenerKind, StringComparison.Ordinal))
+                    {
+                        // Unknown host-resource kind: ignore tolerantly (a future kind may be
+                        // handled by a later sprint's runner without breaking this one).
+                        continue;
+                    }
+
+                    if (buffers.ContainsKey(req.VarName))
+                    {
+                        continue;
+                    }
+
+                    var capBuffer = new WebhookCaptureBuffer();
+                    var listener = await WebhookListener
+                        .StartAsync(capBuffer, cancellationToken)
+                        .ConfigureAwait(false);
+                    listeners.Add(listener);
+                    buffers[req.VarName] = capBuffer;
+
+                    // Stage the listener URL as a discovered service BEFORE step 1.
+                    vars[VarKeys.Service(req.VarName)] = listener.Url;
+                }
+
+                if (buffers.Count > 0)
+                {
+                    webhookAccessor = new WebhookCaptureAccessor(buffers);
+                }
+            }
+
+            return await RunScenarioCoreAsync(
+                ast,
+                scenarioName,
+                runId,
+                suite,
+                assembled,
+                compileReferencePaths,
+                vars,
+                webhookAccessor,
+                buffer,
+                output,
+                seedBaseDirectory,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Dispose every started listener (stops Kestrel, releases the port) regardless of
+            // the scenario's verdict or any thrown exception.  Disposal of fresh per-scenario
+            // listeners is the per-scenario teardown that isolates scenarios in a shared topology.
+            foreach (var listener in listeners)
+            {
+                try
+                {
+                    await listener.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort teardown: a failed listener dispose must not mask the verdict.
+                }
+            }
+        }
+    }
+
+    // The single host-resource kind handled by this sprint's runner (S07-F-01a).
+    private const string WebhookListenerKind = "webhook-listener";
+
+    /// <summary>
+    /// Executes the per-scenario compilation + isolated Roslyn run against an already-started
+    /// topology, with the host-resource staging already applied to <paramref name="vars"/> and
+    /// the webhook accessor already built.  Extracted from
+    /// <see cref="RunScenarioAgainstTopologyAsync"/> so the host-listener lifecycle (start /
+    /// stage / dispose) wraps this body in a single try/finally without duplicating the many
+    /// early-return event-emission paths (S07-F-01a).
+    /// </summary>
+    private static async Task<Verdict> RunScenarioCoreAsync(
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        SuiteTopology suite,
+        AssembledScript assembled,
+        IReadOnlyList<string> compileReferencePaths,
+        Dictionary<string, object?> vars,
+        IWebhookCaptureAccessor webhookAccessor,
+        List<string> buffer,
+        TextWriter output,
+        string? seedBaseDirectory,
+        CancellationToken cancellationToken)
+    {
         // ── Stage the `variables` block constants (DSL §3) ────────────────────
         // Pre-loaded into the shared context under their bare names (no prefix) so
         // {placeholder} substitution and capture reads resolve them uniformly.
@@ -761,7 +877,14 @@ public static class ScenarioRunner
         var secretCatalog = new SecretSourceCatalog(BuildSecretResolvers());
         var secretAccessor = new SecretAccessor(secretCatalog);
 
-        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices, secretAccessor);
+        // ── §5 boundary construction (S07-F-01a) ──────────────────────────────
+        // Both the secret accessor and the webhook-capture accessor are instances built
+        // in the Default ALC and passed by-reference into the sole host↔script boundary.
+        // The webhook listener + buffers they project live in the Default ALC (owned by
+        // this runner); the emitted script reaches captures ONLY via globals.Webhooks —
+        // no static handle bridges the collectible boundary, preserving the memory model.
+        var globals = new ScriptGlobalVariables(
+            vars, suite.DiscoveredServices, secretAccessor, webhookAccessor);
 
         // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
         var tpaPaths = BclReferencePaths()

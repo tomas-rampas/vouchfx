@@ -3,6 +3,7 @@
 // Rule: no static members — the boundary must stay clean so the collectible AssemblyLoadContext
 // has nothing rooting the emitted assembly back into the Default context.
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Webhooks;
 
 namespace Platform.Engine.Abstractions;
 
@@ -46,7 +47,62 @@ public sealed class ScriptGlobalVariables
     public ISecretAccessor Secrets { get; }
 
     /// <summary>
-    /// Initialises a new instance with caller-supplied dictionaries and secret accessor.
+    /// The execution-time webhook-capture accessor (§5, S07-F-01a).  A later
+    /// assertion step reads the inbound HTTP requests captured by a host-owned
+    /// ephemeral webhook listener through this member, keyed by the listener's
+    /// logical name — never through any static handle.
+    /// </summary>
+    /// <remarks>
+    /// This is an <em>instance</em> property by design, exactly like
+    /// <see cref="Secrets"/>: the webhook listener and its capture buffer are owned
+    /// by the topology/runner in the <strong>Default</strong>
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/>, and the emitted script
+    /// observes their captured requests only by-reference through this accessor.
+    /// Exposing the listener, the buffer, or this accessor as a static would root the
+    /// collectible <see cref="System.Runtime.Loader.AssemblyLoadContext"/> back into the
+    /// Default context and defeat the memory model (§5) — so it must remain an instance
+    /// passed in at construction.  The accessor is read-only: the script can observe
+    /// captured requests but can never start, stop, or mutate a listener.  Legacy
+    /// constructors populate this with a <see cref="NullWebhookCaptureAccessor"/> that
+    /// returns an empty list, so a run with no listener never pays for one and every
+    /// existing call site keeps compiling unchanged.
+    /// </remarks>
+    public IWebhookCaptureAccessor Webhooks { get; }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
+    /// and webhook-capture accessor (the full host↔script boundary, S07-F-01a).
+    /// </summary>
+    /// <param name="vars">
+    /// Mutable state map; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="services">
+    /// Read-only typed-client surface; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="secrets">
+    /// The execution-time secret accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="webhooks">
+    /// The execution-time webhook-capture accessor; must not be <see langword="null"/>.
+    /// Pass <see cref="NullWebhookCaptureAccessor.Instance"/> when the run declares no
+    /// webhook listener.
+    /// </param>
+    public ScriptGlobalVariables(
+        IDictionary<string, object?> vars,
+        IReadOnlyDictionary<string, object> services,
+        ISecretAccessor secrets,
+        IWebhookCaptureAccessor webhooks)
+    {
+        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
+    }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries and secret accessor,
+    /// and no configured webhook listeners.  <see cref="Webhooks"/> is a
+    /// <see cref="NullWebhookCaptureAccessor"/> that returns an empty list.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
@@ -61,10 +117,8 @@ public sealed class ScriptGlobalVariables
         IDictionary<string, object?> vars,
         IReadOnlyDictionary<string, object> services,
         ISecretAccessor secrets)
+        : this(vars, services, secrets, NullWebhookCaptureAccessor.Instance)
     {
-        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
-        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
     }
 
     /// <summary>
