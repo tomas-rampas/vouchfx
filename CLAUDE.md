@@ -79,4 +79,4 @@ Steps share one mutable dictionary (`ScriptGlobalVariables`); state threads forw
 
 ## Planned repository structure (partially built)
 
-Six **Core providers** at `src/Providers/Core`: five delivered (`http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`) with `webhook-listen.http` planned for Sprint 7. Community-reviewed providers under `src/Providers/Verified`. Three governance tiers (Core / Verified / Community), all Apache-2.0 so providers move tiers without IP friction. `db-assert` has **no** default provider (no sensible lowest common denominator); other single-provider families accept the bare family name as an alias.
+Six **Core providers** at `src/Providers/Core`: all delivered (`http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`). Community-reviewed providers under `src/Providers/Verified`. Three governance tiers (Core / Verified / Community), all Apache-2.0 so providers move tiers without IP friction. `db-assert` has **no** default provider (no sensible lowest common denominator); other single-provider families accept the bare family name as an alias.
