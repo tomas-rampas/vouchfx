@@ -27,6 +27,8 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
+using Platform.Engine.Abstractions.Reproducibility;
+using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Authoring.Model;
@@ -129,6 +131,23 @@ public static class ScenarioRunner
     private static readonly Regex s_placeholderRegex =
         new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 
+    // Secret-reference sources the engine can resolve (§17, S05-B-01 / S05-B-02).
+    // This sprint ships only the 'env' source; Vault adds a resolver in Sprint 8 by
+    // extending BuildSecretResolvers() — both the pre-compile validation pass (this
+    // field) and the runtime accessor (the catalog) derive from that one factory, so
+    // they can never disagree about which sources are available.
+    private static readonly string[] s_knownSecretSources =
+        BuildSecretResolvers().Select(r => r.Source).ToArray();
+
+    /// <summary>
+    /// Builds the run's secret resolvers (§17).  Single source of truth shared by the
+    /// pre-compile validation pass (<see cref="s_knownSecretSources"/>) and the runtime
+    /// <see cref="SecretSourceCatalog"/> built per scenario, so the known-source set is
+    /// guaranteed consistent.  Vault is added here in Sprint 8 with no other change.
+    /// </summary>
+    private static ISecretResolver[] BuildSecretResolvers()
+        => new ISecretResolver[] { new EnvironmentSecretResolver() };
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -157,6 +176,11 @@ public static class ScenarioRunner
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
     /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative <c>environment.seed</c> SQL file
+    /// paths are resolved (S05-A-01).  Defaults to the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations in the pipeline.
     /// </param>
@@ -170,6 +194,7 @@ public static class ScenarioRunner
         IEnumerable<Assembly> providerAssemblies,
         string? appHostAssemblyName,
         TextWriter output,
+        string? seedBaseDirectory = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(yamlText);
@@ -299,6 +324,33 @@ public static class ScenarioRunner
             return Verdict.Inconclusive;
         }
 
+        // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
+        // A central, provider-uniform pass over every substitutable field text.
+        // Runs BEFORE the topology is started and BEFORE CompileOnce so a bad
+        // secret reference is caught without spinning up any containers — the
+        // scenario never ran, so the verdict is Inconclusive, not Fail.
+        if (TryValidateSecretReferences(ast, out var secretError))
+        {
+            var now5c = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now5c,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now5c,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(secretError).ConfigureAwait(false);
+            TerminalRenderer.Render(buffer, output);
+            return Verdict.Inconclusive;
+        }
+
         // ── Step 6: Start Aspire topology ─────────────────────────────────────
         SuiteTopology suite;
         try
@@ -307,6 +359,7 @@ public static class ScenarioRunner
                 doc.Environment,
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
+                seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -346,6 +399,7 @@ public static class ScenarioRunner
                 buffer,
                 isolation,
                 output,
+                seedBaseDirectory,
                 cancellationToken).ConfigureAwait(false);
 
             TerminalRenderer.Render(buffer, output);
@@ -381,6 +435,11 @@ public static class ScenarioRunner
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
     /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative <c>environment.seed</c> SQL file
+    /// paths are resolved (S05-A-01).  Defaults to the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations.
     /// </param>
@@ -413,6 +472,7 @@ public static class ScenarioRunner
         IEnumerable<Assembly> providerAssemblies,
         string? appHostAssemblyName,
         TextWriter output,
+        string? seedBaseDirectory = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -490,6 +550,14 @@ public static class ScenarioRunner
                 continue;
             }
 
+            // Secret-reference validation (§17, S05-B-01) — engine-level, runs
+            // before the topology is built so a bad reference costs no containers.
+            if (TryValidateSecretReferences(ast, out var secretError))
+            {
+                compilations.Add((name, ast, null, Verdict.Inconclusive, secretError));
+                continue;
+            }
+
             // Provider pipeline compile.
             var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
             if (pipelineResult.Failure is not null)
@@ -510,6 +578,7 @@ public static class ScenarioRunner
                 scenarios[0].Environment,
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
+                seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -618,6 +687,7 @@ public static class ScenarioRunner
                     buffer,
                     new NullScenarioIsolation(), // isolation already handled above/below
                     output,
+                    seedBaseDirectory,
                     cancellationToken).ConfigureAwait(false);
 
                 results.Add((name, scenarioVerdict));
@@ -682,6 +752,7 @@ public static class ScenarioRunner
         List<string> buffer,
         IScenarioIsolation isolation,
         TextWriter output,
+        string? seedBaseDirectory,
         CancellationToken cancellationToken)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
@@ -707,7 +778,16 @@ public static class ScenarioRunner
             vars[kv.Key] = kv.Value;
         }
 
-        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices);
+        // ── Secret subsystem (§17, S05-B-02) ──────────────────────────────────
+        // Build the catalog + accessor here, in the Default ALC, and pass them into
+        // the boundary BY REFERENCE.  No static handle bridges the boundary — the
+        // accessor is an instance the script reaches only via globals.Secrets.
+        // Resolution happens at step-execution time inside the emitted CSX, never at
+        // compile time, so no secret value is ever baked into the emitted IL.
+        var secretCatalog = new SecretSourceCatalog(BuildSecretResolvers());
+        var secretAccessor = new SecretAccessor(secretCatalog);
+
+        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices, secretAccessor);
 
         // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
         var tpaPaths = BclReferencePaths()
@@ -729,6 +809,42 @@ public static class ScenarioRunner
                 runLabel: scenarioName,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (SecretResolutionException sre)
+        {
+            // Defence-in-depth backstop (§17): every Core provider already guards its
+            // own secret resolution and maps a failure to a per-step EnvironmentError.
+            // This catch only fires if a FUTURE provider forgets that guard and lets a
+            // SecretResolutionException escape the Roslyn submission delegate. A secret
+            // that cannot be resolved is an environment/configuration problem, NOT a
+            // product defect — so we surface it as a scenario-level EnvironmentError
+            // (consistent with the verdict taxonomy §12.1; EnvironmentError is already a
+            // first-class scenario verdict used by the topology-start path above).
+            // REFERENCE-ONLY: only the source/path coordinates are written to output —
+            // never sre.Message verbatim (here Message carries only the path, but we keep
+            // the surface reference-only for consistency and future-proofing, §17).
+            var nowSE = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = nowSE,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = nowSE,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.EnvironmentError,
+                Counts = new VerdictCounts { EnvError = 1 },
+            }));
+
+            await output.WriteLineAsync(
+                "Secret resolution failed (EnvironmentError): " +
+                $"source '{sre.SecretSource}', path '{sre.SecretPath}'.")
+                .ConfigureAwait(false);
+
+            return Verdict.EnvironmentError;
         }
         catch (Exception ex)
         {
@@ -829,34 +945,11 @@ public static class ScenarioRunner
                 capturedList = capturedVars;
             }
 
-            // ── G-01: build Substitutions provenance (compile-time) ───────────
+            // ── G-01 + S05-G-01: build Substitutions provenance (compile-time) ─
             // Scan every substitutable field in the step's raw YAML for {name}
-            // tokens.  This is compile-time derivation — no runtime value is read.
-            IReadOnlyList<SubstitutionRef>? substitutionsList = null;
-            var substitutableTexts = CollectSubstitutableTexts(node);
-            if (substitutableTexts.Count > 0)
-            {
-                var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
-                var subs = new List<SubstitutionRef>();
-                foreach (var text in substitutableTexts)
-                {
-                    foreach (System.Text.RegularExpressions.Match m in
-                        s_placeholderRegex.Matches(text))
-                    {
-                        var placeholder = m.Groups[1].Value;
-                        if (!seenPlaceholders.Add(placeholder))
-                            continue; // deduplicate within step
-
-                        captureOriginMap.TryGetValue(placeholder, out var originStepId);
-                        subs.Add(new SubstitutionRef(
-                            Placeholder: placeholder,
-                            OriginStepId: originStepId,
-                            SecretDerived: false)); // no secret resolution this sprint
-                    }
-                }
-                if (subs.Count > 0)
-                    substitutionsList = subs;
-            }
+            // placeholder tokens AND ${secret:source/path} references.  This is
+            // compile-time derivation — no runtime value is ever read.
+            var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
 
             buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
             {
@@ -880,6 +973,22 @@ public static class ScenarioRunner
             EnvError = counts[(int)Verdict.EnvironmentError],
             Inconclusive = counts[(int)Verdict.Inconclusive],
         };
+
+        // ── Reproducibility envelope (§17, docs/02 §3.2.2, S05-B-03) ──────────
+        // Emitted once per scenario, alongside ScenarioCompletedEvent.  Built from
+        // reference text + fixture content ONLY — the secret resolver is never
+        // invoked here, so by construction no resolved secret value can enter the
+        // envelope.  Reuses SeedFixtures.ComputeContentHash for fixture digests.
+        var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory);
+        buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
+        {
+            RunId = runId,
+            Timestamp = DateTimeOffset.UtcNow,
+            ScenarioId = scenarioName,
+            EnvSchemaVersion = envelope.SchemaVersion,
+            SecretReferences = envelope.SecretReferences,
+            Fixtures = envelope.Fixtures,
+        }));
 
         buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
         {
@@ -958,7 +1067,7 @@ public static class ScenarioRunner
     /// step that declares it.  When the same name is declared by multiple steps
     /// (overwriting), the first declaration wins (it is the origin).
     /// </returns>
-    private static Dictionary<string, string> BuildCaptureOriginMap(
+    internal static Dictionary<string, string> BuildCaptureOriginMap(
         IReadOnlyList<StepNode> steps)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -974,6 +1083,300 @@ public static class ScenarioRunner
     }
 
     /// <summary>
+    /// Runs the central secret-reference validation pass over every substitutable
+    /// field of every step in <paramref name="ast"/> (§17, S05-B-01).
+    /// </summary>
+    /// <param name="ast">The parsed scenario to validate.</param>
+    /// <param name="error">
+    /// On the first failure, an actionable British-English message naming the
+    /// offending step and field problem; otherwise <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when a validation error was found (the caller should
+    /// short-circuit with <see cref="Verdict.Inconclusive"/>); <see langword="false"/>
+    /// when every field's secret references are well-formed and use a known source.
+    /// </returns>
+    /// <remarks>
+    /// This pass is engine-level and provider-uniform — it does not require any
+    /// change to the frozen <c>IStepValidator&lt;T&gt;</c> interface. It reuses
+    /// <see cref="CollectSubstitutableTexts"/> so the set of validated fields stays
+    /// in lock-step with the set of fields the providers actually substitute.
+    /// </remarks>
+    private static bool TryValidateSecretReferences(ScenarioAst ast, out string? error)
+    {
+        foreach (var node in ast.Steps)
+        {
+            foreach (var text in CollectSubstitutableTexts(node))
+            {
+                if (!SecretReference.ValidateField(text, s_knownSecretSources, out var fieldError))
+                {
+                    error = $"step '{node.Id}': {fieldError}";
+                    return true;
+                }
+            }
+        }
+
+        error = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Derives the compile-time substitution provenance for a single step
+    /// (S04-G-01 + S05-G-01) by scanning every substitutable field of
+    /// <paramref name="node"/> for two distinct token kinds:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>{placeholder}</c> tokens — each unique placeholder becomes a
+    ///     <see cref="SubstitutionRef"/> with <see cref="SubstitutionRef.SecretDerived"/>
+    ///     <see langword="false"/>.  Whether a placeholder's value <em>happens</em> to
+    ///     have come from a secret is not determinable here in the general case, so we
+    ///     never speculatively taint a plain placeholder — its origin (if any) is the
+    ///     prior capture step recorded in <paramref name="captureOriginMap"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>${secret:source/path}</c> references — each unique reference becomes a
+    ///     <see cref="SubstitutionRef"/> with <see cref="SubstitutionRef.SecretDerived"/>
+    ///     <see langword="true"/>, <see cref="SubstitutionRef.OriginStepId"/>
+    ///     <see langword="null"/> (a secret does not originate from a prior capture),
+    ///     and <see cref="SubstitutionRef.Placeholder"/> set to the non-sensitive
+    ///     reference label <c>"{source}/{path}"</c> (e.g. <c>"env/API_TOKEN"</c>).
+    ///   </description></item>
+    /// </list>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the report-layer redaction hook (§17, docs/02 §14.5): the engine lights
+    /// up <see cref="SubstitutionRef.SecretDerived"/> using only the secret
+    /// <em>reference</em> (source/path), which is intentionally shown in reports — the
+    /// resolved value is never read at compile time and never enters this record.
+    /// </para>
+    /// <para>
+    /// Deduplication is per-step and per token kind: placeholders dedupe on the
+    /// placeholder name, secret references dedupe on the reference label, and the two
+    /// kinds never collide because their grammars cannot overlap (the <c>${secret:</c>
+    /// sigil can never be produced by a bare <c>{name}</c> placeholder, S05-B-01).
+    /// </para>
+    /// <para>
+    /// Extracted as an <see langword="internal"/> method so the no-docker provenance
+    /// tests (S05-G-01) can exercise the <see cref="SubstitutionRef.SecretDerived"/>
+    /// wiring directly, without standing up a topology.
+    /// </para>
+    /// </remarks>
+    /// <param name="node">The step whose substitutable fields are scanned.</param>
+    /// <param name="captureOriginMap">
+    /// Map of captured variable name → originating step id, used to populate
+    /// <see cref="SubstitutionRef.OriginStepId"/> for plain placeholders.
+    /// </param>
+    /// <returns>
+    /// The list of substitution-provenance records for the step, or
+    /// <see langword="null"/> when no substitutable field contains any placeholder or
+    /// secret reference (so the wire field is omitted entirely).
+    /// </returns>
+    internal static IReadOnlyList<SubstitutionRef>? DeriveSubstitutionProvenance(
+        StepNode node,
+        IReadOnlyDictionary<string, string> captureOriginMap)
+    {
+        var substitutableTexts = CollectSubstitutableTexts(node);
+        if (substitutableTexts.Count == 0)
+            return null;
+
+        var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
+        var seenSecretRefs = new HashSet<string>(StringComparer.Ordinal);
+        var subs = new List<SubstitutionRef>();
+
+        foreach (var text in substitutableTexts)
+        {
+            // 1. Plain {placeholder} tokens — never speculatively tainted as secret.
+            foreach (System.Text.RegularExpressions.Match m in
+                s_placeholderRegex.Matches(text))
+            {
+                var placeholder = m.Groups[1].Value;
+                if (!seenPlaceholders.Add(placeholder))
+                    continue; // deduplicate within step
+
+                captureOriginMap.TryGetValue(placeholder, out var originStepId);
+                subs.Add(new SubstitutionRef(
+                    Placeholder: placeholder,
+                    OriginStepId: originStepId,
+                    SecretDerived: false));
+            }
+
+            // 2. ${secret:source/path} references — lit up as secret-derived using
+            //    the non-sensitive reference label only (never the value, §17).
+            foreach (var secretRef in SecretReference.FindAll(text))
+            {
+                var label = $"{secretRef.Source}/{secretRef.Path}";
+                if (!seenSecretRefs.Add(label))
+                    continue; // deduplicate within step
+
+                subs.Add(new SubstitutionRef(
+                    Placeholder: label,
+                    OriginStepId: null,
+                    SecretDerived: true));
+            }
+        }
+
+        return subs.Count > 0 ? subs : null;
+    }
+
+    /// <summary>
+    /// Assembles the reproducibility envelope for a scenario (§17, docs/02 §3.2.2,
+    /// S05-B-03): the hash of every distinct secret <em>reference</em> across all
+    /// steps' substitutable fields, plus the content hash of every applied seed
+    /// fixture.
+    /// </summary>
+    /// <param name="ast">The scenario whose steps and seed block are scanned.</param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory against which relative seed fixture paths are resolved
+    /// (S05-A-01).  When <see langword="null"/>, the current working directory is
+    /// used — matching <see cref="SuiteTopology.StartAsync"/>.
+    /// </param>
+    /// <returns>
+    /// The assembled <see cref="ReproducibilityEnvelope"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Secret-safe by construction (§17 — the headline guarantee):</strong>
+    /// the envelope is built from REFERENCE TEXT and FIXTURE CONTENT only.  The
+    /// secret resolver (<c>ISecretResolver</c>) is never invoked on this code path,
+    /// so there is no mechanism by which a resolved secret value can enter the
+    /// envelope.  Secret references are discovered via the same
+    /// <see cref="CollectSubstitutableTexts"/> + <see cref="SecretReference.FindAll"/>
+    /// scan used for provenance and pre-compile validation, and hashed from
+    /// <see cref="SecretReference.Raw"/> (the verbatim token) so the digest is
+    /// stable across runs (the reproducibility property).
+    /// </para>
+    /// <para>
+    /// Fixture hashing reuses <c>SeedFixtures.ComputeContentHash</c> (Orchestration)
+    /// so the envelope records the SAME hash the seed applier computes — no
+    /// duplicate hashing routine, no project cycle (the Runtime layer references
+    /// both Abstractions and Orchestration).
+    /// </para>
+    /// <para>
+    /// <strong>Missing-fixture behaviour:</strong> if a fixture file is absent at
+    /// envelope-build time, the fixture is recorded with a <see langword="null"/>
+    /// content hash rather than throwing — the envelope must never crash a run, and
+    /// a missing seed file is already classified as an Environment error by the seed
+    /// applier (§12.1).  Recording the reference without a hash keeps the envelope a
+    /// faithful, non-fatal account of what the run referenced.
+    /// </para>
+    /// <para>
+    /// Exposed as <see langword="internal"/> so the no-docker S05-B-03 tests can
+    /// assemble the envelope exactly as the runner does, without standing up a
+    /// topology.
+    /// </para>
+    /// </remarks>
+    internal static ReproducibilityEnvelope BuildReproducibilityEnvelope(
+        ScenarioAst ast,
+        string? seedBaseDirectory)
+    {
+        // ── 1. Distinct secret references across every substitutable field ──────
+        // Reuse the exact compile-time scan used for provenance + validation so the
+        // set of references in the envelope never drifts from the set the engine
+        // actually recognises.  Compute() dedupes by Raw.
+        var references = new List<SecretReference>();
+        foreach (var node in ast.Steps)
+        {
+            foreach (var text in CollectSubstitutableTexts(node))
+            {
+                references.AddRange(SecretReference.FindAll(text));
+            }
+        }
+
+        // ── 2. Fixture content hashes from the seed block ──────────────────────
+        var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory);
+
+        // Compute() is pure: reference text + fixture digests only, no resolver.
+        return ReproducibilityEnvelope.Compute(references, fixtures);
+    }
+
+    /// <summary>
+    /// Enumerates every seed fixture file referenced by <paramref name="seed"/> —
+    /// SQL files, broker-publish payload <c>from</c> files, and document <c>from</c>
+    /// files — and computes each one's content hash via
+    /// <c>SeedFixtures.ComputeContentHash</c> (S05-A-02), in declared order.
+    /// </summary>
+    /// <param name="seed">
+    /// The scenario's seed block, or <see langword="null"/> when no seed is declared
+    /// (yielding an empty fixture list).
+    /// </param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory for relative fixture paths; the current working directory
+    /// when <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// One <see cref="FixtureDigest"/> per referenced fixture file.  A fixture whose
+    /// file is absent is recorded with a <see langword="null"/> content hash (the
+    /// envelope never throws — see <see cref="BuildReproducibilityEnvelope"/>).
+    /// </returns>
+    private static IReadOnlyList<FixtureDigest> CollectFixtureDigests(
+        SeedSpec? seed,
+        string? seedBaseDirectory)
+    {
+        if (seed is null || seed.Dependencies.Count == 0)
+        {
+            return Array.Empty<FixtureDigest>();
+        }
+
+        var baseDir = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+        var digests = new List<FixtureDigest>();
+
+        foreach (var dependency in seed.Dependencies.Values)
+        {
+            // SQL fixtures (postgres) — A-01.
+            if (dependency.Sql is not null)
+            {
+                foreach (var sqlPath in dependency.Sql)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, sqlPath));
+                }
+            }
+
+            // Broker-publish payload fixtures — A-02 (wired-but-deferred seam).
+            if (dependency.Publish is not null)
+            {
+                foreach (var publish in dependency.Publish)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, publish.PayloadFrom));
+                }
+            }
+
+            // Document-store fixtures — A-02 (wired-but-deferred seam).
+            if (dependency.Documents is not null)
+            {
+                foreach (var document in dependency.Documents)
+                {
+                    digests.Add(HashFixtureOrNull(baseDir, document.From));
+                }
+            }
+        }
+
+        return digests;
+    }
+
+    /// <summary>
+    /// Computes a fixture's content hash via the shared
+    /// <c>SeedFixtures.ComputeContentHash</c> routine, returning a
+    /// <see cref="FixtureDigest"/> with a <see langword="null"/> hash (rather than
+    /// throwing) when the file is absent at envelope-build time.
+    /// </summary>
+    private static FixtureDigest HashFixtureOrNull(string baseDirectory, string relativePath)
+    {
+        try
+        {
+            var hash = SeedFixtures.ComputeContentHash(baseDirectory, relativePath);
+            return new FixtureDigest(relativePath, hash);
+        }
+        catch (FileNotFoundException)
+        {
+            // The envelope must never crash a run: a missing seed fixture is already
+            // classified as an Environment error by the seed applier (§12.1).  Record
+            // the reference without a hash so the envelope remains a faithful account.
+            return new FixtureDigest(relativePath, ContentHash: null);
+        }
+    }
+
+    /// <summary>
     /// Returns the set of raw field values from <paramref name="node"/> that are
     /// subject to <c>{placeholder}</c> substitution at runtime (B-03).  These are
     /// the fields whose emitted CSX wraps the value in
@@ -983,10 +1386,22 @@ public static class ScenarioRunner
     /// The implementation uses the raw YAML mapping node to extract the same fields
     /// that the provider emitters wrap.  For <c>http.rest</c> this is <c>path</c>
     /// (and header values when present); for <c>db-assert.postgres</c> this is
-    /// <c>query</c> and each parameter value.
+    /// <c>query</c>, each parameter value, AND each <c>expect.row</c> value — every
+    /// text the <c>DbAssertPostgresProvider.Emit</c> path resolves at runtime via
+    /// <c>Substitute_Helpers.Resolve</c>/<c>ResolveIdentifier</c>.  Keeping this set
+    /// in lock-step with the provider is load-bearing: a field the provider
+    /// substitutes but this scan omits would let a malformed/unknown-source secret
+    /// reference reach execution un-caught, defeating the compile-time guarantee.
     /// <para>
     /// This is a best-effort compile-time scan: it reads the known substitutable
     /// YAML keys for recognised step types.  Unknown provider types are skipped.
+    /// </para>
+    /// <para>
+    /// <c>script.csharp</c> is intentionally absent: its <c>code</c> body is spliced
+    /// into the CSX submission verbatim (it is Turing-complete C#, not a substitutable
+    /// template) — the engine performs NO <c>{placeholder}</c> or <c>${secret:…}</c>
+    /// substitution on it, so there is nothing here to collect or validate.  A future
+    /// reviewer should not re-flag this as a gap.
     /// </para>
     /// </remarks>
     private static List<string> CollectSubstitutableTexts(StepNode node)
@@ -1015,7 +1430,12 @@ public static class ScenarioRunner
                 }
             }
         }
-        // db-assert.postgres: 'query' and each parameter value are substitutable (B-03).
+        // db-assert.postgres: 'query', each parameter value, AND each expect.row
+        // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all
+        // three in Substitute_Helpers.Resolve/ResolveIdentifier at runtime, so all
+        // three must be collected here (the expect.row values were the under-collected
+        // gap fixed in S05-B-01: a ${secret:…} there is resolved at runtime but was
+        // previously invisible to both this scan and the secret-validation pass).
         else if (string.Equals(
             node.CanonicalType, "db-assert.postgres", StringComparison.Ordinal))
         {
@@ -1028,6 +1448,29 @@ public static class ScenarioRunner
                 && paramsNode is YamlDotNet.RepresentationModel.YamlMappingNode paramsMap)
             {
                 foreach (var kv in paramsMap.Children)
+                {
+                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
+                        && !string.IsNullOrEmpty(sv.Value))
+                    {
+                        texts.Add(sv.Value);
+                    }
+                }
+            }
+
+            // expect.row: a map of column name → expected value.  The provider binds
+            // this from RawNode["expect"]["row"] and wraps each VALUE (not the column
+            // name) in Substitute_Helpers.Resolve — mirror that traversal exactly so
+            // the collected set never drifts from what the provider resolves.
+            if (raw.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("expect"),
+                    out var expectNode)
+                && expectNode is YamlDotNet.RepresentationModel.YamlMappingNode expectMap
+                && expectMap.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("row"),
+                    out var rowNode)
+                && rowNode is YamlDotNet.RepresentationModel.YamlMappingNode rowMap)
+            {
+                foreach (var kv in rowMap.Children)
                 {
                     if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
                         && !string.IsNullOrEmpty(sv.Value))

@@ -1,4 +1,4 @@
-// Platform.Engine.Authoring — EnvironmentSpec (S03-B-01).
+// Platform.Engine.Authoring — EnvironmentSpec (S03-B-01; Seed bound in S05-A-01).
 //
 // Strongly-typed records for the optional `environment` top-level section of a
 // .e2e.yaml file (docs/02 §3.2).
@@ -25,8 +25,9 @@ namespace Platform.Engine.Authoring.Model;
 /// </param>
 /// <param name="Seed">
 /// Optional seed block applied after the topology is healthy and before the
-/// first step runs.  Kept as a raw <see cref="YamlMappingNode"/> because its
-/// structure is heterogeneous across dependency types; a later task will bind it.
+/// first step runs (docs/02 §3.2.2).  Bound to a strongly-typed
+/// <see cref="SeedSpec"/> in S05-A-01; <see langword="null"/> when the
+/// <c>seed</c> block is absent or empty.
 /// </param>
 /// <param name="ImageRegistry">
 /// Optional default registry prefix applied to every un-prefixed image reference
@@ -39,7 +40,7 @@ namespace Platform.Engine.Authoring.Model;
 public sealed record EnvironmentSpec(
     IReadOnlyDictionary<string, ServiceSpec>? Services,
     IReadOnlyDictionary<string, DependencySpec>? Dependencies,
-    YamlMappingNode? Seed,
+    SeedSpec? Seed,
     string? ImageRegistry,
     string? ImagePullPolicy);
 

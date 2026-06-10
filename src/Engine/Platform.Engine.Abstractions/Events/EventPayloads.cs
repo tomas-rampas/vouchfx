@@ -20,6 +20,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Platform.Engine.Abstractions.Reproducibility;
 
 namespace Platform.Engine.Abstractions.Events;
 
@@ -322,21 +323,28 @@ public sealed record CapturedVar(
 /// </para>
 /// </remarks>
 /// <param name="Placeholder">
-/// The placeholder name as it appeared in the template (e.g. <c>"orderId"</c>
-/// for the token <c>{orderId}</c>).
+/// For a plain placeholder, the placeholder name as it appeared in the template
+/// (e.g. <c>"orderId"</c> for the token <c>{orderId}</c>).  For a secret-derived
+/// entry (<see cref="SecretDerived"/> is <see langword="true"/>) this is instead
+/// the non-sensitive secret <em>reference</em> label <c>"{source}/{path}"</c>
+/// (e.g. <c>"env/API_TOKEN"</c>) — the reference is intentionally shown in reports
+/// (§17, docs/02 §14.5); the resolved value is never present.
 /// </param>
 /// <param name="OriginStepId">
 /// The step identifier that first captured the variable (i.e. the step whose
 /// <c>capture</c> map declares <paramref name="Placeholder"/> as a key).
 /// <see langword="null"/> when the variable originates from the <c>variables</c>
-/// block or is otherwise not traceable to a prior capture.
+/// block, when the entry is secret-derived (a secret does not originate from a
+/// prior capture), or when it is otherwise not traceable to a prior capture.
 /// </param>
 /// <param name="SecretDerived">
-/// <see langword="true"/> when the placeholder name resolves to a value that
-/// was obtained from a secret reference (<c>${secret:…}</c>).  Always
-/// <see langword="false"/> in the current MVP (secret resolution is not yet
-/// implemented for this sprint); the flag is present so the wire format is
-/// stable for future sprints.
+/// <see langword="true"/> when this entry records a <c>${secret:source/path}</c>
+/// reference found in a substitutable field of the step (S05-G-01); in that case
+/// <see cref="Placeholder"/> carries the reference label, never the value (§17).
+/// <see langword="false"/> for an ordinary <c>{placeholder}</c> token: whether a
+/// placeholder's runtime value happens to derive from a secret is not determinable
+/// at compile time in the general case, so a plain placeholder is never
+/// speculatively tainted.
 /// </param>
 public sealed record SubstitutionRef(
     [property: System.Text.Json.Serialization.JsonPropertyName("placeholder")] string Placeholder,
@@ -512,4 +520,96 @@ public sealed record ScenarioCompletedEvent
     /// </summary>
     [JsonPropertyName("counts")]
     public required VerdictCounts Counts { get; init; }
+}
+
+// ---------------------------------------------------------------------------
+// ReproducibilityEnvelopeEvent — S05-B-03 (§17, docs/02 §3.2.2)
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Emitted once per scenario carrying the reproducibility envelope (§14.4, type
+/// <see cref="EventTypes.ReproducibilityEnvelope"/>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Wire shape is flat: <c>scenarioId</c>, <c>envSchemaVersion</c>,
+/// <c>secretReferences</c>, and <c>fixtures</c> are siblings of the envelope
+/// fields.  The two arrays are the envelope's payload (see
+/// <see cref="ReproducibilityEnvelope"/>).
+/// </para>
+/// <para>
+/// <strong>Secret-safe by construction (§17):</strong> the envelope is built from
+/// reference text and fixture content only — the secret resolver is never invoked
+/// — so no resolved secret value can appear in this event.  The terminal renderer
+/// does not yet have a case for this type and therefore silently ignores it via
+/// its <c>default:</c> branch (§14 forward-compatibility); the envelope is for the
+/// JSON Lines consumers (reproducibility diffing, the Healer).
+/// </para>
+/// <para>
+/// The envelope's own schema version is carried as <c>envSchemaVersion</c> to keep
+/// it distinct from the event-stream <c>schemaVersion</c> (the two version
+/// independently): the former versions the envelope payload, the latter versions
+/// the event envelope.
+/// </para>
+/// </remarks>
+public sealed record ReproducibilityEnvelopeEvent
+{
+    /// <summary>Envelope schema generation.  Currently <c>1</c>.</summary>
+    [JsonPropertyName("v")]
+    public int Version { get; init; } = 1;
+
+    /// <summary>Human-readable event-stream schema version string, e.g. <c>"v1"</c>.</summary>
+    [JsonPropertyName("schemaVersion")]
+    public string SchemaVersion { get; init; } = "v1";
+
+    /// <summary>
+    /// Event-type discriminator.  Defaults to
+    /// <see cref="EventTypes.ReproducibilityEnvelope"/>
+    /// (<c>"reproducibility-envelope"</c>).
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = EventTypes.ReproducibilityEnvelope;
+
+    /// <summary>Wall-clock timestamp at which the engine emitted this event.</summary>
+    [JsonPropertyName("ts")]
+    public DateTimeOffset Timestamp { get; init; }
+
+    /// <summary>Identifier of the run this event belongs to.</summary>
+    [JsonPropertyName("runId")]
+    public required string RunId { get; init; }
+
+    /// <summary>
+    /// Optional correlation identifiers.  Omitted from the wire when
+    /// <see langword="null"/>.
+    /// </summary>
+    [JsonPropertyName("correlationIds")]
+    public IReadOnlyDictionary<string, string>? CorrelationIds { get; init; }
+
+    /// <summary>
+    /// Unique identifier of the scenario this envelope describes.
+    /// </summary>
+    [JsonPropertyName("scenarioId")]
+    public required string ScenarioId { get; init; }
+
+    /// <summary>
+    /// The envelope's own schema version (e.g.
+    /// <see cref="ReproducibilityEnvelope.CurrentSchemaVersion"/>), distinct from
+    /// the event-stream <see cref="SchemaVersion"/>.
+    /// </summary>
+    [JsonPropertyName("envSchemaVersion")]
+    public required string EnvSchemaVersion { get; init; }
+
+    /// <summary>
+    /// The distinct secret-reference digests for the scenario.  Each entry carries
+    /// a non-sensitive source id and the SHA-256 of the verbatim reference token —
+    /// never the resolved value (§17).
+    /// </summary>
+    [JsonPropertyName("secretReferences")]
+    public required IReadOnlyList<SecretReferenceDigest> SecretReferences { get; init; }
+
+    /// <summary>
+    /// The content-hash digests for every applied seed fixture (docs/02 §3.2.2).
+    /// </summary>
+    [JsonPropertyName("fixtures")]
+    public required IReadOnlyList<FixtureDigest> Fixtures { get; init; }
 }

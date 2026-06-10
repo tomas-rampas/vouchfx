@@ -940,9 +940,15 @@ Every renderer — the terminal, the HTML report, the JUnit XML, the cloud dashb
                                                                             "observed":"PROCESSING"}]} }
 {"v":1, "type":"step-completed",   "stepId":"expect-billing-event", "verdict":"FAIL",
                                     "durationMs":30024, "correlationIds":{"trace":"00-9e1c..."} }
+{"v":1, "type":"reproducibility-envelope", "runId":"r-7f3a", "scenarioId":"users-e2e",
+                                    "envSchemaVersion":"v1", "secretReferences":[{"source":"env",
+                                    "referenceHash":"sha256:a3f2..."}], "fixtures":[{"reference":
+                                    "fixtures/users.sql", "contentHash":"sha256:d4c8..."}] }
 {"v":1, "type":"scenario-completed", "scenarioId":"users-e2e", "verdict":"FAIL",
                                     "counts":{"pass":2,"fail":1,"envError":0,"inconclusive":0} }
 ```
+
+The `reproducibility-envelope` event carries per-scenario reproducibility metadata: the hashed secret references (never resolved values) and the content hashes of applied fixtures (see Section 14.7 and Section 17), enabling readers to reproduce the exact run on a different machine.
 
 Two design decisions in this stream are worth underlining. First, every step-attempt event is recorded individually rather than collapsed into a summary: this is what makes the polling timeline of the next subsection possible without re-running the suite. Second, every event carries a correlation id that resolves to a trace in the observability stack of Section 12, so the report becomes a navigable index into the rest of the platform's data plane rather than a dead end.
 
