@@ -1,6 +1,5 @@
 // Platform.Steps.Core.HttpRest — http.rest step model (DSL §5).
 // Strongly-typed record; Dictionary<string,object> is explicitly prohibited (§13).
-using System.Text.Json;
 using Platform.Sdk;
 
 namespace Platform.Steps.HttpRest;
@@ -34,8 +33,13 @@ public sealed record HttpExpect(int? Status);
 /// An optional map of request header names to values.
 /// </param>
 /// <param name="Body">
-/// An optional request body supplied inline; serialised to JSON at
-/// execution time.
+/// An optional request body, stored as a raw template string.  A YAML scalar
+/// body is kept as its literal string; a YAML mapping/sequence body is
+/// serialised to a JSON string at <see cref="HttpRestProvider.Bind"/> time.
+/// The template is emitted RAW (never pre-resolved): <c>{placeholder}</c> and
+/// <c>${secret:source/path}</c> tokens are resolved at step-execution time
+/// inside the emitted helper's guarded region (§17), exactly like the path and
+/// header values.  <see langword="null"/> when no body is declared.
 /// </param>
 /// <param name="Expect">
 /// An optional assertion block applied to the HTTP response.
@@ -45,5 +49,5 @@ public sealed record HttpRestModel(
     string Method,
     string Path,
     IReadOnlyDictionary<string, string>? Headers,
-    JsonElement? Body,
+    string? Body,
     HttpExpect? Expect) : IStepModel;

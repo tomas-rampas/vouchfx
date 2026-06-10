@@ -155,6 +155,7 @@ public sealed class HttpRestProvider
         "        string serviceKey,\n" +
         "        string method,\n" +
         "        string pathTemplate,\n" +
+        "        string? bodyTemplate,\n" +
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        int? expectedStatus,\n" +
@@ -222,6 +223,25 @@ public sealed class HttpRestProvider
         "                    // Add validates the name/value and rejects content headers on a\n" +
         "                    // request-header collection.\n" +
         "                    req.Headers.TryAddWithoutValidation(headerName, headerValue);\n" +
+        "                }\n" +
+        "                // Resolve + attach the request body INSIDE the guarded region (§17),\n" +
+        "                // mirroring the path/header handling EXACTLY. When bodyTemplate is\n" +
+        "                // non-null the original template is resolved in a SINGLE pass via\n" +
+        "                // ResolveTemplate (both {placeholder} substitution AND ${secret:...}\n" +
+        "                // resolution over the original text), so a substituted placeholder is\n" +
+        "                // never re-scanned as a secret token and a revealed secret is never\n" +
+        "                // re-scanned as a placeholder. The revealed body feeds the content sink\n" +
+        "                // directly and is never written back to Vars. A missing secret throws\n" +
+        "                // SecretResolutionException → caught below → EnvironmentError. The\n" +
+        "                // StringContent is owned by the HttpRequestMessage and is disposed when\n" +
+        "                // the request is disposed by the 'using' block above (a using-declaration\n" +
+        "                // is prohibited in a CSX body, §13.3.1).\n" +
+        "                // MVP content type: application/json.\n" +
+        "                if (bodyTemplate != null)\n" +
+        "                {\n" +
+        "                    var body = Secret_Helpers.ResolveTemplate(secrets, vars, bodyTemplate);\n" +
+        "                    req.Content = new System.Net.Http.StringContent(\n" +
+        "                        body, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "                }\n" +
         "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
         "                var actual = (int)resp.StatusCode;\n" +
@@ -526,6 +546,25 @@ public sealed class HttpRestProvider
             headers = dict;
         }
 
+        // S07-B-02a: bring the request body into scope as a RAW template string.
+        //   • A YAML scalar body (raw string / inline JSON) is kept as its literal
+        //     string — the author owns the exact bytes (e.g. an inline JSON document).
+        //   • A YAML mapping/sequence body is serialised to a JSON string here so the
+        //     author can write structured YAML and have it sent as JSON.
+        // Either way the result is a TEMPLATE: any {placeholder} / ${secret:source/path}
+        // token survives verbatim into the model and is resolved at execution time
+        // inside the emitted helper's guarded region (never at bind/compile time, §17).
+        string? body = null;
+        if (mapping.Children.TryGetValue(new YamlScalarNode("body"), out var bodyNode))
+        {
+            body = bodyNode switch
+            {
+                YamlScalarNode scalar => scalar.Value ?? string.Empty,
+                // Mapping / sequence: serialise the YAML structure to a JSON string.
+                _ => JsonSerializer.Serialize(YamlToJsonElement(bodyNode)),
+            };
+        }
+
         HttpExpect? expect = null;
         if (mapping.Children.TryGetValue(new YamlScalarNode("expect"), out var expectNode)
             && expectNode is YamlMappingNode expectMap)
@@ -545,7 +584,7 @@ public sealed class HttpRestProvider
             Method: method,
             Path: path,
             Headers: headers,
-            Body: null,  // Inline YAML body serialisation is a Sprint 3 concern.
+            Body: body,
             Expect: expect);
     }
 
@@ -665,6 +704,17 @@ public sealed class HttpRestProvider
         // hole; a lone {placeholder} or ${secret:…} passes through verbatim.
         var pathTemplateLiteral = JsonSerializer.Serialize(model.Path);
 
+        // S07-B-02a: the request body is emitted as the RAW template literal too, or as
+        // the bare C# literal 'null' when no body is declared.  Like the path/header
+        // values, the body is NOT pre-resolved at emit time — ExecuteAsync substitutes
+        // {placeholder} tokens and reveals ${secret:source/path} references at runtime,
+        // inside the guarded region, so a missing secret in the body is a step-scoped
+        // EnvironmentError and substitution reads runtime Vars.  No secret value is ever
+        // baked into the emitted IL — only the reference token text is.
+        var bodyTemplateLiteral = model.Body is null
+            ? "null"
+            : JsonSerializer.Serialize(model.Body);
+
         // S05-B-02: expand the headers map into parallel name/value-template arrays.
         // Values are emitted as RAW templates; ExecuteAsync substitutes then secret-
         // resolves each at runtime, inside the guarded region.  No secret value is ever
@@ -740,6 +790,7 @@ public sealed class HttpRestProvider
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
                     {{JsonSerializer.Serialize(model.Method)}},
                     {{pathTemplateLiteral}},
+                    {{bodyTemplateLiteral}},
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     {{expectedLiteral}},
@@ -836,5 +887,91 @@ public sealed class HttpRestProvider
             && node is YamlScalarNode scalar
             ? scalar.Value ?? string.Empty
             : string.Empty;
+    }
+
+    /// <summary>
+    /// Converts a structured YAML node (mapping / sequence / scalar) into a
+    /// <see cref="System.Text.Json.Nodes.JsonNode"/> tree so it can be serialised to a
+    /// JSON string for a <c>body</c> declared as inline YAML (S07-B-02a).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Scalars are emitted as the matching JSON type when YAML 1.1 typing is
+    /// unambiguous (<c>true</c>/<c>false</c> → boolean, <c>null</c>/<c>~</c> → null,
+    /// an integer/decimal literal → number), and as a JSON string otherwise.  This
+    /// keeps a structured YAML body's types faithful while leaving any
+    /// <c>{placeholder}</c> / <c>${secret:source/path}</c> token as a quoted string
+    /// for execution-time resolution.
+    /// </para>
+    /// <para>
+    /// A scalar whose YAML style is quoted is always treated as a string (the author
+    /// explicitly quoted it), so a quoted <c>"123"</c> survives as a JSON string.
+    /// </para>
+    /// </remarks>
+    private static System.Text.Json.Nodes.JsonNode? YamlToJsonElement(YamlNode node)
+    {
+        switch (node)
+        {
+            case YamlMappingNode map:
+                {
+                    var obj = new System.Text.Json.Nodes.JsonObject();
+                    foreach (var (k, v) in map.Children)
+                    {
+                        var key = k is YamlScalarNode ks ? ks.Value ?? string.Empty : k.ToString();
+                        obj[key] = YamlToJsonElement(v);
+                    }
+                    return obj;
+                }
+            case YamlSequenceNode seq:
+                {
+                    var arr = new System.Text.Json.Nodes.JsonArray();
+                    foreach (var item in seq.Children)
+                        arr.Add(YamlToJsonElement(item));
+                    return arr;
+                }
+            case YamlScalarNode scalar:
+                return ScalarToJsonNode(scalar);
+            default:
+                return System.Text.Json.Nodes.JsonValue.Create(node.ToString());
+        }
+    }
+
+    /// <summary>
+    /// Maps a YAML scalar to the closest JSON node, preserving YAML 1.1 typing for
+    /// unquoted plain scalars and treating any explicitly-quoted scalar as a string.
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonValue? ScalarToJsonNode(YamlScalarNode scalar)
+    {
+        var value = scalar.Value ?? string.Empty;
+
+        // An explicitly-quoted scalar is always a string — honour the author's intent
+        // (e.g. "123" stays a string, an inline JSON fragment stays a string).
+        if (scalar.Style is YamlDotNet.Core.ScalarStyle.SingleQuoted
+            or YamlDotNet.Core.ScalarStyle.DoubleQuoted)
+        {
+            return System.Text.Json.Nodes.JsonValue.Create(value);
+        }
+
+        if (value.Length == 0)
+            return System.Text.Json.Nodes.JsonValue.Create(string.Empty);
+
+        // YAML 1.1 null tokens.
+        if (value is "null" or "Null" or "NULL" or "~")
+            return null;
+
+        // YAML 1.1 boolean tokens.
+        if (value is "true" or "True" or "TRUE")
+            return System.Text.Json.Nodes.JsonValue.Create(true);
+        if (value is "false" or "False" or "FALSE")
+            return System.Text.Json.Nodes.JsonValue.Create(false);
+
+        // Integer / decimal literals (invariant culture) become JSON numbers.
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l))
+            return System.Text.Json.Nodes.JsonValue.Create(l);
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+            return System.Text.Json.Nodes.JsonValue.Create(d);
+
+        // Everything else (including {placeholder} / ${secret:...} tokens) is a string.
+        return System.Text.Json.Nodes.JsonValue.Create(value);
     }
 }
