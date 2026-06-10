@@ -66,7 +66,8 @@ public sealed class DbAssertPostgresProvider
       IStepValidator<DbAssertPostgresModel>,
       IStepCompiler<DbAssertPostgresModel>,
       IResourceContributor<DbAssertPostgresModel>,
-      ICompileReferenceContributor
+      ICompileReferenceContributor,
+      IStepDiffRenderer
 {
     // ── IStepProvider ─────────────────────────────────────────────────────────
 
@@ -634,6 +635,196 @@ public sealed class DbAssertPostgresProvider
         {
             yield return typeof(Npgsql.NpgsqlConnection).Assembly;
         }
+    }
+
+    // ── IStepDiffRenderer ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Determines whether <paramref name="observation"/> is one of the
+    /// <c>db-assert.postgres</c> Fail-observation shapes that this provider can render
+    /// as an expected-vs-observed diff.
+    /// </summary>
+    /// <remarks>
+    /// Recognised shapes (emitted by <c>DbAssertPostgres_Helpers</c> on a Fail verdict):
+    /// <list type="bullet">
+    ///   <item><description><c>{"column":…,"expected":…,"actual":…}</c> — a column-value mismatch.</description></item>
+    ///   <item><description><c>{"rowCount":{"expected":…,"actual":…}}</c> — a row-count mismatch.</description></item>
+    /// </list>
+    /// The Pass shape <c>{"rowCount":&lt;n&gt;}</c> (scalar) and the EnvironmentError shape
+    /// <c>{"error":…}</c> are intentionally NOT renderable — there is no expected-vs-observed
+    /// diff to draw — so <see cref="CanRender"/> returns <see langword="false"/> for them.
+    /// </remarks>
+    /// <inheritdoc cref="IStepDiffRenderer.CanRender" />
+    public bool CanRender(JsonElement observation) =>
+        TryReadColumnDiff(observation, out _, out _, out _)
+        || TryReadRowCountDiff(observation, out _, out _);
+
+    /// <summary>
+    /// Renders a faithful expected-vs-observed diff for a <c>db-assert.postgres</c>
+    /// Fail observation as a small plain-text relational table, or returns
+    /// <see langword="null"/> when <paramref name="observation"/> is not a recognised
+    /// diff shape (see <see cref="CanRender"/>).
+    /// </summary>
+    /// <inheritdoc cref="IStepDiffRenderer.RenderDiff" />
+    public string? RenderDiff(JsonElement observation)
+    {
+        if (TryReadColumnDiff(observation, out var column, out var expected, out var actual))
+        {
+            return RenderColumnTable(column, expected, actual);
+        }
+
+        if (TryReadRowCountDiff(observation, out var expectedCount, out var actualCount))
+        {
+            return RenderRowCountTable(expectedCount, actualCount);
+        }
+
+        return null;
+    }
+
+    // ── IStepDiffRenderer helpers ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Attempts to read the column-mismatch shape
+    /// <c>{"column":…,"expected":…,"actual":…}</c> from <paramref name="observation"/>.
+    /// </summary>
+    private static bool TryReadColumnDiff(
+        JsonElement observation,
+        out string column,
+        out string expected,
+        out string actual)
+    {
+        column = string.Empty;
+        expected = string.Empty;
+        actual = string.Empty;
+
+        if (observation.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (!observation.TryGetProperty("column", out var columnEl)
+            || columnEl.ValueKind != JsonValueKind.String
+            || !observation.TryGetProperty("expected", out var expectedEl)
+            || !observation.TryGetProperty("actual", out var actualEl))
+        {
+            return false;
+        }
+
+        column = columnEl.GetString() ?? string.Empty;
+        expected = ScalarText(expectedEl);
+        actual = ScalarText(actualEl);
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to read the row-count-mismatch shape
+    /// <c>{"rowCount":{"expected":&lt;n&gt;,"actual":&lt;m&gt;}}</c> from
+    /// <paramref name="observation"/>.  A scalar <c>rowCount</c> (the Pass shape) is
+    /// deliberately rejected.
+    /// </summary>
+    private static bool TryReadRowCountDiff(
+        JsonElement observation,
+        out string expected,
+        out string actual)
+    {
+        expected = string.Empty;
+        actual = string.Empty;
+
+        if (observation.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (!observation.TryGetProperty("rowCount", out var rowCountEl)
+            || rowCountEl.ValueKind != JsonValueKind.Object
+            || !rowCountEl.TryGetProperty("expected", out var expectedEl)
+            || !rowCountEl.TryGetProperty("actual", out var actualEl))
+        {
+            return false;
+        }
+
+        expected = ScalarText(expectedEl);
+        actual = ScalarText(actualEl);
+        return true;
+    }
+
+    /// <summary>
+    /// Returns a plain-text representation of a JSON scalar (string, number, boolean,
+    /// or null) for display inside a diff cell, without the surrounding quotes a
+    /// raw <c>GetRawText</c> would add to a string value.
+    /// </summary>
+    private static string ScalarText(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? "null",
+        JsonValueKind.Null => "null",
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => element.GetRawText(),
+    };
+
+    /// <summary>
+    /// Renders a two-data-column relational table for a column-value mismatch, using
+    /// the same box-drawing style as the terminal renderer.
+    /// </summary>
+    private static string RenderColumnTable(string column, string expected, string actual)
+    {
+        var headers = new[] { "column", "expected", "actual" };
+        var values = new[] { column, expected, actual };
+        return RenderTable(headers, values);
+    }
+
+    /// <summary>
+    /// Renders a single-row table for a row-count mismatch.
+    /// </summary>
+    private static string RenderRowCountTable(string expected, string actual)
+    {
+        var headers = new[] { "rowCount", "expected", "actual" };
+        var values = new[] { "(rows)", expected, actual };
+        return RenderTable(headers, values);
+    }
+
+    /// <summary>
+    /// Renders a single-row, fixed-column box-drawing table: a header row, a separator
+    /// rule, then one value row.  Column widths size to the widest of header/value.
+    /// </summary>
+    private static string RenderTable(string[] headers, string[] values)
+    {
+        var widths = new int[headers.Length];
+        for (int i = 0; i < headers.Length; i++)
+        {
+            widths[i] = Math.Max(headers[i].Length, values[i].Length);
+        }
+
+        var sb = new System.Text.StringBuilder();
+
+        // Header row.
+        AppendRow(sb, headers, widths);
+
+        // Separator rule: ─ segments joined by ┼ at each column boundary.
+        for (int i = 0; i < widths.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('┼');
+            sb.Append(new string('─', widths[i] + 2));
+        }
+        sb.Append('\n');
+
+        // Value row.
+        AppendRow(sb, values, widths);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends one padded, ' │ '-separated table row terminated by a newline.
+    /// </summary>
+    private static void AppendRow(System.Text.StringBuilder sb, string[] cells, int[] widths)
+    {
+        for (int i = 0; i < cells.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('│');
+            sb.Append(' ');
+            sb.Append(cells[i].PadRight(widths[i]));
+            sb.Append(' ');
+        }
+        sb.Append('\n');
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

@@ -940,7 +940,8 @@ Every renderer — the terminal, the HTML report, the JUnit XML, the cloud dashb
                                                                             "expected":"PENDING",
                                                                             "observed":"PROCESSING"}]} }
 {"v":1, "type":"step-completed",   "stepId":"expect-billing-event", "verdict":"FAIL",
-                                    "durationMs":30024, "correlationIds":{"trace":"00-9e1c..."} }
+                                    "durationMs":30024, "observation":{"matched":1,"diff":[...]},
+                                    "correlationIds":{"trace":"00-9e1c..."} }
 {"v":1, "type":"reproducibility-envelope", "runId":"r-7f3a", "scenarioId":"users-e2e",
                                     "envSchemaVersion":"v1", "secretReferences":[{"source":"env",
                                     "referenceHash":"sha256:a3f2..."}], "fixtures":[{"reference":
@@ -952,6 +953,8 @@ Every renderer — the terminal, the HTML report, the JUnit XML, the cloud dashb
 The `reproducibility-envelope` event carries per-scenario reproducibility metadata: the hashed secret references (never resolved values) and the content hashes of applied fixtures (see Section 14.7 and Section 17), enabling readers to reproduce the exact run on a different machine.
 
 Two design decisions in this stream are worth underlining. First, every step-attempt event is recorded individually rather than collapsed into a summary: this is what makes the polling timeline of the next subsection possible without re-running the suite. Second, every event carries a correlation id that resolves to a trace in the observability stack of Section 12, so the report becomes a navigable index into the rest of the platform's data plane rather than a dead end.
+
+An optional third point: `step-completed` events may also carry a `observation` field — the structured provider observation (e.g. a failed assertion's expected-vs-observed diff) — which renderers use at render time to compute human-readable diffs (Section 14.10). This field is omitted when the step recorded no observation; it is purely structured data, never rendered diff text. Adding this optional field preserves backward compatibility — older renderers ignore it via `[JsonExtensionData]` — and costs the engine only the work of forwarding the observation from the runtime to the event.
 
 ## 14.5 Rendering asynchronous flows: the polling timeline
 
@@ -1022,7 +1025,7 @@ The five-layer model maps naturally onto the platform's three commercial tiers, 
 
 ## 14.10 Provider participation in reports
 
-Providers contribute to the report through their typed model and through an optional renderer hook. The structured-diff machinery for `db-assert.postgres` knows how to render “expected row count 1, observed 0” or “row[0].plan: expected 'standard', got 'trial'” in a way that respects relational semantics; `db-assert.mongodb` renders a document diff with array indexes and nested paths; `db-assert.redis` renders a key-and-value diff. A provider's implementation can supply an `IStepDiffRenderer<TObservation, TExpectation>` alongside the interfaces already defined in Section 13, and the report calls it when the step fails. This keeps reporting fidelity high without putting database-specific knowledge in the report renderer itself, and it means a community contributor adding a new provider also contributes the right rendering for its failure mode — not as an afterthought, but as part of what the provider contract asks for.
+Providers contribute to the report through their typed model and through an optional renderer hook. The structured-diff machinery for `db-assert.postgres` knows how to render “expected row count 1, observed 0” or “row[0].plan: expected 'standard', got 'trial'” in a way that respects relational semantics; `db-assert.mongodb` renders a document diff with array indexes and nested paths; `db-assert.redis` renders a key-and-value diff. A provider's implementation can supply an `IStepDiffRenderer` interface (Section 13.8.1, an additive optional interface) implementing `bool CanRender(JsonElement observation)` and `string? RenderDiff(JsonElement observation)`. The renderer calls `CanRender` to determine whether it can render the step's structured observation, and if true, calls `RenderDiff` to produce the rendered diff text. This interface is discovered at startup from the provider's type like the core compilation interfaces, but runs in the engine's Default AssemblyLoadContext so it raises no memory-model concern (Section 5.4). The structured observation is a plain `System.Text.Json.JsonElement` rather than a provider-specific type, keeping the reporting layer decoupled from `Platform.Sdk`; the engine invokes the renderer through a delegate seam built at startup from the frozen `StepKindRegistry`. `RenderDiff` returns LF-separated lines (no trailing CR) ready to splice under the step line in the terminal output. This keeps reporting fidelity high without putting database-specific knowledge in the report renderer itself, and it means a community contributor adding a new provider also contributes the right rendering for its failure mode — not as an afterthought, but as part of what the provider contract asks for.
 
 ## 14.11 Accessibility commitments for the reporting surface
 
@@ -1211,7 +1214,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | Verdict taxonomy | The four-state classification of every step and scenario outcome — pass, fail, environment error, inconclusive — surfaced separately by the renderers. |
 | Polling timeline | The per-attempt rendering of a RETRY step's history, derived directly from step-attempt events in the structured stream. |
 | Reproducibility envelope | The full context bundled into every report — engine version, schema version, provider versions, image digests, content hashes, seeded variables — that lets a reader reproduce the exact run elsewhere. |
-| IStepDiffRenderer<TObservation, TExpectation> | Optional provider interface that supplies technology-specific rendering for the expected-versus-observed diff in the report. |
+| IStepDiffRenderer | Optional provider interface (`bool CanRender(JsonElement observation)` and `string? RenderDiff(JsonElement observation)`) that supplies technology-specific rendering for the expected-versus-observed diff in the report. Renders LF-separated lines ready for terminal output; the reporting layer stays decoupled from provider-specific observation types. |
 | seed block | Environment-level declaration of reference SQL files, document fixtures, and broker warm-up messages applied after the topology is healthy and before the first step runs. |
 | Respawn (seeding context) | Already listed for reset; in the data lifecycle it provides the between-scenario clean baseline that the isolation contract depends on. |
 | Test runner selection language | Composable selection over tag, ownership, path, change-set, and prior verdict, evaluated against metadata the author already writes. |

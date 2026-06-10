@@ -209,6 +209,12 @@ public static class ScenarioRunner
         // ── Step 1: Build provider registry ──────────────────────────────────
         var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
 
+        // Render-time diff-lookup closure (S07-G-01): resolves a step's kind to its
+        // provider's IStepDiffRenderer (when implemented) so the terminal renderer can
+        // draw an expected-vs-observed diff under a failed step.  Built once here over
+        // the frozen registry and threaded into every TerminalRenderer.Render call.
+        var diffLookup = BuildDiffLookup(registry);
+
         // ── Step 2: Validate YAML against composed JSON Schema ────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
         if (!validationResult.IsValid)
@@ -236,7 +242,7 @@ public static class ScenarioRunner
                 await output.WriteLineAsync(error.Message).ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return Verdict.Inconclusive;
         }
 
@@ -269,7 +275,7 @@ public static class ScenarioRunner
             await output.WriteLineAsync(
                 $"Parse / AST error: {ex.Message}").ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return Verdict.Inconclusive;
         }
 
@@ -293,7 +299,7 @@ public static class ScenarioRunner
             }));
             await output.WriteLineAsync(pipelineResult.Failure.Message)
                 .ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return Verdict.Inconclusive;
         }
 
@@ -320,7 +326,7 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
             await output.WriteLineAsync(secretError).ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return Verdict.Inconclusive;
         }
 
@@ -354,7 +360,7 @@ public static class ScenarioRunner
                 Verdict = Verdict.EnvironmentError,
                 Counts = new VerdictCounts { EnvError = 1 },
             }));
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return Verdict.EnvironmentError;
         }
 
@@ -375,7 +381,7 @@ public static class ScenarioRunner
                 seedBaseDirectory,
                 cancellationToken).ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output);
+            TerminalRenderer.Render(buffer, output, diffLookup);
             return verdict;
         }
     }
@@ -468,6 +474,10 @@ public static class ScenarioRunner
 
         // Build the provider registry once (shared across all scenarios).
         var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+
+        // Render-time diff-lookup closure (S07-G-01), built once over the frozen
+        // registry and threaded into the suite-level TerminalRenderer.Render call.
+        var diffLookup = BuildDiffLookup(registry);
 
         // ── Validate shared-environment assumption ─────────────────────────────
         // All scenarios must share the environment declared in scenario[0].
@@ -680,7 +690,7 @@ public static class ScenarioRunner
                 await disposable.DisposeAsync().ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(allBuffers, output);
+            TerminalRenderer.Render(allBuffers, output, diffLookup);
             return new SuiteResult(suiteAggregate, results);
         }
     }
@@ -931,6 +941,11 @@ public static class ScenarioRunner
                 DurationMs = durationMs,
                 Captured = capturedList,
                 Substitutions = substitutionsList,
+                // S07-G-01: carry the structured observation onto the step-completed
+                // event so a renderer can compute an expected-vs-observed diff at render
+                // time (the stream stays pure structured data — no rendered text here).
+                // An unparseable observation degrades to omission rather than crashing.
+                Observation = ParseObservation(outcome?.Observation),
             }));
 
             counts[(int)stepVerdict]++;
@@ -1005,6 +1020,34 @@ public static class ScenarioRunner
         env is null
             ? string.Empty
             : System.Text.Json.JsonSerializer.Serialize(env);
+
+    // ── Render-time diff lookup (S07-G-01) ──────────────────────────────────────
+
+    /// <summary>
+    /// Builds the render-time diff-lookup closure passed to
+    /// <see cref="TerminalRenderer.Render(IEnumerable{string}, TextWriter, Func{string, JsonElement, string?}?)"/>.
+    /// </summary>
+    /// <param name="registry">The frozen provider registry to resolve the kind against.</param>
+    /// <returns>
+    /// A delegate that, given a step <c>kind</c> and structured observation, resolves
+    /// the provider for that kind and — when it implements
+    /// <see cref="IStepDiffRenderer"/> and recognises the observation — returns its
+    /// rendered expected-vs-observed diff, or <see langword="null"/> otherwise.
+    /// </returns>
+    /// <remarks>
+    /// The diff renderer runs in the Default <c>AssemblyLoadContext</c> (the provider
+    /// instance is held by the frozen registry), so this raises no §5 memory-model
+    /// concern.  The closure is the sole bridge between the decoupled
+    /// <c>Platform.Engine.Reporting</c> layer (which knows only <see cref="Func{T1, T2, TResult}"/>)
+    /// and the <c>IStepDiffRenderer</c> SDK type.
+    /// </remarks>
+    private static Func<string, JsonElement, string?> BuildDiffLookup(StepKindRegistry registry)
+        => (kind, observation) =>
+            registry.TryGet(kind, out var rp)
+            && rp?.Instance is IStepDiffRenderer renderer
+            && renderer.CanRender(observation)
+                ? renderer.RenderDiff(observation)
+                : null;
 
     // ── Verdict aggregation ────────────────────────────────────────────────────
 

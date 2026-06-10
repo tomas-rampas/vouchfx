@@ -281,6 +281,64 @@ public interface ICompileReferenceContributor
 }
 
 /// <summary>
+/// Optional.  A provider implements this to render a faithful expected-vs-observed
+/// diff for its own data model from a step's structured observation, at <em>render
+/// time</em> (§14.5, §13.8.1).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The diff is computed by the renderer when it formats a failed step, never by the
+/// engine when it records the event.  This keeps the schema-versioned JSON Lines event
+/// stream pure structured data: a renderer that does not understand a provider's
+/// observation simply omits the diff (§14 invariant — one stream feeds every renderer;
+/// renderers tolerate unknown fields).  No rendered diff text is ever baked into the
+/// stream.
+/// </para>
+/// <para>
+/// This is a frozen-contract-compatible optional extension interface (§13.8.1).
+/// Providers that do not implement it are skipped — the renderer falls back to its
+/// plain verdict line — so adding this interface does not change the v1 provider
+/// contract, which remains frozen for the v1.x engine series.  The implementation runs
+/// in the Default <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (the provider
+/// instance is held by the frozen <c>StepKindRegistry</c>), so it raises no §5
+/// memory-model concern.
+/// </para>
+/// </remarks>
+public interface IStepDiffRenderer
+{
+    /// <summary>
+    /// Returns <see langword="true"/> when this renderer recognises the shape of the
+    /// supplied structured step <paramref name="observation"/> and can render a diff
+    /// for it.
+    /// </summary>
+    /// <param name="observation">
+    /// The provider-supplied structured observation recorded on the step's
+    /// <c>step-completed</c> event (e.g. a failed column-value or row-count assertion).
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when <see cref="RenderDiff"/> would return a non-null
+    /// diff for <paramref name="observation"/>; <see langword="false"/> otherwise
+    /// (e.g. a pass-shaped observation or an unrecognised shape).
+    /// </returns>
+    bool CanRender(System.Text.Json.JsonElement observation);
+
+    /// <summary>
+    /// Renders a faithful expected-vs-observed diff for this provider's data model
+    /// from the structured step <paramref name="observation"/>.
+    /// </summary>
+    /// <param name="observation">
+    /// The provider-supplied structured observation recorded on the step's
+    /// <c>step-completed</c> event.
+    /// </param>
+    /// <returns>
+    /// The rendered diff text (plain ASCII / box-drawing, ready to splice under the
+    /// step line), or <see langword="null"/> when this renderer cannot render the
+    /// supplied observation.
+    /// </returns>
+    string? RenderDiff(System.Text.Json.JsonElement observation);
+}
+
+/// <summary>
 /// Applied to a class that implements one or more provider interfaces to mark
 /// it as discoverable by the engine's <c>StepKindRegistry</c> at startup.
 /// </summary>
