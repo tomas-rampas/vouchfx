@@ -59,6 +59,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Ka
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Kafka.Tests", "tests\Platform.Steps.MqPublish.Kafka.Tests\Platform.Steps.MqPublish.Kafka.Tests.csproj", "{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Kafka", "src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj", "{04486CE0-D91F-444C-A81B-D8688FF3210F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Kafka.Tests", "tests\Platform.Steps.MqExpect.Kafka.Tests\Platform.Steps.MqExpect.Kafka.Tests.csproj", "{294BD427-85F8-4A46-B370-69AAEF314B21}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -156,6 +160,14 @@ Global
 		{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{04486CE0-D91F-444C-A81B-D8688FF3210F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{04486CE0-D91F-444C-A81B-D8688FF3210F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{04486CE0-D91F-444C-A81B-D8688FF3210F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{04486CE0-D91F-444C-A81B-D8688FF3210F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{294BD427-85F8-4A46-B370-69AAEF314B21}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{294BD427-85F8-4A46-B370-69AAEF314B21}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{294BD427-85F8-4A46-B370-69AAEF314B21}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{294BD427-85F8-4A46-B370-69AAEF314B21}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -184,5 +196,7 @@ Global
 		{D2E3F4A5-B6C7-8901-BCDE-F12345678901} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{757A858B-E1A2-43C5-BD86-4C796771B51F} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
 		{C9A7E0B7-F01E-48CE-AE58-CD63386184C4} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{04486CE0-D91F-444C-A81B-D8688FF3210F} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{294BD427-85F8-4A46-B370-69AAEF314B21} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal
