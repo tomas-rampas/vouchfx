@@ -50,6 +50,12 @@
       the test can prove the constraint originates from the provider, not a central file.
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj" />
+    <!--
+      S07-B-02b: the substitution-uniformity proof asserts the script.csharp boundary
+      (its provider emits NO shared substitution helpers and splices author code verbatim),
+      so the test references the script.csharp provider to read its Emit output directly.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj" />
   </ItemGroup>
 
 </Project>

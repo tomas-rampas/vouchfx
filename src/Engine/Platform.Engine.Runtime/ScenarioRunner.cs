@@ -1524,7 +1524,17 @@ public static class ScenarioRunner
         var texts = new List<string>();
         var raw = node.RawNode;
 
-        // http.rest: 'path' and each header value are substitutable (B-03).
+        // http.rest: 'path', each header value, AND the request 'body' are substitutable.
+        // path/headers since B-03; 'body' since S07-B-02a, when HttpRestProvider.Emit began
+        // routing the body through Secret_Helpers.ResolveTemplate at runtime.  S07-B-02b:
+        // the body was previously OMITTED from this scan, so a ${secret:…} in an http.rest
+        // body was resolved at runtime but invisible to provenance, the pre-compile secret-
+        // validation pass, AND the reproducibility envelope — the exact "field the provider
+        // substitutes but this scan omits" hazard this method's remarks warn against.  A
+        // scalar body is collected here; a structured (mapping/sequence) body is bound to a
+        // serialised JSON string by the provider — its placeholders/secrets live inside that
+        // string, which this scan does not reconstruct (a structured-body secret remains a
+        // known, narrower follow-up, but the common scalar/inline-JSON body is now covered).
         if (string.Equals(node.CanonicalType, "http.rest", StringComparison.Ordinal))
         {
             if (TryGetScalar(raw, "path", out var path) && !string.IsNullOrEmpty(path))
@@ -1544,6 +1554,12 @@ public static class ScenarioRunner
                     }
                 }
             }
+
+            // 'body' as a scalar (raw string / inline JSON): the provider keeps it verbatim
+            // as a template and resolves it via Secret_Helpers.ResolveTemplate at runtime, so
+            // its {placeholder}/${secret:…} tokens must be recognised here too.
+            if (TryGetScalar(raw, "body", out var body) && !string.IsNullOrEmpty(body))
+                texts.Add(body);
         }
         // db-assert.postgres: 'query', each parameter value, AND each expect.row
         // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all
