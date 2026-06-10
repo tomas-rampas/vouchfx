@@ -205,17 +205,103 @@ public static class ScenarioRunner
         ArgumentNullException.ThrowIfNull(providerAssemblies);
         ArgumentNullException.ThrowIfNull(output);
 
-        var runId = Guid.NewGuid().ToString("n");
-        var buffer = new List<string>();
-
-        // ── Step 1: Build provider registry ──────────────────────────────────
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
-
+        // ── Build provider registry + render-time diff-lookup closure ─────────
+        // Rendering is this wrapper's responsibility (the no-render core returns a
+        // fully-populated event buffer instead), so the registry and the diff-lookup
+        // closure it feeds are built here.
+        //
         // Render-time diff-lookup closure (S07-G-01): resolves a step's kind to its
         // provider's IStepDiffRenderer (when implemented) so the terminal renderer can
-        // draw an expected-vs-observed diff under a failed step.  Built once here over
-        // the frozen registry and threaded into every TerminalRenderer.Render call.
+        // draw an expected-vs-observed diff under a failed step.  Built once over the
+        // frozen registry and threaded into the single TerminalRenderer.Render call.
+        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
         var diffLookup = BuildDiffLookup(registry);
+
+        // Delegate to the no-render core, which builds its own topology, runs the
+        // single scenario, and returns the fully-populated event buffer + verdict for
+        // whichever path it took (every early-exit included).  This wrapper then renders
+        // that buffer exactly ONCE — reproducing, byte-for-byte, what the per-path
+        // renders did before this extraction (S07-C-03 foundation).
+        var (verdict, buffer) = await RunScenarioOwningTopologyAsync(
+            registry,
+            yamlText,
+            scenarioName,
+            appHostAssemblyName,
+            output,
+            seedBaseDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        TerminalRenderer.Render(buffer, output, diffLookup);
+        return verdict;
+    }
+
+    /// <summary>
+    /// Executes the full vouchfx pipeline for a single scenario — building and
+    /// owning its own Aspire topology — and returns the fully-populated event
+    /// buffer together with the aggregate <see cref="Verdict"/>, <strong>without
+    /// rendering</strong>.  This is the no-render, owns-its-own-topology entry
+    /// point that a future <c>ParallelSuiteRunner</c> (Sprint 8, S07-C-03) calls
+    /// once per scenario, then renders all returned buffers itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method contains exactly the logic that previously lived inline in
+    /// <see cref="RunAsync"/> (build own topology → run one scenario → every
+    /// early-exit path), <strong>except</strong> rendering and the render-time
+    /// diff-lookup construction — those are render concerns owned by the caller.
+    /// Every place that previously did
+    /// <c>TerminalRenderer.Render(buffer, output, diffLookup); return verdict;</c>
+    /// here instead does <c>return (verdict, buffer);</c>: the returned buffer is the
+    /// complete event stream for the chosen path, so a single caller-side
+    /// <see cref="TerminalRenderer.Render(IEnumerable{string}, TextWriter, Func{string, JsonElement, string?}?)"/>
+    /// reproduces the previous per-path render byte-for-byte.
+    /// </para>
+    /// <para>
+    /// <paramref name="output"/> is retained <strong>only</strong> for the raw
+    /// diagnostic text the early-exit paths write directly (schema-validation
+    /// errors, parse errors, the pipeline-failure message, the secret-reference
+    /// error).  Those raw writes are NOT event-stream lines — they are not in the
+    /// returned buffer and are not reproduced by rendering — so to preserve output
+    /// byte-for-byte they must still be written here, before the caller renders.
+    /// This method never calls <see cref="TerminalRenderer"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="registry">
+    /// The frozen provider registry (built by the caller from the provider
+    /// assemblies).  Used for schema validation and the provider pipeline.
+    /// </param>
+    /// <param name="yamlText">The raw text of a <c>.e2e.yaml</c> scenario file.</param>
+    /// <param name="scenarioName">
+    /// Human-readable scenario name, used as the <c>scenarioId</c> in the event
+    /// stream and as the Roslyn ALC run label.
+    /// </param>
+    /// <param name="appHostAssemblyName">
+    /// Short name of the Aspire host assembly (R-1 finding, CLAUDE.md §"Aspire").
+    /// </param>
+    /// <param name="output">
+    /// The <see cref="TextWriter"/> that receives the raw early-exit diagnostic
+    /// text (never rendered event lines).
+    /// </param>
+    /// <param name="seedBaseDirectory">
+    /// Base directory for relative <c>environment.seed</c> SQL file paths (S05-A-01).
+    /// </param>
+    /// <param name="cancellationToken">Propagated to all async operations.</param>
+    /// <returns>
+    /// A tuple of the aggregate <see cref="Verdict"/> and the complete event buffer
+    /// for the chosen path; the buffer is non-empty and always contains a
+    /// scenario-completed event.
+    /// </returns>
+    internal static async Task<(Verdict Verdict, List<string> Buffer)> RunScenarioOwningTopologyAsync(
+        StepKindRegistry registry,
+        string yamlText,
+        string scenarioName,
+        string? appHostAssemblyName,
+        TextWriter output,
+        string? seedBaseDirectory,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.NewGuid().ToString("n");
+        var buffer = new List<string>();
 
         // ── Step 2: Validate YAML against composed JSON Schema ────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
@@ -244,8 +330,7 @@ public static class ScenarioRunner
                 await output.WriteLineAsync(error.Message).ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 3: Parse YAML → E2eDocument → ScenarioAst ───────────────────
@@ -277,8 +362,7 @@ public static class ScenarioRunner
             await output.WriteLineAsync(
                 $"Parse / AST error: {ex.Message}").ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
@@ -301,8 +385,7 @@ public static class ScenarioRunner
             }));
             await output.WriteLineAsync(pipelineResult.Failure.Message)
                 .ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
@@ -328,8 +411,7 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
             await output.WriteLineAsync(secretError).ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 6: Start Aspire topology ─────────────────────────────────────
@@ -362,8 +444,7 @@ public static class ScenarioRunner
                 Verdict = Verdict.EnvironmentError,
                 Counts = new VerdictCounts { EnvError = 1 },
             }));
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return Verdict.EnvironmentError;
+            return (Verdict.EnvironmentError, buffer);
         }
 
         await using (suite.ConfigureAwait(false))
@@ -384,8 +465,7 @@ public static class ScenarioRunner
                 seedBaseDirectory,
                 cancellationToken).ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return verdict;
+            return (verdict, buffer);
         }
     }
 
