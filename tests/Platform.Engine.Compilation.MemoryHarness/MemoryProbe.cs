@@ -8,6 +8,10 @@
 //   closure  — a script that touches one type from each Core-provider canonical client
 //              (Npgsql, Confluent.Kafka, MongoDB.Driver, StackExchange.Redis, HttpClient)
 //              so that their static initialisers run and any singleton pinners are exercised.
+//              Sprint-6 also drives the NEW Kafka code paths inside the collectible ALC:
+//              a real native Confluent producer + consumer handle (build/dispose), the
+//              Confluent.SchemaRegistry Avro serdes + CachedSchemaRegistryClient, and the
+//              Polly-backed RetryRunner — proving they do not pin the collectible context.
 //
 // Protocol (both modes):
 //   1. Compile the probe script ONCE (§5: compile-once invariant).
@@ -155,6 +159,25 @@ public static class MemoryProbe
     private const int SingletonResetEveryN = 50;
 
     /// <summary>
+    /// The cadence (every N iterations) at which the closure probe builds the REAL
+    /// native librdkafka producer/consumer handles.  Each <c>Build()</c> allocates a
+    /// native handle and spins up librdkafka background threads, so building one every
+    /// single one of 5,000 iterations would dominate the wall-clock and churn OS
+    /// threads — far more cost than is needed to detect a per-iteration ALC pin (a pin
+    /// accumulates, so a few hundred real builds over the run is more than enough to
+    /// reveal one).  The CHEAP static-init touches — the Avro serdes / schema-registry
+    /// client and the Polly RETRY runner — run on EVERY iteration; only the native
+    /// handle build is gated by this cadence.  The CSX body reads
+    /// <c>Vars["__iter"] % HandleBuildEveryN == 0</c> to decide.
+    /// </summary>
+    /// <remarks>
+    /// The probe passes the current iteration index into <c>Vars["__iter"]</c>; warm-up
+    /// cycles pass <c>0</c>, so each warm-up also builds the handles once (amortising the
+    /// one-time librdkafka native-init cost before the baseline is taken).
+    /// </remarks>
+    private const int HandleBuildEveryN = 50;
+
+    /// <summary>
     /// Runs the trivial memory measurement protocol and returns a structured
     /// <see cref="HeapMeasurement"/> result.
     /// </summary>
@@ -255,6 +278,16 @@ public static class MemoryProbe
     /// anchor objects across the collectible boundary are exercised.
     /// </para>
     /// <para>
+    /// Sprint-6 additions: the probe also exercises the REAL code paths the new Kafka
+    /// providers depend on — a native <c>Confluent.Kafka</c> producer and consumer
+    /// handle (create-and-dispose, the exact discipline mq-publish/mq-expect rely on),
+    /// the <c>Confluent.SchemaRegistry</c> Avro serdes + <c>CachedSchemaRegistryClient</c>,
+    /// and the Polly-backed <c>RetryRunner</c>.  The native handle build runs on a bounded
+    /// cadence (<see cref="HandleBuildEveryN"/>) because each <c>Build()</c> allocates a
+    /// native handle and librdkafka threads; the cheap Avro / Polly touches run every
+    /// iteration.  Proving these do not pin the collectible ALC is the core Sprint-6 gate.
+    /// </para>
+    /// <para>
     /// <see cref="SingletonReset.ResetAll"/> is called every
     /// <see cref="SingletonResetEveryN"/> iterations to prevent connection-pool
     /// accumulation from perturbing the per-cycle heap delta.  The reset list is
@@ -299,6 +332,23 @@ public static class MemoryProbe
             typeof(MongoDB.Driver.MongoClientSettings).Assembly.Location,
             typeof(StackExchange.Redis.ConfigurationOptions).Assembly.Location,
             typeof(System.Net.Http.HttpClient).Assembly.Location,
+
+            // ── Sprint-6 Kafka serdes + schema-registry closure ─────────────────
+            // The Sprint-6 mq-publish.kafka / mq-expect.kafka providers build a
+            // CachedSchemaRegistryClient, an AvroSerializer/AvroDeserializer<GenericRecord>,
+            // and parse Avro schemas.  Reference those three assemblies so the closure
+            // probe's Avro touches compile.  All are already loaded in the Default ALC
+            // (the harness references the packages directly) and resolve from there at
+            // runtime — they must never load into the collectible ALC (§5).
+            typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+            typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+            typeof(Avro.Schema).Assembly.Location,
+
+            // Platform.Engine.Abstractions is ALREADY added unconditionally by
+            // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
+            // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner
+            // resolves at compile time without a separate entry here; Polly.Core (which
+            // RetryRunner uses internally) arrives transitively in the Default ALC.
         };
 
         // ── Step 1: compile ONCE with the canonical-client metadata references ──
@@ -331,7 +381,11 @@ public static class MemoryProbe
             if (i % SingletonResetEveryN == 0)
                 SingletonReset.ResetAll();
 
-            await RunIsolatedNoInlineAsync(compiled, null, $"iter-{i}", ct).ConfigureAwait(false);
+            // Pass the iteration index so the closure probe can gate the native
+            // librdkafka producer/consumer handle build to HandleBuildEveryN cadence
+            // (the cheap Avro / Polly touches still run every iteration).
+            await RunIsolatedNoInlineAsync(compiled, null, $"iter-{i}", ct, iterIndex: i)
+                .ConfigureAwait(false);
         }
 
         // ── Step 5: post measurement (bounded settle loop) ──────────────────────
@@ -383,9 +437,18 @@ public static class MemoryProbe
         CompiledScript compiled,
         IReadOnlyList<string>? collectibleProbingPaths,
         string label,
-        CancellationToken ct)
+        CancellationToken ct,
+        int iterIndex = 0)
     {
         var vars = new Dictionary<string, object?>();
+
+        // The closure probe reads Vars["__iter"] to gate the expensive native
+        // librdkafka handle build to a bounded cadence (HandleBuildEveryN); the cheap
+        // Avro/Polly touches run every iteration regardless.  Warm-up passes index 0,
+        // which builds the handles once to amortise librdkafka's native init before the
+        // baseline.  The trivial probe ignores this key, so setting it is harmless there.
+        vars["__iter"] = (long)iterIndex;
+
         var globals = new ScriptGlobalVariables(vars);
         await RoslynScriptCompiler.RunIsolatedAsync(
                 compiled,
