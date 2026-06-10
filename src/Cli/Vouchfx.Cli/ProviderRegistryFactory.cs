@@ -5,8 +5,6 @@
 // this factory is the single seam where the CLI declares which providers it ships with.
 // Adding a provider to the CLI is a one-line change here (plus the matching
 // ProjectReference in Vouchfx.Cli.csproj).
-//
-// webhook-listen.http is added in a later task; the // TODO below marks the slot.
 
 using System.Reflection;
 using Platform.Sdk;
@@ -15,6 +13,7 @@ using Platform.Steps.HttpRest;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.Script.Csharp;
+using Platform.Steps.WebhookListen.Http;
 
 namespace Vouchfx.Cli;
 
@@ -34,10 +33,9 @@ internal static class ProviderRegistryFactory
     /// Returns the assemblies the CLI scans for <c>[StepProvider]</c>-decorated providers.
     /// </summary>
     /// <remarks>
-    /// One anchor type per Core provider assembly.  The five Core providers wired this
-    /// sprint are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>script.csharp</c>,
-    /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c>.  <c>webhook-listen.http</c>
-    /// joins the list in a later task — see the TODO below.
+    /// One anchor type per Core provider assembly.  The six Core providers wired into the
+    /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>script.csharp</c>,
+    /// <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c> and <c>webhook-listen.http</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
@@ -46,7 +44,7 @@ internal static class ProviderRegistryFactory
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
-        // TODO(S08+): typeof(WebhookListenHttpProvider).Assembly — webhook-listen.http.
+        typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
     };
 
     /// <summary>

@@ -52,8 +52,8 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj"
                       IsAspireProjectResource="false" />
-    <!-- TODO(S08+): add Platform.Steps.WebhookListen.Http here when webhook-listen.http
-         ships; ProviderRegistryFactory.CoreProviderAssemblies() is the matching seam. -->
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
