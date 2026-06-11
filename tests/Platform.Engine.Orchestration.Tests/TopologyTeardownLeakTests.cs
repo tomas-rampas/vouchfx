@@ -49,6 +49,9 @@ public sealed class TopologyTeardownLeakTests
     /// <summary>Line separators for splitting docker CLI stdout (hoisted per CA1861).</summary>
     private static readonly char[] s_lineSeparators = { '\r', '\n' };
 
+    /// <summary>Bound for a single docker CLI call so a wedged process can never hang CI.</summary>
+    private const int DockerTimeoutMs = 30_000;
+
     private readonly ITestOutputHelper _output;
 
     public TopologyTeardownLeakTests(ITestOutputHelper output) => _output = output;
@@ -267,9 +270,41 @@ public sealed class TopologyTeardownLeakTests
             return new List<string>();
         }
 
-        var stdout = proc.StandardOutput.ReadToEnd();
-        _ = proc.StandardError.ReadToEnd();
+        // Drain BOTH redirected pipes concurrently, started BEFORE the wait. Reading stdout to
+        // completion and only then reading stderr can deadlock: if docker fills the stderr pipe
+        // buffer while the parent is still blocked draining stdout, the child blocks on the full
+        // stderr pipe and the parent blocks on stdout (the deadlock the Copilot review flagged).
+        // Kicking off both reads up front lets either pipe drain freely. The wait is BOUNDED with
+        // kill-on-timeout: these are quick `docker ps/inspect/network/rm` calls, so exceeding the
+        // budget means something is wrong — we kill the tree and return empty rather than hang CI.
+        var outTask = proc.StandardOutput.ReadToEndAsync();
+        var errTask = proc.StandardError.ReadToEndAsync();
+
+        if (!proc.WaitForExit(DockerTimeoutMs))
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best-effort kill; the process may already be exiting. Callers treat the empty
+                // result below as "no match", and the test's bounded settle-poll + try/finally
+                // self-cleanup absorb a one-off failure safely.
+            }
+
+            // Observe the abandoned reads so a faulted ReadToEndAsync (the killed process) cannot
+            // surface later as an unobserved-task exception on the finalizer thread.
+            _ = Task.WhenAll(outTask, errTask).ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+            return new List<string>();
+        }
+
+        // The bounded wait returned true (process exited). The read tasks below are the real
+        // synchronisation point — GetResult() blocks until each fully-drained stream is materialised;
+        // the parameterless WaitForExit() additionally flushes any remaining async output handlers.
         proc.WaitForExit();
+        var stdout = outTask.GetAwaiter().GetResult();
+        _ = errTask.GetAwaiter().GetResult();
 
         return stdout
             .Split(s_lineSeparators, StringSplitOptions.RemoveEmptyEntries)
