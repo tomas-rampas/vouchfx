@@ -244,9 +244,13 @@ public sealed class M2EndToEndCompileTests
             Assert.Equal("fetch-id", fetchStep.Id);
             Assert.True(fetchStep.Capture.ContainsKey("hostname"),
                 "fetch-id must capture the non-secret 'hostname' field.");
-            Assert.Equal("$.hostname", fetchStep.Capture["hostname"]);
+            Assert.Equal(CaptureFormat.JsonPath, fetchStep.Capture["hostname"].Format);
+            Assert.Equal("$.hostname", fetchStep.Capture["hostname"].Expression);
             Assert.DoesNotContain("Authorization", fetchStep.Capture.Keys, StringComparer.Ordinal);
-            Assert.DoesNotContain("Authorization", fetchStep.Capture.Values, StringComparer.Ordinal);
+            Assert.DoesNotContain(
+                "Authorization",
+                fetchStep.Capture.Values.Select(e => e.Expression),
+                StringComparer.Ordinal);
 
             // ── 8. db-assert query with substitution ─────────────────────────────
             // The db-assert emitter wraps the substitutable parameter value in

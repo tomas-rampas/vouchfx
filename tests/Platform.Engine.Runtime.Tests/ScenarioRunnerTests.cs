@@ -86,6 +86,65 @@ public sealed class ScenarioRunnerTests
             "Expected non-empty output containing the validation error message.");
     }
 
+    // ── Non-docker: no-render core seam (S07-C-03 foundation) ────────────────
+
+    /// <summary>
+    /// The no-render core <see cref="ScenarioRunner.RunScenarioOwningTopologyAsync"/>
+    /// must, for a schema-invalid scenario, return the verdict together with the
+    /// fully-populated event buffer <strong>without rendering it</strong> — proving the
+    /// seam that a future Sprint 8 parallel runner relies on: each scenario produces its
+    /// own complete buffer, and the caller owns the single render.
+    /// </summary>
+    /// <remarks>
+    /// A schema-invalid input short-circuits before any topology is started, so this
+    /// exercises the core's early-exit path without Docker.  The returned buffer must be
+    /// non-empty and contain the <c>scenario-completed</c> event line; the verdict is
+    /// <see cref="Verdict.Inconclusive"/> (the scenario never ran).
+    /// </remarks>
+    [Fact]
+    public async Task RunScenarioOwningTopologyAsync_SchemaInvalid_ReturnsBufferWithoutRendering()
+    {
+        // Arrange — step missing the required 'id' field (same short-circuit input as
+        // the RunAsync schema-invalid test), so the core never reaches the topology.
+        const string yaml = """
+            steps:
+              - type: http.rest
+                method: GET
+                path: /
+                target: whoami
+            """;
+
+        var registry = Platform.Sdk.StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var sw = new StringWriter();
+
+        // Act — call the no-render core directly.
+        var (verdict, buffer) = await ScenarioRunner.RunScenarioOwningTopologyAsync(
+            registry: registry,
+            yamlText: yaml,
+            scenarioName: "core-seam-schema-invalid",
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            seedBaseDirectory: null,
+            cancellationToken: default);
+
+        // Assert — the core returns the verdict + the complete event buffer.
+        Assert.Equal(Verdict.Inconclusive, verdict);
+        Assert.NotEmpty(buffer);
+
+        // The buffer carries the structured event stream; the scenario-completed event
+        // proves the core populated the buffer up to the terminal event.
+        Assert.Contains(
+            buffer,
+            line => line.Contains("scenario-completed", StringComparison.Ordinal));
+
+        // The buffer is the UN-rendered event stream: its lines are raw JSON, not the
+        // human-readable text the TerminalRenderer would produce ("Scenario '…' started").
+        // Confirming the core did not render: no buffer line is a rendered scenario line.
+        Assert.DoesNotContain(
+            buffer,
+            line => line.Contains("Scenario 'core-seam-schema-invalid' started", StringComparison.Ordinal));
+    }
+
     // ── Non-docker: secret-reference validation (S05-B-01) ──────────────────
 
     /// <summary>

@@ -97,7 +97,26 @@ incorporated.
   `webhook-listen.http` step captures an inbound webhook; an XPath capture threads a value forward; a
   failed `db-assert.postgres` shows a relational diff.
 
+## Delivery status
+
+**Delivered:**
+- **S07-B-01** (XPath capture) — `CaptureFormat.XPath` + parser support; a `capture:` entry may be a bare scalar (JSONPath, back-compat) or an explicit single-key mapping (`{ xpath: … }`). XPath evaluation is provider-specific (`http.rest` against XML bodies).
+- **S07-B-02** (Full substitution) — `{placeholder}` and `${secret:…}` tokens resolved uniformly across http/db/mq/webhook steps at execution time. Secret-derived values stay redacted in every context.
+- **S07-C-01** (CLI runner skeleton) — `vouchfx run [<path>]` discovers, parses, and executes `.e2e.yaml` scenarios end-to-end. Exit codes: 0 (pass/inconclusive), 1 (fail), 2 (usage).
+- **S07-C-02** (Selection language) — `--tag`, `--owner`, `--path <glob>`, `--changed-since <ref>` filters applied before execution. AND across dimensions, OR within.
+- **S07-F-01** (`webhook-listen.http` provider) — Ephemeral host-owned HTTP listener declared via `listener` name; URL staged at `Vars[<listener>]` and `svc::<listener>`; RETRY consumer; match criteria (method/path/headers/bodyContains) with full substitution support. **Sharp edge documented:** captured path includes query string; `path: /cb` does not match `/cb?x=1`.
+- **S07-G-01** (`IStepDiffRenderer` contract) — Provider-facing contract for expected-vs-observed diffs; `db-assert.postgres` emits relational diffs on failure.
+- **S07-E-01** (Vendor entity) — incorporation **plan** delivered as a planning artefact (`plan/vendor-entity.md`): CZ s.r.o. jurisdiction recommendation, structure, trademark-application prep for early Sprint 9, and the incorporation/legal-engagement checklist. The actual incorporation + legal engagement are the PD's to execute (acceptance: filing in progress with a firm date — to be set after the legal consultation).
+
+**Deferred to Sprint 8:**
+- **S07-C-03** (Scenario-level parallelism) — Only the no-render-core foundation landed; bounded concurrency and isolation contract deferred.
+
+**Proof tasks:**
+- Compile companion green (non-Docker).
+- **Full docker integration suite run locally — 28/28 `requires=docker` tests green** (~11 min), including `Sprint07Capstone_WebhookCallbackCapturedByRetryListener_Pass`, `Sprint07Capstone_FailingDbAssert_RendersRelationalDiff_Fail`, the Sprint 6 Avro capstones, M2, and the S04 Respawn capstone. The Sprint 7 webhook capstone simulates the callback with a `script.csharp` step POSTing to the host listener; a real containerised-SUT callback over `host.docker.internal` is the one path not yet automated as a test.
+- **Finding (follow-up):** the Aspire topology teardown leaks containers — a clean exit-0 docker run left `web-*`/`pg-*` containers + an orphaned `aspire-session-network-*-testhost` network behind (and a prior run's `events-sr-*`/`events-*` lingered for hours). DCP/topology dispose does not reliably reap containers after the test host process exits; worth fixing in the topology lifecycle or documenting as a known DCP limitation.
+
 ## Risks mitigated this sprint (MVP §10)
 
-- Runner does not scale to a real estate (selection + safe parallelism land in Phase 3).
-- Enterprise procurement blocked by no named vendor (entity incorporated).
+- Runner does not scale to a real estate (selection lands; parallelism deferred to S08).
+- Enterprise procurement blocked by no named vendor (incorporation plan + jurisdiction recommendation prepared; actual incorporation is the PD's to execute).

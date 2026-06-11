@@ -9,6 +9,11 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Platform.Engine.Runtime.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!-- The CLI runner reuses ScenarioRunner.Elevate (verdict precedence) so the CLI and
+         the engine can never disagree about how verdicts aggregate (S07-C-01). -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>vouchfx</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

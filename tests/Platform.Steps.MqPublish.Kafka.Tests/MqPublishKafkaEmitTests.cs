@@ -51,6 +51,10 @@ public sealed class MqPublishKafkaEmitTests
         /// <inheritdoc />
         public IReadOnlyDictionary<string, string> Captures { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+            new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
     }
 
     // ── Shared provider instance ──────────────────────────────────────────────────

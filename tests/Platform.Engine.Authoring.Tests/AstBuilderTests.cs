@@ -355,7 +355,8 @@ public sealed class AstBuilderTests
         Assert.Equal(10_000, step.Timeout!.Value.TotalMilliseconds, precision: 0);
         Assert.True(step.ContinueOnFailure);
         Assert.Single(step.Capture);
-        Assert.Equal("$.id", step.Capture["userId"]);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture["userId"].Format);
+        Assert.Equal("$.id", step.Capture["userId"].Expression);
     }
 
     // =========================================================================
@@ -453,9 +454,9 @@ public sealed class AstBuilderTests
     public void Build_CaptureKey_WithConnPrefix_Throws()
     {
         var registry = RegistryWith(new StubProvider("http", "rest"));
-        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        var capture = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal)
         {
-            ["conn::orders-db"] = "$.connString",
+            ["conn::orders-db"] = new CaptureExpr(CaptureFormat.JsonPath, "$.connString"),
         };
         var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
 
@@ -472,9 +473,9 @@ public sealed class AstBuilderTests
     public void Build_CaptureKey_WithSvcPrefix_Throws()
     {
         var registry = RegistryWith(new StubProvider("http", "rest"));
-        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        var capture = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal)
         {
-            ["svc::my-service"] = "$.url",
+            ["svc::my-service"] = new CaptureExpr(CaptureFormat.JsonPath, "$.url"),
         };
         var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
 
@@ -490,9 +491,9 @@ public sealed class AstBuilderTests
     public void Build_CaptureKey_WithOutcomePrefix_Throws()
     {
         var registry = RegistryWith(new StubProvider("http", "rest"));
-        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        var capture = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal)
         {
-            ["__outcome::step1"] = "$.result",
+            ["__outcome::step1"] = new CaptureExpr(CaptureFormat.JsonPath, "$.result"),
         };
         var doc = DocWithStep(StepSpecWith(id: "step1", type: "http.rest", capture: capture));
 
@@ -554,10 +555,10 @@ public sealed class AstBuilderTests
     public void Build_NormalCaptureKeyAndVariableName_DoNotThrow()
     {
         var registry = RegistryWith(new StubProvider("http", "rest"));
-        var capture = new Dictionary<string, string>(StringComparer.Ordinal)
+        var capture = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal)
         {
-            ["orderId"] = "$.id",
-            ["status"] = "$.status",
+            ["orderId"] = new CaptureExpr(CaptureFormat.JsonPath, "$.id"),
+            ["status"] = new CaptureExpr(CaptureFormat.JsonPath, "$.status"),
         };
         var variables = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -595,7 +596,7 @@ public sealed class AstBuilderTests
         string? verifyMode = null,
         string? timeout = null,
         bool? continueOnFailure = null,
-        IReadOnlyDictionary<string, string>? capture = null)
+        IReadOnlyDictionary<string, CaptureExpr>? capture = null)
     {
         // Build a minimal YAML mapping node directly so tests can run without
         // parsing YAML — the Start mark on a freshly constructed node will be

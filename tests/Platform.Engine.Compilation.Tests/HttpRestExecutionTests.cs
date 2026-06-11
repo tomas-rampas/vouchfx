@@ -44,6 +44,8 @@ public sealed class HttpRestExecutionTests
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+            new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -76,6 +78,7 @@ public sealed class HttpRestExecutionTests
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,                      // System.Private.Uri (safe URI composition, M1)
         typeof(Json.Path.JsonPath).Assembly.Location,              // JsonPath.Net — capture logic (S04-B-02)
+        typeof(System.Xml.XmlDocument).Assembly.Location,          // System.Private.Xml — XPath capture logic (S07-B-01b)
     };
 
     /// <summary>

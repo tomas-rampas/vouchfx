@@ -43,6 +43,9 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Sprint 7 capstone (docker) + compile twin: the sixth Core provider. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Sprint 6 Kafka client libs — direct refs so the DLLs deploy to output">

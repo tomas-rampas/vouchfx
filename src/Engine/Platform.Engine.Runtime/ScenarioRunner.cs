@@ -31,12 +31,14 @@ using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Abstractions.Retry;
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
 using Platform.Engine.Authoring.Model;
 using Platform.Engine.Compilation;
 using Platform.Engine.Compilation.Schema;
 using Platform.Engine.Orchestration;
+using Platform.Engine.Orchestration.HostResources;
 using Platform.Engine.Reporting;
 using Platform.Sdk;
 
@@ -203,11 +205,103 @@ public static class ScenarioRunner
         ArgumentNullException.ThrowIfNull(providerAssemblies);
         ArgumentNullException.ThrowIfNull(output);
 
+        // ── Build provider registry + render-time diff-lookup closure ─────────
+        // Rendering is this wrapper's responsibility (the no-render core returns a
+        // fully-populated event buffer instead), so the registry and the diff-lookup
+        // closure it feeds are built here.
+        //
+        // Render-time diff-lookup closure (S07-G-01): resolves a step's kind to its
+        // provider's IStepDiffRenderer (when implemented) so the terminal renderer can
+        // draw an expected-vs-observed diff under a failed step.  Built once over the
+        // frozen registry and threaded into the single TerminalRenderer.Render call.
+        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+        var diffLookup = BuildDiffLookup(registry);
+
+        // Delegate to the no-render core, which builds its own topology, runs the
+        // single scenario, and returns the fully-populated event buffer + verdict for
+        // whichever path it took (every early-exit included).  This wrapper then renders
+        // that buffer exactly ONCE — reproducing, byte-for-byte, what the per-path
+        // renders did before this extraction (S07-C-03 foundation).
+        var (verdict, buffer) = await RunScenarioOwningTopologyAsync(
+            registry,
+            yamlText,
+            scenarioName,
+            appHostAssemblyName,
+            output,
+            seedBaseDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        TerminalRenderer.Render(buffer, output, diffLookup);
+        return verdict;
+    }
+
+    /// <summary>
+    /// Executes the full vouchfx pipeline for a single scenario — building and
+    /// owning its own Aspire topology — and returns the fully-populated event
+    /// buffer together with the aggregate <see cref="Verdict"/>, <strong>without
+    /// rendering</strong>.  This is the no-render, owns-its-own-topology entry
+    /// point that a future <c>ParallelSuiteRunner</c> (Sprint 8, S07-C-03) calls
+    /// once per scenario, then renders all returned buffers itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method contains exactly the logic that previously lived inline in
+    /// <see cref="RunAsync"/> (build own topology → run one scenario → every
+    /// early-exit path), <strong>except</strong> rendering and the render-time
+    /// diff-lookup construction — those are render concerns owned by the caller.
+    /// Every place that previously did
+    /// <c>TerminalRenderer.Render(buffer, output, diffLookup); return verdict;</c>
+    /// here instead does <c>return (verdict, buffer);</c>: the returned buffer is the
+    /// complete event stream for the chosen path, so a single caller-side
+    /// <see cref="TerminalRenderer.Render(IEnumerable{string}, TextWriter, Func{string, JsonElement, string?}?)"/>
+    /// reproduces the previous per-path render byte-for-byte.
+    /// </para>
+    /// <para>
+    /// <paramref name="output"/> is retained <strong>only</strong> for the raw
+    /// diagnostic text the early-exit paths write directly (schema-validation
+    /// errors, parse errors, the pipeline-failure message, the secret-reference
+    /// error).  Those raw writes are NOT event-stream lines — they are not in the
+    /// returned buffer and are not reproduced by rendering — so to preserve output
+    /// byte-for-byte they must still be written here, before the caller renders.
+    /// This method never calls <see cref="TerminalRenderer"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="registry">
+    /// The frozen provider registry (built by the caller from the provider
+    /// assemblies).  Used for schema validation and the provider pipeline.
+    /// </param>
+    /// <param name="yamlText">The raw text of a <c>.e2e.yaml</c> scenario file.</param>
+    /// <param name="scenarioName">
+    /// Human-readable scenario name, used as the <c>scenarioId</c> in the event
+    /// stream and as the Roslyn ALC run label.
+    /// </param>
+    /// <param name="appHostAssemblyName">
+    /// Short name of the Aspire host assembly (R-1 finding, CLAUDE.md §"Aspire").
+    /// </param>
+    /// <param name="output">
+    /// The <see cref="TextWriter"/> that receives the raw early-exit diagnostic
+    /// text (never rendered event lines).
+    /// </param>
+    /// <param name="seedBaseDirectory">
+    /// Base directory for relative <c>environment.seed</c> SQL file paths (S05-A-01).
+    /// </param>
+    /// <param name="cancellationToken">Propagated to all async operations.</param>
+    /// <returns>
+    /// A tuple of the aggregate <see cref="Verdict"/> and the complete event buffer
+    /// for the chosen path; the buffer is non-empty and always contains a
+    /// scenario-completed event.
+    /// </returns>
+    internal static async Task<(Verdict Verdict, List<string> Buffer)> RunScenarioOwningTopologyAsync(
+        StepKindRegistry registry,
+        string yamlText,
+        string scenarioName,
+        string? appHostAssemblyName,
+        TextWriter output,
+        string? seedBaseDirectory,
+        CancellationToken cancellationToken)
+    {
         var runId = Guid.NewGuid().ToString("n");
         var buffer = new List<string>();
-
-        // ── Step 1: Build provider registry ──────────────────────────────────
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
 
         // ── Step 2: Validate YAML against composed JSON Schema ────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
@@ -236,8 +330,7 @@ public static class ScenarioRunner
                 await output.WriteLineAsync(error.Message).ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 3: Parse YAML → E2eDocument → ScenarioAst ───────────────────
@@ -269,8 +362,7 @@ public static class ScenarioRunner
             await output.WriteLineAsync(
                 $"Parse / AST error: {ex.Message}").ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
@@ -293,8 +385,7 @@ public static class ScenarioRunner
             }));
             await output.WriteLineAsync(pipelineResult.Failure.Message)
                 .ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
@@ -320,8 +411,7 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
             await output.WriteLineAsync(secretError).ConfigureAwait(false);
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.Inconclusive;
+            return (Verdict.Inconclusive, buffer);
         }
 
         // ── Step 6: Start Aspire topology ─────────────────────────────────────
@@ -354,8 +444,7 @@ public static class ScenarioRunner
                 Verdict = Verdict.EnvironmentError,
                 Counts = new VerdictCounts { EnvError = 1 },
             }));
-            TerminalRenderer.Render(buffer, output);
-            return Verdict.EnvironmentError;
+            return (Verdict.EnvironmentError, buffer);
         }
 
         await using (suite.ConfigureAwait(false))
@@ -369,14 +458,14 @@ public static class ScenarioRunner
                 suite,
                 pipelineResult.Assembled!,
                 pipelineResult.CompileReferencePaths,
+                pipelineResult.HostResourcePlan,
                 buffer,
                 isolation,
                 output,
                 seedBaseDirectory,
                 cancellationToken).ConfigureAwait(false);
 
-            TerminalRenderer.Render(buffer, output);
-            return verdict;
+            return (verdict, buffer);
         }
     }
 
@@ -468,6 +557,10 @@ public static class ScenarioRunner
 
         // Build the provider registry once (shared across all scenarios).
         var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+
+        // Render-time diff-lookup closure (S07-G-01), built once over the frozen
+        // registry and threaded into the suite-level TerminalRenderer.Render call.
+        var diffLookup = BuildDiffLookup(registry);
 
         // ── Validate shared-environment assumption ─────────────────────────────
         // All scenarios must share the environment declared in scenario[0].
@@ -648,6 +741,7 @@ public static class ScenarioRunner
                     suite,
                     pipeline!.Assembled!,
                     pipeline.CompileReferencePaths,
+                    pipeline.HostResourcePlan,
                     buffer,
                     new NullScenarioIsolation(), // isolation already handled above/below
                     output,
@@ -680,7 +774,7 @@ public static class ScenarioRunner
                 await disposable.DisposeAsync().ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(allBuffers, output);
+            TerminalRenderer.Render(allBuffers, output, diffLookup);
             return new SuiteResult(suiteAggregate, results);
         }
     }
@@ -713,6 +807,7 @@ public static class ScenarioRunner
         SuiteTopology suite,
         AssembledScript assembled,
         IReadOnlyList<string> compileReferencePaths,
+        IReadOnlyList<HostResourcePlanEntry> hostResourcePlan,
         List<string> buffer,
         IScenarioIsolation isolation,
         TextWriter output,
@@ -732,6 +827,129 @@ public static class ScenarioRunner
             vars[varKey] = kv.Value;
         }
 
+        // ── Host resources (S07-F-01a, §5) ────────────────────────────────────
+        // BEFORE staging the `variables` block and BEFORE running any step, start each
+        // host-side resource declared by a provider (e.g. an ephemeral webhook listener)
+        // IN THE DEFAULT ALC, owned here by the runner.  Stage each listener's bound URL
+        // at svc::<VarName> so it is available before step 1 — an EARLIER step can hand
+        // that URL to the SUT (forward-only Vars threading preserved) — and register its
+        // buffer so a LATER assertion step can read captures via globals.Webhooks.
+        //
+        // Off the hot path: when no step contributes a host resource, no listener starts
+        // and Webhooks stays the Null accessor.  Listeners are disposed in the finally
+        // below; because each scenario run starts FRESH listeners+buffers and disposes
+        // them at the end, a webhook captured in scenario A can never satisfy an assertion
+        // in scenario B within a shared topology (strictly stronger than a buffer clear).
+        var listeners = new List<WebhookListener>();
+        IWebhookCaptureAccessor webhookAccessor = NullWebhookCaptureAccessor.Instance;
+        try
+        {
+            if (hostResourcePlan.Count > 0)
+            {
+                var buffers = new Dictionary<string, WebhookCaptureBuffer>(StringComparer.Ordinal);
+                // De-duplicate by VarName: many steps may reference the same logical listener.
+                foreach (var entry in hostResourcePlan)
+                {
+                    var req = entry.Requirement;
+                    if (!string.Equals(req.Kind, WebhookListenerKind, StringComparison.Ordinal))
+                    {
+                        // Unknown host-resource kind: ignore tolerantly (a future kind may be
+                        // handled by a later sprint's runner without breaking this one).
+                        continue;
+                    }
+
+                    if (buffers.ContainsKey(req.VarName))
+                    {
+                        continue;
+                    }
+
+                    var capBuffer = new WebhookCaptureBuffer();
+                    var listener = await WebhookListener
+                        .StartAsync(capBuffer, cancellationToken)
+                        .ConfigureAwait(false);
+                    listeners.Add(listener);
+                    buffers[req.VarName] = capBuffer;
+
+                    // Stage the listener URL under TWO keys BEFORE step 1, so an EARLIER
+                    // step can hand the callback URL to the SUT via either access path:
+                    //   • svc::<VarName>  — the discovered-service slot an http.rest step
+                    //     reaches via target:, identical to any orchestrated endpoint.
+                    //   • <VarName>       — a PLAIN Vars entry so {placeholder} substitution
+                    //     can reach it: an author writes {<listener>} in a request body/field
+                    //     to interpolate the callback URL.  {placeholder} substitution scans
+                    //     bare identifiers ([A-Za-z_]…) only and CANNOT reach a svc:: key, so
+                    //     this second staging is what makes the URL author-interpolable.
+                    // Both point at the same listener.Url.  The plain key is staged here,
+                    // before the `variables` block, so an author-declared variable of the
+                    // same name (rare) deliberately overrides it (forward-only Vars threading).
+                    vars[VarKeys.Service(req.VarName)] = listener.Url;
+                    vars[req.VarName] = listener.Url;
+                }
+
+                if (buffers.Count > 0)
+                {
+                    webhookAccessor = new WebhookCaptureAccessor(buffers);
+                }
+            }
+
+            return await RunScenarioCoreAsync(
+                ast,
+                scenarioName,
+                runId,
+                suite,
+                assembled,
+                compileReferencePaths,
+                vars,
+                webhookAccessor,
+                buffer,
+                output,
+                seedBaseDirectory,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Dispose every started listener (stops Kestrel, releases the port) regardless of
+            // the scenario's verdict or any thrown exception.  Disposal of fresh per-scenario
+            // listeners is the per-scenario teardown that isolates scenarios in a shared topology.
+            foreach (var listener in listeners)
+            {
+                try
+                {
+                    await listener.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort teardown: a failed listener dispose must not mask the verdict.
+                }
+            }
+        }
+    }
+
+    // The single host-resource kind handled by this sprint's runner (S07-F-01a).
+    private const string WebhookListenerKind = "webhook-listener";
+
+    /// <summary>
+    /// Executes the per-scenario compilation + isolated Roslyn run against an already-started
+    /// topology, with the host-resource staging already applied to <paramref name="vars"/> and
+    /// the webhook accessor already built.  Extracted from
+    /// <see cref="RunScenarioAgainstTopologyAsync"/> so the host-listener lifecycle (start /
+    /// stage / dispose) wraps this body in a single try/finally without duplicating the many
+    /// early-return event-emission paths (S07-F-01a).
+    /// </summary>
+    private static async Task<Verdict> RunScenarioCoreAsync(
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        SuiteTopology suite,
+        AssembledScript assembled,
+        IReadOnlyList<string> compileReferencePaths,
+        Dictionary<string, object?> vars,
+        IWebhookCaptureAccessor webhookAccessor,
+        List<string> buffer,
+        TextWriter output,
+        string? seedBaseDirectory,
+        CancellationToken cancellationToken)
+    {
         // ── Stage the `variables` block constants (DSL §3) ────────────────────
         // Pre-loaded into the shared context under their bare names (no prefix) so
         // {placeholder} substitution and capture reads resolve them uniformly.
@@ -751,7 +969,14 @@ public static class ScenarioRunner
         var secretCatalog = new SecretSourceCatalog(BuildSecretResolvers());
         var secretAccessor = new SecretAccessor(secretCatalog);
 
-        var globals = new ScriptGlobalVariables(vars, suite.DiscoveredServices, secretAccessor);
+        // ── §5 boundary construction (S07-F-01a) ──────────────────────────────
+        // Both the secret accessor and the webhook-capture accessor are instances built
+        // in the Default ALC and passed by-reference into the sole host↔script boundary.
+        // The webhook listener + buffers they project live in the Default ALC (owned by
+        // this runner); the emitted script reaches captures ONLY via globals.Webhooks —
+        // no static handle bridges the collectible boundary, preserving the memory model.
+        var globals = new ScriptGlobalVariables(
+            vars, suite.DiscoveredServices, secretAccessor, webhookAccessor);
 
         // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
         var tpaPaths = BclReferencePaths()
@@ -896,7 +1121,14 @@ public static class ScenarioRunner
                 var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
                 var capturedVars = new List<CapturedVar>(node.Capture.Count);
                 var captureKeys = node.Capture.Keys.ToArray();
-                var captureVals = node.Capture.Values.ToArray();
+
+                // S07-B-01a: node.Capture values are now typed CaptureExpr records.
+                // The CapturedVar.Path provenance field carries the raw expression
+                // string (format-agnostic), so read .Expression — the event payload
+                // is unchanged for a JSONPath capture (byte-for-byte back-compatible).
+                var captureVals = node.Capture.Values
+                    .Select(e => e.Expression)
+                    .ToArray();
 
                 for (int ci = 0; ci < captureKeys.Length; ci++)
                 {
@@ -931,6 +1163,11 @@ public static class ScenarioRunner
                 DurationMs = durationMs,
                 Captured = capturedList,
                 Substitutions = substitutionsList,
+                // S07-G-01: carry the structured observation onto the step-completed
+                // event so a renderer can compute an expected-vs-observed diff at render
+                // time (the stream stays pure structured data — no rendered text here).
+                // An unparseable observation degrades to omission rather than crashing.
+                Observation = ParseObservation(outcome?.Observation),
             }));
 
             counts[(int)stepVerdict]++;
@@ -1005,6 +1242,34 @@ public static class ScenarioRunner
         env is null
             ? string.Empty
             : System.Text.Json.JsonSerializer.Serialize(env);
+
+    // ── Render-time diff lookup (S07-G-01) ──────────────────────────────────────
+
+    /// <summary>
+    /// Builds the render-time diff-lookup closure passed to
+    /// <see cref="TerminalRenderer.Render(IEnumerable{string}, TextWriter, Func{string, JsonElement, string?}?)"/>.
+    /// </summary>
+    /// <param name="registry">The frozen provider registry to resolve the kind against.</param>
+    /// <returns>
+    /// A delegate that, given a step <c>kind</c> and structured observation, resolves
+    /// the provider for that kind and — when it implements
+    /// <see cref="IStepDiffRenderer"/> and recognises the observation — returns its
+    /// rendered expected-vs-observed diff, or <see langword="null"/> otherwise.
+    /// </returns>
+    /// <remarks>
+    /// The diff renderer runs in the Default <c>AssemblyLoadContext</c> (the provider
+    /// instance is held by the frozen registry), so this raises no §5 memory-model
+    /// concern.  The closure is the sole bridge between the decoupled
+    /// <c>Platform.Engine.Reporting</c> layer (which knows only <see cref="Func{T1, T2, TResult}"/>)
+    /// and the <c>IStepDiffRenderer</c> SDK type.
+    /// </remarks>
+    private static Func<string, JsonElement, string?> BuildDiffLookup(StepKindRegistry registry)
+        => (kind, observation) =>
+            registry.TryGet(kind, out var rp)
+            && rp?.Instance is IStepDiffRenderer renderer
+            && renderer.CanRender(observation)
+                ? renderer.RenderDiff(observation)
+                : null;
 
     // ── Verdict aggregation ────────────────────────────────────────────────────
 
@@ -1474,7 +1739,17 @@ public static class ScenarioRunner
         var texts = new List<string>();
         var raw = node.RawNode;
 
-        // http.rest: 'path' and each header value are substitutable (B-03).
+        // http.rest: 'path', each header value, AND the request 'body' are substitutable.
+        // path/headers since B-03; 'body' since S07-B-02a, when HttpRestProvider.Emit began
+        // routing the body through Secret_Helpers.ResolveTemplate at runtime.  S07-B-02b:
+        // the body was previously OMITTED from this scan, so a ${secret:…} in an http.rest
+        // body was resolved at runtime but invisible to provenance, the pre-compile secret-
+        // validation pass, AND the reproducibility envelope — the exact "field the provider
+        // substitutes but this scan omits" hazard this method's remarks warn against.  A
+        // scalar body is collected here; a structured (mapping/sequence) body is bound to a
+        // serialised JSON string by the provider — its placeholders/secrets live inside that
+        // string, which this scan does not reconstruct (a structured-body secret remains a
+        // known, narrower follow-up, but the common scalar/inline-JSON body is now covered).
         if (string.Equals(node.CanonicalType, "http.rest", StringComparison.Ordinal))
         {
             if (TryGetScalar(raw, "path", out var path) && !string.IsNullOrEmpty(path))
@@ -1494,6 +1769,12 @@ public static class ScenarioRunner
                     }
                 }
             }
+
+            // 'body' as a scalar (raw string / inline JSON): the provider keeps it verbatim
+            // as a template and resolves it via Secret_Helpers.ResolveTemplate at runtime, so
+            // its {placeholder}/${secret:…} tokens must be recognised here too.
+            if (TryGetScalar(raw, "body", out var body) && !string.IsNullOrEmpty(body))
+                texts.Add(body);
         }
         // db-assert.postgres: 'query', each parameter value, AND each expect.row
         // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all

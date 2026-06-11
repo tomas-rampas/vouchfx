@@ -3,6 +3,7 @@
 
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Model;
+using Platform.Sdk;
 using Xunit;
 
 namespace Platform.Engine.Authoring.Tests;
@@ -269,11 +270,216 @@ public sealed class YamlDocumentParserTests
         // Act
         var doc = YamlDocumentParser.Parse(yaml);
 
+        // Assert — bare-scalar form is back-compatible: it defaults to JSONPath
+        // and preserves the expression text byte-for-byte (S07-B-01a).
+        var step = doc.Steps[0];
+        Assert.NotNull(step.Capture);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture!["newUserId"].Format);
+        Assert.Equal("$.id", step.Capture["newUserId"].Expression);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture["planName"].Format);
+        Assert.Equal("$.plan", step.Capture["planName"].Expression);
+    }
+
+    // -------------------------------------------------------------------------
+    // S07-B-01a — capture format generalisation (JSONPath alongside XPath)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_StepCapture_ExplicitJsonPathMapping_IsJsonPath()
+    {
+        // Arrange — explicit single-key { jsonpath: … } form.
+        const string yaml = """
+            steps:
+              - id: create-user
+                type: http.rest
+                capture:
+                  newUserId:
+                    jsonpath: "$.id"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
         // Assert
         var step = doc.Steps[0];
         Assert.NotNull(step.Capture);
-        Assert.Equal("$.id", step.Capture["newUserId"]);
-        Assert.Equal("$.plan", step.Capture["planName"]);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture!["newUserId"].Format);
+        Assert.Equal("$.id", step.Capture["newUserId"].Expression);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_ExplicitXPathMapping_IsXPath()
+    {
+        // Arrange — explicit single-key { xpath: … } form.
+        const string yaml = """
+            steps:
+              - id: read-soap
+                type: http.rest
+                capture:
+                  orderId:
+                    xpath: "//order/id"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var step = doc.Steps[0];
+        Assert.NotNull(step.Capture);
+        Assert.Equal(CaptureFormat.XPath, step.Capture!["orderId"].Format);
+        Assert.Equal("//order/id", step.Capture["orderId"].Expression);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_MixedBareAndMappingForms_AreBothBound()
+    {
+        // Arrange — a bare scalar and an explicit XPath mapping side by side.
+        const string yaml = """
+            steps:
+              - id: mixed
+                type: http.rest
+                capture:
+                  fromJson: "$.id"
+                  fromXml:
+                    xpath: "//id"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var step = doc.Steps[0];
+        Assert.NotNull(step.Capture);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture!["fromJson"].Format);
+        Assert.Equal("$.id", step.Capture["fromJson"].Expression);
+        Assert.Equal(CaptureFormat.XPath, step.Capture["fromXml"].Format);
+        Assert.Equal("//id", step.Capture["fromXml"].Expression);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_EmptyMapping_ThrowsWithClearMessage()
+    {
+        // Arrange — a mapping entry with neither 'jsonpath' nor 'xpath'.
+        const string yaml = """
+            steps:
+              - id: bad
+                type: http.rest
+                capture:
+                  x: {}
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("'x'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("jsonpath", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("xpath", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_BothKeys_ThrowsWithClearMessage()
+    {
+        // Arrange — a mapping entry declaring both 'jsonpath' and 'xpath'.
+        const string yaml = """
+            steps:
+              - id: bad
+                type: http.rest
+                capture:
+                  x:
+                    jsonpath: "$.id"
+                    xpath: "//id"
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("'x'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("exactly one", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_UnknownKey_ThrowsWithClearMessage()
+    {
+        // Arrange — a mapping entry with an unrecognised key.
+        const string yaml = """
+            steps:
+              - id: bad
+                type: http.rest
+                capture:
+                  x:
+                    regex: "id=(.*)"
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("'x'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("regex", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_MappingValueNotScalar_ThrowsWithClearMessage()
+    {
+        // Arrange — the 'jsonpath' value is itself a mapping, not a scalar.
+        const string yaml = """
+            steps:
+              - id: bad
+                type: http.rest
+                capture:
+                  x:
+                    jsonpath:
+                      nested: oops
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("'x'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_StepCapture_NonScalarKey_ThrowsRatherThanSilentlySkipping()
+    {
+        // Arrange — a capture block whose KEY is a YAML complex (sequence) key
+        // rather than a scalar variable name.  The parser must REJECT this per its
+        // own contract (a silently-dropped capture later misattributes an
+        // assertion Fail / leaves a {placeholder} unresolved, §12.1), not skip it.
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http.rest
+                capture:
+                  ? [a, b]
+                  : "$.id"
+            """;
+
+        // Act + Assert — the malformed key must surface as a YamlParseException.
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("capture", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The message must name the requirement (a scalar variable name).
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // 1-based position is derived from the offending key node (mirrors siblings).
+        Assert.True(ex.Line > 0, "Line should be populated from the offending key node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending key node.");
+    }
+
+    [Fact]
+    public void Parse_StepCapture_ScalarKey_StillParsesUnchanged()
+    {
+        // Arrange — back-compat: a normal scalar capture key must keep working
+        // exactly as before the malformed-key rejection was added.
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http.rest
+                capture:
+                  newUserId: "$.id"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var step = doc.Steps[0];
+        Assert.NotNull(step.Capture);
+        Assert.Equal(CaptureFormat.JsonPath, step.Capture!["newUserId"].Format);
+        Assert.Equal("$.id", step.Capture["newUserId"].Expression);
     }
 
     [Fact]

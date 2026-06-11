@@ -226,6 +226,7 @@ public sealed class SecretResolutionPipelineTests
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,
         typeof(Json.Path.JsonPath).Assembly.Location,
+        typeof(System.Xml.XmlDocument).Assembly.Location,          // System.Private.Xml — XPath capture logic (S07-B-01b)
     };
 
     private sealed class StubCompileContext : ICompileContext
@@ -236,6 +237,8 @@ public sealed class SecretResolutionPipelineTests
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+            new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
     }
 
     private static bool ContainsBytes(byte[] haystack, byte[] needle)
