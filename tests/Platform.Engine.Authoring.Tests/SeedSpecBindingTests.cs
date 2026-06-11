@@ -383,4 +383,66 @@ public sealed class SeedSpecBindingTests
         Assert.Contains("events", ex.Message, StringComparison.Ordinal);
         Assert.Contains("publish", ex.Message, StringComparison.Ordinal);
     }
+
+    // ── Malformed seed dependency KEY rejection (sibling of ParseCaptureMap) ──
+
+    [Fact]
+    public void Parse_SeedDependencyNonScalarKey_ThrowsRatherThanSilentlySkipping()
+    {
+        // Arrange — a seed block whose dependency KEY is a YAML complex (sequence)
+        // key rather than a scalar logical dependency name.  The parser must REJECT
+        // this per ParseSeed's own contract: a silently-dropped seed dependency
+        // leaves a fixture unloaded, so a later step asserts against unseeded data
+        // and surfaces as a misattributed assertion Fail / EnvironmentError (§12.1) —
+        // the exact confusion seeding prevents.  Mirrors the value-side rejection
+        // and the capture-key sibling Parse_StepCapture_NonScalarKey_*.  The rest of
+        // the YAML is well-formed so the seed KEY is the ONLY parse error.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: "example/api:latest"
+              seed:
+                ? [a, b]
+                : { sql: [ "fixtures/x.sql" ] }
+            steps:
+              - id: s1
+                type: http.rest
+                target: api
+            """;
+
+        // Act + Assert — the malformed key must surface as a YamlParseException.
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        // The message must name the requirement (a scalar dependency name).
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("seed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // 1-based position is derived from the offending key node (mirrors siblings).
+        Assert.True(ex.Line > 0, "Line should be populated from the offending key node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending key node.");
+    }
+
+    [Fact]
+    public void Parse_SeedDependencyScalarKey_StillParsesUnchanged()
+    {
+        // Arrange — back-compat: a normal scalar seed-dependency key must keep
+        // working exactly as before the malformed-key rejection was added.
+        const string yaml = """
+            environment:
+              seed:
+                orders-db:
+                  sql: [ "fixtures/a.sql" ]
+            steps:
+              - id: s1
+                type: script.csharp
+                code: "// no-op"
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — the scalar-keyed dependency binds unchanged.
+        var seed = doc.Environment!.Seed!;
+        Assert.True(seed.Dependencies.ContainsKey("orders-db"));
+        Assert.Equal("fixtures/a.sql", Assert.Single(seed.Dependencies["orders-db"].Sql!));
+    }
 }

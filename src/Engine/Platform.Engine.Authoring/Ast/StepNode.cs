@@ -49,7 +49,9 @@ namespace Platform.Engine.Authoring.Ast;
 /// column information for diagnostics.
 /// </param>
 /// <param name="Capture">
-/// Map of variable name to extractor expression (JSONPath / XPath).  Never
+/// Map of variable name to a typed extractor
+/// (<see cref="Platform.Sdk.CaptureExpr"/>, carrying both the query language —
+/// JSONPath or XPath — and the raw expression string).  Never
 /// <see langword="null"/>; the empty dictionary is used when the YAML step
 /// has no <c>capture</c> section.
 /// </param>
@@ -74,7 +76,7 @@ public sealed record StepNode(
     StepKindId Kind,
     string CanonicalType,
     YamlMappingNode RawNode,
-    IReadOnlyDictionary<string, string> Capture,
+    IReadOnlyDictionary<string, CaptureExpr> Capture,
     VerifyMode VerifyMode,
     TimeSpan? Timeout,
     bool ContinueOnFailure);

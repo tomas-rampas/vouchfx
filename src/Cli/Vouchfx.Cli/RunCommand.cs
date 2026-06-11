@@ -1,0 +1,368 @@
+// Vouchfx.Cli — RunCommand (S07-C-01).
+//
+// The `vouchfx run [<path>]` subcommand. THIS sprint's surface is just the optional
+// <path> argument (default "."). Selection flags (--tag / --owner / --changed / …) are a
+// later task; the command is shaped so they slot in as Options without disturbing this.
+//
+// Flow:
+//   1. Build the frozen Core provider registry (ProviderRegistryFactory).
+//   2. Discover + parse *.e2e.yaml under <path> (ScenarioDiscovery).
+//   3. Split discovery into parsed scenarios and parse-failures.
+//   4. Hand the parsed scenarios to ScenarioRunner.RunSuiteAsync with appHostAssemblyName
+//      = THIS executable ("vouchfx") so DCP metadata resolves to this host (CLAUDE.md
+//      §"Aspire (§4, §19)" R-1 finding), not the GetEntryAssembly fallback.
+//   5. Each parse-failure becomes an Inconclusive scenario (§12.1 — authoring error, the
+//      scenario never ran), aggregated alongside the suite verdict.
+//   6. Map the aggregate verdict to a process exit code (ExitCodes).
+//
+// The full `run` path needs Docker (RunSuiteAsync starts an Aspire topology) and is NOT
+// exercised by the unit tests — the Docker-free seams (discovery, registry, exit-code
+// mapping, verdict aggregation) are factored out as internal statics and tested directly.
+
+using System.CommandLine;
+using System.Reflection;
+using Platform.Engine.Abstractions;
+using Platform.Engine.Authoring.Ast;
+using Platform.Engine.Runtime;
+using Platform.Sdk;
+using Vouchfx.Cli.Selection;
+
+namespace Vouchfx.Cli;
+
+/// <summary>
+/// Builds and executes the <c>run</c> subcommand.
+/// </summary>
+internal static class RunCommand
+{
+    /// <summary>
+    /// Builds the <c>run</c> <see cref="Command"/>, wiring its async action to
+    /// <see cref="ExecuteAsync"/>.
+    /// </summary>
+    /// <returns>
+    /// The configured <c>run</c> command (with its <c>&lt;path&gt;</c> argument), ready to
+    /// be added to the root command.
+    /// </returns>
+    public static Command Build()
+    {
+        var command = new Command(
+            "run",
+            "Discover *.e2e.yaml scenarios under <path> and run them end-to-end against an "
+            + "orchestrated topology.");
+
+        var pathArgument = BuildPathArgument();
+        command.Add(pathArgument);
+
+        // Selection options (S07-C-02): tag / owner / path / change-set. These bind into a
+        // SelectionCriteria that filters the discovered scenarios BEFORE the runner sees
+        // them — `metadata` (tag/owner) drives selection only, never execution (BP §16).
+        var tagOption = BuildTagOption();
+        var ownerOption = BuildOwnerOption();
+        var pathOption = BuildPathOption();
+        var changedSinceOption = BuildChangedSinceOption();
+        command.Add(tagOption);
+        command.Add(ownerOption);
+        command.Add(pathOption);
+        command.Add(changedSinceOption);
+
+        // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
+        // cancellation-aware overload (System.CommandLine 2.0.x GA).
+        command.SetAction((parseResult, cancellationToken) =>
+        {
+            var path = parseResult.GetValue(pathArgument) ?? ".";
+            var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
+            return ExecuteAsync(path, criteria, Console.Out, cancellationToken);
+        });
+
+        return command;
+    }
+
+    /// <summary>The repeatable <c>--tag</c> option: keep scenarios carrying any listed tag.</summary>
+    internal static Option<string[]> BuildTagOption() => new("--tag")
+    {
+        Description =
+            "Select scenarios whose metadata.tags contains this tag. Repeatable; a scenario "
+            + "matches if it has ANY of the supplied tags (OR).",
+        AllowMultipleArgumentsPerToken = true,
+    };
+
+    /// <summary>The repeatable <c>--owner</c> option: keep scenarios with any listed owner.</summary>
+    internal static Option<string[]> BuildOwnerOption() => new("--owner")
+    {
+        Description =
+            "Select scenarios whose metadata.owner is this value. Repeatable; a scenario "
+            + "matches if its owner is ANY of the supplied owners (OR).",
+        AllowMultipleArgumentsPerToken = true,
+    };
+
+    /// <summary>The <c>--path</c> option: a glob (or substring) over the scenario's path.</summary>
+    internal static Option<string?> BuildPathOption() => new("--path")
+    {
+        Description =
+            "Select scenarios whose (normalised) absolute path matches this glob. Supports "
+            + "*, ** and ?; a pattern with no wildcard is matched as a substring.",
+    };
+
+    /// <summary>The <c>--changed-since</c> option: a git ref bounding the change-set.</summary>
+    internal static Option<string?> BuildChangedSinceOption() => new("--changed-since")
+    {
+        Description =
+            "Select only scenarios whose file changed since this git ref (committed diff vs "
+            + "the ref plus the dirty working tree). Requires a git repository.",
+    };
+
+    /// <summary>
+    /// Folds the four selection options out of a <see cref="ParseResult"/> into the
+    /// immutable <see cref="SelectionCriteria"/> the selector consumes.
+    /// </summary>
+    /// <remarks>Exposed as <see langword="internal"/> for the arg-parsing test.</remarks>
+    internal static SelectionCriteria BuildCriteria(
+        ParseResult parseResult,
+        Option<string[]> tagOption,
+        Option<string[]> ownerOption,
+        Option<string?> pathOption,
+        Option<string?> changedSinceOption)
+    {
+        var tags = parseResult.GetValue(tagOption) ?? Array.Empty<string>();
+        var owners = parseResult.GetValue(ownerOption) ?? Array.Empty<string>();
+        var pathGlob = Normalise(parseResult.GetValue(pathOption));
+        var changedSince = Normalise(parseResult.GetValue(changedSinceOption));
+
+        return new SelectionCriteria(tags, owners, pathGlob, changedSince);
+    }
+
+    /// <summary>Treats an empty/whitespace option value as "not supplied".</summary>
+    private static string? Normalise(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// Builds the optional positional <c>&lt;path&gt;</c> argument that defaults to the
+    /// current directory.
+    /// </summary>
+    /// <remarks>
+    /// Factored out (and <see langword="internal"/>) so the no-docker arg-parsing test can
+    /// assert that <c>run &lt;path&gt;</c> resolves the supplied path and that a bare
+    /// <c>run</c> defaults to <c>"."</c>.  In System.CommandLine 2.0.x GA the
+    /// <see cref="Argument{T}"/> constructor takes the name only; the description and
+    /// default come from init properties.
+    /// </remarks>
+    internal static Argument<string> BuildPathArgument() => new("path")
+    {
+        Description = "Directory to search for *.e2e.yaml scenarios (recursively). Defaults to '.'.",
+        DefaultValueFactory = _ => ".",
+    };
+
+    /// <summary>
+    /// The Docker-free orchestration of a <c>run</c> invocation: discovers scenarios, runs
+    /// the parsed ones, folds parse-failures in as Inconclusive, and returns the exit code.
+    /// </summary>
+    /// <param name="path">The discovery root (already defaulted to <c>"."</c> by the parser).</param>
+    /// <param name="output">The writer that receives diagnostics + the rendered report.</param>
+    /// <param name="cancellationToken">Propagated to the runner.</param>
+    /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
+    /// <remarks>
+    /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/>, which starts an Aspire
+    /// topology and therefore needs Docker — so this method is NOT exercised by the unit
+    /// tests.  Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
+    /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
+    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>) are each tested
+    /// in isolation.
+    /// </remarks>
+    internal static async Task<int> ExecuteAsync(
+        string path,
+        SelectionCriteria criteria,
+        TextWriter output,
+        CancellationToken cancellationToken)
+    {
+        StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
+
+        IReadOnlyList<DiscoveredScenario> discovered;
+        try
+        {
+            discovered = ScenarioDiscovery.Discover(path, registry);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            await output.WriteLineAsync(ex.Message).ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        if (discovered.Count == 0)
+        {
+            await output.WriteLineAsync(
+                $"No {ScenarioDiscovery.ScenarioGlob} scenarios found under '{path}'.")
+                .ConfigureAwait(false);
+            // Nothing ran; nothing failed. Success per §12.1 (only Fail breaks CI).
+            return ExitCodes.Success;
+        }
+
+        // Apply the test-selection language BEFORE the runner: narrow the discovered
+        // scenarios by tag/owner/path/change-set (BP §16). A bad --changed-since (no repo,
+        // git missing, bad ref) is a usage error (exit 2), not a crash.
+        IReadOnlyList<DiscoveredScenario> selected;
+        try
+        {
+            selected = SelectScenarios(discovered, criteria, path);
+        }
+        catch (ChangeSetException ex)
+        {
+            await output.WriteLineAsync(ex.Message).ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        if (selected.Count == 0)
+        {
+            await output.WriteLineAsync(
+                $"No scenarios matched the selection criteria (of {discovered.Count} discovered "
+                + $"under '{path}').")
+                .ConfigureAwait(false);
+            // Nothing selected is not a failure — there was simply nothing to run.
+            return ExitCodes.Success;
+        }
+
+        discovered = selected;
+
+        // Split into runnable scenarios and parse-failures.
+        var parsed = new List<DiscoveredScenario>(discovered.Count);
+        var failures = new List<DiscoveredScenario>();
+        foreach (var scenario in discovered)
+        {
+            if (scenario.Failed)
+            {
+                failures.Add(scenario);
+            }
+            else
+            {
+                parsed.Add(scenario);
+            }
+        }
+
+        // Report each parse-failure as an Inconclusive scenario (it never ran — §12.1).
+        foreach (var failure in failures)
+        {
+            await output.WriteLineAsync(
+                $"{failure.AbsolutePath}: {failure.ParseError} (Inconclusive)")
+                .ConfigureAwait(false);
+        }
+
+        Verdict suiteVerdict = Verdict.Pass;
+        if (parsed.Count > 0)
+        {
+            var asts = parsed.Select(p => p.Ast!).ToList();
+            var names = parsed.Select(ScenarioName).ToList();
+            var yamlTexts = parsed.Select(p => p.YamlText).ToList();
+
+            // appHostAssemblyName = THIS executable's name ("vouchfx"): the Aspire host that
+            // carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost). Passing
+            // it explicitly avoids the GetEntryAssembly fallback (CLAUDE.md §"Aspire").
+            var appHostAssemblyName = Assembly.GetExecutingAssembly().GetName().Name;
+
+            SuiteResult result = await ScenarioRunner.RunSuiteAsync(
+                asts,
+                names,
+                yamlTexts,
+                ProviderRegistryFactory.CoreProviderAssemblies(),
+                appHostAssemblyName,
+                output,
+                seedBaseDirectory: null,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            suiteVerdict = result.Verdict;
+        }
+
+        // Fold the parse-failures (Inconclusive) into the suite verdict so the exit code
+        // reflects the whole discovery, not just the scenarios that compiled.
+        var aggregate = AggregateVerdict(suiteVerdict, failures.Count);
+        return ExitCodes.FromVerdict(aggregate);
+    }
+
+    /// <summary>
+    /// Applies the <see cref="SelectionCriteria"/> to the discovered scenarios, constructing
+    /// a git-backed <see cref="GitChangeSet"/> only when a <c>--changed-since</c> ref is set
+    /// (otherwise the change-set dimension is inert via <see cref="NullChangeSet"/>).
+    /// </summary>
+    /// <param name="discovered">The discovered scenarios (parsed and parse-failures).</param>
+    /// <param name="criteria">The selection criteria parsed from the CLI options.</param>
+    /// <param name="discoveryRoot">
+    /// The discovery root, used as git's working directory so <c>--changed-since</c> resolves
+    /// against the repository the scenarios live in.
+    /// </param>
+    /// <returns>The selected subset, in discovery order.</returns>
+    /// <exception cref="ChangeSetException">
+    /// Thrown when <c>--changed-since</c> is set but the change-set cannot be computed.
+    /// </exception>
+    /// <remarks>
+    /// Exposed as <see langword="internal"/> so the no-docker test can assert that an empty
+    /// criteria selects everything and that the change-set is only built on demand.
+    /// </remarks>
+    internal static IReadOnlyList<DiscoveredScenario> SelectScenarios(
+        IReadOnlyList<DiscoveredScenario> discovered,
+        SelectionCriteria criteria,
+        string discoveryRoot)
+    {
+        IChangeSet changeSet = NullChangeSet.Instance;
+        if (criteria.ChangedSinceRef is { } changedSinceRef)
+        {
+            var workingDirectory = ResolveWorkingDirectory(discoveryRoot);
+            changeSet = new GitChangeSet(changedSinceRef, workingDirectory, SystemProcessRunner.Instance);
+        }
+
+        return ScenarioSelector.Apply(discovered, criteria, changeSet);
+    }
+
+    /// <summary>
+    /// Resolves the directory git should run in: the discovery root if it is itself a
+    /// directory, else its containing directory, falling back to the current directory.
+    /// </summary>
+    private static string ResolveWorkingDirectory(string discoveryRoot)
+    {
+        var full = Path.GetFullPath(discoveryRoot);
+        if (Directory.Exists(full))
+        {
+            return full;
+        }
+
+        var parent = Path.GetDirectoryName(full);
+        return string.IsNullOrEmpty(parent) ? Directory.GetCurrentDirectory() : parent;
+    }
+
+    /// <summary>
+    /// Elevates <paramref name="suiteVerdict"/> by the discovery parse-failures, each of
+    /// which counts as an <see cref="Verdict.Inconclusive"/> scenario (§12.1).
+    /// </summary>
+    /// <param name="suiteVerdict">The aggregate verdict from the parsed scenarios.</param>
+    /// <param name="parseFailureCount">The number of files that failed to parse.</param>
+    /// <returns>
+    /// The suite verdict elevated to at least <see cref="Verdict.Inconclusive"/> when any
+    /// file failed to parse, using the standard precedence
+    /// (<c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c>).
+    /// </returns>
+    /// <remarks>
+    /// Reuses <see cref="ScenarioRunner.Elevate"/> so the CLI and the runner can never
+    /// disagree about verdict precedence.  Exposed as <see langword="internal"/> for the
+    /// no-docker aggregation test.
+    /// </remarks>
+    internal static Verdict AggregateVerdict(Verdict suiteVerdict, int parseFailureCount) =>
+        parseFailureCount > 0
+            ? ScenarioRunner.Elevate(suiteVerdict, Verdict.Inconclusive)
+            : suiteVerdict;
+
+    /// <summary>
+    /// Derives the report-facing scenario name: the <c>metadata.name</c> when present,
+    /// else the file name without its <c>.e2e.yaml</c> extension.
+    /// </summary>
+    /// <remarks>Exposed as <see langword="internal"/> for the no-docker naming test.</remarks>
+    internal static string ScenarioName(DiscoveredScenario scenario)
+    {
+        var metaName = scenario.Ast?.Metadata?.Name;
+        if (!string.IsNullOrWhiteSpace(metaName))
+        {
+            return metaName;
+        }
+
+        var fileName = Path.GetFileName(scenario.AbsolutePath);
+        const string suffix = ".e2e.yaml";
+        return fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? fileName[..^suffix.Length]
+            : fileName;
+    }
+}

@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Aspire.AppHost.Sdk injects the DCP binary references and embeds the
+       dcpclipath / aspiredashboardpath AssemblyMetadata attributes that
+       DistributedApplication.CreateBuilder requires to locate the DCP process.
+       This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
+       a plain Aspire.Hosting library reference alone does NOT carry the DCP binaries,
+       and StartAsync then throws OptionsValidationException ("CliPath ... is required").
+       The CLI runner is the executable that HOSTS the engine, so it (not the engine
+       library) must carry this SDK and pass its OWN assembly name ("vouchfx") to
+       ScenarioRunner.RunSuiteAsync as appHostAssemblyName (see Program.cs). -->
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>vouchfx</AssemblyName>
+    <RootNamespace>Vouchfx.Cli</RootNamespace>
+    <!-- Mark this project as an Aspire host so the AppHost build targets embed the
+         DCP metadata onto THIS assembly (the one whose name we pass to the runner). -->
+    <IsAspireHost>true</IsAspireHost>
+  </PropertyGroup>
+
+  <!-- Expose the internal testable seams (ScenarioDiscovery, ExitCodes, RunCommand
+       helpers) to the no-docker CLI test project. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Cli.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <!-- AppHost must be a direct reference so its build targets run and embed the DCP
+         metadata. Aspire.AppHost.Sdk auto-adds this package; the explicit reference
+         pins the CPM version. -->
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- IsAspireProjectResource=false: these are libraries linked into the runner,
+         not orchestrated services that Aspire should treat as project resources. -->
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj"
+                      IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
+    <!-- The providers resolve these via Assembly.Location at runtime (and the Roslyn
+         compile needs them on the reference path); a transitive project-reference path
+         alone does not guarantee deployment to the output directory. Referenced
+         directly here so the DLLs ship with the runner. Mirrors the Runtime test csproj. -->
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
+    <PackageReference Include="JsonPath.Net" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

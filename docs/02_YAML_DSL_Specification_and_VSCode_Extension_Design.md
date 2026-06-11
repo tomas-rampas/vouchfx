@@ -213,9 +213,9 @@ An `http` step issues an HTTP request to one of the services declared in the env
 |---|---|
 | target | Logical name of the service to call, as declared under environment.services. |
 | method | The HTTP verb: GET, POST, PUT, PATCH, or DELETE. |
-| path | The request path, which may contain variable placeholders such as {basePath}/users. |
-| headers | An optional map of request headers. |
-| body | An optional request body, given inline as YAML and serialised to JSON. |
+| path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
+| headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
+| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
 | expect | An assertion block: expected status code, and optional assertions on response headers and body fields. |
 
 ```yaml
@@ -406,13 +406,53 @@ The example below uses `db-assert.postgres`, the Core provider that ships with t
 
 ## 5.5 The webhook-listen family
 
-A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the cloud topology, the architecture's reverse SSH port forwarding ensures that a webhook fired by a cloud-hosted service still reaches this listener on the developer's machine. The step is inherently asynchronous and is therefore typically combined with `verifyMode: RETRY`.
+A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the cloud topology, the architecture's reverse SSH port forwarding ensures that a webhook fired by a cloud-hosted service still reaches this listener on the developer's machine. The step is inherently asynchronous and is therefore always combined with `verifyMode: RETRY`.
+
+The Core provider is `webhook-listen.http`. The engine stands up an ephemeral host-owned HTTP listener for each declared `listener` name, stages its bound URL at both `svc::<listener>` and the plain `Vars[<listener>]` key (so authors can interpolate `{<listener>}` into callback registration calls in earlier steps), and at execution time asserts that at least one captured inbound HTTP request satisfies all declared match criteria.
 
 | Field | Meaning |
 |---|---|
-| pathExpose | The local path the listener will accept requests on; the engine binds an ephemeral port and surfaces the reachable address as a variable. |
-| expect | An assertion block applied to the first matching inbound request: method, headers, and body field assertions. |
-| capture | Optionally captures values from the inbound request body into the shared context. |
+| listener | The logical listener name whose URL is staged at `svc::<listener>` and `Vars[<listener>]` for earlier steps to reference. Must not be empty. |
+| match | The criteria an inbound request must satisfy. At least one criterion must be declared. |
+
+The `match` block contains the following optional criteria (all conjunctive — every declared criterion must hold):
+
+| Criterion | Meaning |
+|---|---|
+| method | Expected HTTP method (e.g. `"POST"`), matched case-insensitively. May contain `{placeholder}` and `${secret:…}` tokens. |
+| path | Expected request path (token-stripped, SUT-facing). Matched by exact ordinal equality; includes any query string. May contain `{placeholder}` and `${secret:…}` tokens. |
+| headers | Optional map of expected header names to their string values. Names are case-insensitive; values are ordinal. Each value may contain `{placeholder}` and `${secret:…}` tokens. |
+| bodyContains | Optional substring the request body must contain (ordinal). May contain `{placeholder}` and `${secret:…}` tokens. |
+
+**Sharp edge:** The captured path includes the query string, so a callback to `/cb?x=1` is **not** matched by `path: /cb` — the query string must be included in the path criterion.
+
+Example: A service publishes a webhook callback URL to a third-party system, which then fires the callback asynchronously. Earlier steps thread the callback URL via placeholders.
+
+```yaml
+- id: register-webhook
+  type: http.rest
+  target: third-party-api
+  method: POST
+  path: "/register"
+  body:
+    callbackUrl: "{webhook-listener}"
+  expect:
+    status: 200
+
+- id: wait-for-webhook
+  type: webhook-listen.http
+  verifyMode: RETRY
+  timeout: 30s
+  listener: webhook-listener
+  match:
+    method: POST
+    path: "/callbacks/delivery"
+    headers:
+      x-signature: "expected-hmac"
+    bodyContains: "order-confirmed"
+  capture:
+    deliveryId: "$.id"        # JSONPath into the captured request body
+```
 
 ## 5.6 The script family
 
@@ -476,11 +516,34 @@ A meaningful end-to-end test is stateful: a value produced by one step is consum
 
 ## 6.1 Capturing values
 
-The `capture` field, available on any step, is a map from a variable name to an extractor expression. After the step completes, each expression is evaluated against the step's result and the value is written into the shared context under the given name. Extractor expressions use JSONPath for JSON results and XPath for XML, so `$.id` reads the top-level `id` field of a JSON response body, and `$.payload.accountId` reaches into a nested field of a Kafka message.
+The `capture` field, available on any step, is a map from a variable name to a capture expression. After the step completes, each expression is evaluated against the step's result and the value is written into the shared context under the given name. An author may specify a capture entry in two forms:
+
+- **Bare scalar (JSONPath, backward-compatible):** `id: "$.id"` — the expression defaults to JSONPath and is evaluated against the step result as JSON. A bare scalar is the recommended concise form.
+- **Explicit single-key mapping (JSONPath or XPath):** `id: { jsonpath: "$.id" }` or `id: { xpath: "//order/id" }` — the mapping's single key specifies the query language. Use the XPath form to extract values from XML response bodies (e.g. from `http.rest` calls to SOAP or XML-returning services).
+
+JSONPath uses JsonPath.Net (§5.7 libraries) and evaluates `$.id` to read a top-level field, `$.payload.accountId` to reach nested fields. XPath evaluates against the XML body; a non-XML response, invalid XPath expression, or no matching element results in a capture miss, which counts as an inconclusive outcome (timeout/unmet precondition) rather than a test failure.
+
+Examples:
+
+```yaml
+capture:
+  newUserId: "$.id"                         # Bare scalar → JSONPath (back-compat)
+  customerId: { jsonpath: "$.customer.id" } # Explicit JSONPath
+  orderId: { xpath: "//order/@id" }        # XPath into XML result
+```
 
 ## 6.2 Substituting values
 
-Anywhere a value is expected, a captured or seeded variable can be substituted with brace syntax: `{newUserId}` is replaced, at execution time, by the current value of the `newUserId` variable. Substitution works inside paths, headers, request bodies, Kafka payloads, and database queries. Because substitution happens at execution time, a placeholder always reflects the most recent value — which is what lets a generated identifier from step one appear in the assertions of step five.
+Anywhere a value is expected in a declarative step, a captured or seeded variable can be substituted with brace syntax: `{newUserId}` is replaced, at execution time, by the current value of the `newUserId` variable. Substitution also works with secret references: `{foo}` reads from the context, whilst `${secret:source/path}` resolves from a configured secret source. Both are resolved at step-execution time (never at compile time), ensuring secrets are never baked into the compiled code. Substitution works inside:
+
+- HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar, or serialised to JSON and then used as a template if a YAML mapping or sequence).
+- Kafka topic names, message keys, plain payloads, Avro field values, and message headers.
+- Database query strings and parameter values.
+- Webhook listener URLs (via the `listener` name staged at `{<listener>}`), and all fields of the `match` criteria.
+
+Because substitution happens at execution time, a placeholder always reflects the most recent value — which is what lets a generated identifier from step one appear in the assertions of step five.
+
+**`script.csharp` does not participate in placeholder substitution or secret redaction.** Unlike every other Core step family, a `script.csharp` step's `code` is Turing-complete C# spliced into the compiled submission verbatim — the engine performs **no** `{placeholder}` substitution and **no** `${secret:source/path}` resolution on it, and `SecretString` redaction is **not** applied. The author is trusted (it is their own test code) and may read any value in `Vars` directly. To use a secret from `script.csharp`, resolve it explicitly via the secret accessor in code rather than expecting template substitution.
 
 ## 6.3 A worked thread of state
 
@@ -715,6 +778,53 @@ In the enterprise topology, running a suite against the cloud backend requires a
 ## 13.4 Choosing the execution target
 
 The extension lets the author choose where a run executes — against the local Docker socket, against the SaaS cloud, or against an enterprise backend — and remembers the choice per workspace. Because the architecture guarantees topological parity, the test file does not change between targets; only the runner's configuration does. This makes it natural for a developer to iterate locally for speed and then run the identical suite against the cloud before merging.
+
+## 13.5 Running tests from the command line
+
+The `vouchfx` command-line tool discovers and runs `.e2e.yaml` test scenarios from the shell, optionally filtering them by metadata and file changes. It discovers all scenarios under a given path (recursively), applies the optional selection filters, compiles and executes them against an orchestrated topology, and returns an exit code reflecting the overall verdict.
+
+```bash
+vouchfx run [<path>] [--tag <tag>...] [--owner <owner>...] [--path <glob>] [--changed-since <ref>]
+```
+
+The positional `<path>` argument specifies the directory to search for scenarios (defaults to `.` if omitted). All selection options are optional and composable — a scenario is selected if it matches **all** supplied criteria (AND across dimensions):
+
+| Option | Meaning |
+|---|---|
+| `--tag <tag>` | Repeatable. Selects scenarios whose `metadata.tags` contains any of the supplied tags (OR within the dimension). |
+| `--owner <owner>` | Repeatable. Selects scenarios whose `metadata.owner` equals any of the supplied owners (OR within the dimension). |
+| `--path <glob>` | Selects scenarios whose absolute file path matches the supplied glob pattern. Supports `*` (matches within a path segment), `**` (matches across segments), and `?` (single character). A pattern with no wildcard characters is matched as a substring. |
+| `--changed-since <ref>` | Selects only scenarios whose file has changed since the given git reference (as determined by `git diff <ref>...HEAD` plus the dirty working tree). Requires a git repository. |
+
+Exit codes follow the verdict taxonomy:
+
+| Exit code | Meaning |
+|---|---|
+| 0 | All scenarios passed; or scenarios were inconclusive / environment errors (not counted as failures). |
+| 1 | At least one scenario failed (i.e. the test assertions did not hold). |
+| 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref). |
+
+Examples:
+
+```bash
+# Run all scenarios under the current directory
+vouchfx run
+
+# Run scenarios in a specific directory
+vouchfx run ./tests/e2e
+
+# Select scenarios by tag (any of the tags match)
+vouchfx run --tag smoke --tag integration
+
+# Select by owner and path together (all match)
+vouchfx run --owner alice --path "**/orders/*"
+
+# Select only scenarios that changed since the last commit
+vouchfx run --changed-since HEAD~1
+
+# Combine multiple filters
+vouchfx run ./tests --tag integration --owner team-a --changed-since main
+```
 
 # 14. Result Reporting from the Author's Perspective
 

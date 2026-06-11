@@ -33,6 +33,8 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Platform.Engine.Abstractions;
+using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Compilation;
 
 namespace Platform.Engine.Compilation.MemoryHarness;
@@ -176,6 +178,20 @@ public static class MemoryProbe
     /// one-time librdkafka native-init cost before the baseline is taken).
     /// </remarks>
     private const int HandleBuildEveryN = 50;
+
+    /// <summary>
+    /// The shared stub webhook-capture accessor used by the closure probe (S07-E1, §5).
+    /// </summary>
+    /// <remarks>
+    /// Created once and reused across every closure iteration.  It is a by-reference
+    /// Default-ALC instance (it lives in this harness, exactly like the real host-owned
+    /// accessor lives in Orchestration's Default ALC) holding an immutable pre-seeded
+    /// snapshot with no mutable or static state, so reuse is safe.  The closure CSX reads
+    /// it through <c>ScriptGlobalVariables.Webhooks</c> to prove that read path does not
+    /// pin the collectible context.  The trivial probe leaves <see cref="Webhooks"/> as
+    /// the <see cref="NullWebhookCaptureAccessor"/> (it passes <see langword="null"/> here).
+    /// </remarks>
+    private static readonly ProbeWebhookAccessor ClosureWebhookAccessor = new();
 
     /// <summary>
     /// Runs the trivial memory measurement protocol and returns a structured
@@ -360,9 +376,14 @@ public static class MemoryProbe
         var singletonsReset = SingletonReset.ResetAll();
 
         // ── Step 2: warm up ─────────────────────────────────────────────────────
+        // Warm-up passes the SAME stub webhook accessor as the measured workload so the
+        // Webhooks read path (and the CapturedWebhookRequest record graph) is JIT-warmed
+        // before the baseline is taken — exactly as the Kafka/Avro/Polly touches are.
         for (var i = 0; i < WarmUpIterations; i++)
         {
-            await RunIsolatedNoInlineAsync(compiled, null, $"warmup-{i}", ct).ConfigureAwait(false);
+            await RunIsolatedNoInlineAsync(
+                    compiled, null, $"warmup-{i}", ct, webhooks: ClosureWebhookAccessor)
+                .ConfigureAwait(false);
         }
 
         QuiescentGc();
@@ -383,8 +404,11 @@ public static class MemoryProbe
 
             // Pass the iteration index so the closure probe can gate the native
             // librdkafka producer/consumer handle build to HandleBuildEveryN cadence
-            // (the cheap Avro / Polly touches still run every iteration).
-            await RunIsolatedNoInlineAsync(compiled, null, $"iter-{i}", ct, iterIndex: i)
+            // (the cheap Avro / Polly touches still run every iteration), and pass the
+            // stub webhook accessor so the CSX exercises the Webhooks read path (S07-E1).
+            await RunIsolatedNoInlineAsync(
+                    compiled, null, $"iter-{i}", ct,
+                    iterIndex: i, webhooks: ClosureWebhookAccessor)
                 .ConfigureAwait(false);
         }
 
@@ -432,13 +456,25 @@ public static class MemoryProbe
     /// </param>
     /// <param name="label">Human-readable label for the ALC name.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="iterIndex">
+    /// Iteration index forwarded to the closure probe via <c>Vars["__iter"]</c> to gate
+    /// the native librdkafka handle build cadence.
+    /// </param>
+    /// <param name="webhooks">
+    /// Optional stub webhook-capture accessor (S07-E1).  When non-<see langword="null"/>
+    /// (the closure path), the globals are built with the 4-arg constructor so the CSX can
+    /// exercise the <c>Webhooks.GetCaptured</c> read path across the collectible ALC; when
+    /// <see langword="null"/> (the trivial path), the 1-arg constructor is used and
+    /// <c>Webhooks</c> stays a <see cref="NullWebhookCaptureAccessor"/>.
+    /// </param>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task RunIsolatedNoInlineAsync(
         CompiledScript compiled,
         IReadOnlyList<string>? collectibleProbingPaths,
         string label,
         CancellationToken ct,
-        int iterIndex = 0)
+        int iterIndex = 0,
+        IWebhookCaptureAccessor? webhooks = null)
     {
         var vars = new Dictionary<string, object?>();
 
@@ -449,7 +485,18 @@ public static class MemoryProbe
         // baseline.  The trivial probe ignores this key, so setting it is harmless there.
         vars["__iter"] = (long)iterIndex;
 
-        var globals = new ScriptGlobalVariables(vars);
+        // Trivial path: the 1-arg ctor (Webhooks → NullWebhookCaptureAccessor).
+        // Closure path: the FULL 4-arg ctor with an empty services map, the throwing
+        // NullSecretAccessor (the probe never resolves a secret), and the stub webhook
+        // accessor — so the CSX reads ScriptGlobalVariables.Webhooks across the
+        // collectible ALC and a pin through that read path would surface (S07-E1, §5).
+        var globals = webhooks is null
+            ? new ScriptGlobalVariables(vars)
+            : new ScriptGlobalVariables(
+                vars,
+                new Dictionary<string, object>(StringComparer.Ordinal),
+                NullSecretAccessor.Instance,
+                webhooks);
         await RoslynScriptCompiler.RunIsolatedAsync(
                 compiled,
                 globals,

@@ -23,14 +23,16 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Milestone M2 (Core compiler) reached.** The engine compiles `.e2e.yaml` declarative integration
+> **Milestone M2 achieved; Phase 3 underway.** The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
-> with Aspire and Testcontainers, executes five Core providers (`http.rest`, `db-assert.postgres`,
-> `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`) end-to-end with declarative seeding,
-> `${secret:env/…}` resolution, and engine-owned RETRY polling (Polly v8), emitting a schema-versioned
-> JSON Lines event stream rendered to the terminal. Still to come: the webhook provider, VSCode
-> extension/LSP, and community tiers — see the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md).
-> The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
+> with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
+> `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
+> declarative seeding, `${secret:env/…}` resolution, and engine-owned RETRY polling (Polly v8),
+> emitting a schema-versioned JSON Lines event stream rendered to the terminal. A headless CLI runner
+> discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
+> Still to come: VSCode extension/LSP, scenario-level parallelism, and community provider tiers — see
+> the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
+> shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -50,9 +52,9 @@ The contract that makes a suite run unchanged across local / SaaS / CI: the comp
 Steps are typed `<family>.<provider>` — *family* is intent, *provider* is technology
 (`db-assert.postgres`, `mq-publish.kafka`). Providers are **compile-time, source-level plugins**: add
 a project, implement the contract, and a reflective registry discovers it at startup — no runtime
-loader, no sandbox. Five of the six planned **Core** providers are now delivered (`http.rest`,
-`db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`); `webhook-listen.http`
-is planned for Sprint 7. All are governed across three tiers (Core / Verified / Community), all Apache-2.0.
+loader, no sandbox. All six **Core** providers are now delivered: `http.rest`, `db-assert.postgres`,
+`script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, and `webhook-listen.http`. All are governed
+across three tiers (Core / Verified / Community), all Apache-2.0.
 
 ## A test, in shape
 
@@ -98,6 +100,36 @@ Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a bl
 (build + format + unit tests), a **memory-leak** job that runs the heap-measurement harness over
 5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
 (Docker) job.
+
+## Running tests with the CLI
+
+Once built, the `vouchfx` command discovers and runs tests. Place `.e2e.yaml` files anywhere in your project and run:
+
+```bash
+# Run all scenarios in the current directory and below
+vouchfx run
+
+# Run scenarios in a specific directory
+vouchfx run ./tests/e2e
+
+# Select by metadata: tag (repeatable, OR within the option)
+vouchfx run --tag smoke --tag integration
+
+# Select by owner (repeatable, OR within the option)
+vouchfx run --owner alice --owner bob
+
+# Select by file path (glob pattern: *, **, or substring match)
+vouchfx run --path "**/orders/*"
+
+# Select scenarios that changed since a git reference (plus dirty tree)
+vouchfx run --changed-since main
+
+# Combine filters (all must match — AND across dimensions)
+vouchfx run ./tests --tag integration --owner team-a --changed-since HEAD~1
+```
+
+The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment
+errors occur), and **2** for usage errors. The output is a terminal report with colour-coded verdicts.
 
 ## Sprint 1 de-risking results
 

@@ -37,11 +37,16 @@ public sealed class SubstituteHelperTests
         {
             StepId = stepId;
             Captures = captures ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            CaptureExprs = Captures.ToDictionary(
+                kv => kv.Key,
+                kv => new CaptureExpr(CaptureFormat.JsonPath, kv.Value),
+                StringComparer.Ordinal);
         }
 
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; }
+        public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; }
     }
 
     // Additional Roslyn metadata references required by the emitted helpers.
@@ -53,6 +58,7 @@ public sealed class SubstituteHelperTests
         typeof(System.Globalization.CultureInfo).Assembly.Location,
         typeof(System.Uri).Assembly.Location,
         typeof(Json.Path.JsonPath).Assembly.Location,
+        typeof(System.Xml.XmlDocument).Assembly.Location,          // System.Private.Xml — XPath capture logic (S07-B-01b)
     };
 
     // ── 1. SubstituteHelper.Source compiles standalone ─────────────────────────

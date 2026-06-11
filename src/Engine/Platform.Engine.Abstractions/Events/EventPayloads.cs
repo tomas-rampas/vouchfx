@@ -454,6 +454,28 @@ public sealed record StepCompletedEvent
     /// </remarks>
     [JsonPropertyName("substitutions")]
     public IReadOnlyList<SubstitutionRef>? Substitutions { get; init; }
+
+    /// <summary>
+    /// Provider-supplied structured observation for this step (S07-G-01).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Carries the step's <c>StepOutcome.Observation</c> as a structured
+    /// <see cref="JsonElement"/> (e.g. a failed-assertion diff such as
+    /// <c>{"column":"status","expected":"SHIPPED","actual":"PENDING"}</c>), so that a
+    /// renderer can compute an expected-vs-observed diff at <em>render time</em> via an
+    /// <c>IStepDiffRenderer</c> looked up by step kind.  <see langword="null"/> (and
+    /// omitted from the wire) when the step recorded no observation.
+    /// </para>
+    /// <para>
+    /// This field is <strong>structured data only</strong> — no rendered diff text is
+    /// ever stored here, preserving the §14 invariant that one schema-versioned stream
+    /// feeds every renderer.  Renderers that do not understand it ignore it via
+    /// <c>[JsonExtensionData]</c> on <see cref="EventEnvelope"/> (§14 forward-compat).
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("observation")]
+    public JsonElement? Observation { get; init; }
 }
 
 // ---------------------------------------------------------------------------

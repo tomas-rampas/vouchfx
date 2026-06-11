@@ -44,6 +44,26 @@ internal sealed record ResourcePlanEntry(
     string ProviderTypeName);
 
 /// <summary>
+/// Records a single host-side resource requirement contributed by a provider step
+/// (S07-F-01a), together with the contributing step's identity.
+/// </summary>
+/// <remarks>
+/// This is the host-side counterpart to <see cref="ResourcePlanEntry"/>: where the latter
+/// records a containerised Aspire resource, this records an in-process resource the engine
+/// host must own in the Default <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (e.g.
+/// an ephemeral webhook listener), started at topology-up before any step runs (§5).
+/// </remarks>
+/// <param name="StepId">
+/// The step identifier whose provider contributed this host-resource requirement.
+/// </param>
+/// <param name="Requirement">
+/// The declared host-side resource requirement (kind + logical var name).
+/// </param>
+internal sealed record HostResourcePlanEntry(
+    string StepId,
+    HostResourceRequirement Requirement);
+
+/// <summary>
 /// Records a model-validation failure surfaced during the pipeline's validate stage.
 /// </summary>
 /// <param name="Message">
@@ -73,6 +93,14 @@ internal sealed record ValidationFailure(string Message);
 /// the Default ALC, preserving the §5 memory-model invariant.
 /// Empty when no provider contributes compile references.
 /// </param>
+/// <param name="HostResourcePlan">
+/// The ordered list of host-side resource requirements collected from every step that
+/// implements <see cref="IHostResourceContributor{TModel}"/> (S07-F-01a).  Empty when no
+/// step contributes a host resource — in which case the runner starts no listener and the
+/// <c>Webhooks</c> accessor stays the Null accessor (off the hot path).  These resources are
+/// started by the runner in the Default <see cref="System.Runtime.Loader.AssemblyLoadContext"/>
+/// before any step runs, never inside the collectible script context (§5).
+/// </param>
 /// <param name="Failure">
 /// Non-null when a model-validation failure was encountered during the pipeline.
 /// The caller should map this to <c>Verdict.Inconclusive</c> (the step never ran;
@@ -82,6 +110,7 @@ internal sealed record PipelineResult(
     AssembledScript? Assembled,
     IReadOnlyList<ResourcePlanEntry> ResourcePlan,
     IReadOnlyList<string> CompileReferencePaths,
+    IReadOnlyList<HostResourcePlanEntry> HostResourcePlan,
     ValidationFailure? Failure);
 
 /// <summary>
@@ -133,6 +162,7 @@ internal static class ProviderPipeline
     {
         var fragments = new List<StepCompilePlan>(ast.Steps.Count);
         var resourcePlan = new List<ResourcePlanEntry>();
+        var hostResourcePlan = new List<HostResourcePlanEntry>();
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
 
@@ -151,14 +181,17 @@ internal static class ProviderPipeline
                     Assembled: null,
                     ResourcePlan: Array.Empty<ResourcePlanEntry>(),
                     CompileReferencePaths: Array.Empty<string>(),
+                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
                     Failure: new ValidationFailure(
                         $"Internal error: provider '{node.CanonicalType}' missing from registry after AST build."));
             }
 
             var instance = rp.Instance;
             var bindingCtx = new RunBindingContext();
-            // S04-B-02: pass the step's capture map into the compile context so
-            // providers can emit JSONPath-based capture logic into the CSX block.
+            // S04-B-02 / S07-B-01a: pass the step's format-aware capture map
+            // (varName → CaptureExpr) into the compile context so providers can emit
+            // capture logic into the CSX block.  The context exposes both the typed
+            // CaptureExprs view and the back-compatible expression-string Captures view.
             var compileCtx = new RunCompileContext(node.Id, suiteNamespace, node.Capture);
 
             // ── Bind ──────────────────────────────────────────────────────────
@@ -172,6 +205,7 @@ internal static class ProviderPipeline
                     Assembled: null,
                     ResourcePlan: Array.Empty<ResourcePlanEntry>(),
                     CompileReferencePaths: Array.Empty<string>(),
+                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
                     Failure: new ValidationFailure(
                         $"Step '{node.Id}' model validation failed: " +
                         string.Join("; ", validResult.Errors)));
@@ -185,6 +219,17 @@ internal static class ProviderPipeline
                     Requirement: req,
                     ProviderTypeName: instance.GetType().FullName
                         ?? instance.GetType().Name));
+            }
+
+            // ── Host resources (tolerant, S07-F-01a) ──────────────────────────
+            // Providers that do not implement IHostResourceContributor<TModel>
+            // contribute nothing; the runner starts a host-side resource (in the
+            // Default ALC) for each requirement collected here, before any step runs.
+            foreach (var hostReq in ReflectHostResources(instance, model))
+            {
+                hostResourcePlan.Add(new HostResourcePlanEntry(
+                    StepId: node.Id,
+                    Requirement: hostReq));
             }
 
             // ── Compile references (tolerant) ─────────────────────────────────
@@ -216,6 +261,7 @@ internal static class ProviderPipeline
             Assembled: assembled,
             ResourcePlan: resourcePlan,
             CompileReferencePaths: compileRefPaths,
+            HostResourcePlan: hostResourcePlan,
             Failure: null);
     }
 
@@ -297,6 +343,43 @@ internal static class ProviderPipeline
         var result = resourcesMethod.Invoke(instance, new object[] { model });
         return result as IEnumerable<ResourceRequirement>
             ?? Array.Empty<ResourceRequirement>();
+    }
+
+    /// <summary>
+    /// Reflects the closed <see cref="IHostResourceContributor{TModel}"/> interface on
+    /// <paramref name="instance"/> and, when present, invokes <c>HostResources</c>
+    /// (S07-F-01a).
+    /// </summary>
+    /// <remarks>
+    /// This method is <em>tolerant</em>, exactly like <see cref="ReflectResources"/>: when
+    /// <paramref name="instance"/> does not implement
+    /// <see cref="IHostResourceContributor{TModel}"/> it returns an empty enumerable rather
+    /// than throwing, so an absent host-resource contribution costs nothing and keeps the
+    /// no-listener path off the hot path.
+    /// </remarks>
+    private static IEnumerable<HostResourceRequirement> ReflectHostResources(
+        IStepProvider instance,
+        object model)
+    {
+        var contributorInterface = instance.GetType()
+            .GetInterfaces()
+            .FirstOrDefault(i =>
+                i.IsGenericType &&
+                i.GetGenericTypeDefinition() == typeof(IHostResourceContributor<>));
+
+        if (contributorInterface is null)
+            return Array.Empty<HostResourceRequirement>();
+
+        var hostResourcesMethod = contributorInterface.GetMethod(
+            nameof(IHostResourceContributor<IStepModel>.HostResources),
+            BindingFlags.Public | BindingFlags.Instance);
+
+        if (hostResourcesMethod is null)
+            return Array.Empty<HostResourceRequirement>();
+
+        var result = hostResourcesMethod.Invoke(instance, new object[] { model });
+        return result as IEnumerable<HostResourceRequirement>
+            ?? Array.Empty<HostResourceRequirement>();
     }
 
     /// <summary>

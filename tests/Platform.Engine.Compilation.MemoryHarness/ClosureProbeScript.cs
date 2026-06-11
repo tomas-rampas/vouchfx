@@ -80,6 +80,16 @@ public static class ClosureProbeScript
     ///     exercising the Polly <c>ResiliencePipeline</c> construction and the cross-boundary
     ///     lambda pass.  Writes the outcome + attempt timeline into <c>Vars</c>.
     ///   </description></item>
+    ///   <item><description>
+    ///     <b>Webhooks read path (Sprint 7)</b> — reads the host-owned webhook capture
+    ///     snapshot through the NEW <c>ScriptGlobalVariables.Webhooks</c> accessor
+    ///     (<c>Webhooks.GetCaptured("probe")</c>, paralleling <c>Secrets</c>) and iterates
+    ///     the returned <c>CapturedWebhookRequest</c> records, summing their
+    ///     <c>Method</c>/<c>Path</c>/<c>Body</c> lengths into <c>Vars</c>.  Proves the
+    ///     accessor + record graph read path does not pin the collectible ALC (S07-E1).
+    ///     Under the closure run the harness stub seeds two requests; under the trivial
+    ///     probe the null accessor returns an empty list and the loop is a no-op.
+    ///   </description></item>
     /// </list>
     /// </summary>
     /// <remarks>
@@ -215,5 +225,24 @@ public static class ClosureProbeScript
             async (System.Threading.CancellationToken __ct) =>
                 new Platform.Engine.Abstractions.StepOutcome(
                     Platform.Engine.Abstractions.Verdict.Pass, 0L, null));
+
+        // ── Sprint-7: ScriptGlobalVariables.Webhooks read path (cheap — every iter) ─
+        // Read the host-owned webhook capture snapshot through the NEW Webhooks accessor
+        // (paralleling Secrets) and iterate the returned CapturedWebhookRequest records.
+        // This forces the CSX (collectible ALC) to (a) call the IWebhookCaptureAccessor
+        // instance handed in via ScriptGlobalVariables.Webhooks and (b) walk the immutable
+        // CapturedWebhookRequest record graph (Method/Path/Body) seeded by the harness stub.
+        // If either pinned the collectible context, the per-cycle heap delta would grow.
+        // In the closure run the stub returns two requests for "probe"; under the trivial
+        // probe (and any run with no listener) Webhooks is a NullWebhookCaptureAccessor that
+        // returns an empty list, so this loop runs zero times and is harmless.  Result via
+        // Vars only; fully-qualified types; no 'using var' (CSX rules, §13.3.1).
+        var __wh = Webhooks.GetCaptured("probe");
+        long __whlen = 0;
+        for (int i = 0; i < __wh.Count; i++)
+        {
+            __whlen += __wh[i].Method.Length + __wh[i].Path.Length + __wh[i].Body.Length;
+        }
+        Vars["webhook_touch_len"] = __whlen;
         """;
 }

@@ -66,9 +66,72 @@ public sealed class TerminalRenderer
     /// <see langword="null"/>.
     /// </exception>
     public static void Render(IEnumerable<string> jsonLines, TextWriter output)
+        => Render(jsonLines, output, diffLookup: null);
+
+    /// <summary>
+    /// Renders the supplied JSON Lines event stream to <paramref name="output"/>,
+    /// optionally drawing a provider-specific expected-vs-observed diff under each
+    /// failed step (S07-G-01).
+    /// </summary>
+    /// <param name="jsonLines">
+    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
+    /// malformed lines are skipped silently.  The sequence is enumerated exactly
+    /// once; it is safe to pass a streaming source.
+    /// </param>
+    /// <param name="output">
+    /// The <see cref="TextWriter"/> that receives the rendered text.
+    /// </param>
+    /// <param name="diffLookup">
+    /// An optional delegate that, given a step <c>kind</c> (e.g.
+    /// <c>"db-assert.postgres"</c>) and the step's structured observation, returns the
+    /// rendered diff text for that observation, or <see langword="null"/> when no diff
+    /// is applicable.  Invoked only for a <c>step-completed</c> event whose verdict is
+    /// <see cref="Verdict.Fail"/> and which carries an <c>observation</c>.  When
+    /// <see langword="null"/> the renderer behaves exactly like the two-argument
+    /// overload (no diff is drawn).
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The diff is computed by <paramref name="diffLookup"/> at render time — the event
+    /// stream itself carries only the structured observation, never rendered diff text
+    /// (§14: one schema-versioned stream feeds every renderer).
+    /// </para>
+    /// <para>
+    /// The delegate is intentionally a plain
+    /// <see cref="Func{T1, T2, TResult}"/> over <see cref="JsonElement"/> so this
+    /// assembly stays decoupled from <c>Platform.Sdk</c> and the
+    /// <c>IStepDiffRenderer</c> type: the runner builds the closure over the frozen
+    /// registry and passes it in.
+    /// </para>
+    /// <para>
+    /// Because a <c>step-completed</c> event does not itself carry the step
+    /// <c>kind</c>, the kind is threaded forward from the matching
+    /// <c>step-started</c> event: the renderer builds a step-id → kind map from
+    /// <c>step-started</c> events as it streams, then looks the kind up when a
+    /// <c>step-completed</c> event arrives.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="jsonLines"/> or <paramref name="output"/> is
+    /// <see langword="null"/>.
+    /// </exception>
+    public static void Render(
+        IEnumerable<string> jsonLines,
+        TextWriter output,
+        Func<string, JsonElement, string?>? diffLookup)
     {
         ArgumentNullException.ThrowIfNull(jsonLines);
         ArgumentNullException.ThrowIfNull(output);
+
+        // (runId, stepId) → kind map, populated from step-started events as the stream
+        // is read.  A step-completed event does not carry its own kind, so we thread it
+        // forward.  Keying by (runId, stepId) — not stepId alone — disambiguates an
+        // aggregated multi-RUN stream where two runs reuse the same step id: without the
+        // runId, a later run's step-started would overwrite the earlier run's kind and
+        // its step-completed would resolve the wrong diff.  FULL interleaving correctness
+        // for multiple SCENARIOS within ONE run still needs scenarioId on the step events
+        // (they don't carry it today) and is tracked for the S8 parallelism work.
+        var stepKinds = new Dictionary<(string RunId, string StepId), string>();
 
         foreach (var line in jsonLines)
         {
@@ -91,7 +154,21 @@ public sealed class TerminalRenderer
                 continue;
             }
 
-            RenderEnvelope(envelope, output);
+            // Record step kinds so step-completed events can resolve their kind.
+            if (envelope.Type == EventTypes.StepStarted)
+            {
+                // runId is a typed envelope field (mapped from the wire "runId"); it does
+                // not ride in Extra, so it is read directly rather than via GetStr.
+                var startedRunId = envelope.RunId;
+                var startedStepId = GetStr(envelope, "stepId");
+                var startedKind = GetStr(envelope, "kind");
+                if (!string.IsNullOrEmpty(startedRunId) && startedStepId is not null && startedKind is not null)
+                {
+                    stepKinds[(startedRunId, startedStepId)] = startedKind;
+                }
+            }
+
+            RenderEnvelope(envelope, output, stepKinds, diffLookup);
         }
     }
 
@@ -99,7 +176,11 @@ public sealed class TerminalRenderer
     // Private rendering logic
     // -------------------------------------------------------------------------
 
-    private static void RenderEnvelope(EventEnvelope envelope, TextWriter output)
+    private static void RenderEnvelope(
+        EventEnvelope envelope,
+        TextWriter output,
+        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
+        Func<string, JsonElement, string?>? diffLookup)
     {
         switch (envelope.Type)
         {
@@ -154,6 +235,13 @@ public sealed class TerminalRenderer
                             stepId,
                             verdict,
                             durationSuffix));
+
+                    // S07-G-01: render a provider-specific expected-vs-observed diff
+                    // under a FAILED step when a diff lookup is supplied and the step
+                    // carries a structured observation.  The diff is computed here, at
+                    // render time — the stream itself only ever carries the structured
+                    // observation, never rendered text (§14).
+                    RenderStepDiff(envelope, output, stepId, verdict, stepKinds, diffLookup);
                     break;
                 }
 
@@ -202,6 +290,67 @@ public sealed class TerminalRenderer
             // This is the core §14 forward-compatibility guarantee.
             default:
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Renders the provider-specific expected-vs-observed diff under a step line when
+    /// the step failed, a <paramref name="diffLookup"/> is supplied, and the step
+    /// carries a structured <c>observation</c> whose kind resolves to a provider that
+    /// can render it (S07-G-01).  A no-op otherwise.
+    /// </summary>
+    private static void RenderStepDiff(
+        EventEnvelope envelope,
+        TextWriter output,
+        string stepId,
+        string verdict,
+        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
+        Func<string, JsonElement, string?>? diffLookup)
+    {
+        // Only failed steps get a diff, and only when a lookup is wired in.
+        if (diffLookup is null
+            || !string.Equals(verdict, "FAIL", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // The observation rides on the step-completed event as extension data.
+        if (envelope.Extra is null
+            || !envelope.Extra.TryGetValue("observation", out var observation)
+            || observation.ValueKind == JsonValueKind.Null
+            || observation.ValueKind == JsonValueKind.Undefined)
+        {
+            return;
+        }
+
+        // Resolve the step kind threaded forward from the step-started event, keyed by
+        // (runId, stepId) so an aggregated multi-run stream does not cross-resolve a
+        // shared step id.  runId is a typed envelope field (read directly, not via Extra).
+        // Without a runId or a recorded kind we cannot select a provider's diff renderer,
+        // so we skip the diff.
+        var runId = envelope.RunId;
+        if (string.IsNullOrEmpty(runId) || !stepKinds.TryGetValue((runId, stepId), out var kind))
+        {
+            return;
+        }
+
+        var diff = diffLookup(kind, observation);
+        if (string.IsNullOrEmpty(diff))
+        {
+            return;
+        }
+
+        // Indent each line of the rendered diff under the step line.
+        foreach (var diffLine in diff.Split('\n'))
+        {
+            // Skip a trailing empty segment from a terminal newline so we do not emit a
+            // stray blank indented line.
+            if (diffLine.Length == 0)
+            {
+                continue;
+            }
+
+            output.WriteLine("    " + diffLine);
         }
     }
 
