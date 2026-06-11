@@ -101,7 +101,13 @@ internal sealed class GitChangeSet : IChangeSet
     {
         ArgumentNullException.ThrowIfNull(absolutePath);
 
-        var normalised = Normalise(Path.GetFullPath(absolutePath));
+        // Canonicalise separators to the OS-native form BEFORE Path.GetFullPath. On Linux,
+        // Path.GetFullPath treats '\' as a LITERAL filename character (not a separator), so a
+        // Windows-style absolute path ("\repo\orders\x") would not be recognised as rooted —
+        // GetFullPath would then prepend the cwd and keep the literal backslashes, so the
+        // result never matches a '/'-normalised change-set key. ToOsSeparators makes both '\'
+        // and '/' behave as separators on every OS so the path round-trips correctly here.
+        var normalised = Normalise(Path.GetFullPath(ToOsSeparators(absolutePath)));
         if (_changed.Contains(normalised))
         {
             return true;
@@ -138,7 +144,10 @@ internal sealed class GitChangeSet : IChangeSet
                 $"git did not report a repository root for '{workingDirectory}'.");
         }
 
-        return Normalise(Path.GetFullPath(root));
+        // ToOsSeparators is defensive: git's rev-parse output is already OS-native, but
+        // canonicalising separators keeps every Path.GetFullPath call site in this file
+        // consistent against the Linux backslash-as-literal-char behaviour (see IsChanged).
+        return Normalise(Path.GetFullPath(ToOsSeparators(root)));
     }
 
     /// <summary>
@@ -200,8 +209,11 @@ internal sealed class GitChangeSet : IChangeSet
                 continue;
             }
 
-            // git output is repo-relative with forward slashes; make it absolute.
-            var absolute = Normalise(Path.GetFullPath(Path.Combine(repoRoot, relative)));
+            // git output is repo-relative with forward slashes; make it absolute. The combined
+            // path mixes the OS-native repoRoot with git's forward slashes, so canonicalise
+            // separators before GetFullPath for the same reason as IsChanged (on Linux a stray
+            // '\' would be kept as a literal filename char instead of acting as a separator).
+            var absolute = Normalise(Path.GetFullPath(ToOsSeparators(Path.Combine(repoRoot, relative))));
             changed.Add(absolute);
         }
     }
@@ -252,4 +264,19 @@ internal sealed class GitChangeSet : IChangeSet
 
     /// <summary>Normalises path separators to <c>/</c> for cross-platform comparison.</summary>
     private static string Normalise(string path) => path.Replace('\\', '/');
+
+    /// <summary>
+    /// Rewrites both <c>\</c> and <c>/</c> to the OS-native directory separator so the result
+    /// can be handed to <see cref="Path.GetFullPath(string)"/> on any platform.
+    /// </summary>
+    /// <remarks>
+    /// On Linux, <see cref="Path.GetFullPath(string)"/> treats <c>\</c> as a literal filename
+    /// character rather than a separator, so a Windows-style path such as
+    /// <c>\repo\orders\x.e2e.yaml</c> is seen as relative (it does not start with <c>/</c>),
+    /// gets the current directory prepended, and keeps its literal backslashes — never matching
+    /// a <c>/</c>-normalised change-set key. Canonicalising to the native separator FIRST makes
+    /// both slash styles act as separators on every OS. Do not "simplify" this away.
+    /// </remarks>
+    private static string ToOsSeparators(string path) =>
+        path.Replace('\\', '/').Replace('/', Path.DirectorySeparatorChar);
 }
