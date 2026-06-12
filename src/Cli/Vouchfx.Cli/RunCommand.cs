@@ -60,11 +60,13 @@ internal static class RunCommand
         var pathOption = BuildPathOption();
         var changedSinceOption = BuildChangedSinceOption();
         var parallelOption = BuildParallelOption();
+        var watchOption = BuildWatchOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
         command.Add(changedSinceOption);
         command.Add(parallelOption);
+        command.Add(watchOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -73,7 +75,8 @@ internal static class RunCommand
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
             var parallel = parseResult.GetValue(parallelOption);
-            return ExecuteAsync(path, criteria, parallel, Console.Out, cancellationToken);
+            var watch = parseResult.GetValue(watchOption);
+            return ExecuteAsync(path, criteria, parallel, watch, Console.Out, cancellationToken);
         });
 
         return command;
@@ -133,6 +136,31 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--watch</c> flag (S08-C-01): run the suite once, then watch the <c>.e2e.yaml</c>
+    /// file and re-run automatically on save, re-using the already-built topology while the
+    /// <c>environment</c> block is unchanged (and rebuilding it only when it changes).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Watch mode targets the local edit-run loop for a SINGLE file: it keeps one topology alive
+    /// across re-runs and skips the expensive container rebuild whenever only <c>steps</c> change.
+    /// </para>
+    /// <para>
+    /// <c>--watch</c> is mutually exclusive with <c>--parallel</c>: the former keeps ONE topology
+    /// alive for one file, the latter fans MANY scenarios across MANY topologies — combining them
+    /// is incoherent, so the combination is rejected as a usage error.
+    /// </para>
+    /// </remarks>
+    internal static Option<bool> BuildWatchOption() => new("--watch")
+    {
+        Description =
+            "Run once, then watch the .e2e.yaml file and re-run automatically on save, re-using "
+            + "the already-built topology while the `environment` block is unchanged (rebuilding "
+            + "it only when it changes). For local iteration on a single file; press Ctrl-C to "
+            + "stop. Cannot be combined with --parallel.",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -187,24 +215,45 @@ internal static class RunCommand
     /// sequentially against one shared topology via <see cref="ScenarioRunner.RunSuiteAsync"/>.
     /// A value &lt; 1 is a usage error (<see cref="ExitCodes.UsageError"/>).
     /// </param>
+    /// <param name="watch">
+    /// The <c>--watch</c> flag (S08-C-01): when <see langword="true"/>, run once and then watch
+    /// the single selected <c>.e2e.yaml</c> file, re-running on each save and re-using the kept
+    /// topology while the <c>environment</c> block is unchanged.  Mutually exclusive with
+    /// <paramref name="parallel"/> (combining them is a usage error); requires the selection to
+    /// resolve to exactly one file.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
     /// <see cref="ParallelSuiteRunner.RunParallelAsync"/> when <paramref name="parallel"/> is
-    /// supplied), which starts an Aspire topology and therefore needs Docker — so this method is
-    /// NOT exercised by the unit tests.  Its Docker-free building blocks
-    /// (<see cref="ScenarioDiscovery.Discover"/>,
+    /// supplied, or the watch loop when <paramref name="watch"/> is set), which starts an Aspire
+    /// topology and therefore needs Docker — so this method is NOT exercised by the unit tests.
+    /// Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
     /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
-    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, and the
-    /// <c>--parallel</c> arg-parse) are each tested in isolation.
+    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, the
+    /// <c>--parallel</c> / <c>--watch</c> arg-parse, and the <c>--watch</c>+<c>--parallel</c>
+    /// usage-error short-circuit) are each tested in isolation.
     /// </remarks>
     internal static async Task<int> ExecuteAsync(
         string path,
         SelectionCriteria criteria,
         int? parallel,
+        bool watch,
         TextWriter output,
         CancellationToken cancellationToken)
     {
+        // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
+        // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
+        // usage error (exit 2) up front — before discovering or running anything (no Docker).
+        if (watch && parallel is not null)
+        {
+            await output.WriteLineAsync(
+                "--watch cannot be combined with --parallel (watch keeps one topology alive for a "
+                + "single file; --parallel fans many scenarios across many topologies).")
+                .ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
         // Validate --parallel up front: a value < 1 is a usage error (exit 2), not a crash.
         // (System.CommandLine binds the value; the >= 1 contract is the engine's, enforced here.)
         if (parallel is { } degree && degree < 1)
@@ -260,6 +309,17 @@ internal static class RunCommand
         }
 
         discovered = selected;
+
+        // ── Watch mode (S08-C-01) ─────────────────────────────────────────────
+        // `vouchfx run <file> --watch` watches a SINGLE file: run once, then re-run on save,
+        // re-using the kept topology while the `environment` block is unchanged.  Watching is
+        // inherently single-file, so the selection must resolve to exactly one scenario; a
+        // directory matching many files (or none that parses) is a usage error here.
+        if (watch)
+        {
+            return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         // Split into runnable scenarios and parse-failures.
         var parsed = new List<DiscoveredScenario>(discovered.Count);

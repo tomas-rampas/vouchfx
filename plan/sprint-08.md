@@ -91,11 +91,11 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream C — Authoring tooling
 
-#### S08-C-01 · Watch mode for local iteration
+#### S08-C-01 · Watch mode for local iteration ✓
 - **Owner:** TX · **Estimate:** 1.5d · **Depends on:** S07-C-01 · **Spec:** MVP §6.3 (watch mode), §4.2 (loop-time)
 - Re-run affected suites on file change to compress the author→run loop.
 - **Acceptance:**
-  - Editing a `.e2e.yaml` re-runs it automatically without a full topology rebuild where possible.
+  - Editing a `.e2e.yaml` re-runs it automatically without a full topology rebuild where possible. ✓
 
 #### S08-C-03 · Scenario-level parallelism (re-instated from S07)
 - **Owner:** TL · **Estimate:** 2.5d · **Depends on:** S07-C-01 · **Spec:** BP §16.2; MVP §6.3 (parallelism)

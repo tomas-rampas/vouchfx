@@ -115,6 +115,83 @@ public sealed class SeedApplierDockerTests
     }
 
     /// <summary>
+    /// Watch-mode re-seed proof (S08-T10, B2): the reuse path resets the kept topology
+    /// (Respawn truncates user tables — INCLUDING the seed rows) and then RE-APPLIES the seed
+    /// via <see cref="SuiteTopology.ReseedAsync"/>, so a reuse run sees the SAME seeded baseline
+    /// a fresh <c>vouchfx run</c> would.  This pins the load-bearing half of B2 against a real
+    /// Postgres container: build+seed → seed present → reset (seed gone) → reseed → seed back.
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task ReseedAsync_AfterRespawnReset_RestoresTheSeededBaseline()
+    {
+        var baseDir = Path.Combine(Path.GetTempPath(), "vouchfx-reseed-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(baseDir);
+        try
+        {
+            // Arrange — a seed SQL fixture: a reference table with one seeded row.
+            await File.WriteAllTextAsync(
+                Path.Combine(baseDir, "reference.sql"),
+                "CREATE TABLE countries (code TEXT PRIMARY KEY, name TEXT NOT NULL);" +
+                "INSERT INTO countries (code, name) VALUES ('GB', 'United Kingdom');");
+
+            var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
+            {
+                [DepName] = new DependencySeed(new List<string> { "reference.sql" }),
+            });
+
+            // ── BUILD path: StartAsync applies the seed once (the first watch run's baseline).
+            await using var suite = await SuiteTopology.StartAsync(
+                environment: BuildEnv(seed),
+                appHostAssemblyName: AppHostAssemblyName,
+                startupTimeout: StartupTimeout,
+                seedBaseDirectory: baseDir);
+
+            var connStr = suite.DiscoveredServices[DepName] as string;
+            Assert.False(string.IsNullOrWhiteSpace(connStr));
+
+            // The first watch run (build path) sees the seed — no reset/reseed needed.
+            Assert.Equal(1L, await CountCountriesAsync(connStr!));
+            _output.WriteLine("Build path: seed present (1 row) — first watch run sees the seed.");
+
+            // ── REUSE path: reset (Respawn) clears the seed rows too, then ReseedAsync restores.
+            await using var isolation = new RespawnPostgresIsolation(connStr!);
+            await isolation.EndScenarioAsync(CancellationToken.None);
+
+            // After the reset alone, the seed row is gone (the "Respawn-truncates-seed" behaviour).
+            Assert.Equal(0L, await CountCountriesAsync(connStr!));
+            _output.WriteLine("Reuse path: post-Respawn the seed is truncated (0 rows) — as documented.");
+
+            // ReseedAsync re-applies the seed, restoring the freshly-built baseline.
+            await suite.ReseedAsync(CancellationToken.None);
+            Assert.Equal(1L, await CountCountriesAsync(connStr!));
+            _output.WriteLine("Reuse path: after ReseedAsync the seed is back (1 row) — baseline restored.");
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Counts the rows in the seeded <c>countries</c> table over a fresh Npgsql connection.
+    /// </summary>
+    private static async Task<long> CountCountriesAsync(string connStr)
+    {
+        var conn = new Npgsql.NpgsqlConnection(connStr);
+        await using (conn.ConfigureAwait(false))
+        {
+            await conn.OpenAsync();
+            var cmd = conn.CreateCommand();
+            await using (cmd.ConfigureAwait(false))
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM countries";
+                return (long)(await cmd.ExecuteScalarAsync())!;
+            }
+        }
+    }
+
+    /// <summary>
     /// Broken seed: a SQL file with a syntax error makes
     /// <see cref="SuiteTopology.StartAsync"/> throw an
     /// <see cref="OrchestrationException"/> (Provision kind) — an Environment error

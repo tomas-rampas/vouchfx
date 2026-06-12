@@ -129,6 +129,9 @@ vouchfx run ./tests --tag integration --owner team-a --changed-since HEAD~1
 
 # Run scenarios in parallel (each owning its own container topology)
 vouchfx run --parallel 2
+
+# Watch a single file for changes and re-run automatically (topology re-used for steps-only edits)
+vouchfx run ./tests/users.e2e.yaml --watch
 ```
 
 The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment

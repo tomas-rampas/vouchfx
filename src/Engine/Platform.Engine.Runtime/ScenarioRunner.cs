@@ -799,6 +799,274 @@ public static class ScenarioRunner
         }
     }
 
+    // ── Watch-mode seams (S08-C-01) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Computes a stable hash of a scenario's <c>environment</c> block for watch-mode
+    /// topology reuse (S08-C-01): two scenarios whose <c>environment</c> blocks are
+    /// structurally equal produce the same string, so the watch loop can decide
+    /// "environment unchanged → re-use the kept topology" with a plain string compare.
+    /// </summary>
+    /// <param name="environment">
+    /// The parsed <c>environment</c> block, or <see langword="null"/> when the scenario
+    /// declares none (an empty topology).
+    /// </param>
+    /// <returns>
+    /// A stable string key derived from the same serialisation
+    /// <see cref="RunSuiteAsync"/> uses for its shared-environment check, so the two can
+    /// never disagree about what counts as "the same environment".  An empty string for a
+    /// <see langword="null"/> environment.
+    /// </returns>
+    /// <remarks>
+    /// Reuses the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
+    /// form the suite runner already compares for its shared-topology assumption — so the
+    /// reuse decision here and the suite's equality check are guaranteed consistent.
+    /// </remarks>
+    public static string ComputeEnvironmentHash(EnvironmentSpec? environment) =>
+        SerialiseEnvironment(environment);
+
+    /// <summary>
+    /// Builds the per-topology isolation for watch mode (S08-C-01): a
+    /// <see cref="RespawnPostgresIsolation"/> when the kept topology has a Postgres
+    /// dependency, otherwise <see cref="NullScenarioIsolation"/>.  Watch mode keeps ONE
+    /// topology alive across re-runs, so it must reset mutable dependency state between
+    /// re-runs exactly as <see cref="RunSuiteAsync"/> does between scenarios.
+    /// </summary>
+    /// <param name="topology">The kept topology to build isolation for.</param>
+    /// <returns>The isolation strategy appropriate to the topology's dependencies.</returns>
+    public static IScenarioIsolation BuildWatchIsolation(SuiteTopology topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        return BuildIsolation(topology);
+    }
+
+    /// <summary>
+    /// Runs a single scenario against an <strong>already-built</strong>
+    /// <see cref="SuiteTopology"/> (the no-rebuild re-run seam for watch mode, S08-C-01):
+    /// optionally reset+reseed → validate → compile → run → render.  The topology is neither
+    /// built nor disposed here — the watch session owns its lifetime so it survives across
+    /// re-runs while the environment is unchanged.
+    /// </summary>
+    /// <param name="topology">The kept topology to run against (built by the caller).</param>
+    /// <param name="isolation">
+    /// The state-reset strategy applied <em>before</em> the run when
+    /// <paramref name="resetAndReseed"/> is set, so a reuse run starts from a known-clean
+    /// dependency state.  Pass <see cref="BuildWatchIsolation"/>'s result.
+    /// </param>
+    /// <param name="registry">The frozen provider registry (schema validation + pipeline).</param>
+    /// <param name="ast">The parsed scenario AST (its steps drive the event stream).</param>
+    /// <param name="yamlText">The raw YAML (re-validated + re-compiled on every re-run).</param>
+    /// <param name="scenarioName">The scenario name (event-stream <c>scenarioId</c>).</param>
+    /// <param name="output">The writer that receives the rendered report + raw diagnostics.</param>
+    /// <param name="resetAndReseed">
+    /// Whether to reset (Respawn) and re-apply the seed BEFORE the run.  Pass <see langword="false"/>
+    /// on the FIRST run against a freshly-built+seeded topology — <see cref="SuiteTopology.StartAsync"/>
+    /// already applied the seed and there are no prior-run writes to clear, so a reset here would
+    /// truncate the seed (and Respawn throws on a schema-via-<c>script.csharp</c> DB with no user
+    /// tables yet).  Pass <see langword="true"/> on a REUSE run (same topology as the previous run,
+    /// which left its writes behind): the reset clears those writes and the re-seed restores the
+    /// freshly-seeded baseline, so every watch run sees the same initial state as a fresh
+    /// <c>vouchfx run</c>.
+    /// </param>
+    /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="cancellationToken">Propagated to all async operations.</param>
+    /// <returns>The scenario's aggregate <see cref="Verdict"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// Re-validating and re-compiling on every re-run is deliberate: in watch mode the file
+    /// changes between runs, so the kept topology may be re-used but the SCENARIO must be
+    /// re-read from the latest save.  Only the topology build is skipped on reuse, never the
+    /// compile.
+    /// </para>
+    /// <para>
+    /// <strong>Reset+reseed semantics (S08-T10):</strong> on the build path
+    /// (<paramref name="resetAndReseed"/> = <see langword="false"/>) there is NO pre-reset and NO
+    /// re-seed — matching <see cref="RunSuiteAsync"/>'s first scenario, whose <c>Begin</c> is a
+    /// Respawn no-op against a just-seeded topology.  On the reuse path
+    /// (<paramref name="resetAndReseed"/> = <see langword="true"/>) the kept topology is reset via
+    /// <see cref="IScenarioIsolation.EndScenarioAsync"/> (Respawn truncates the prior run's writes
+    /// — INCLUDING the seed rows, the documented "Respawn-truncates-seed" behaviour) and then
+    /// RE-SEEDED via <see cref="SuiteTopology.ReseedAsync"/>, so the run sees the freshly-seeded
+    /// baseline — identical to a fresh <c>vouchfx run</c>.  A reset or re-seed failure surfaces as
+    /// <see cref="Verdict.EnvironmentError"/> (§12.1), never a Fail.
+    /// </para>
+    /// </remarks>
+    public static async Task<Verdict> RunScenarioAgainstKeptTopologyAsync(
+        SuiteTopology topology,
+        IScenarioIsolation isolation,
+        StepKindRegistry registry,
+        ScenarioAst ast,
+        string yamlText,
+        string scenarioName,
+        TextWriter output,
+        bool resetAndReseed,
+        string? seedBaseDirectory = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        ArgumentNullException.ThrowIfNull(isolation);
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(ast);
+        ArgumentNullException.ThrowIfNull(yamlText);
+        ArgumentNullException.ThrowIfNull(scenarioName);
+        ArgumentNullException.ThrowIfNull(output);
+
+        var diffLookup = BuildDiffLookup(registry);
+        var runId = Guid.NewGuid().ToString("n");
+        var buffer = new List<string>();
+
+        // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────
+        // ONLY on the reuse path, where the kept topology carries the previous re-run's writes.
+        // Two complementary resets restore the SAME initial state a fresh `vouchfx run` sees:
+        //   1. isolation.EndScenarioAsync — Respawn truncates the prior run's row-level writes
+        //      across ALL user tables (the right reset for an UNSEEDED postgres dependency, and
+        //      for tables a prior run's script.csharp step created).
+        //   2. topology.ReseedAsync — for SEEDED postgres dependencies, resets each seeded
+        //      database's public schema to empty and re-applies the seed, so the author's
+        //      (non-idempotent) seed SQL re-runs cleanly and the seeded baseline is restored;
+        //      a no-op when the scenario declares no seed.
+        // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
+        // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
+        // Respawn throws on a schema-via-script.csharp DB that has no user tables yet — exactly
+        // why the normal path defers the reset to AFTER the first run).  A reset or re-seed
+        // failure is an Environment error (§12.1), never a Fail — and we render before returning
+        // so the verdict is still reported.
+        if (resetAndReseed)
+        {
+            try
+            {
+                await isolation.EndScenarioAsync(cancellationToken).ConfigureAwait(false);
+                await topology.ReseedAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OrchestrationException oex)
+            {
+                var nowR = DateTimeOffset.UtcNow;
+                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowR,
+                    ScenarioId = scenarioName,
+                }));
+                buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, nowR));
+                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowR,
+                    ScenarioId = scenarioName,
+                    Verdict = Verdict.EnvironmentError,
+                    Counts = new VerdictCounts { EnvError = 1 },
+                }));
+                TerminalRenderer.Render(buffer, output, diffLookup);
+                return Verdict.EnvironmentError;
+            }
+        }
+
+        // ── Validate + compile the (latest-saved) scenario ────────────────────
+        if (TryCompileForRun(
+                registry, yamlText, ast, scenarioName, runId, buffer,
+                out var pipeline, out var earlyVerdict, out var earlyMessage))
+        {
+            if (!string.IsNullOrEmpty(earlyMessage))
+            {
+                await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+            }
+
+            TerminalRenderer.Render(buffer, output, diffLookup);
+            return earlyVerdict;
+        }
+
+        // ── Run against the kept topology ─────────────────────────────────────
+        var verdict = await RunScenarioAgainstTopologyAsync(
+            ast,
+            scenarioName,
+            runId,
+            topology,
+            pipeline!.Assembled!,
+            pipeline.CompileReferencePaths,
+            pipeline.HostResourcePlan,
+            buffer,
+            new NullScenarioIsolation(), // isolation reset handled above.
+            output,
+            seedBaseDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        TerminalRenderer.Render(buffer, output, diffLookup);
+        return verdict;
+    }
+
+    /// <summary>
+    /// Validates and compiles <paramref name="yamlText"/> for execution, emitting the
+    /// Inconclusive scenario-started/completed pair into <paramref name="buffer"/> on any
+    /// early-exit (schema-invalid, bad secret reference, pipeline failure).  Shared by the
+    /// watch re-run path so it reproduces the suite runner's early-exit event shape exactly.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when an early-exit occurred (<paramref name="earlyVerdict"/> /
+    /// <paramref name="earlyMessage"/> are set and <paramref name="pipeline"/> is
+    /// <see langword="null"/>); <see langword="false"/> when compilation succeeded
+    /// (<paramref name="pipeline"/> is set).
+    /// </returns>
+    private static bool TryCompileForRun(
+        StepKindRegistry registry,
+        string yamlText,
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        List<string> buffer,
+        out PipelineResult? pipeline,
+        out Verdict earlyVerdict,
+        out string? earlyMessage)
+    {
+        pipeline = null;
+        earlyVerdict = Verdict.Inconclusive;
+        earlyMessage = null;
+
+        void EmitInconclusive()
+        {
+            var now = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+        }
+
+        var validationResult = DocumentValidator.Validate(yamlText, registry);
+        if (!validationResult.IsValid)
+        {
+            EmitInconclusive();
+            earlyMessage = string.Join("; ", validationResult.Errors.Select(e => e.Message));
+            return true;
+        }
+
+        if (TryValidateSecretReferences(ast, out var secretError))
+        {
+            EmitInconclusive();
+            earlyMessage = secretError;
+            return true;
+        }
+
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+        if (pipelineResult.Failure is not null)
+        {
+            EmitInconclusive();
+            earlyMessage = pipelineResult.Failure.Message;
+            return true;
+        }
+
+        pipeline = pipelineResult;
+        return false;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>

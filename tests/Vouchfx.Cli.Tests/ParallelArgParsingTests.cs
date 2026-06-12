@@ -66,6 +66,7 @@ public sealed class ParallelArgParsingTests
             path: ".",
             criteria: SelectionCriteria.None,
             parallel: 0,
+            watch: false,
             output: sw,
             cancellationToken: default);
 
