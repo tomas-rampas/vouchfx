@@ -65,22 +65,22 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream B — Compiler & runtime
 
-#### S08-B-01 · Vault secret source
+#### S08-B-01 · Vault secret source ✓
 - **Owner:** CR1 · **Estimate:** 2d · **Depends on:** S05-B-02 · **Spec:** BP §17; MVP §8.3 (Vault secret source), §10 (secrets risk)
 - Add the HashiCorp Vault source alongside `env`, through the pluggable-source seam, resolving at
   step-execution time and returning `SecretString`.
 - **Acceptance:**
   - A credential resolves from Vault at execution time; redaction holds; the reproducibility envelope
-    still hashes only the reference.
+    still hashes only the reference. ✓
 
 ### Workstream G — Result reporting & diagnostics
 
-#### S08-G-01 · Polling timeline renderer for RETRY steps
+#### S08-G-01 · Polling timeline renderer for RETRY steps ✓
 - **Owner:** PC · **Estimate:** 2d · **Depends on:** S06-B-02, S03-G-01 · **Spec:** BP §14; MVP §8.3 (polling timeline), §2.5 (positioning claim)
 - Render the per-attempt polling timeline for RETRY steps from the individual `step-attempt` events —
   the feature that explains asynchronous failures rather than reducing them to timeouts.
 - **Acceptance:**
-  - A RETRY step renders a legible attempt-by-attempt timeline (timing + per-attempt outcome).
+  - A RETRY step renders a legible attempt-by-attempt timeline (timing + per-attempt outcome). ✓
 
 #### S08-G-02 · Captured-variable thread renderer
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S04-G-01 · **Spec:** BP §14; MVP §8.3 (captured-variable thread), §2.5

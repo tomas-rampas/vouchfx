@@ -1161,14 +1161,14 @@ The `Vars.Secrets.Resolve` call is intercepted by the reporting layer's redactio
 
 ## 17.2 Pluggable secret sources
 
-The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. Four sources are recognised, mapped to the platform's tiers.
+The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future tiers.
 
-| Source prefix | Resolves from | Tier |
-|---|---|---|
-| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie. |
-| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie. |
-| vault | HashiCorp Vault, addressed by path, authenticated by the runner's own identity. The MVP supports the developer's own Vault instance (token or AppRole) and an enterprise Vault deployment in the cloud-tier topologies. | Indie+ (developer's Vault); Team and Enterprise for managed Vault integration. |
-| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. Deferred past the MVP; the prefix is reserved. | Team and Enterprise. |
+| Source prefix | Resolves from | Tier | Status |
+|---|---|---|---|
+| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie | MVP |
+| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Indie | MVP |
+| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie | Deferred |
+| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Team and Enterprise | Deferred |
 
 Because the source is chosen by configuration and only the logical path appears in the file, a test authored against an environment variable locally runs unchanged against Vault in CI. The seam between “which secret” and “where secrets come from” is exactly the seam that lets one test file move between environments without edits.
 

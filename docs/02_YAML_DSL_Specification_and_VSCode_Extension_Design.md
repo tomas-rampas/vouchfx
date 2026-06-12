@@ -89,7 +89,9 @@ The `owner` and `tags` fields are not decoration: the test runner's selection la
 
 ## 3.2 The environment section
 
-The environment section names the infrastructure the test depends on. Each entry maps a logical name — the name the steps will use — to a resource type. The orchestration layer reads this section to decide which containers to provision and in what order, and it is also the information the VSCode extension cross-references to know which logical names are valid elsewhere in the file. Declaring a dependency here is what makes `orders-db` a resolvable target in a later database assertion.
+The environment section names the infrastructure the test depends on. Each entry maps a logical name — the name the steps will use — to a resource specification. The orchestration layer reads this section to decide which containers to provision and in what order, and it is also the information the VSCode extension cross-references to know which logical names are valid elsewhere in the file. Declaring a dependency here is what makes `orders-db` a resolvable target in a later database assertion.
+
+Both services and dependencies must have a mapping (YAML `{ … }`) value; a bare scalar (e.g. an unquoted service name or type) is malformed and rejected by the parser at load time with a line/column error.
 
 Services are the system under test: the customer's own code that the suite exercises. Each service is brought to the topology in one of two forms. The **image** form references a container image — the customer's CI has already built and pushed it — and is the recommended default for speed and isolation. The **project** form references a csproj path — the engine builds and runs the project as part of suite startup — and is the convenience for teams iterating on a service locally. Use exactly one of the two fields per service. Dependencies, by contrast, are managed resources Aspire knows how to provision (databases, brokers, caches): they declare a type and the engine selects the appropriate image.
 
@@ -566,7 +568,7 @@ environment:
   dependencies:
     orders-db:
       type: postgres
-      connectionString: "${secret:vault/orders-db/conn}"
+      connectionString: "${secret:env/ORDERS_DB_CONN}"
 
 steps:
   - id: call-protected-endpoint
@@ -575,10 +577,14 @@ steps:
     method: GET
     path: "{basePath}/admin/report"
     headers:
-      Authorization: "Bearer ${secret:env/ADMIN_TOKEN}"
+      Authorization: "Bearer ${secret:vault/secrets/api-keys#admin-token}"
 ```
 
-The source prefix — `env` for an environment variable, `file` for a git-ignored local file, `vault` for HashiCorp Vault, `cloud` for Azure Key Vault or AWS Secrets Manager — is chosen by runner configuration, not by the file, so the same test resolves from an environment variable locally and from Vault in CI without any edit. The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
+The source prefix — `env` for an environment variable, `vault` for HashiCorp Vault KV v2, `file` for a git-ignored local file (deferred), and `cloud` for Azure Key Vault or AWS Secrets Manager (deferred) — is chosen by runner configuration, not by the file, so the same test resolves from an environment variable locally and from Vault in CI without any edit.
+
+**The `vault` source** addresses a HashiCorp Vault KV v2 store with the syntax `${secret:vault/<kvPath>#<field>}`, where `<kvPath>` is the logical KV path (e.g. `secrets/api-keys`) and `<field>` is the key within that path's data object to return (e.g. `admin-token`). The KV path and field are both mandatory. Configuration is via three optional environment variables: `VAULT_ADDR` (the Vault server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (the access token), and `VAULT_KV_MOUNT` (the KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs or reports.
+
+The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
 
 # 7. Verification Modes and Asynchronous Assertions
 
