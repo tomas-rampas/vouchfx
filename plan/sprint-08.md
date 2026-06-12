@@ -41,19 +41,19 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream F — Publish the Provider SDK
 
-#### S08-F-03 · Publish the Provider SDK as a NuGet package
+#### S08-F-03 · Publish the Provider SDK as a NuGet package ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S08-F-02 · **Spec:** BP §13; MVP §8.3 (publish the Provider SDK), §6.6
 - Release the frozen C# contract as a NuGet package under Apache 2.0.
 - **Acceptance:**
-  - The SDK package installs cleanly in a fresh project and resolves the contract types.
+  - The SDK package installs cleanly in a fresh project and resolves the contract types. ✓
 
-#### S08-F-04 · CONTRIBUTING.md, integration-test fixture, worked example provider
+#### S08-F-04 · CONTRIBUTING.md, integration-test fixture, worked example provider ✓
 - **Owner:** PC · **Estimate:** 2.5d · **Depends on:** S08-F-03 · **Spec:** BP §13; MVP §8.3, §6.6, §9.6 (Verified rubric), §10 (community-pathway risk)
 - Write `CONTRIBUTING.md` with scope guardrails, document the integration-test fixture every Verified
   provider must pass, and publish the blueprint's worked example provider as a public reference.
 - **Acceptance:**
   - The fixture runs against the worked example and passes; CONTRIBUTING.md states the Verified-tier
-    rubric (MVP §9.6) and the reserved-namespace rule.
+    rubric (MVP §9.6) and the reserved-namespace rule. ✓
 
 #### S08-F-05 · Outside-contributor validation of the SDK
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S08-F-04 · **Spec:** MVP §8.3 (validated by an outside contributor), §4.2 (community gate)

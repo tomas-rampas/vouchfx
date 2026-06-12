@@ -197,9 +197,9 @@ engine internals.
 
 ## Contributing
 
-The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and
-orchestration first). Anyone working in this repository — human or agent — must honour the **hard
-invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
+**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract from the `Platform.Sdk` NuGet package, composition rules, and the Verified-tier rubric. The [`examples/Example.Steps.Hello`](examples/Example.Steps.Hello) provider is a copyable template demonstrating all four mandatory interfaces on a minimal, dependency-free step.
+
+**Contributing to the platform engine?** The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and orchestration first). Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
 ## Licence
 

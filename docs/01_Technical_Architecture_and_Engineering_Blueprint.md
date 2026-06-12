@@ -792,6 +792,8 @@ All three tiers use the Apache 2.0 licence in the Indie layer, so contributions 
 >
 > A provider that opens a database connection, joins a broker, or calls an authenticated service necessarily holds credentials at some point. The Verified tier therefore requires an explicit security review covering credential lifetime, log redaction, and TLS defaults. Community-tier providers are not gated on this, but the documentation makes the trust model clear to users who install them.
 
+**The Provider SDK and CONTRIBUTING guide.** The frozen v1 provider contract is published as the `Platform.Sdk` NuGet package (Apache-2.0). Detailed authoring rules, the integration-test fixture pattern, and the Verified-tier rubric are documented in the repository's [`CONTRIBUTING.md`](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md). A worked-example provider (`examples/Example.Steps.Hello`) demonstrates all four mandatory interfaces on a minimal, dependency-free step; the integration-test fixture is a copyable template for every community provider.
+
 ## 13.10 A worked example: the db-assert.postgres provider
 
 To make the model concrete, this subsection walks through a single provider end to end — from the YAML an author writes, through the C# the provider implements, to the CSX the engine emits. It is deliberately abbreviated for illustration; the full source for each Core provider lives in the platform repository.
