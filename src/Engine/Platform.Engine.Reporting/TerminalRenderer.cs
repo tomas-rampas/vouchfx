@@ -20,6 +20,7 @@
 //     when present.  scenario-completed appends durationMs when present.
 
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using Platform.Engine.Abstractions.Events;
 
@@ -202,21 +203,7 @@ public sealed class TerminalRenderer
 
             case EventTypes.StepAttempt:
                 {
-                    var stepId = GetStr(envelope, "stepId") ?? "(unknown)";
-                    var attempt = GetInt(envelope, "attempt");
-                    var outcome = GetStr(envelope, "outcome") ?? "(pending)";
-                    var tMs = GetLong(envelope, "tMs");
-                    var attemptSuffix = tMs.HasValue
-                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", tMs.Value)
-                        : string.Empty;
-                    output.WriteLine(
-                        string.Format(
-                            CultureInfo.InvariantCulture,
-                            "    attempt {0} -> {1}{2}  [{3}]",
-                            attempt,
-                            outcome,
-                            attemptSuffix,
-                            stepId));
+                    RenderAttemptTimelineLine(envelope, output);
                     break;
                 }
 
@@ -352,6 +339,121 @@ public sealed class TerminalRenderer
 
             output.WriteLine("    " + diffLine);
         }
+    }
+
+    /// <summary>
+    /// Renders a single attempt of a step as one legible line of the polling
+    /// timeline (S08-G-01, docs/01 §14.5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The line is indented beneath the step it belongs to and carries the
+    /// elapsed time relative to step start (rendered in seconds), the
+    /// one-based attempt counter, and the per-attempt outcome — turning a RETRY
+    /// step's asynchrony back into the story the author wrote rather than a
+    /// final pass-or-fail at the end of a timeout window.  Example:
+    /// </para>
+    /// <code>
+    ///       t=  0.5s   attempt 1   INCONCLUSIVE
+    ///       t=  1.5s   attempt 2   FAIL
+    /// </code>
+    /// <para>
+    /// Renders exclusively from the existing <c>StepAttemptEvent</c> fields
+    /// (<c>attempt</c>, <c>tMs</c>, <c>outcome</c>, <c>observation</c>); it adds
+    /// no field to the event contract.  The optional observation summary is the
+    /// provider's structured observation, which is metadata-only by construction
+    /// (§17) — no captured or secret value can appear here.  An attempt whose
+    /// outcome the engine has not yet resolved (a mid-RETRY poll with a null
+    /// <c>outcome</c>) renders a <c>(pending)</c> marker in place of a verdict.
+    /// </para>
+    /// </remarks>
+    private static void RenderAttemptTimelineLine(EventEnvelope envelope, TextWriter output)
+    {
+        var attempt = GetInt(envelope, "attempt");
+        var outcome = GetStr(envelope, "outcome") ?? "(pending)";
+        var tMs = GetLong(envelope, "tMs");
+
+        // Elapsed time relative to step start, in seconds with one decimal place,
+        // right-padded so the "attempt" columns line up across attempts (the §14.5
+        // example aligns on the elapsed column).  Absent timing renders as "?".
+        var elapsed = tMs.HasValue
+            ? string.Format(CultureInfo.InvariantCulture, "{0,5:0.0}s", tMs.Value / 1000.0)
+            : "    ?s";
+
+        var observationSummary = SummariseObservation(envelope);
+
+        output.WriteLine(
+            string.Format(
+                CultureInfo.InvariantCulture,
+                "      t={0}   attempt {1}   {2}{3}",
+                elapsed,
+                attempt,
+                outcome,
+                observationSummary));
+    }
+
+    /// <summary>
+    /// Produces a compact, secret-safe one-line summary of an attempt's structured
+    /// <c>observation</c> for the polling timeline, or the empty string when no
+    /// renderable observation is present.
+    /// </summary>
+    /// <remarks>
+    /// The observation is provider-supplied structured metadata (e.g.
+    /// <c>{"matched":0}</c> or a diff) and is metadata-only by construction (§17),
+    /// so it carries no captured or secret value.  This summary is intentionally
+    /// terse — it surfaces a scalar observation verbatim and an object/array
+    /// observation as a brief shape hint — leaving the full expected-vs-observed
+    /// diff to the <c>step-completed</c> diff renderer.  A leading separator is
+    /// included so the caller can concatenate the result directly.
+    /// </remarks>
+    private static string SummariseObservation(EventEnvelope envelope)
+    {
+        if (envelope.Extra is null
+            || !envelope.Extra.TryGetValue("observation", out var observation)
+            || observation.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return string.Empty;
+        }
+
+        var summary = observation.ValueKind switch
+        {
+            // Scalars are surfaced verbatim — these are provider metadata
+            // (e.g. a matched count) and never a captured/secret value.
+            JsonValueKind.String => observation.GetString() ?? string.Empty,
+            JsonValueKind.Number => observation.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+
+            // Objects and arrays get a brief shape hint rather than their full
+            // contents; the full diff is rendered under the step-completed line.
+            JsonValueKind.Object => DescribeObject(observation),
+            JsonValueKind.Array => string.Format(
+                CultureInfo.InvariantCulture,
+                "[{0} item(s)]",
+                observation.GetArrayLength()),
+
+            _ => string.Empty,
+        };
+
+        return string.IsNullOrEmpty(summary)
+            ? string.Empty
+            : "   " + summary;
+    }
+
+    /// <summary>
+    /// Describes a JSON object observation as a brief, comma-separated list of its
+    /// property names, e.g. <c>{matched, diff}</c>.  Property <em>values</em> are
+    /// deliberately omitted to keep the timeline terse and to avoid surfacing any
+    /// value that could be sensitive; the keys alone tell the reader what the
+    /// provider observed on this attempt.
+    /// </summary>
+    private static string DescribeObject(JsonElement observation)
+    {
+        var keys = observation
+            .EnumerateObject()
+            .Select(static p => p.Name);
+
+        return "{" + string.Join(", ", keys) + "}";
     }
 
     // -------------------------------------------------------------------------
