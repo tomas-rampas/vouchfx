@@ -136,6 +136,12 @@ public sealed class HelloConsoleProvider
     /// <inheritdoc />
     public HelloConsoleModel Bind(YamlNode node, IBindingContext ctx)
     {
+        // BIND→VALIDATE CONTRACT (§13): Bind only SHAPES YAML into the model; it does not
+        // reject input.  A non-mapping node yields an empty model, and the empty `Message`
+        // is then caught by Validate (below), which fails the step with a clear diagnostic.
+        // This is the intended split — keep rejection in Validate.  If you copy this template,
+        // do NOT move validation logic here, and do NOT emit a silently-empty model for a
+        // field your Validate does NOT check, or the bad input will slip through unnoticed.
         if (node is not YamlMappingNode mapping)
             return new HelloConsoleModel(Message: string.Empty, Expected: string.Empty);
 

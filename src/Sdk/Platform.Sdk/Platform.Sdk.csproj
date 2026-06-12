@@ -25,10 +25,20 @@
     <!-- Deterministic, reproducible packaging. -->
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <!-- SourceLink + symbols (S08-F-03): let external provider authors step into the SDK.
+         PublishRepositoryUrl/EmbedUntrackedSources map PDB source paths back to GitHub;
+         IncludeSymbols + the snupkg format ships a separate symbols package alongside the
+         main .nupkg so debuggers can resolve SDK source without it bloating the lib package. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
+    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
