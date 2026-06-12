@@ -24,36 +24,36 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream B / F — Freeze the contracts
 
-#### S08-F-01 · Freeze the v1 JSON Schema
+#### S08-F-01 · Freeze the v1 JSON Schema ✓
 - **Owner:** TX · **Estimate:** 1.5d · **Depends on:** S02-C-02, S07-F-01 · **Spec:** DSL §8; MVP §8.3 (freeze v1 schema), §10 (contract-freeze gate)
 - Finalise and version-stamp the unified JSON Schema (draft 2020-12) for v1 so tooling builds against a
   stable contract.
 - **Acceptance:**
-  - The schema is tagged `v1`, composed from all six providers' fragments, and frozen against change.
+  - The schema is tagged `v1`, composed from all six providers' fragments, and frozen against change. ✓
 
-#### S08-F-02 · Freeze the v1 provider contract (with extension path)
+#### S08-F-02 · Freeze the v1 provider contract (with extension path) ✓
 - **Owner:** TL · **Estimate:** 1.5d · **Depends on:** S05-F-01 · **Spec:** BP §13.8.1; MVP §8.3, §10 (engine-breaks-contract risk)
 - Freeze the provider interfaces for the v1.x engine series; new optional capabilities arrive via
   extension interfaces (`IStepProviderV1_1`), never by mutating existing ones. This is the contract-freeze
   gate reviewed before the SDK is published.
 - **Acceptance:**
-  - The v1 contract is tagged and documented as frozen; the extension-interface mechanism is demonstrated.
+  - The v1 contract is tagged and documented as frozen; the extension-interface mechanism is demonstrated. ✓
 
 ### Workstream F — Publish the Provider SDK
 
-#### S08-F-03 · Publish the Provider SDK as a NuGet package
+#### S08-F-03 · Publish the Provider SDK as a NuGet package ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S08-F-02 · **Spec:** BP §13; MVP §8.3 (publish the Provider SDK), §6.6
 - Release the frozen C# contract as a NuGet package under Apache 2.0.
 - **Acceptance:**
-  - The SDK package installs cleanly in a fresh project and resolves the contract types.
+  - The SDK package installs cleanly in a fresh project and resolves the contract types. ✓
 
-#### S08-F-04 · CONTRIBUTING.md, integration-test fixture, worked example provider
+#### S08-F-04 · CONTRIBUTING.md, integration-test fixture, worked example provider ✓
 - **Owner:** PC · **Estimate:** 2.5d · **Depends on:** S08-F-03 · **Spec:** BP §13; MVP §8.3, §6.6, §9.6 (Verified rubric), §10 (community-pathway risk)
 - Write `CONTRIBUTING.md` with scope guardrails, document the integration-test fixture every Verified
   provider must pass, and publish the blueprint's worked example provider as a public reference.
 - **Acceptance:**
   - The fixture runs against the worked example and passes; CONTRIBUTING.md states the Verified-tier
-    rubric (MVP §9.6) and the reserved-namespace rule.
+    rubric (MVP §9.6) and the reserved-namespace rule. ✓
 
 #### S08-F-05 · Outside-contributor validation of the SDK
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S08-F-04 · **Spec:** MVP §8.3 (validated by an outside contributor), §4.2 (community gate)
@@ -65,37 +65,43 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream B — Compiler & runtime
 
-#### S08-B-01 · Vault secret source
+#### S08-B-01 · Vault secret source ✓
 - **Owner:** CR1 · **Estimate:** 2d · **Depends on:** S05-B-02 · **Spec:** BP §17; MVP §8.3 (Vault secret source), §10 (secrets risk)
 - Add the HashiCorp Vault source alongside `env`, through the pluggable-source seam, resolving at
   step-execution time and returning `SecretString`.
 - **Acceptance:**
   - A credential resolves from Vault at execution time; redaction holds; the reproducibility envelope
-    still hashes only the reference.
+    still hashes only the reference. ✓
 
 ### Workstream G — Result reporting & diagnostics
 
-#### S08-G-01 · Polling timeline renderer for RETRY steps
+#### S08-G-01 · Polling timeline renderer for RETRY steps ✓
 - **Owner:** PC · **Estimate:** 2d · **Depends on:** S06-B-02, S03-G-01 · **Spec:** BP §14; MVP §8.3 (polling timeline), §2.5 (positioning claim)
 - Render the per-attempt polling timeline for RETRY steps from the individual `step-attempt` events —
   the feature that explains asynchronous failures rather than reducing them to timeouts.
 - **Acceptance:**
-  - A RETRY step renders a legible attempt-by-attempt timeline (timing + per-attempt outcome).
+  - A RETRY step renders a legible attempt-by-attempt timeline (timing + per-attempt outcome). ✓
 
-#### S08-G-02 · Captured-variable thread renderer
+#### S08-G-02 · Captured-variable thread renderer ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S04-G-01 · **Spec:** BP §14; MVP §8.3 (captured-variable thread), §2.5
 - Render the captured-variable thread showing where each value in a scenario originated; secret-derived
   values render redacted.
 - **Acceptance:**
-  - The thread shows provenance for every captured/substituted value; no secret value is shown.
+  - The thread shows provenance for every captured/substituted value; no secret value is shown. ✓
 
 ### Workstream C — Authoring tooling
 
-#### S08-C-01 · Watch mode for local iteration
+#### S08-C-01 · Watch mode for local iteration ✓
 - **Owner:** TX · **Estimate:** 1.5d · **Depends on:** S07-C-01 · **Spec:** MVP §6.3 (watch mode), §4.2 (loop-time)
 - Re-run affected suites on file change to compress the author→run loop.
 - **Acceptance:**
-  - Editing a `.e2e.yaml` re-runs it automatically without a full topology rebuild where possible.
+  - Editing a `.e2e.yaml` re-runs it automatically without a full topology rebuild where possible. ✓
+
+#### S08-C-03 · Scenario-level parallelism (re-instated from S07) ✓
+- **Owner:** TL · **Estimate:** 2.5d · **Depends on:** S07-C-01 · **Spec:** BP §16.2; MVP §6.3 (parallelism)
+- Implement concurrent scenario execution using the topology-per-scenario slot model: each scenario builds, owns, and disposes its own Aspire topology with isolation by construction (no Respawn). Bounded concurrency via `--parallel <n>` CLI flag with conservative default (min(cores,4)); deterministic render-in-declaration-order; complete-all cancellation semantics.
+- **Acceptance:**
+  - `vouchfx run --parallel 2` runs two scenarios concurrently against separate topologies; each scenario's topology is independent (no cross-scenario state); output is byte-stable regardless of which finishes first; all topologies dispose on cancellation. ✓
 
 ### Workstream D — Integration
 

@@ -13,6 +13,17 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup Label="S08-F-02 — frozen v1 event-wire-contract golden artifact">
+    <!--
+      The committed golden the EventContractFreezeTests gate diffs against.  Copied
+      next to the test DLL so the test reads it from AppContext.BaseDirectory/Golden.
+      Treated as a non-compiled Content item; CopyToOutputDirectory keeps it fresh.
+    -->
+    <Content Include="Golden\event-stream-wire-contract.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
   </ItemGroup>

@@ -475,7 +475,18 @@ public static class YamlDocumentParser
 
             if (value is not YamlMappingNode serviceMapping)
             {
-                continue;
+                // A service value that is not a mapping (e.g. a bare image scalar
+                // where a '{ image: … }' mapping is expected) is a malformed shape.
+                // Silently dropping it would leave the system-under-test container
+                // unstarted, surfacing later as a misattributed EnvironmentError —
+                // the exact §12.1 confusion the parser elsewhere prevents — so reject
+                // it with line/column, mirroring the seed-dependency-value throw.
+                throw new YamlParseException(
+                    $"Service '{keyScalar.Value}' at line {value.Start.Line} must be a " +
+                    $"mapping declaring the container's image or project " +
+                    $"(e.g. 'image: myorg/api:1.0'), but found {value.NodeType}.",
+                    value.Start.Line,
+                    value.Start.Column);
             }
 
             var image = GetScalar(serviceMapping, "image");
@@ -507,7 +518,18 @@ public static class YamlDocumentParser
 
             if (value is not YamlMappingNode depMapping)
             {
-                continue;
+                // A dependency value that is not a mapping (e.g. a bare type scalar
+                // where a '{ type: … }' mapping is expected) is a malformed shape.
+                // Silently dropping it would leave a managed Aspire resource
+                // unprovisioned, surfacing later as a misattributed EnvironmentError —
+                // the exact §12.1 confusion the parser elsewhere prevents — so reject
+                // it with line/column, mirroring the missing-'type' throw below.
+                throw new YamlParseException(
+                    $"Dependency '{keyScalar.Value}' at line {value.Start.Line} must be a " +
+                    $"mapping declaring at least its 'type' " +
+                    $"(e.g. 'type: postgres'), but found {value.NodeType}.",
+                    value.Start.Line,
+                    value.Start.Column);
             }
 
             var type = GetScalar(depMapping, "type");

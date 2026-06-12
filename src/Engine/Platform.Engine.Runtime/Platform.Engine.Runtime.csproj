@@ -14,6 +14,11 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>vouchfx</_Parameter1>
     </AssemblyAttribute>
+    <!-- The memory harness drives the internal ParallelSuiteRunner.RunParallelCoreAsync with a
+         fake core to prove concurrent per-scenario collectible ALCs are all reclaimed (S08-T1). -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Platform.Engine.Compilation.MemoryHarness</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

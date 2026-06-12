@@ -63,16 +63,28 @@ namespace Platform.Engine.Orchestration;
 public sealed class SuiteTopology : IAsyncDisposable
 {
     private readonly HeadlessTopology _inner;
+
+    // Retained so the seed can be RE-APPLIED against the kept topology between watch re-runs
+    // (S08-T10): the environment (which carries environment.seed + dependency types) and the
+    // base directory relative seed file paths resolve against.  Both are exactly the values
+    // StartAsync used for the initial seed, so a re-seed reproduces the freshly-built baseline.
+    private readonly EnvironmentSpec? _environment;
+    private readonly string _seedBaseDirectory;
+
     private bool _disposed;
 
     private SuiteTopology(
         HeadlessTopology inner,
         IReadOnlyDictionary<string, object> discoveredServices,
-        IReadOnlyList<string> dependencyNames)
+        IReadOnlyList<string> dependencyNames,
+        EnvironmentSpec? environment,
+        string seedBaseDirectory)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
         DependencyNames = dependencyNames;
+        _environment = environment;
+        _seedBaseDirectory = seedBaseDirectory;
     }
 
     /// <summary>
@@ -287,18 +299,20 @@ public sealed class SuiteTopology : IAsyncDisposable
             // also truncated after the first scenario — persisting reference data
             // across scenarios is a future enhancement, OUT OF SCOPE for A-01.
             // ----------------------------------------------------------------
-            var dependencyTypes = BuildDependencyTypeMap(environment);
-            await SeedApplier.ApplyAsync(
-                    environment?.Seed,
+            var resolvedSeedBaseDirectory = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+            await ApplySeedAsync(
+                    environment,
                     discoveredServices,
-                    dependencyTypes,
-                    seedBaseDirectory ?? Directory.GetCurrentDirectory(),
-                    brokerSink: null,
-                    documentSink: null,
+                    resolvedSeedBaseDirectory,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return new SuiteTopology(topology, discoveredServices, mapped.DependencyNames);
+            return new SuiteTopology(
+                topology,
+                discoveredServices,
+                mapped.DependencyNames,
+                environment,
+                resolvedSeedBaseDirectory);
         }
         catch
         {
@@ -307,6 +321,171 @@ public sealed class SuiteTopology : IAsyncDisposable
             await topology.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Returns this <strong>already-running</strong> topology's seeded Postgres dependencies to
+    /// the freshly-built-and-seeded baseline (S08-T10, watch-mode reuse path): each seeded
+    /// Postgres database's <c>public</c> schema is reset to empty, then the declarative
+    /// <c>environment.seed</c> is re-applied — exactly reproducing the fresh-container-then-seed
+    /// sequence a plain <c>vouchfx run</c> performs.
+    /// </summary>
+    /// <param name="cancellationToken">Propagated to the schema reset and the seed applier.</param>
+    /// <returns>A task that completes once the seed has been re-applied (a no-op when the
+    /// scenario declares no seed).</returns>
+    /// <exception cref="OrchestrationException">
+    /// Thrown (Provision kind) when the schema reset or re-seed fails — always an Environment
+    /// error (§12.1), never a test <c>Fail</c>.  Unlike the initial seed in
+    /// <see cref="StartAsync"/>, the topology is <em>not</em> disposed here: the kept topology
+    /// survives a re-seed failure so the watch loop can report it and continue (the caller owns
+    /// the topology lifetime).
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// Watch mode keeps ONE topology alive across re-runs.  Between reuse runs the kept topology
+    /// carries the previous run's writes AND the previous seed's rows.  A plain
+    /// <c>vouchfx run</c> always starts from a fresh, EMPTY container and then applies the seed —
+    /// so the seed SQL is written assuming an empty database (bare <c>CREATE TABLE</c>, not
+    /// <c>CREATE TABLE IF NOT EXISTS</c>).  To match that initial state without rebuilding the
+    /// container, this method first DROPS the <c>public</c> schema of each seeded Postgres
+    /// dependency and recreates it empty (clearing both the prior run's writes and the prior
+    /// seed's tables), then re-applies the seed against the now-empty schema — so the author's
+    /// non-idempotent seed SQL re-runs cleanly, exactly as on a fresh build.
+    /// </para>
+    /// <para>
+    /// This is why the watch reuse path does NOT rely on the Respawn truncate alone to restore
+    /// the baseline: Respawn preserves the schema (keeping the seed's tables), so a re-applied
+    /// <c>CREATE TABLE</c> would collide.  Dropping the schema is the faithful "fresh container"
+    /// reset for the seeded case.
+    /// </para>
+    /// </remarks>
+    public async Task ReseedAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Nothing to restore when the scenario declares no seed: leave the topology untouched
+        // (the caller's Respawn reset has already cleared the prior run's row-level writes).
+        var seed = _environment?.Seed;
+        if (seed is null || seed.Dependencies.Count == 0)
+        {
+            return;
+        }
+
+        // Return each seeded Postgres dependency's public schema to EMPTY before re-seeding, so
+        // the seed's bare CREATE TABLE re-runs cleanly (mirrors a fresh container).  Only seeded
+        // dependencies are reset — an unseeded dependency is left exactly as the run left it.
+        var dependencyTypes = BuildDependencyTypeMap(_environment);
+        foreach (var dependencyName in seed.Dependencies.Keys)
+        {
+            if (!dependencyTypes.TryGetValue(dependencyName, out var declaredType) ||
+                !string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase))
+            {
+                // Non-Postgres (or undeclared) seed dependency: SeedApplier validates/dispatches
+                // it; no SQL schema to reset here.  (Broker/document seeds are content-recorded,
+                // not row-applied, so they have no persisted state to clear on the kept topology.)
+                continue;
+            }
+
+            if (DiscoveredServices.TryGetValue(dependencyName, out var value) &&
+                value is string connectionString &&
+                !string.IsNullOrWhiteSpace(connectionString))
+            {
+                await ResetPostgresSchemaAsync(dependencyName, connectionString, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        await ApplySeedAsync(
+                _environment,
+                DiscoveredServices,
+                _seedBaseDirectory,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resets a Postgres database's <c>public</c> schema to empty — <c>DROP SCHEMA public CASCADE;
+    /// CREATE SCHEMA public;</c> — so the kept topology's database matches a freshly-built
+    /// container before the seed is re-applied (S08-T10).  Any failure is wrapped as an
+    /// <see cref="OrchestrationException"/> (Provision kind, §12.1: Environment error, never a
+    /// test Fail).
+    /// </summary>
+    private static async Task ResetPostgresSchemaAsync(
+        string dependencyName,
+        string connectionString,
+        CancellationToken cancellationToken)
+    {
+        var connection = new Npgsql.NpgsqlConnection(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            var command = connection.CreateCommand();
+            try
+            {
+                // DROP … CASCADE removes every table/sequence/type the prior run + prior seed
+                // created; CREATE SCHEMA restores an empty `public` schema (Postgres DDL is
+                // transactional, so this is atomic).  Equivalent to a fresh container's DB.
+                command.CommandText = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await command.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var info = new OrchestrationErrorInfo(
+                Kind: OrchestrationErrorKind.Provision,
+                ResourceName: dependencyName,
+                RegistryHost: null,
+                AuthStatus: null,
+                Detail: $"watch re-seed could not reset the '{dependencyName}' schema: "
+                        + TrimDetail(ex.Message));
+            throw new OrchestrationException(info, ex);
+        }
+        finally
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Returns a trimmed, single-line summary of <paramref name="message"/> capped at 200
+    /// characters for display in event streams and logs.
+    /// </summary>
+    private static string TrimDetail(string message)
+    {
+        var collapsed = (message ?? string.Empty).ReplaceLineEndings(" ").Trim();
+        return collapsed.Length > 200 ? collapsed[..200] : collapsed;
+    }
+
+    /// <summary>
+    /// Applies the scenario's declarative <c>environment.seed</c> against the discovered
+    /// services.  The single seed-apply path shared by the initial seed in
+    /// <see cref="StartAsync"/> and the re-seed in <see cref="ReseedAsync"/>, so the two can
+    /// never diverge in how they map dependency types or resolve seed file paths (S08-T10).
+    /// </summary>
+    private static Task ApplySeedAsync(
+        EnvironmentSpec? environment,
+        IReadOnlyDictionary<string, object> discoveredServices,
+        string seedBaseDirectory,
+        CancellationToken cancellationToken)
+    {
+        var dependencyTypes = BuildDependencyTypeMap(environment);
+        return SeedApplier.ApplyAsync(
+            environment?.Seed,
+            discoveredServices,
+            dependencyTypes,
+            seedBaseDirectory,
+            brokerSink: null,
+            documentSink: null,
+            cancellationToken);
     }
 
     /// <summary>

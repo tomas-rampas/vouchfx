@@ -59,10 +59,14 @@ internal static class RunCommand
         var ownerOption = BuildOwnerOption();
         var pathOption = BuildPathOption();
         var changedSinceOption = BuildChangedSinceOption();
+        var parallelOption = BuildParallelOption();
+        var watchOption = BuildWatchOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
         command.Add(changedSinceOption);
+        command.Add(parallelOption);
+        command.Add(watchOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -70,7 +74,9 @@ internal static class RunCommand
         {
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
-            return ExecuteAsync(path, criteria, Console.Out, cancellationToken);
+            var parallel = parseResult.GetValue(parallelOption);
+            var watch = parseResult.GetValue(watchOption);
+            return ExecuteAsync(path, criteria, parallel, watch, Console.Out, cancellationToken);
         });
 
         return command;
@@ -108,6 +114,50 @@ internal static class RunCommand
         Description =
             "Select only scenarios whose file changed since this git ref (committed diff vs "
             + "the ref plus the dirty working tree). Requires a git repository.",
+    };
+
+    /// <summary>
+    /// The <c>--parallel</c> option: run up to N scenarios concurrently, each owning its own
+    /// topology (S08-T1).  When absent, scenarios run sequentially against ONE shared topology
+    /// (the default — explicit opt-in keeps the container cost a deliberate choice).
+    /// </summary>
+    /// <remarks>
+    /// Parallelism is an explicit opt-in because each concurrent scenario stands up its OWN
+    /// container topology: running N scenarios at <c>--parallel N</c> means up to N times the
+    /// containers (and their pull / start cost) at once.  A value &lt; 1 is a usage error.
+    /// </remarks>
+    internal static Option<int?> BuildParallelOption() => new("--parallel")
+    {
+        Description =
+            "Run up to N scenarios concurrently, each owning its OWN container topology (S08). "
+            + "Must be 1 or greater. CAVEAT: each concurrent scenario stands up its own topology, "
+            + "so --parallel N uses up to N times the containers at once. Omit to run sequentially "
+            + "against a single shared topology (the default).",
+    };
+
+    /// <summary>
+    /// The <c>--watch</c> flag (S08-C-01): run the suite once, then watch the <c>.e2e.yaml</c>
+    /// file and re-run automatically on save, re-using the already-built topology while the
+    /// <c>environment</c> block is unchanged (and rebuilding it only when it changes).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Watch mode targets the local edit-run loop for a SINGLE file: it keeps one topology alive
+    /// across re-runs and skips the expensive container rebuild whenever only <c>steps</c> change.
+    /// </para>
+    /// <para>
+    /// <c>--watch</c> is mutually exclusive with <c>--parallel</c>: the former keeps ONE topology
+    /// alive for one file, the latter fans MANY scenarios across MANY topologies — combining them
+    /// is incoherent, so the combination is rejected as a usage error.
+    /// </para>
+    /// </remarks>
+    internal static Option<bool> BuildWatchOption() => new("--watch")
+    {
+        Description =
+            "Run once, then watch the .e2e.yaml file and re-run automatically on save, re-using "
+            + "the already-built topology while the `environment` block is unchanged (rebuilding "
+            + "it only when it changes). For local iteration on a single file; press Ctrl-C to "
+            + "stop. Cannot be combined with --parallel.",
     };
 
     /// <summary>
@@ -158,21 +208,60 @@ internal static class RunCommand
     /// <param name="path">The discovery root (already defaulted to <c>"."</c> by the parser).</param>
     /// <param name="output">The writer that receives diagnostics + the rendered report.</param>
     /// <param name="cancellationToken">Propagated to the runner.</param>
+    /// <param name="parallel">
+    /// The <c>--parallel</c> value: when non-<see langword="null"/>, run up to this many
+    /// scenarios concurrently (each owning its own topology) via
+    /// <see cref="ParallelSuiteRunner.RunParallelAsync"/>; when <see langword="null"/>, run
+    /// sequentially against one shared topology via <see cref="ScenarioRunner.RunSuiteAsync"/>.
+    /// A value &lt; 1 is a usage error (<see cref="ExitCodes.UsageError"/>).
+    /// </param>
+    /// <param name="watch">
+    /// The <c>--watch</c> flag (S08-C-01): when <see langword="true"/>, run once and then watch
+    /// the single selected <c>.e2e.yaml</c> file, re-running on each save and re-using the kept
+    /// topology while the <c>environment</c> block is unchanged.  Mutually exclusive with
+    /// <paramref name="parallel"/> (combining them is a usage error); requires the selection to
+    /// resolve to exactly one file.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
-    /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/>, which starts an Aspire
-    /// topology and therefore needs Docker — so this method is NOT exercised by the unit
-    /// tests.  Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
+    /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
+    /// <see cref="ParallelSuiteRunner.RunParallelAsync"/> when <paramref name="parallel"/> is
+    /// supplied, or the watch loop when <paramref name="watch"/> is set), which starts an Aspire
+    /// topology and therefore needs Docker — so this method is NOT exercised by the unit tests.
+    /// Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
     /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
-    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>) are each tested
-    /// in isolation.
+    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, the
+    /// <c>--parallel</c> / <c>--watch</c> arg-parse, and the <c>--watch</c>+<c>--parallel</c>
+    /// usage-error short-circuit) are each tested in isolation.
     /// </remarks>
     internal static async Task<int> ExecuteAsync(
         string path,
         SelectionCriteria criteria,
+        int? parallel,
+        bool watch,
         TextWriter output,
         CancellationToken cancellationToken)
     {
+        // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
+        // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
+        // usage error (exit 2) up front — before discovering or running anything (no Docker).
+        if (watch && parallel is not null)
+        {
+            await output.WriteLineAsync(
+                "--watch cannot be combined with --parallel (watch keeps one topology alive for a "
+                + "single file; --parallel fans many scenarios across many topologies).")
+                .ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        // Validate --parallel up front: a value < 1 is a usage error (exit 2), not a crash.
+        // (System.CommandLine binds the value; the >= 1 contract is the engine's, enforced here.)
+        if (parallel is { } degree && degree < 1)
+        {
+            await output.WriteLineAsync("--parallel must be 1 or greater.").ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
         IReadOnlyList<DiscoveredScenario> discovered;
@@ -221,6 +310,17 @@ internal static class RunCommand
 
         discovered = selected;
 
+        // ── Watch mode (S08-C-01) ─────────────────────────────────────────────
+        // `vouchfx run <file> --watch` watches a SINGLE file: run once, then re-run on save,
+        // re-using the kept topology while the `environment` block is unchanged.  Watching is
+        // inherently single-file, so the selection must resolve to exactly one scenario; a
+        // directory matching many files (or none that parses) is a usage error here.
+        if (watch)
+        {
+            return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         // Split into runnable scenarios and parse-failures.
         var parsed = new List<DiscoveredScenario>(discovered.Count);
         var failures = new List<DiscoveredScenario>();
@@ -256,15 +356,30 @@ internal static class RunCommand
             // it explicitly avoids the GetEntryAssembly fallback (CLAUDE.md §"Aspire").
             var appHostAssemblyName = Assembly.GetExecutingAssembly().GetName().Name;
 
-            SuiteResult result = await ScenarioRunner.RunSuiteAsync(
-                asts,
-                names,
-                yamlTexts,
-                ProviderRegistryFactory.CoreProviderAssemblies(),
-                appHostAssemblyName,
-                output,
-                seedBaseDirectory: null,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            // --parallel N → run scenarios concurrently, each owning its OWN topology
+            // (ParallelSuiteRunner, S08). Absent → run sequentially against ONE shared topology
+            // (ScenarioRunner.RunSuiteAsync). Parallelism is an explicit opt-in because it
+            // multiplies the concurrent container cost (one topology per in-flight scenario).
+            SuiteResult result = parallel is { } parallelDegree
+                ? await ParallelSuiteRunner.RunParallelAsync(
+                    asts,
+                    names,
+                    yamlTexts,
+                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    appHostAssemblyName,
+                    output,
+                    maxConcurrency: parallelDegree,
+                    seedBaseDirectory: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await ScenarioRunner.RunSuiteAsync(
+                    asts,
+                    names,
+                    yamlTexts,
+                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    appHostAssemblyName,
+                    output,
+                    seedBaseDirectory: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
         }

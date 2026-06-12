@@ -178,6 +178,10 @@ Spinning up SQL Server or a Kafka broker for every test scenario is the single l
 
 The default in sequential mode is one topology per suite, with Respawn-based state reset between scenarios providing the isolation. In parallel mode the rules change because parallel scenarios cannot safely share a mutable topology; the runner's isolation contract in Section 16.3 governs the parallel case. Either way, the heavy infrastructure is paid for at most once per scenario and typically once per suite, and the fixture is reused across every iteration of every test the suite contains.
 
+### 4.2.1 Watch mode for local iteration
+
+For developers iterating on a single `.e2e.yaml` file, the CLI runner's `--watch` flag compresses the author→run loop by eliminating repeated topology rebuilds. When invoked with `vouchfx run <file> --watch`, the runner: builds the topology once, runs the scenario, then watches the file for changes. On each save, it re-compiles the scenario and decides whether to re-use the kept topology or rebuild it, based on whether the `environment` block hash changed. If the hash is unchanged (a steps-only edit, the common case during iteration), the scenario re-runs against the existing topology; if the hash changed, the old topology is disposed, a new one is built, and the scenario runs against it. The reuse path first resets the database via Respawn, then re-applies the seed block to restore the freshly-provisioned baseline — matching the baseline of a plain `vouchfx run` so each watch run starts from identical state. Compile errors and run failures are reported concisely and the watch loop keeps running, so the developer can edit again without re-running from the shell. The `--watch` and `--parallel` flags are mutually exclusive (combining them is a usage error), as watch mode targets the single-file edit-run loop whilst parallelism fans multiple scenarios across independent topologies.
+
 ## 4.3 Startup determinism
 
 Microservices frequently crash on boot if their backing store is not yet accepting connections. A naive harness races against this and produces intermittent, irreproducible failures. The engine eliminates the race by modelling the dependency graph explicitly as a Directed Acyclic Graph and enforcing startup order with Aspire's `.WaitFor(...)` construct. The test runner then blocks on `app.ResourceNotifications.WaitForResourceHealthyAsync("resource-name")` with a bounded cancellation timeout, so that no test step fires until the entire distributed graph reports healthy. A timeout here is reported as an environment failure, not a test failure — a distinction that section 12 treats as essential.
@@ -715,6 +719,8 @@ Whichever mode the author chooses, the provider does not call Docker itself, doe
 
 The single JSON Schema described in the DSL specification is, in fact, assembled. At engine startup the registry walks the registered providers, collects each provider's schema fragment, and merges them into a unified schema. The composition uses an `if` / `then` / `else` chain with a `const`-valued discriminator on the `type` field, rather than a flat `oneOf` array. The two are semantically equivalent but the former is dramatically faster to validate: a `oneOf` of fifty provider fragments forces the validator to try every branch on every node, where the const-discriminator pattern selects exactly one branch on the first comparison. Validation performance matters because the VSCode extension validates on every keystroke; a 50-provider catalog must not produce sluggish autocomplete.
 
+The discriminator clauses are emitted in deterministic (type-key-sorted) order so the composed schema is byte-stable and snapshottable for change tracking. For the v1 engine series, the v1 schema — composed from all six Core providers' fragments — is frozen by a golden-file CI gate that fails if the composed JSON drifts, ensuring any schema change is deliberate and reviewed.
+
 The engine and the VSCode extension use `JsonSchema.Net` (the JsonEverything family) against the JSON Schema draft 2020-12 vocabulary. The choice is consistent with the JSONPath library named in Section 5.7 and is the modern .NET-canonical pair. The unified schema is exposed at a stable URL the editor consumes; nothing in the editor's pipeline changes when a new provider is added.
 
 The result is that the editor experience extends naturally as providers are added. Autocompleting `type: db-assert.` offers every registered `db-assert.*` provider; selecting `db-assert.postgres` narrows the remaining fields to the Postgres-specific schema; hover documentation comes from the provider's fragment; “Go to definition” on the type field navigates to the provider's source. The VSCode extension does not need to know which providers exist — it asks the unified schema, and the schema answers.
@@ -768,6 +774,8 @@ The provider contract that providers depend on — the interfaces in section 13.
 
 Breaking changes to the contract appear only in a v2.x engine series. A v2 engine declares the v1 contract dropped or evolved, and providers targeting v1 either continue to work in a v1-compatibility mode or are explicitly required to migrate. Providers declare which engine major they target through their `MinEngineVersion`, which the registry compares against the engine's own version at startup; an incompatibility produces an actionable error rather than a silent load. This commitment is essential for the open-source community pathway: external contributors will not maintain providers if the platform reserves the right to break their work on every release. Freezing the v1 contract is the minimum credible offer the platform owes its community.
 
+This freeze is now **enforced by a golden-file CI gate** (`SdkContractFreezeTests`) that reflects over the entire `Platform.Sdk` public surface and asserts it is byte-for-byte identical to the committed golden, failing if the contract drifts. The extension mechanism is **demonstrated and tested** through `OptionalExtensionInterfaceTests`, proving that new optional capabilities (such as `IStepDiffRenderer` and `IHostResourceContributor` from earlier sprints) can be added by implementing new interfaces outside the frozen core, with no change to any v1 interface. This pattern — extend via a NEW optional interface, never mutate a v1 interface — is the sole mechanism for evolution within v1.x.
+
 ## 13.9 Open-source governance and the three provider tiers
 
 The provider model is most valuable when the community contributes to it freely, and the architecture makes that the default rather than the exception. Three tiers exist, each with its own quality bar, owner, and integration path.
@@ -783,6 +791,8 @@ All three tiers use the Apache 2.0 licence in the Indie layer, so contributions 
 > **Security review is non-negotiable for credential handlers**
 >
 > A provider that opens a database connection, joins a broker, or calls an authenticated service necessarily holds credentials at some point. The Verified tier therefore requires an explicit security review covering credential lifetime, log redaction, and TLS defaults. Community-tier providers are not gated on this, but the documentation makes the trust model clear to users who install them.
+
+**The Provider SDK and CONTRIBUTING guide.** The frozen v1 provider contract is published as the `Platform.Sdk` NuGet package (Apache-2.0). Detailed authoring rules, the integration-test fixture pattern, and the Verified-tier rubric are documented in the repository's [`CONTRIBUTING.md`](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md). A worked-example provider (`examples/Example.Steps.Hello`) demonstrates all four mandatory interfaces on a minimal, dependency-free step; the integration-test fixture is a copyable template for every community provider.
 
 ## 13.10 A worked example: the db-assert.postgres provider
 
@@ -962,9 +972,15 @@ Two design decisions in this stream are worth underlining. First, every step-att
 
 An optional third point: `step-completed` events may also carry a `observation` field — the structured provider observation (e.g. a failed assertion's expected-vs-observed diff) — which renderers use at render time to compute human-readable diffs (Section 14.10). This field is omitted when the step recorded no observation; it is purely structured data, never rendered diff text. Adding this optional field preserves backward compatibility — older renderers ignore it via `[JsonExtensionData]` — and costs the engine only the work of forwarding the observation from the runtime to the event.
 
+### 14.4.1 The v1 event-wire contract freeze and the scenarioId decision
+
+The event-record surface — the top-level event records and all nested value records (`EventEnvelope`, `ScenarioStartedEvent`, `StepStartedEvent`, `StepAttemptEvent`, `StepCompletedEvent`, `ScenarioCompletedEvent`, `ReproducibilityEnvelopeEvent`, `VerdictCounts`, `CapturedVar`, `SubstitutionRef`, `SecretReferenceDigest`, `FixtureDigest`) — is **frozen at v1 for the v1.x engine series**, enforced by a golden-file CI gate (`EventContractFreezeTests`) that asserts every property name, CLR type, and `[JsonPropertyName]` wire key is byte-for-byte identical to the committed golden. Any change to the JSON-Lines wire contract breaks every consumer (terminal renderer, HTML report, JUnit XML, dashboard, Healer agent), so this freeze is non-negotiable.
+
+A deliberate architectural decision is encoded in the golden and pinned independently: the three step events — `StepStartedEvent`, `StepAttemptEvent`, `StepCompletedEvent` — carry `RunId` and `StepId` but **do not** carry `ScenarioId`. The terminal renderer's `(runId, stepId)` cache already disambiguates an aggregated or parallel multi-scenario stream, because each scenario has a distinct `runId`. Re-adding `ScenarioId` to a step event would be a conscious, reviewed change (the golden freeze gate would fail, and the wire contract would increment), not an accidental drift. Designing the event stream to omit this redundant field leaves room for future optimisations and keeps the event payload lean.
+
 ## 14.5 Rendering asynchronous flows: the polling timeline
 
-When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently.
+When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently (S08-G-01).
 
 ```
 Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
@@ -978,7 +994,7 @@ Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
       t= 30.0s   attempt 6   timeout fired
 ```
 
-This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full.
+This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full. As a sibling feature, the captured-variable provenance thread (§14.6, S08-G-02) shows where each value in the scenario originated and was threaded through steps, making cross-step state visible in the same spirit.
 
 In later tiers, once the agentic Healer is available, the same event stream supports a second class of content layered on top: a hypothesis line in which the agent proposes a likely cause from the attempt pattern. The example below shows what a future-tier rendering might look like; nothing in the timeline above changes, and the hypothesis is clearly marked as agent-generated and reviewable.
 
@@ -991,23 +1007,27 @@ In later tiers, once the agentic Healer is available, the same event stream supp
 
 ## 14.6 Cross-step state visibility: the captured-variable thread
 
-A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it.
+A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it (S08-G-02).
+
+The terminal renderer emits a `provenance:` section under each step that shows this lineage. For each captured variable it renders `captured '<name>' <- step '<id>' (<path>)` with an optional `(no match)` marker if the JSONPath or XPath matched nothing. For each substitution it renders either `substituted '{placeholder}' (from step '<id>') -> step '<current>'` for ordinary placeholders or `substituted ${secret:<reference>} (redacted) -> step '<current>'` for secret-derived substitutions, never revealing the secret's value. The section is omitted when a step has no captures or substitutions, keeping straightforward runs uncluttered.
 
 ```
 Scenario  users-e2e
 
   1. create-user             PASS (203ms)
-       captured  newUserId       = "u-8af2-c13e"   (from $.id)
+    provenance:
+      captured 'newUserId' <- step 'create-user' ($.id)
 
   2. expect-billing-event    FAIL (30024ms)
-       substituted  newUserId    = "u-8af2-c13e"   (from step 1)
-       captured     billingAccountId = (none — step failed before capture)
+    provenance:
+      substituted '{newUserId}' (from step 'create-user') -> step 'expect-billing-event'
+      captured 'billingAccountId' <- step 'expect-billing-event' ($.account.id)   (no match)
 
   3. assert-projection       INCONCLUSIVE (skipped)
        reason  depends on billingAccountId from step 2, which was not captured
 ```
 
-The thread above does more than show variables; it shows why step 3 is inconclusive rather than failed. A scenario whose later steps depend on values that earlier steps did not produce is not a scenario whose later steps are broken. Rendering this distinction prevents a single root-cause failure from cascading into a wall of red unrelated to the real defect.
+The thread above does more than show variables; it shows why step 3 is inconclusive rather than failed. A scenario whose later steps depend on values that earlier steps did not produce is not a scenario whose later steps are broken. Rendering this distinction prevents a single root-cause failure from cascading into a wall of red unrelated to the real defect. Secret-derived substitutions are always rendered redacted (reference label only, never the value), preserving the security invariant even in the report (§17).
 
 ## 14.7 The reproducibility envelope
 
@@ -1097,7 +1117,9 @@ The axes compose: a CI job can ask for “tagged regression, owned by payments, 
 
 ## 16.2 Parallelism and the concurrency budget
 
-Independent scenarios can run concurrently, bounded by a concurrency budget the operator sets through `maxParallel`. Parallelism is across scenarios, not within a scenario: the steps of one scenario remain a strict ordered sequence, because their state dependencies require it. The default value of `maxParallel` is **two on local developer hardware** and is hardware-aware: the runner inspects available CPU and memory at startup and reduces the budget if the host appears small. The conservative default matters because each parallel scenario can require its own topology (Section 16.3), and a topology of four to six containers multiplied by an unbounded fan-out would swap a typical 16-GB laptop within seconds. CI runners with more memory raise the budget explicitly through configuration or through the CI sharding interface.
+Scenario parallelism is **opt-in** through the `--parallel <n>` CLI flag (§13.5); when omitted, scenarios run sequentially against one shared topology. Independent scenarios can run concurrently when the flag is supplied, bounded by the supplied concurrency degree. Parallelism is across scenarios, not within a scenario: the steps of one scenario remain a strict ordered sequence, because their state dependencies require it. Each concurrent scenario builds, owns, and disposes **its own isolated Aspire topology** — no shared-state reset or database reset between scenarios is required because each scenario starts with a clean topology and its fresh dependencies. The default concurrency when `--parallel` is supplied is `Math.Max(1, Math.Min(ProcessorCount, 4))` — a conservative cap because containers, not CPU, are the scarce resource: a topology of four to six containers multiplied by an unbounded fan-out would exhaust a typical developer laptop's memory and Docker resource limits within seconds. The deterministic single-render model (events concatenated in declaration order) and complete-all cancellation semantics (every topology disposes, never fail-fast) are preserved across all concurrency levels. Timeout or cancellation of one scenario never cancels siblings; an escaping engine exception is mapped to `EnvironmentError` rather than `Fail` (§12.1), so parallelism never manufactures defects from infrastructure faults.
+
+A note on the event stream schema: step events do not carry a `scenarioId` field. Each scenario receives a distinct `runId`, so the reporting layer's `(runId, stepId)` cache key already disambiguates steps across an aggregated multi-scenario stream. The v1.x schema is frozen (§8.3); this decision will be recorded formally in the T2/T3 schema-evolution ADR.
 
 ## 16.3 Isolation between scenarios
 
@@ -1149,14 +1171,14 @@ The `Vars.Secrets.Resolve` call is intercepted by the reporting layer's redactio
 
 ## 17.2 Pluggable secret sources
 
-The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. Four sources are recognised, mapped to the platform's tiers.
+The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future tiers.
 
-| Source prefix | Resolves from | Tier |
-|---|---|---|
-| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie. |
-| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie. |
-| vault | HashiCorp Vault, addressed by path, authenticated by the runner's own identity. The MVP supports the developer's own Vault instance (token or AppRole) and an enterprise Vault deployment in the cloud-tier topologies. | Indie+ (developer's Vault); Team and Enterprise for managed Vault integration. |
-| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. Deferred past the MVP; the prefix is reserved. | Team and Enterprise. |
+| Source prefix | Resolves from | Tier | Status |
+|---|---|---|---|
+| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie | MVP |
+| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Indie | MVP |
+| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie | Deferred |
+| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Team and Enterprise | Deferred |
 
 Because the source is chosen by configuration and only the logical path appears in the file, a test authored against an environment variable locally runs unchanged against Vault in CI. The seam between “which secret” and “where secrets come from” is exactly the seam that lets one test file move between environments without edits.
 

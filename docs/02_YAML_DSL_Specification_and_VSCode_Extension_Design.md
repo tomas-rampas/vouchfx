@@ -89,7 +89,9 @@ The `owner` and `tags` fields are not decoration: the test runner's selection la
 
 ## 3.2 The environment section
 
-The environment section names the infrastructure the test depends on. Each entry maps a logical name — the name the steps will use — to a resource type. The orchestration layer reads this section to decide which containers to provision and in what order, and it is also the information the VSCode extension cross-references to know which logical names are valid elsewhere in the file. Declaring a dependency here is what makes `orders-db` a resolvable target in a later database assertion.
+The environment section names the infrastructure the test depends on. Each entry maps a logical name — the name the steps will use — to a resource specification. The orchestration layer reads this section to decide which containers to provision and in what order, and it is also the information the VSCode extension cross-references to know which logical names are valid elsewhere in the file. Declaring a dependency here is what makes `orders-db` a resolvable target in a later database assertion.
+
+Both services and dependencies must have a mapping (YAML `{ … }`) value; a bare scalar (e.g. an unquoted service name or type) is malformed and rejected by the parser at load time with a line/column error.
 
 Services are the system under test: the customer's own code that the suite exercises. Each service is brought to the topology in one of two forms. The **image** form references a container image — the customer's CI has already built and pushed it — and is the recommended default for speed and isolation. The **project** form references a csproj path — the engine builds and runs the project as part of suite startup — and is the convenience for teams iterating on a service locally. Use exactly one of the two fields per service. Dependencies, by contrast, are managed resources Aspire knows how to provision (databases, brokers, caches): they declare a type and the engine selects the appropriate image.
 
@@ -566,7 +568,7 @@ environment:
   dependencies:
     orders-db:
       type: postgres
-      connectionString: "${secret:vault/orders-db/conn}"
+      connectionString: "${secret:env/ORDERS_DB_CONN}"
 
 steps:
   - id: call-protected-endpoint
@@ -575,10 +577,14 @@ steps:
     method: GET
     path: "{basePath}/admin/report"
     headers:
-      Authorization: "Bearer ${secret:env/ADMIN_TOKEN}"
+      Authorization: "Bearer ${secret:vault/secrets/api-keys#admin-token}"
 ```
 
-The source prefix — `env` for an environment variable, `file` for a git-ignored local file, `vault` for HashiCorp Vault, `cloud` for Azure Key Vault or AWS Secrets Manager — is chosen by runner configuration, not by the file, so the same test resolves from an environment variable locally and from Vault in CI without any edit. The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
+The source prefix — `env` for an environment variable, `vault` for HashiCorp Vault KV v2, `file` for a git-ignored local file (deferred), and `cloud` for Azure Key Vault or AWS Secrets Manager (deferred) — is chosen by runner configuration, not by the file, so the same test resolves from an environment variable locally and from Vault in CI without any edit.
+
+**The `vault` source** addresses a HashiCorp Vault KV v2 store with the syntax `${secret:vault/<kvPath>#<field>}`, where `<kvPath>` is the logical KV path (e.g. `secrets/api-keys`) and `<field>` is the key within that path's data object to return (e.g. `admin-token`). The KV path and field are both mandatory. Configuration is via three optional environment variables: `VAULT_ADDR` (the Vault server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (the access token), and `VAULT_KV_MOUNT` (the KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs or reports.
+
+The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. Captured and substituted variables are traceable end-to-end in the terminal report's provenance section, with secret-derived values always shown redacted (reference only, never the literal value). The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
 
 # 7. Verification Modes and Asynchronous Assertions
 
@@ -625,6 +631,10 @@ The schema is organised so that the editor can give precise, context-aware sugge
 Crucially, the unified schema is assembled rather than authored. The platform's compiler walks the registered providers at startup, collects each provider's JSON Schema fragment, and merges those fragments into the discriminated union. This is how a new provider becomes visible to the editor without any change to the editor itself: the contributor adds the provider, its fragment joins the union, and the next time the editor fetches the schema the new step kind appears in autocomplete with its provider-specific field set. The mechanism is described in detail in the Technical Architecture & Engineering Blueprint; the relevant point for DSL authors is that the schema they validate against is always exactly the schema the installed engine will execute.
 
 Each provider's schema fragment contributes the fields specific to that step type. For example, the `mq-publish.kafka` provider contributes fields for `target`, `topic`, `key`, `payload`, `headers`, and the optional `avro` block; the `mq-expect.kafka` provider contributes `target`, `topic`, `match`, and the optional `avro` block. Dependencies in the environment section may also declare provider-specific flags — for example, a kafka dependency's `schemaRegistry: true` flag is a Kafka-specific extra that signals the provisioning of a Confluent Schema Registry sidecar.
+
+### The v1 schema is frozen
+
+The composed v1 JSON Schema — the root language schema plus the fragments from all six Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {
@@ -784,10 +794,10 @@ The extension lets the author choose where a run executes — against the local 
 The `vouchfx` command-line tool discovers and runs `.e2e.yaml` test scenarios from the shell, optionally filtering them by metadata and file changes. It discovers all scenarios under a given path (recursively), applies the optional selection filters, compiles and executes them against an orchestrated topology, and returns an exit code reflecting the overall verdict.
 
 ```bash
-vouchfx run [<path>] [--tag <tag>...] [--owner <owner>...] [--path <glob>] [--changed-since <ref>]
+vouchfx run [<path>] [--tag <tag>...] [--owner <owner>...] [--path <glob>] [--changed-since <ref>] [--parallel <n>] [--watch]
 ```
 
-The positional `<path>` argument specifies the directory to search for scenarios (defaults to `.` if omitted). All selection options are optional and composable — a scenario is selected if it matches **all** supplied criteria (AND across dimensions):
+The positional `<path>` argument specifies the directory to search for scenarios (defaults to `.` if omitted). All selection and execution options are optional and composable — a scenario is selected if it matches **all** supplied criteria (AND across dimensions):
 
 | Option | Meaning |
 |---|---|
@@ -795,6 +805,8 @@ The positional `<path>` argument specifies the directory to search for scenarios
 | `--owner <owner>` | Repeatable. Selects scenarios whose `metadata.owner` equals any of the supplied owners (OR within the dimension). |
 | `--path <glob>` | Selects scenarios whose absolute file path matches the supplied glob pattern. Supports `*` (matches within a path segment), `**` (matches across segments), and `?` (single character). A pattern with no wildcard characters is matched as a substring. |
 | `--changed-since <ref>` | Selects only scenarios whose file has changed since the given git reference (as determined by `git diff <ref>...HEAD` plus the dirty working tree). Requires a git repository. |
+| `--parallel <n>` | Run up to N scenarios concurrently, each owning its own container topology. Opt-in parallelism: each concurrent scenario multiplies container cost, so omitting this flag runs scenarios sequentially against one shared topology (the default). Must be 1 or greater. Cannot be combined with `--watch`. |
+| `--watch` | Run once, then watch the `.e2e.yaml` file and re-run automatically on save. Re-uses the already-built container topology while the `environment` block is unchanged; rebuilds the topology only when the environment changes. Useful for fast local iteration on a single file. Press Ctrl-C to stop. Cannot be combined with `--parallel`. |
 
 Exit codes follow the verdict taxonomy:
 
@@ -824,6 +836,12 @@ vouchfx run --changed-since HEAD~1
 
 # Combine multiple filters
 vouchfx run ./tests --tag integration --owner team-a --changed-since main
+
+# Watch a single file for changes and re-run automatically
+vouchfx run ./tests/users.e2e.yaml --watch
+
+# Run scenarios in parallel (two at a time, each with its own topology)
+vouchfx run --parallel 2
 ```
 
 # 14. Result Reporting from the Author's Perspective
