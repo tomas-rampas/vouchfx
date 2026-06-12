@@ -784,10 +784,10 @@ The extension lets the author choose where a run executes — against the local 
 The `vouchfx` command-line tool discovers and runs `.e2e.yaml` test scenarios from the shell, optionally filtering them by metadata and file changes. It discovers all scenarios under a given path (recursively), applies the optional selection filters, compiles and executes them against an orchestrated topology, and returns an exit code reflecting the overall verdict.
 
 ```bash
-vouchfx run [<path>] [--tag <tag>...] [--owner <owner>...] [--path <glob>] [--changed-since <ref>]
+vouchfx run [<path>] [--tag <tag>...] [--owner <owner>...] [--path <glob>] [--changed-since <ref>] [--parallel <n>]
 ```
 
-The positional `<path>` argument specifies the directory to search for scenarios (defaults to `.` if omitted). All selection options are optional and composable — a scenario is selected if it matches **all** supplied criteria (AND across dimensions):
+The positional `<path>` argument specifies the directory to search for scenarios (defaults to `.` if omitted). All selection and execution options are optional and composable — a scenario is selected if it matches **all** supplied criteria (AND across dimensions):
 
 | Option | Meaning |
 |---|---|
@@ -795,6 +795,7 @@ The positional `<path>` argument specifies the directory to search for scenarios
 | `--owner <owner>` | Repeatable. Selects scenarios whose `metadata.owner` equals any of the supplied owners (OR within the dimension). |
 | `--path <glob>` | Selects scenarios whose absolute file path matches the supplied glob pattern. Supports `*` (matches within a path segment), `**` (matches across segments), and `?` (single character). A pattern with no wildcard characters is matched as a substring. |
 | `--changed-since <ref>` | Selects only scenarios whose file has changed since the given git reference (as determined by `git diff <ref>...HEAD` plus the dirty working tree). Requires a git repository. |
+| `--parallel <n>` | Run up to N scenarios concurrently, each owning its own container topology. Opt-in parallelism: each concurrent scenario multiplies container cost, so omitting this flag runs scenarios sequentially against one shared topology (the default). Must be 1 or greater. |
 
 Exit codes follow the verdict taxonomy:
 

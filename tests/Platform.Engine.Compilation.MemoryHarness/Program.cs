@@ -80,6 +80,24 @@ var result = mode == MemoryProbe.ClosureMode
     ? await MemoryProbe.RunClosureAsync(iterations, thresholdBytes).ConfigureAwait(false)
     : await MemoryProbe.RunAsync(iterations, thresholdBytes).ConfigureAwait(false);
 
+// ── Concurrent-ALC-churn gate (S08-T1) ─────────────────────────────────────────
+// In closure mode (the M1 CI gate) also prove that the NEW scenario-parallelism path does not
+// leak: drive the real ParallelSuiteRunner.RunParallelCoreAsync with a fake core that creates +
+// loads + unloads a collectible ALC per scenario, CONCURRENTLY, and assert every per-scenario ALC
+// is reclaimed.  No Docker (the fake core never starts a topology).  A leak here fails the gate.
+ConcurrentChurnMeasurement? churn = null;
+if (mode == MemoryProbe.ClosureMode)
+{
+    churn = await ConcurrentAlcChurnProbe.RunAsync(scenarios: 64, maxConcurrency: 4)
+        .ConfigureAwait(false);
+
+    await Console.Error.WriteLineAsync(
+        $"[MemoryHarness] Concurrent-ALC-churn: scenarios={churn.Scenarios}, " +
+        $"maxConcurrency={churn.MaxConcurrency}, alcsCreated={churn.AlcsCreated}, " +
+        $"alcsReclaimed={churn.AlcsReclaimed}, allReclaimed={churn.AllReclaimed}.")
+        .ConfigureAwait(false);
+}
+
 // ── Stdout: machine-readable JSON (pure — no other writes to stdout) ──────────
 var json = JsonSerializer.Serialize(result, jsonOptions);
 Console.WriteLine(json);
@@ -109,4 +127,7 @@ if (result.SingletonsReset.Count > 0)
 }
 
 // ── Exit code ─────────────────────────────────────────────────────────────────
-return result.Passed && result.ContextReclaimed ? 0 : 1;
+// The run passes only if the heap/ALC measurement passed AND (in closure mode) the new
+// concurrent-ALC-churn case reclaimed every per-scenario collectible context.
+var concurrentOk = churn is null || churn.AllReclaimed;
+return result.Passed && result.ContextReclaimed && concurrentOk ? 0 : 1;

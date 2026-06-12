@@ -126,6 +126,9 @@ vouchfx run --changed-since main
 
 # Combine filters (all must match — AND across dimensions)
 vouchfx run ./tests --tag integration --owner team-a --changed-since HEAD~1
+
+# Run scenarios in parallel (each owning its own container topology)
+vouchfx run --parallel 2
 ```
 
 The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment

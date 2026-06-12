@@ -23,6 +23,13 @@
       context — the closure probe must exercise the full provider graph (§5).
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj" />
+    <!--
+      S08-T1: reference the Runtime engine so the concurrent-ALC-churn case can drive the
+      internal ParallelSuiteRunner.RunParallelCoreAsync (via InternalsVisibleTo) with a fake
+      core that loads + unloads a REAL collectible ALC per scenario.  The fake core never
+      starts a topology, so this adds NO Aspire/Docker dependency to the harness run.
+    -->
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj" />
   </ItemGroup>
 
   <ItemGroup Label="Canonical clients (§5.7) — closure probe forces their static initialisers">

@@ -59,10 +59,12 @@ internal static class RunCommand
         var ownerOption = BuildOwnerOption();
         var pathOption = BuildPathOption();
         var changedSinceOption = BuildChangedSinceOption();
+        var parallelOption = BuildParallelOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
         command.Add(changedSinceOption);
+        command.Add(parallelOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -70,7 +72,8 @@ internal static class RunCommand
         {
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
-            return ExecuteAsync(path, criteria, Console.Out, cancellationToken);
+            var parallel = parseResult.GetValue(parallelOption);
+            return ExecuteAsync(path, criteria, parallel, Console.Out, cancellationToken);
         });
 
         return command;
@@ -108,6 +111,25 @@ internal static class RunCommand
         Description =
             "Select only scenarios whose file changed since this git ref (committed diff vs "
             + "the ref plus the dirty working tree). Requires a git repository.",
+    };
+
+    /// <summary>
+    /// The <c>--parallel</c> option: run up to N scenarios concurrently, each owning its own
+    /// topology (S08-T1).  When absent, scenarios run sequentially against ONE shared topology
+    /// (the default — explicit opt-in keeps the container cost a deliberate choice).
+    /// </summary>
+    /// <remarks>
+    /// Parallelism is an explicit opt-in because each concurrent scenario stands up its OWN
+    /// container topology: running N scenarios at <c>--parallel N</c> means up to N times the
+    /// containers (and their pull / start cost) at once.  A value &lt; 1 is a usage error.
+    /// </remarks>
+    internal static Option<int?> BuildParallelOption() => new("--parallel")
+    {
+        Description =
+            "Run up to N scenarios concurrently, each owning its OWN container topology (S08). "
+            + "Must be 1 or greater. CAVEAT: each concurrent scenario stands up its own topology, "
+            + "so --parallel N uses up to N times the containers at once. Omit to run sequentially "
+            + "against a single shared topology (the default).",
     };
 
     /// <summary>
@@ -158,21 +180,39 @@ internal static class RunCommand
     /// <param name="path">The discovery root (already defaulted to <c>"."</c> by the parser).</param>
     /// <param name="output">The writer that receives diagnostics + the rendered report.</param>
     /// <param name="cancellationToken">Propagated to the runner.</param>
+    /// <param name="parallel">
+    /// The <c>--parallel</c> value: when non-<see langword="null"/>, run up to this many
+    /// scenarios concurrently (each owning its own topology) via
+    /// <see cref="ParallelSuiteRunner.RunParallelAsync"/>; when <see langword="null"/>, run
+    /// sequentially against one shared topology via <see cref="ScenarioRunner.RunSuiteAsync"/>.
+    /// A value &lt; 1 is a usage error (<see cref="ExitCodes.UsageError"/>).
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
-    /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/>, which starts an Aspire
-    /// topology and therefore needs Docker — so this method is NOT exercised by the unit
-    /// tests.  Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
+    /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
+    /// <see cref="ParallelSuiteRunner.RunParallelAsync"/> when <paramref name="parallel"/> is
+    /// supplied), which starts an Aspire topology and therefore needs Docker — so this method is
+    /// NOT exercised by the unit tests.  Its Docker-free building blocks
+    /// (<see cref="ScenarioDiscovery.Discover"/>,
     /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
-    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>) are each tested
-    /// in isolation.
+    /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, and the
+    /// <c>--parallel</c> arg-parse) are each tested in isolation.
     /// </remarks>
     internal static async Task<int> ExecuteAsync(
         string path,
         SelectionCriteria criteria,
+        int? parallel,
         TextWriter output,
         CancellationToken cancellationToken)
     {
+        // Validate --parallel up front: a value < 1 is a usage error (exit 2), not a crash.
+        // (System.CommandLine binds the value; the >= 1 contract is the engine's, enforced here.)
+        if (parallel is { } degree && degree < 1)
+        {
+            await output.WriteLineAsync("--parallel must be 1 or greater.").ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
         IReadOnlyList<DiscoveredScenario> discovered;
@@ -256,15 +296,30 @@ internal static class RunCommand
             // it explicitly avoids the GetEntryAssembly fallback (CLAUDE.md §"Aspire").
             var appHostAssemblyName = Assembly.GetExecutingAssembly().GetName().Name;
 
-            SuiteResult result = await ScenarioRunner.RunSuiteAsync(
-                asts,
-                names,
-                yamlTexts,
-                ProviderRegistryFactory.CoreProviderAssemblies(),
-                appHostAssemblyName,
-                output,
-                seedBaseDirectory: null,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            // --parallel N → run scenarios concurrently, each owning its OWN topology
+            // (ParallelSuiteRunner, S08). Absent → run sequentially against ONE shared topology
+            // (ScenarioRunner.RunSuiteAsync). Parallelism is an explicit opt-in because it
+            // multiplies the concurrent container cost (one topology per in-flight scenario).
+            SuiteResult result = parallel is { } parallelDegree
+                ? await ParallelSuiteRunner.RunParallelAsync(
+                    asts,
+                    names,
+                    yamlTexts,
+                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    appHostAssemblyName,
+                    output,
+                    maxConcurrency: parallelDegree,
+                    seedBaseDirectory: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await ScenarioRunner.RunSuiteAsync(
+                    asts,
+                    names,
+                    yamlTexts,
+                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    appHostAssemblyName,
+                    output,
+                    seedBaseDirectory: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
         }

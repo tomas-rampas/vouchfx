@@ -1271,6 +1271,14 @@ public static class ScenarioRunner
                 ? renderer.RenderDiff(observation)
                 : null;
 
+    /// <summary>
+    /// Exposes <see cref="BuildDiffLookup"/> to <see cref="ParallelSuiteRunner"/> (same assembly)
+    /// so the parallel runner builds the identical render-time diff-lookup closure this runner
+    /// uses — the two cannot drift in how a failed step's expected-vs-observed diff is resolved.
+    /// </summary>
+    internal static Func<string, JsonElement, string?> BuildParallelDiffLookup(
+        StepKindRegistry registry) => BuildDiffLookup(registry);
+
     // ── Verdict aggregation ────────────────────────────────────────────────────
 
     /// <summary>
