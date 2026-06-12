@@ -31,13 +31,13 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 - **Acceptance:**
   - The schema is tagged `v1`, composed from all six providers' fragments, and frozen against change. ✓
 
-#### S08-F-02 · Freeze the v1 provider contract (with extension path)
+#### S08-F-02 · Freeze the v1 provider contract (with extension path) ✓
 - **Owner:** TL · **Estimate:** 1.5d · **Depends on:** S05-F-01 · **Spec:** BP §13.8.1; MVP §8.3, §10 (engine-breaks-contract risk)
 - Freeze the provider interfaces for the v1.x engine series; new optional capabilities arrive via
   extension interfaces (`IStepProviderV1_1`), never by mutating existing ones. This is the contract-freeze
   gate reviewed before the SDK is published.
 - **Acceptance:**
-  - The v1 contract is tagged and documented as frozen; the extension-interface mechanism is demonstrated.
+  - The v1 contract is tagged and documented as frozen; the extension-interface mechanism is demonstrated. ✓
 
 ### Workstream F — Publish the Provider SDK
 
