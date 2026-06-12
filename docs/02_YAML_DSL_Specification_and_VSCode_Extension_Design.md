@@ -584,7 +584,7 @@ The source prefix — `env` for an environment variable, `vault` for HashiCorp V
 
 **The `vault` source** addresses a HashiCorp Vault KV v2 store with the syntax `${secret:vault/<kvPath>#<field>}`, where `<kvPath>` is the logical KV path (e.g. `secrets/api-keys`) and `<field>` is the key within that path's data object to return (e.g. `admin-token`). The KV path and field are both mandatory. Configuration is via three optional environment variables: `VAULT_ADDR` (the Vault server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (the access token), and `VAULT_KV_MOUNT` (the KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs or reports.
 
-The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
+The reporting layer redacts any value that originated from a secret reference, showing the reference placeholder in its place, so a secret cannot leak through a report or a captured-variable thread. Captured and substituted variables are traceable end-to-end in the terminal report's provenance section, with secret-derived values always shown redacted (reference only, never the literal value). The resolution mechanism and its tier mapping are specified in Section 17 of the companion Technical Architecture & Engineering Blueprint.
 
 # 7. Verification Modes and Asynchronous Assertions
 

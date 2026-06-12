@@ -974,7 +974,7 @@ A deliberate architectural decision is encoded in the golden and pinned independ
 
 ## 14.5 Rendering asynchronous flows: the polling timeline
 
-When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently.
+When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently (S08-G-01).
 
 ```
 Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
@@ -988,7 +988,7 @@ Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
       t= 30.0s   attempt 6   timeout fired
 ```
 
-This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full.
+This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full. As a sibling feature, the captured-variable provenance thread (§14.6, S08-G-02) shows where each value in the scenario originated and was threaded through steps, making cross-step state visible in the same spirit.
 
 In later tiers, once the agentic Healer is available, the same event stream supports a second class of content layered on top: a hypothesis line in which the agent proposes a likely cause from the attempt pattern. The example below shows what a future-tier rendering might look like; nothing in the timeline above changes, and the hypothesis is clearly marked as agent-generated and reviewable.
 
@@ -1001,23 +1001,27 @@ In later tiers, once the agentic Healer is available, the same event stream supp
 
 ## 14.6 Cross-step state visibility: the captured-variable thread
 
-A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it.
+A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it (S08-G-02).
+
+The terminal renderer emits a `provenance:` section under each step that shows this lineage. For each captured variable it renders `captured '<name>' <- step '<id>' (<path>)` with an optional `(no match)` marker if the JSONPath or XPath matched nothing. For each substitution it renders either `substituted '{placeholder}' (from step '<id>') -> step '<current>'` for ordinary placeholders or `substituted ${secret:<reference>} (redacted) -> step '<current>'` for secret-derived substitutions, never revealing the secret's value. The section is omitted when a step has no captures or substitutions, keeping straightforward runs uncluttered.
 
 ```
 Scenario  users-e2e
 
   1. create-user             PASS (203ms)
-       captured  newUserId       = "u-8af2-c13e"   (from $.id)
+    provenance:
+      captured 'newUserId' <- step 'create-user' ($.id)
 
   2. expect-billing-event    FAIL (30024ms)
-       substituted  newUserId    = "u-8af2-c13e"   (from step 1)
-       captured     billingAccountId = (none — step failed before capture)
+    provenance:
+      substituted '{newUserId}' (from step 'create-user') -> step 'expect-billing-event'
+      captured 'billingAccountId' <- step 'expect-billing-event' ($.account.id)   (no match)
 
   3. assert-projection       INCONCLUSIVE (skipped)
        reason  depends on billingAccountId from step 2, which was not captured
 ```
 
-The thread above does more than show variables; it shows why step 3 is inconclusive rather than failed. A scenario whose later steps depend on values that earlier steps did not produce is not a scenario whose later steps are broken. Rendering this distinction prevents a single root-cause failure from cascading into a wall of red unrelated to the real defect.
+The thread above does more than show variables; it shows why step 3 is inconclusive rather than failed. A scenario whose later steps depend on values that earlier steps did not produce is not a scenario whose later steps are broken. Rendering this distinction prevents a single root-cause failure from cascading into a wall of red unrelated to the real defect. Secret-derived substitutions are always rendered redacted (reference label only, never the value), preserving the security invariant even in the report (§17).
 
 ## 14.7 The reproducibility envelope
 

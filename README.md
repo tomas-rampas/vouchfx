@@ -28,7 +28,7 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. A headless CLI runner
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. A headless CLI runner
 > discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
 > Still to come: VSCode extension/LSP, scenario-level parallelism, and community provider tiers — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,

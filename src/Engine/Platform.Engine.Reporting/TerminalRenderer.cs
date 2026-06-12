@@ -229,6 +229,14 @@ public sealed class TerminalRenderer
                     // render time — the stream itself only ever carries the structured
                     // observation, never rendered text (§14).
                     RenderStepDiff(envelope, output, stepId, verdict, stepKinds, diffLookup);
+
+                    // S08-G-02 (T9): render the captured-variable provenance thread for
+                    // this step — every value it captured (name ← this step, JSONPath)
+                    // and every {placeholder}/${secret:…} substituted INTO it (with the
+                    // originating step id).  Rendered ONLY from the existing Captured /
+                    // Substitutions fields; secret-derived substitutions render a
+                    // redaction marker and never a value (§17).
+                    RenderProvenanceThread(envelope, output, stepId);
                     break;
                 }
 
@@ -338,6 +346,122 @@ public sealed class TerminalRenderer
             }
 
             output.WriteLine("    " + diffLine);
+        }
+    }
+
+    /// <summary>
+    /// Renders the captured-variable provenance thread for a <c>step-completed</c>
+    /// event (S08-G-02, T9, docs/01 §14): the values this step <em>captured</em> and
+    /// the <c>{placeholder}</c> / <c>${secret:…}</c> references substituted <em>into</em>
+    /// it, so an author can trace a value end-to-end across the scenario.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rendered exclusively from the existing <c>captured</c> and <c>substitutions</c>
+    /// arrays on the step-completed event (frozen by T3); it adds no field to the event
+    /// contract.  The section is drawn only when the step has at least one capture or
+    /// substitution, so a plain step run produces no provenance noise.
+    /// </para>
+    /// <para>
+    /// <strong>§17 secret-safety.</strong>  A substitution whose <c>secretDerived</c>
+    /// flag is <see langword="true"/> renders as a redaction marker — its
+    /// <c>placeholder</c> field carries the non-sensitive secret <em>reference</em>
+    /// label (e.g. <c>env/API_TOKEN</c>), never a value, and the value is never present
+    /// in the stream to begin with.  The rendering makes the secret-derived provenance
+    /// visible WITHOUT the value.  Captured variable names and JSONPaths are metadata
+    /// (safe to show); captured values are not in the stream and are never invented.
+    /// </para>
+    /// <para>
+    /// The walk is a stateless function of THIS event's own fields, so an aggregated /
+    /// parallel multi-scenario stream (each scenario a distinct <c>runId</c>, T1) cannot
+    /// cross-contaminate: a step's captures and substitutions are read from the step's
+    /// own event, and the origin step id printed for a substitution is the one the
+    /// compiler recorded on that same event — no shared per-var state is keyed across
+    /// runs.
+    /// </para>
+    /// </remarks>
+    private static void RenderProvenanceThread(EventEnvelope envelope, TextWriter output, string stepId)
+    {
+        var captured = ReadArray(envelope, "captured");
+        var substitutions = ReadArray(envelope, "substitutions");
+
+        if (captured.Length == 0 && substitutions.Length == 0)
+        {
+            // No provenance to show for this step — emit nothing (no empty section).
+            return;
+        }
+
+        output.WriteLine("    provenance:");
+
+        // Captures: each value this step extracted, named and traced to its JSONPath.
+        // "captured 'orderId' <- step 'create-order' ($.id)".
+        foreach (var capture in captured)
+        {
+            if (capture.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var name = GetStrFromObject(capture, "name") ?? "(unknown)";
+            var path = GetStrFromObject(capture, "path") ?? "(unknown)";
+            var matched = GetBoolFromObject(capture, "matched");
+
+            // A capture whose JSONPath matched nothing is called out explicitly so the
+            // reader can see why a downstream substitution had no value to thread.
+            var matchSuffix = matched ? string.Empty : "   (no match)";
+
+            output.WriteLine(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "      captured '{0}' <- step '{1}' ({2}){3}",
+                    name,
+                    stepId,
+                    path,
+                    matchSuffix));
+        }
+
+        // Substitutions: each {placeholder} / ${secret:…} threaded INTO this step.
+        foreach (var substitution in substitutions)
+        {
+            if (substitution.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var placeholder = GetStrFromObject(substitution, "placeholder") ?? "(unknown)";
+            var secretDerived = GetBoolFromObject(substitution, "secretDerived");
+            var originStepId = GetStrFromObject(substitution, "originStepId");
+
+            if (secretDerived)
+            {
+                // §17: the placeholder field carries the non-sensitive secret REFERENCE
+                // label (e.g. env/API_TOKEN); render it with a redaction marker and never
+                // a value.  The value is not in the stream — the marker makes the
+                // secret-derived provenance visible WITHOUT it.
+                output.WriteLine(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "      substituted ${{secret:{0}}} (redacted) -> step '{1}'",
+                        placeholder,
+                        stepId));
+            }
+            else
+            {
+                // A plain placeholder: trace it back to the step that first captured it
+                // when that origin is known, else note it as untraced (e.g. it came from
+                // the variables block rather than a prior capture).
+                var origin = string.IsNullOrEmpty(originStepId)
+                    ? "(variables/untraced)"
+                    : string.Format(CultureInfo.InvariantCulture, "step '{0}'", originStepId);
+
+                output.WriteLine(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "      substituted '{{{0}}}' (from {1}) -> step '{2}'",
+                        placeholder,
+                        origin,
+                        stepId));
+            }
         }
     }
 
@@ -559,5 +683,61 @@ public sealed class TerminalRenderer
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Returns the elements of the JSON array stored under <paramref name="key"/> in
+    /// <see cref="EventEnvelope.Extra"/>, or an empty list when the key is absent, not
+    /// an array, or <see langword="null"/>.  Defensive by design — never throws.
+    /// </summary>
+    /// <remarks>
+    /// Used to read the <c>captured</c> / <c>substitutions</c> provenance arrays that
+    /// ride on a <c>step-completed</c> event as extension data (S08-G-02).  Each
+    /// element is a <see cref="JsonElement"/> of kind <see cref="JsonValueKind.Object"/>
+    /// in practice; callers re-check the kind before reading sub-properties.
+    /// </remarks>
+    private static JsonElement[] ReadArray(EventEnvelope envelope, string key)
+    {
+        if (envelope.Extra is not null
+            && envelope.Extra.TryGetValue(key, out var element)
+            && element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().ToArray();
+        }
+
+        return Array.Empty<JsonElement>();
+    }
+
+    /// <summary>
+    /// Reads a string sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="null"/> if the
+    /// property is absent or not a JSON string.
+    /// </summary>
+    private static string? GetStrFromObject(JsonElement obj, string propertyName)
+    {
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind == JsonValueKind.String)
+        {
+            return prop.GetString();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads a boolean sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="false"/> if the
+    /// property is absent or not a JSON boolean (so an omitted <c>secretDerived</c> /
+    /// <c>matched</c> defaults to <see langword="false"/>).
+    /// </summary>
+    private static bool GetBoolFromObject(JsonElement obj, string propertyName)
+    {
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return prop.GetBoolean();
+        }
+
+        return false;
     }
 }

@@ -82,12 +82,12 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 - **Acceptance:**
   - A RETRY step renders a legible attempt-by-attempt timeline (timing + per-attempt outcome). ✓
 
-#### S08-G-02 · Captured-variable thread renderer
+#### S08-G-02 · Captured-variable thread renderer ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S04-G-01 · **Spec:** BP §14; MVP §8.3 (captured-variable thread), §2.5
 - Render the captured-variable thread showing where each value in a scenario originated; secret-derived
   values render redacted.
 - **Acceptance:**
-  - The thread shows provenance for every captured/substituted value; no secret value is shown.
+  - The thread shows provenance for every captured/substituted value; no secret value is shown. ✓
 
 ### Workstream C — Authoring tooling
 
