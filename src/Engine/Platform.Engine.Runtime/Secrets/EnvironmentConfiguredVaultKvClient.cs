@@ -34,6 +34,17 @@ namespace Platform.Engine.Runtime.Secrets;
 /// </remarks>
 internal sealed class EnvironmentConfiguredVaultKvClient : IVaultKvClient, IDisposable
 {
+    /// <summary>
+    /// Bounded per-request timeout for the Vault read (security S2).  Without an
+    /// explicit bound, <see cref="HttpClient"/> defaults to 100 s, so a hung or
+    /// black-holed Vault would stall the step for that whole window before the read
+    /// fails.  15 s is generous for a single KV v2 GET on a healthy server yet fails
+    /// fast against an unreachable one; the timeout surfaces as a
+    /// <see cref="Platform.Engine.Abstractions.Secrets.SecretResolutionException"/>
+    /// (EnvironmentError, §12.1) from <see cref="HttpVaultKvClient"/>.
+    /// </summary>
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+
     private readonly object _gate = new();
     private HttpClient? _httpClient;
     private HttpVaultKvClient? _inner;
@@ -61,7 +72,9 @@ internal sealed class EnvironmentConfiguredVaultKvClient : IVaultKvClient, IDisp
                 throw new SecretResolutionException("vault", string.Empty, error!);
             }
 
-            _httpClient = new HttpClient();
+            // Bound the per-request time (security S2): a hung/black-holed Vault must
+            // fail the step fast rather than stall it for HttpClient's 100 s default.
+            _httpClient = new HttpClient { Timeout = RequestTimeout };
             _inner = new HttpVaultKvClient(_httpClient, config!);
             return _inner;
         }

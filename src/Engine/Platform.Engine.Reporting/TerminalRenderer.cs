@@ -400,11 +400,18 @@ public sealed class TerminalRenderer
     /// <remarks>
     /// The observation is provider-supplied structured metadata (e.g.
     /// <c>{"matched":0}</c> or a diff) and is metadata-only by construction (§17),
-    /// so it carries no captured or secret value.  This summary is intentionally
-    /// terse — it surfaces a scalar observation verbatim and an object/array
-    /// observation as a brief shape hint — leaving the full expected-vs-observed
-    /// diff to the <c>step-completed</c> diff renderer.  A leading separator is
-    /// included so the caller can concatenate the result directly.
+    /// so it carries no captured or secret value.  Even so, the secret-safety
+    /// invariant here is kept <em>total</em>: nothing from the observation is ever
+    /// rendered verbatim.  An object/array is summarised by its shape (its keys or
+    /// length), and a SCALAR observation is summarised by its JSON value-kind
+    /// (<c>&lt;string&gt;</c> / <c>&lt;number&gt;</c> / <c>&lt;bool&gt;</c>) rather
+    /// than its literal value.  No Core provider emits a bare-scalar observation
+    /// today, but <c>StepAttemptEvent.Observation</c> advertises "raw response" as
+    /// legitimate, so a future provider could place a sensitive scalar there; a
+    /// shape hint ensures the polling timeline never prints that value.  The full
+    /// expected-vs-observed diff is left to the <c>step-completed</c> diff renderer.
+    /// A leading separator is included so the caller can concatenate the result
+    /// directly.
     /// </remarks>
     private static string SummariseObservation(EventEnvelope envelope)
     {
@@ -417,12 +424,13 @@ public sealed class TerminalRenderer
 
         var summary = observation.ValueKind switch
         {
-            // Scalars are surfaced verbatim — these are provider metadata
-            // (e.g. a matched count) and never a captured/secret value.
-            JsonValueKind.String => observation.GetString() ?? string.Empty,
-            JsonValueKind.Number => observation.GetRawText(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
+            // Scalars are rendered as a SHAPE HINT (their JSON value-kind), never
+            // verbatim: the keys-only secret-safety invariant is total, so a future
+            // provider that puts a sensitive scalar in the observation cannot leak it
+            // onto the timeline.  The full diff (if any) renders under step-completed.
+            JsonValueKind.String => "<string>",
+            JsonValueKind.Number => "<number>",
+            JsonValueKind.True or JsonValueKind.False => "<bool>",
 
             // Objects and arrays get a brief shape hint rather than their full
             // contents; the full diff is rendered under the step-completed line.

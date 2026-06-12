@@ -10,7 +10,11 @@
 // Strategy mirrors TerminalRendererDiffTests: build an event-line buffer from
 // typed payload records via EventStreamJson.ToLine<T>, render to a StringWriter,
 // and assert on the textual output.  The renderer is single-pass over an ordered
-// stream and keys any per-step state by (runId, stepId), so the input order here
+// stream; the attempt-timeline rendering itself is STATELESS — each timeline line
+// is produced solely from its own step-attempt event's fields — which is exactly
+// why interleaved attempts from different runs never cross-contaminate (the only
+// per-step state the renderer keeps is the diff-lookup kind map, keyed by
+// (runId, stepId), which the timeline lines do not consult).  The input order here
 // matches the engine's emission order: step-started → step-attempt* → step-completed.
 
 using System;
@@ -220,5 +224,111 @@ public sealed class TerminalRendererTimelineTests
         Assert.Contains("ping", output, StringComparison.Ordinal);
         Assert.Contains("attempt 1", output, StringComparison.Ordinal);
         Assert.Contains("PASS", output, StringComparison.Ordinal);
+    }
+
+    // ── An OBJECT observation renders keys-only (shape hint, no values) ────────
+    //
+    // The keys-only secret-safety invariant: an object observation on an attempt
+    // surfaces only its property NAMES on the timeline, never their values.  This
+    // is the established behaviour and must not regress.
+
+    [Fact]
+    public void Render_ObjectObservation_SurfacesKeysOnlyNeverValues()
+    {
+        const string sensitiveValue = "leaked-secret-value-must-not-appear";
+        var lines = new[]
+        {
+            Line(new StepStartedEvent { RunId = "run-4", StepId = "expect", Kind = "mq-expect.kafka", VerifyMode = "RETRY" }),
+            Line(new StepAttemptEvent
+            {
+                RunId       = "run-4",
+                StepId      = "expect",
+                Attempt     = 1,
+                TMs         = 500,
+                Outcome     = Verdict.Inconclusive,
+                // An object observation: keys are metadata; the raw value must NOT print.
+                Observation = Parse($"{{\"matched\":0,\"raw\":\"{sensitiveValue}\"}}"),
+            }),
+            Line(new StepCompletedEvent { RunId = "run-4", StepId = "expect", Verdict = Verdict.Inconclusive, DurationMs = 520 }),
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The keys appear; the values do not.
+        Assert.Contains("matched", output, StringComparison.Ordinal);
+        Assert.Contains("raw", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(sensitiveValue, output, StringComparison.Ordinal);
+    }
+
+    // ── A SCALAR observation renders as a SHAPE HINT, never verbatim (§17) ─────
+    //
+    // No Core provider emits a bare-scalar observation today, but the
+    // StepAttemptEvent.Observation contract advertises "raw response" as a
+    // legitimate payload — so a future provider could place a sensitive scalar
+    // there.  The keys-only invariant is TOTAL: a scalar observation is summarised
+    // by its JSON value-kind (<string>/<number>/<bool>), never by its literal
+    // value, so the polling timeline can never print that value.
+
+    [Fact]
+    public void Render_ScalarStringObservation_RendersShapeHintNotValue()
+    {
+        const string sensitiveScalar = "sk-live-deadbeef-must-not-appear-on-timeline";
+        var lines = new[]
+        {
+            Line(new StepStartedEvent { RunId = "run-5", StepId = "poll", Kind = "mq-expect.kafka", VerifyMode = "RETRY" }),
+            Line(new StepAttemptEvent
+            {
+                RunId       = "run-5",
+                StepId      = "poll",
+                Attempt     = 1,
+                TMs         = 250,
+                Outcome     = Verdict.Inconclusive,
+                // A bare-scalar string observation (the "raw response" the contract allows).
+                Observation = Parse($"\"{sensitiveScalar}\""),
+            }),
+            Line(new StepCompletedEvent { RunId = "run-5", StepId = "poll", Verdict = Verdict.Inconclusive, DurationMs = 260 }),
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The attempt line renders; the scalar's VALUE never does — only its shape.
+        Assert.Contains("attempt 1", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(sensitiveScalar, output, StringComparison.Ordinal);
+        Assert.Contains("<string>", output, StringComparison.Ordinal);
+    }
+
+    // A numeric scalar observation likewise renders only its value-kind, not the number.
+
+    [Fact]
+    public void Render_ScalarNumberObservation_RendersShapeHintNotValue()
+    {
+        // A distinctive number that would be unmistakable if printed verbatim.
+        const string distinctiveNumber = "8675309";
+        var lines = new[]
+        {
+            Line(new StepStartedEvent { RunId = "run-6", StepId = "poll", Kind = "mq-expect.kafka", VerifyMode = "RETRY" }),
+            Line(new StepAttemptEvent
+            {
+                RunId       = "run-6",
+                StepId      = "poll",
+                Attempt     = 1,
+                TMs         = 250,
+                Outcome     = Verdict.Inconclusive,
+                Observation = Parse(distinctiveNumber),
+            }),
+            Line(new StepCompletedEvent { RunId = "run-6", StepId = "poll", Verdict = Verdict.Inconclusive, DurationMs = 260 }),
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains("attempt 1", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(distinctiveNumber, output, StringComparison.Ordinal);
+        Assert.Contains("<number>", output, StringComparison.Ordinal);
     }
 }
