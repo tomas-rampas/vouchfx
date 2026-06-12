@@ -23,14 +23,14 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Milestone M3 achieved.** The engine compiles `.e2e.yaml` declarative integration
+> **Milestone M3 — full step set & SDK — is engineering-complete and in phase-exit review** (see [exit criteria](plan/m3-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. A headless CLI runner
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner
 > discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
-> Still to come: VSCode extension/LSP, scenario-level parallelism, and community provider tiers — see
+> Still to come: VSCode extension/LSP, HTML report and JUnit XML renderers, the full verdict taxonomy surface, and community provider tiers (Verified and Community governance) — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
 

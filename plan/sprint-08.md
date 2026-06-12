@@ -97,11 +97,11 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 - **Acceptance:**
   - Editing a `.e2e.yaml` re-runs it automatically without a full topology rebuild where possible. ✓
 
-#### S08-C-03 · Scenario-level parallelism (re-instated from S07)
+#### S08-C-03 · Scenario-level parallelism (re-instated from S07) ✓
 - **Owner:** TL · **Estimate:** 2.5d · **Depends on:** S07-C-01 · **Spec:** BP §16.2; MVP §6.3 (parallelism)
 - Implement concurrent scenario execution using the topology-per-scenario slot model: each scenario builds, owns, and disposes its own Aspire topology with isolation by construction (no Respawn). Bounded concurrency via `--parallel <n>` CLI flag with conservative default (min(cores,4)); deterministic render-in-declaration-order; complete-all cancellation semantics.
 - **Acceptance:**
-  - `vouchfx run --parallel 2` runs two scenarios concurrently against separate topologies; each scenario's topology is independent (no cross-scenario state); output is byte-stable regardless of which finishes first; all topologies dispose on cancellation.
+  - `vouchfx run --parallel 2` runs two scenarios concurrently against separate topologies; each scenario's topology is independent (no cross-scenario state); output is byte-stable regardless of which finishes first; all topologies dispose on cancellation. ✓
 
 ### Workstream D — Integration
 
