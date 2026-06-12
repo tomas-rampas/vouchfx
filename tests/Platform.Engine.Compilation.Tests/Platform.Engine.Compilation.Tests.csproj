@@ -12,6 +12,18 @@
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
 
+  <ItemGroup Label="S08-F-01 — frozen v1 schema golden artifact">
+    <!--
+      The committed golden the SchemaFreezeTests gate diffs against.  Copied next
+      to the test DLL so the test reads it from AppContext.BaseDirectory/Golden.
+      Treated as a non-compiled Content item; CopyToOutputDirectory keeps it
+      fresh on every build.
+    -->
+    <Content Include="Golden\composed-schema.v1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
@@ -56,6 +68,17 @@
       so the test references the script.csharp provider to read its Emit output directly.
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj" />
+    <!--
+      S08-F-01 (T2 — freeze the v1 JSON Schema): SchemaFreezeTests builds the FULL
+      six-Core-provider registry to compose the frozen v1 schema, so the test project
+      must reference every Core provider assembly (mirroring the CLI's
+      ProviderRegistryFactory).  HttpRest and Script.Csharp are already referenced
+      above; the remaining four are added here.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj" />
   </ItemGroup>
 
 </Project>

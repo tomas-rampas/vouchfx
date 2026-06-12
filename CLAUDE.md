@@ -40,7 +40,7 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 - Step type = `<family>.<provider>` (`db-assert.postgres`, `mq-publish.kafka`). Family = intent, provider = technology.
 - Providers are **compile-time, source-level plugins** — no runtime loader, no dynamic assembly loading, no sandbox. Add a project, implement `IStepProvider`/`IStepBinder<T>`/`IStepValidator<T>`/`IStepCompiler<T>`/`IResourceContributor<T>`, mark `[StepProvider]`; the reflective `StepKindRegistry` (frozen at startup) discovers it.
 - Models are **strongly-typed records**, never `Dictionary<string,object>`.
-- The v1 interface contract is **frozen for the v1.x engine series**.
+- The v1 interface contract is **frozen for the v1.x engine series**, enforced by a golden-file CI gate (`SdkContractFreezeTests`). Evolution is additive only, via NEW optional interfaces (never mutating a v1 interface) — exactly how S6/S7 added `IStepDiffRenderer`/`IHostResourceContributor`.
 
 **CsxFragment composition (§13.3.1) — these rules prevent collisions.**
 - Three fields only: `RequiredUsings` (namespace strings, never inline `using` lines), `RequiredHelpers` (nested static classes prefixed with the provider id, e.g. `DbAssertPostgres_Helpers`), one brace-enclosed `StatementBlock`.
@@ -60,7 +60,7 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 
 **Verdict taxonomy (§12.1) — four outcomes, kept separate everywhere (taxonomy, reporting, exit codes).** **Pass** · **Fail** · **Environment error** (infra: unhealthy container, pull/tunnel/seed failure) · **Inconclusive** (timeout / partition-outlasted-grace / upstream-capture-unmet). **Only `Fail` breaks CI by default.** Conflating an env error with a defect destroys trust in the tool.
 
-**Reporting (§14).** One **schema-versioned JSON Lines event stream** feeds every renderer (terminal, HTML, JUnit XML, dashboard) and the Healer agent. Record each `step-attempt` individually (this makes the RETRY polling timeline renderable without re-running). Renderers tolerate unknown fields. Never build per-audience pipelines — render the one stream differently.
+**Reporting (§14).** One **schema-versioned JSON Lines event stream** feeds every renderer (terminal, HTML, JUnit XML, dashboard) and the Healer agent. Record each `step-attempt` individually (this makes the RETRY polling timeline renderable without re-running). Renderers tolerate unknown fields. Never build per-audience pipelines — render the one stream differently. The v1 event-wire contract (top-level records and nested value records) is frozen at v1 and enforced by a golden-file CI gate (`EventContractFreezeTests`); any property name, CLR type, or `[JsonPropertyName]` change breaks every consumer. Step events carry `runId`+`stepId` but deliberately NOT `scenarioId` — the renderer's `(runId,stepId)` cache already disambiguates aggregated streams.
 
 **Assembly-graph hygiene (§5.6).** Reserved namespaces: `Platform.Engine.*` (engine), `Platform.Steps.*` (providers, e.g. `Platform.Steps.DbAssert.Postgres`). Customer DLLs declaring these are refused at startup. Customer DLLs share the generated script's collectible context. Version conflicts fail fast at suite start, not at runtime.
 

@@ -31,6 +31,7 @@ using Platform.Engine.Abstractions.Events;
 using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Abstractions.Retry;
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Secrets.Vault;
 using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
@@ -40,6 +41,7 @@ using Platform.Engine.Compilation.Schema;
 using Platform.Engine.Orchestration;
 using Platform.Engine.Orchestration.HostResources;
 using Platform.Engine.Reporting;
+using Platform.Engine.Runtime.Secrets;
 using Platform.Sdk;
 
 namespace Platform.Engine.Runtime;
@@ -134,11 +136,18 @@ public static class ScenarioRunner
     private static readonly Regex s_placeholderRegex =
         new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 
-    // Secret-reference sources the engine can resolve (§17, S05-B-01 / S05-B-02).
-    // This sprint ships only the 'env' source; Vault adds a resolver in Sprint 8 by
-    // extending BuildSecretResolvers() — both the pre-compile validation pass (this
-    // field) and the runtime accessor (the catalog) derive from that one factory, so
-    // they can never disagree about which sources are available.
+    // Secret-reference sources the engine can resolve (§17, S05-B-01 / S05-B-02 / S08-B-01).
+    // MVP sources: 'env' (S05) + 'vault' (S08).  Both the pre-compile validation pass
+    // (this field) and the runtime accessor (the per-scenario catalog) derive from the
+    // SAME BuildSecretResolvers() factory, so they can never disagree about which
+    // sources are available.
+    //
+    // Static-init safety: BuildSecretResolvers() must NOT read the environment or open a
+    // connection at construction — it only NAMES the sources here.  The Vault connection
+    // is resolved lazily, at step-execution time, by EnvironmentConfiguredVaultKvClient
+    // (so ${secret:vault/...} validates at compile time even when VAULT_ADDR/VAULT_TOKEN
+    // are not set at validation time; a missing config surfaces as an EnvironmentError
+    // only if a step actually resolves a vault secret).
     private static readonly string[] s_knownSecretSources =
         BuildSecretResolvers().Select(r => r.Source).ToArray();
 
@@ -146,10 +155,21 @@ public static class ScenarioRunner
     /// Builds the run's secret resolvers (§17).  Single source of truth shared by the
     /// pre-compile validation pass (<see cref="s_knownSecretSources"/>) and the runtime
     /// <see cref="SecretSourceCatalog"/> built per scenario, so the known-source set is
-    /// guaranteed consistent.  Vault is added here in Sprint 8 with no other change.
+    /// guaranteed consistent.
     /// </summary>
+    /// <remarks>
+    /// Constructs the resolvers WITHOUT touching the environment or opening any
+    /// connection — the Vault connection is created lazily on first resolve by
+    /// <see cref="EnvironmentConfiguredVaultKvClient"/>.  The returned array may contain
+    /// <see cref="IDisposable"/> resolvers (the Vault client owns an
+    /// <see cref="System.Net.Http.HttpClient"/>); the per-scenario caller disposes them.
+    /// </remarks>
     private static ISecretResolver[] BuildSecretResolvers()
-        => new ISecretResolver[] { new EnvironmentSecretResolver() };
+        => new ISecretResolver[]
+        {
+            new EnvironmentSecretResolver(),
+            new VaultSecretResolver(new EnvironmentConfiguredVaultKvClient()),
+        };
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -779,6 +799,274 @@ public static class ScenarioRunner
         }
     }
 
+    // ── Watch-mode seams (S08-C-01) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Computes a stable hash of a scenario's <c>environment</c> block for watch-mode
+    /// topology reuse (S08-C-01): two scenarios whose <c>environment</c> blocks are
+    /// structurally equal produce the same string, so the watch loop can decide
+    /// "environment unchanged → re-use the kept topology" with a plain string compare.
+    /// </summary>
+    /// <param name="environment">
+    /// The parsed <c>environment</c> block, or <see langword="null"/> when the scenario
+    /// declares none (an empty topology).
+    /// </param>
+    /// <returns>
+    /// A stable string key derived from the same serialisation
+    /// <see cref="RunSuiteAsync"/> uses for its shared-environment check, so the two can
+    /// never disagree about what counts as "the same environment".  An empty string for a
+    /// <see langword="null"/> environment.
+    /// </returns>
+    /// <remarks>
+    /// Reuses the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
+    /// form the suite runner already compares for its shared-topology assumption — so the
+    /// reuse decision here and the suite's equality check are guaranteed consistent.
+    /// </remarks>
+    public static string ComputeEnvironmentHash(EnvironmentSpec? environment) =>
+        SerialiseEnvironment(environment);
+
+    /// <summary>
+    /// Builds the per-topology isolation for watch mode (S08-C-01): a
+    /// <see cref="RespawnPostgresIsolation"/> when the kept topology has a Postgres
+    /// dependency, otherwise <see cref="NullScenarioIsolation"/>.  Watch mode keeps ONE
+    /// topology alive across re-runs, so it must reset mutable dependency state between
+    /// re-runs exactly as <see cref="RunSuiteAsync"/> does between scenarios.
+    /// </summary>
+    /// <param name="topology">The kept topology to build isolation for.</param>
+    /// <returns>The isolation strategy appropriate to the topology's dependencies.</returns>
+    public static IScenarioIsolation BuildWatchIsolation(SuiteTopology topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        return BuildIsolation(topology);
+    }
+
+    /// <summary>
+    /// Runs a single scenario against an <strong>already-built</strong>
+    /// <see cref="SuiteTopology"/> (the no-rebuild re-run seam for watch mode, S08-C-01):
+    /// optionally reset+reseed → validate → compile → run → render.  The topology is neither
+    /// built nor disposed here — the watch session owns its lifetime so it survives across
+    /// re-runs while the environment is unchanged.
+    /// </summary>
+    /// <param name="topology">The kept topology to run against (built by the caller).</param>
+    /// <param name="isolation">
+    /// The state-reset strategy applied <em>before</em> the run when
+    /// <paramref name="resetAndReseed"/> is set, so a reuse run starts from a known-clean
+    /// dependency state.  Pass <see cref="BuildWatchIsolation"/>'s result.
+    /// </param>
+    /// <param name="registry">The frozen provider registry (schema validation + pipeline).</param>
+    /// <param name="ast">The parsed scenario AST (its steps drive the event stream).</param>
+    /// <param name="yamlText">The raw YAML (re-validated + re-compiled on every re-run).</param>
+    /// <param name="scenarioName">The scenario name (event-stream <c>scenarioId</c>).</param>
+    /// <param name="output">The writer that receives the rendered report + raw diagnostics.</param>
+    /// <param name="resetAndReseed">
+    /// Whether to reset (Respawn) and re-apply the seed BEFORE the run.  Pass <see langword="false"/>
+    /// on the FIRST run against a freshly-built+seeded topology — <see cref="SuiteTopology.StartAsync"/>
+    /// already applied the seed and there are no prior-run writes to clear, so a reset here would
+    /// truncate the seed (and Respawn throws on a schema-via-<c>script.csharp</c> DB with no user
+    /// tables yet).  Pass <see langword="true"/> on a REUSE run (same topology as the previous run,
+    /// which left its writes behind): the reset clears those writes and the re-seed restores the
+    /// freshly-seeded baseline, so every watch run sees the same initial state as a fresh
+    /// <c>vouchfx run</c>.
+    /// </param>
+    /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="cancellationToken">Propagated to all async operations.</param>
+    /// <returns>The scenario's aggregate <see cref="Verdict"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// Re-validating and re-compiling on every re-run is deliberate: in watch mode the file
+    /// changes between runs, so the kept topology may be re-used but the SCENARIO must be
+    /// re-read from the latest save.  Only the topology build is skipped on reuse, never the
+    /// compile.
+    /// </para>
+    /// <para>
+    /// <strong>Reset+reseed semantics (S08-T10):</strong> on the build path
+    /// (<paramref name="resetAndReseed"/> = <see langword="false"/>) there is NO pre-reset and NO
+    /// re-seed — matching <see cref="RunSuiteAsync"/>'s first scenario, whose <c>Begin</c> is a
+    /// Respawn no-op against a just-seeded topology.  On the reuse path
+    /// (<paramref name="resetAndReseed"/> = <see langword="true"/>) the kept topology is reset via
+    /// <see cref="IScenarioIsolation.EndScenarioAsync"/> (Respawn truncates the prior run's writes
+    /// — INCLUDING the seed rows, the documented "Respawn-truncates-seed" behaviour) and then
+    /// RE-SEEDED via <see cref="SuiteTopology.ReseedAsync"/>, so the run sees the freshly-seeded
+    /// baseline — identical to a fresh <c>vouchfx run</c>.  A reset or re-seed failure surfaces as
+    /// <see cref="Verdict.EnvironmentError"/> (§12.1), never a Fail.
+    /// </para>
+    /// </remarks>
+    public static async Task<Verdict> RunScenarioAgainstKeptTopologyAsync(
+        SuiteTopology topology,
+        IScenarioIsolation isolation,
+        StepKindRegistry registry,
+        ScenarioAst ast,
+        string yamlText,
+        string scenarioName,
+        TextWriter output,
+        bool resetAndReseed,
+        string? seedBaseDirectory = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        ArgumentNullException.ThrowIfNull(isolation);
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(ast);
+        ArgumentNullException.ThrowIfNull(yamlText);
+        ArgumentNullException.ThrowIfNull(scenarioName);
+        ArgumentNullException.ThrowIfNull(output);
+
+        var diffLookup = BuildDiffLookup(registry);
+        var runId = Guid.NewGuid().ToString("n");
+        var buffer = new List<string>();
+
+        // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────
+        // ONLY on the reuse path, where the kept topology carries the previous re-run's writes.
+        // Two complementary resets restore the SAME initial state a fresh `vouchfx run` sees:
+        //   1. isolation.EndScenarioAsync — Respawn truncates the prior run's row-level writes
+        //      across ALL user tables (the right reset for an UNSEEDED postgres dependency, and
+        //      for tables a prior run's script.csharp step created).
+        //   2. topology.ReseedAsync — for SEEDED postgres dependencies, resets each seeded
+        //      database's public schema to empty and re-applies the seed, so the author's
+        //      (non-idempotent) seed SQL re-runs cleanly and the seeded baseline is restored;
+        //      a no-op when the scenario declares no seed.
+        // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
+        // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
+        // Respawn throws on a schema-via-script.csharp DB that has no user tables yet — exactly
+        // why the normal path defers the reset to AFTER the first run).  A reset or re-seed
+        // failure is an Environment error (§12.1), never a Fail — and we render before returning
+        // so the verdict is still reported.
+        if (resetAndReseed)
+        {
+            try
+            {
+                await isolation.EndScenarioAsync(cancellationToken).ConfigureAwait(false);
+                await topology.ReseedAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OrchestrationException oex)
+            {
+                var nowR = DateTimeOffset.UtcNow;
+                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowR,
+                    ScenarioId = scenarioName,
+                }));
+                buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, nowR));
+                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowR,
+                    ScenarioId = scenarioName,
+                    Verdict = Verdict.EnvironmentError,
+                    Counts = new VerdictCounts { EnvError = 1 },
+                }));
+                TerminalRenderer.Render(buffer, output, diffLookup);
+                return Verdict.EnvironmentError;
+            }
+        }
+
+        // ── Validate + compile the (latest-saved) scenario ────────────────────
+        if (TryCompileForRun(
+                registry, yamlText, ast, scenarioName, runId, buffer,
+                out var pipeline, out var earlyVerdict, out var earlyMessage))
+        {
+            if (!string.IsNullOrEmpty(earlyMessage))
+            {
+                await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+            }
+
+            TerminalRenderer.Render(buffer, output, diffLookup);
+            return earlyVerdict;
+        }
+
+        // ── Run against the kept topology ─────────────────────────────────────
+        var verdict = await RunScenarioAgainstTopologyAsync(
+            ast,
+            scenarioName,
+            runId,
+            topology,
+            pipeline!.Assembled!,
+            pipeline.CompileReferencePaths,
+            pipeline.HostResourcePlan,
+            buffer,
+            new NullScenarioIsolation(), // isolation reset handled above.
+            output,
+            seedBaseDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        TerminalRenderer.Render(buffer, output, diffLookup);
+        return verdict;
+    }
+
+    /// <summary>
+    /// Validates and compiles <paramref name="yamlText"/> for execution, emitting the
+    /// Inconclusive scenario-started/completed pair into <paramref name="buffer"/> on any
+    /// early-exit (schema-invalid, bad secret reference, pipeline failure).  Shared by the
+    /// watch re-run path so it reproduces the suite runner's early-exit event shape exactly.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when an early-exit occurred (<paramref name="earlyVerdict"/> /
+    /// <paramref name="earlyMessage"/> are set and <paramref name="pipeline"/> is
+    /// <see langword="null"/>); <see langword="false"/> when compilation succeeded
+    /// (<paramref name="pipeline"/> is set).
+    /// </returns>
+    private static bool TryCompileForRun(
+        StepKindRegistry registry,
+        string yamlText,
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        List<string> buffer,
+        out PipelineResult? pipeline,
+        out Verdict earlyVerdict,
+        out string? earlyMessage)
+    {
+        pipeline = null;
+        earlyVerdict = Verdict.Inconclusive;
+        earlyMessage = null;
+
+        void EmitInconclusive()
+        {
+            var now = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+        }
+
+        var validationResult = DocumentValidator.Validate(yamlText, registry);
+        if (!validationResult.IsValid)
+        {
+            EmitInconclusive();
+            earlyMessage = string.Join("; ", validationResult.Errors.Select(e => e.Message));
+            return true;
+        }
+
+        if (TryValidateSecretReferences(ast, out var secretError))
+        {
+            EmitInconclusive();
+            earlyMessage = secretError;
+            return true;
+        }
+
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+        if (pipelineResult.Failure is not null)
+        {
+            EmitInconclusive();
+            earlyMessage = pipelineResult.Failure.Message;
+            return true;
+        }
+
+        pipeline = pipelineResult;
+        return false;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>
@@ -960,254 +1248,288 @@ public static class ScenarioRunner
             vars[kv.Key] = kv.Value;
         }
 
-        // ── Secret subsystem (§17, S05-B-02) ──────────────────────────────────
+        // ── Secret subsystem (§17, S05-B-02 / S08-B-01) ───────────────────────
         // Build the catalog + accessor here, in the Default ALC, and pass them into
         // the boundary BY REFERENCE.  No static handle bridges the boundary — the
         // accessor is an instance the script reaches only via globals.Secrets.
         // Resolution happens at step-execution time inside the emitted CSX, never at
         // compile time, so no secret value is ever baked into the emitted IL.
-        var secretCatalog = new SecretSourceCatalog(BuildSecretResolvers());
+        //
+        // Some resolvers own disposable state (the Vault resolver's client owns an
+        // HttpClient).  Retain the array so the finally below disposes any IDisposable
+        // resolver at scenario end — no HttpClient leaks across the per-scenario
+        // boundary, and no static handle holds the connection open.
+        var secretResolvers = BuildSecretResolvers();
+        var secretCatalog = new SecretSourceCatalog(secretResolvers);
         var secretAccessor = new SecretAccessor(secretCatalog);
-
-        // ── §5 boundary construction (S07-F-01a) ──────────────────────────────
-        // Both the secret accessor and the webhook-capture accessor are instances built
-        // in the Default ALC and passed by-reference into the sole host↔script boundary.
-        // The webhook listener + buffers they project live in the Default ALC (owned by
-        // this runner); the emitted script reaches captures ONLY via globals.Webhooks —
-        // no static handle bridges the collectible boundary, preserving the memory model.
-        var globals = new ScriptGlobalVariables(
-            vars, suite.DiscoveredServices, secretAccessor, webhookAccessor);
-
-        // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
-        var tpaPaths = BclReferencePaths()
-            .Concat(compileReferencePaths)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        CompiledScript compiled;
         try
         {
-            compiled = RoslynScriptCompiler.CompileOnce(
-                assembled.CsxSource,
-                additionalOptions: null,
-                additionalReferencePaths: tpaPaths);
 
-            await RoslynScriptCompiler.RunIsolatedAsync(
-                compiled,
-                globals,
-                runLabel: scenarioName,
-                cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (SecretResolutionException sre)
-        {
-            // Defence-in-depth backstop (§17): every Core provider already guards its
-            // own secret resolution and maps a failure to a per-step EnvironmentError.
-            // This catch only fires if a FUTURE provider forgets that guard and lets a
-            // SecretResolutionException escape the Roslyn submission delegate. A secret
-            // that cannot be resolved is an environment/configuration problem, NOT a
-            // product defect — so we surface it as a scenario-level EnvironmentError
-            // (consistent with the verdict taxonomy §12.1; EnvironmentError is already a
-            // first-class scenario verdict used by the topology-start path above).
-            // REFERENCE-ONLY: only the source/path coordinates are written to output —
-            // never sre.Message verbatim (here Message carries only the path, but we keep
-            // the surface reference-only for consistency and future-proofing, §17).
-            var nowSE = DateTimeOffset.UtcNow;
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            // ── §5 boundary construction (S07-F-01a) ──────────────────────────────
+            // Both the secret accessor and the webhook-capture accessor are instances built
+            // in the Default ALC and passed by-reference into the sole host↔script boundary.
+            // The webhook listener + buffers they project live in the Default ALC (owned by
+            // this runner); the emitted script reaches captures ONLY via globals.Webhooks —
+            // no static handle bridges the collectible boundary, preserving the memory model.
+            var globals = new ScriptGlobalVariables(
+                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor);
+
+            // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
+            var tpaPaths = BclReferencePaths()
+                .Concat(compileReferencePaths)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            CompiledScript compiled;
+            try
             {
-                RunId = runId,
-                Timestamp = nowSE,
-                ScenarioId = scenarioName,
-            }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                compiled = RoslynScriptCompiler.CompileOnce(
+                    assembled.CsxSource,
+                    additionalOptions: null,
+                    additionalReferencePaths: tpaPaths);
+
+                await RoslynScriptCompiler.RunIsolatedAsync(
+                    compiled,
+                    globals,
+                    runLabel: scenarioName,
+                    cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (SecretResolutionException sre)
             {
-                RunId = runId,
-                Timestamp = nowSE,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.EnvironmentError,
-                Counts = new VerdictCounts { EnvError = 1 },
-            }));
-
-            await output.WriteLineAsync(
-                "Secret resolution failed (EnvironmentError): " +
-                $"source '{sre.SecretSource}', path '{sre.SecretPath}'.")
-                .ConfigureAwait(false);
-
-            return Verdict.EnvironmentError;
-        }
-        catch (Exception ex)
-        {
-            var nowCE = DateTimeOffset.UtcNow;
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-            {
-                RunId = runId,
-                Timestamp = nowCE,
-                ScenarioId = scenarioName,
-            }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = nowCE,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
-
-            var diagnosis = ex is ScriptCompilationException sce
-                ? $"CSX compilation failed: {sce.Message}"
-                : $"{ex.GetType().Name}: {ex.Message}";
-
-            await output.WriteLineAsync(
-                $"Compile/run error (Inconclusive): {diagnosis}")
-                .ConfigureAwait(false);
-
-            return Verdict.Inconclusive;
-        }
-
-        // ── Emit events from outcomes + aggregate verdict ─────────────────────
-        var now9 = DateTimeOffset.UtcNow;
-        buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-        {
-            RunId = runId,
-            Timestamp = now9,
-            ScenarioId = scenarioName,
-        }));
-
-        var aggregate = Verdict.Pass;
-        var counts = new int[4];
-
-        // Build a map of varName → stepId for all captures defined in this scenario,
-        // so that substitution provenance (G-01) can trace each placeholder's origin.
-        // Only steps that appear BEFORE the current step contribute (captures are
-        // forward-threading: a step can only read what a prior step captured).
-        // We build the full map once and use it as a lookup in the loop below.
-        var captureOriginMap = BuildCaptureOriginMap(ast.Steps);
-
-        foreach (var node in ast.Steps)
-        {
-            var safeId = CsxFragment.SanitiseId(node.Id);
-
-            buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
-            {
-                RunId = runId,
-                Timestamp = now9,
-                StepId = node.Id,
-                Kind = node.CanonicalType,
-                VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
-                TimeoutMs = node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
-            }));
-
-            var outcomeKey = VarKeys.Outcome(safeId);
-            var outcome = vars.TryGetValue(outcomeKey, out var raw)
-                ? raw as StepOutcome
-                : null;
-
-            var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
-            var durationMs = outcome?.DurationMs ?? 0L;
-
-            // ── G-01: build Captured provenance ──────────────────────────────
-            IReadOnlyList<CapturedVar>? capturedList = null;
-            if (node.Capture.Count > 0)
-            {
-                // Read the matched-flag string written by the emitted block:
-                // format is "1,0,1" — one flag per capture in declaration order.
-                string? captureStatusRaw = null;
-                if (vars.TryGetValue(VarKeys.CaptureStatus(safeId), out var csRaw)
-                    && csRaw is string csStr)
+                // Defence-in-depth backstop (§17): every Core provider already guards its
+                // own secret resolution and maps a failure to a per-step EnvironmentError.
+                // This catch only fires if a FUTURE provider forgets that guard and lets a
+                // SecretResolutionException escape the Roslyn submission delegate. A secret
+                // that cannot be resolved is an environment/configuration problem, NOT a
+                // product defect — so we surface it as a scenario-level EnvironmentError
+                // (consistent with the verdict taxonomy §12.1; EnvironmentError is already a
+                // first-class scenario verdict used by the topology-start path above).
+                // REFERENCE-ONLY: only the source/path coordinates are written to output —
+                // never sre.Message verbatim (here Message carries only the path, but we keep
+                // the surface reference-only for consistency and future-proofing, §17).
+                var nowSE = DateTimeOffset.UtcNow;
+                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
                 {
-                    captureStatusRaw = csStr;
-                }
-
-                var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
-                var capturedVars = new List<CapturedVar>(node.Capture.Count);
-                var captureKeys = node.Capture.Keys.ToArray();
-
-                // S07-B-01a: node.Capture values are now typed CaptureExpr records.
-                // The CapturedVar.Path provenance field carries the raw expression
-                // string (format-agnostic), so read .Expression — the event payload
-                // is unchanged for a JSONPath capture (byte-for-byte back-compatible).
-                var captureVals = node.Capture.Values
-                    .Select(e => e.Expression)
-                    .ToArray();
-
-                for (int ci = 0; ci < captureKeys.Length; ci++)
+                    RunId = runId,
+                    Timestamp = nowSE,
+                    ScenarioId = scenarioName,
+                }));
+                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
                 {
-                    var matched = ci < flagTokens.Length && flagTokens[ci] == "1";
-                    capturedVars.Add(new CapturedVar(
-                        Name: captureKeys[ci],
-                        Path: captureVals[ci],
-                        Matched: matched));
-                }
-                capturedList = capturedVars;
+                    RunId = runId,
+                    Timestamp = nowSE,
+                    ScenarioId = scenarioName,
+                    Verdict = Verdict.EnvironmentError,
+                    Counts = new VerdictCounts { EnvError = 1 },
+                }));
+
+                await output.WriteLineAsync(
+                    "Secret resolution failed (EnvironmentError): " +
+                    $"source '{sre.SecretSource}', path '{sre.SecretPath}'.")
+                    .ConfigureAwait(false);
+
+                return Verdict.EnvironmentError;
+            }
+            catch (Exception ex)
+            {
+                var nowCE = DateTimeOffset.UtcNow;
+                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowCE,
+                    ScenarioId = scenarioName,
+                }));
+                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = nowCE,
+                    ScenarioId = scenarioName,
+                    Verdict = Verdict.Inconclusive,
+                    Counts = new VerdictCounts { Inconclusive = 1 },
+                }));
+
+                var diagnosis = ex is ScriptCompilationException sce
+                    ? $"CSX compilation failed: {sce.Message}"
+                    : $"{ex.GetType().Name}: {ex.Message}";
+
+                await output.WriteLineAsync(
+                    $"Compile/run error (Inconclusive): {diagnosis}")
+                    .ConfigureAwait(false);
+
+                return Verdict.Inconclusive;
             }
 
-            // ── G-01 + S05-G-01: build Substitutions provenance (compile-time) ─
-            // Scan every substitutable field in the step's raw YAML for {name}
-            // placeholder tokens AND ${secret:source/path} references.  This is
-            // compile-time derivation — no runtime value is ever read.
-            var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
-
-            // ── RETRY (Sprint 6): one step-attempt event per recorded poll ────
-            // The engine-owned RETRY runner writes a List<AttemptRecord> to
-            // Vars[VarKeys.Attempts(safeId)]; emit one step-attempt event per
-            // record so the polling timeline is renderable offline (§14).  An
-            // IMMEDIATE step writes no attempts list, so this is a no-op for it.
-            buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars));
-
-            buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
+            // ── Emit events from outcomes + aggregate verdict ─────────────────────
+            var now9 = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
                 RunId = runId,
                 Timestamp = now9,
-                StepId = node.Id,
-                Verdict = stepVerdict,
-                DurationMs = durationMs,
-                Captured = capturedList,
-                Substitutions = substitutionsList,
-                // S07-G-01: carry the structured observation onto the step-completed
-                // event so a renderer can compute an expected-vs-observed diff at render
-                // time (the stream stays pure structured data — no rendered text here).
-                // An unparseable observation degrades to omission rather than crashing.
-                Observation = ParseObservation(outcome?.Observation),
+                ScenarioId = scenarioName,
             }));
 
-            counts[(int)stepVerdict]++;
-            aggregate = Elevate(aggregate, stepVerdict);
+            var aggregate = Verdict.Pass;
+            var counts = new int[4];
+
+            // Build a map of varName → stepId for all captures defined in this scenario,
+            // so that substitution provenance (G-01) can trace each placeholder's origin.
+            // Only steps that appear BEFORE the current step contribute (captures are
+            // forward-threading: a step can only read what a prior step captured).
+            // We build the full map once and use it as a lookup in the loop below.
+            var captureOriginMap = BuildCaptureOriginMap(ast.Steps);
+
+            foreach (var node in ast.Steps)
+            {
+                var safeId = CsxFragment.SanitiseId(node.Id);
+
+                buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = now9,
+                    StepId = node.Id,
+                    Kind = node.CanonicalType,
+                    VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
+                    TimeoutMs = node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
+                }));
+
+                var outcomeKey = VarKeys.Outcome(safeId);
+                var outcome = vars.TryGetValue(outcomeKey, out var raw)
+                    ? raw as StepOutcome
+                    : null;
+
+                var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
+                var durationMs = outcome?.DurationMs ?? 0L;
+
+                // ── G-01: build Captured provenance ──────────────────────────────
+                IReadOnlyList<CapturedVar>? capturedList = null;
+                if (node.Capture.Count > 0)
+                {
+                    // Read the matched-flag string written by the emitted block:
+                    // format is "1,0,1" — one flag per capture in declaration order.
+                    string? captureStatusRaw = null;
+                    if (vars.TryGetValue(VarKeys.CaptureStatus(safeId), out var csRaw)
+                        && csRaw is string csStr)
+                    {
+                        captureStatusRaw = csStr;
+                    }
+
+                    var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
+                    var capturedVars = new List<CapturedVar>(node.Capture.Count);
+                    var captureKeys = node.Capture.Keys.ToArray();
+
+                    // S07-B-01a: node.Capture values are now typed CaptureExpr records.
+                    // The CapturedVar.Path provenance field carries the raw expression
+                    // string (format-agnostic), so read .Expression — the event payload
+                    // is unchanged for a JSONPath capture (byte-for-byte back-compatible).
+                    var captureVals = node.Capture.Values
+                        .Select(e => e.Expression)
+                        .ToArray();
+
+                    for (int ci = 0; ci < captureKeys.Length; ci++)
+                    {
+                        var matched = ci < flagTokens.Length && flagTokens[ci] == "1";
+                        capturedVars.Add(new CapturedVar(
+                            Name: captureKeys[ci],
+                            Path: captureVals[ci],
+                            Matched: matched));
+                    }
+                    capturedList = capturedVars;
+                }
+
+                // ── G-01 + S05-G-01: build Substitutions provenance (compile-time) ─
+                // Scan every substitutable field in the step's raw YAML for {name}
+                // placeholder tokens AND ${secret:source/path} references.  This is
+                // compile-time derivation — no runtime value is ever read.
+                var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
+
+                // ── RETRY (Sprint 6): one step-attempt event per recorded poll ────
+                // The engine-owned RETRY runner writes a List<AttemptRecord> to
+                // Vars[VarKeys.Attempts(safeId)]; emit one step-attempt event per
+                // record so the polling timeline is renderable offline (§14).  An
+                // IMMEDIATE step writes no attempts list, so this is a no-op for it.
+                buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars));
+
+                buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = now9,
+                    StepId = node.Id,
+                    Verdict = stepVerdict,
+                    DurationMs = durationMs,
+                    Captured = capturedList,
+                    Substitutions = substitutionsList,
+                    // S07-G-01: carry the structured observation onto the step-completed
+                    // event so a renderer can compute an expected-vs-observed diff at render
+                    // time (the stream stays pure structured data — no rendered text here).
+                    // An unparseable observation degrades to omission rather than crashing.
+                    Observation = ParseObservation(outcome?.Observation),
+                }));
+
+                counts[(int)stepVerdict]++;
+                aggregate = Elevate(aggregate, stepVerdict);
+            }
+
+            var finalCounts = new VerdictCounts
+            {
+                Pass = counts[(int)Verdict.Pass],
+                Fail = counts[(int)Verdict.Fail],
+                EnvError = counts[(int)Verdict.EnvironmentError],
+                Inconclusive = counts[(int)Verdict.Inconclusive],
+            };
+
+            // ── Reproducibility envelope (§17, docs/02 §3.2.2, S05-B-03) ──────────
+            // Emitted once per scenario, alongside ScenarioCompletedEvent.  Built from
+            // reference text + fixture content ONLY — the secret resolver is never
+            // invoked here, so by construction no resolved secret value can enter the
+            // envelope.  Reuses SeedFixtures.ComputeContentHash for fixture digests.
+            var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory);
+            buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
+            {
+                RunId = runId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ScenarioId = scenarioName,
+                EnvSchemaVersion = envelope.SchemaVersion,
+                SecretReferences = envelope.SecretReferences,
+                Fixtures = envelope.Fixtures,
+            }));
+
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ScenarioId = scenarioName,
+                Verdict = aggregate,
+                Counts = finalCounts,
+            }));
+
+            return aggregate;
         }
-
-        var finalCounts = new VerdictCounts
+        finally
         {
-            Pass = counts[(int)Verdict.Pass],
-            Fail = counts[(int)Verdict.Fail],
-            EnvError = counts[(int)Verdict.EnvironmentError],
-            Inconclusive = counts[(int)Verdict.Inconclusive],
-        };
+            // Dispose any resolver that owns disposable state (the Vault resolver's
+            // client owns an HttpClient).  Runs on EVERY exit path — normal completion,
+            // the EnvironmentError/Inconclusive early returns above, and any unexpected
+            // throw — so no HttpClient leaks across the per-scenario boundary (§5).
+            DisposeSecretResolvers(secretResolvers);
+        }
+    }
 
-        // ── Reproducibility envelope (§17, docs/02 §3.2.2, S05-B-03) ──────────
-        // Emitted once per scenario, alongside ScenarioCompletedEvent.  Built from
-        // reference text + fixture content ONLY — the secret resolver is never
-        // invoked here, so by construction no resolved secret value can enter the
-        // envelope.  Reuses SeedFixtures.ComputeContentHash for fixture digests.
-        var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory);
-        buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
+    /// <summary>
+    /// Disposes any <see cref="IDisposable"/> resolvers in <paramref name="resolvers"/>
+    /// (e.g. the Vault resolver's client owns an
+    /// <see cref="System.Net.Http.HttpClient"/>).  Stateless resolvers (such as the
+    /// <c>env</c> resolver) are skipped.  Never throws into the verdict path.
+    /// </summary>
+    private static void DisposeSecretResolvers(IReadOnlyList<ISecretResolver> resolvers)
+    {
+        foreach (var resolver in resolvers)
         {
-            RunId = runId,
-            Timestamp = DateTimeOffset.UtcNow,
-            ScenarioId = scenarioName,
-            EnvSchemaVersion = envelope.SchemaVersion,
-            SecretReferences = envelope.SecretReferences,
-            Fixtures = envelope.Fixtures,
-        }));
-
-        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-        {
-            RunId = runId,
-            Timestamp = DateTimeOffset.UtcNow,
-            ScenarioId = scenarioName,
-            Verdict = aggregate,
-            Counts = finalCounts,
-        }));
-
-        return aggregate;
+            if (resolver is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -1270,6 +1592,14 @@ public static class ScenarioRunner
             && renderer.CanRender(observation)
                 ? renderer.RenderDiff(observation)
                 : null;
+
+    /// <summary>
+    /// Exposes <see cref="BuildDiffLookup"/> to <see cref="ParallelSuiteRunner"/> (same assembly)
+    /// so the parallel runner builds the identical render-time diff-lookup closure this runner
+    /// uses — the two cannot drift in how a failed step's expected-vs-observed diff is resolved.
+    /// </summary>
+    internal static Func<string, JsonElement, string?> BuildParallelDiffLookup(
+        StepKindRegistry registry) => BuildDiffLookup(registry);
 
     // ── Verdict aggregation ────────────────────────────────────────────────────
 

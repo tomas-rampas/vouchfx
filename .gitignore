@@ -31,6 +31,8 @@ project.fragment.lock.json
 .nuget/
 packages/
 !**/packages/build/
+## Local `dotnet pack` output (S08 T4)
+_nupkg/
 
 ## Test results & coverage
 [Tt]est[Rr]esult*/

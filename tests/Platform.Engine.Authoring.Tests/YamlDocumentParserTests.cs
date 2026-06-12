@@ -507,6 +507,98 @@ public sealed class YamlDocumentParserTests
         Assert.True(step.ContinueOnFailure);
     }
 
+    // -------------------------------------------------------------------------
+    // S08-T11 — reject malformed (non-mapping) service / dependency VALUES
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_ServiceValueNotMapping_ThrowsRatherThanSilentlyDropping()
+    {
+        // Arrange — a service whose VALUE is a bare scalar (e.g. an image string)
+        // where a '{ image: … }' mapping is expected.  Silently dropping it would
+        // leave the system-under-test container unstarted, surfacing later as a
+        // misattributed EnvironmentError — the exact §12.1 confusion the parser
+        // elsewhere prevents.  The parser must REJECT it.
+        const string yaml = """
+            environment:
+              services:
+                api: "myimage:latest"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert — the malformed value must surface as a YamlParseException.
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("service", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The message must name the requirement (a mapping such as '{ image: … }').
+        Assert.Contains("mapping", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // 1-based position is derived from the offending value node (mirrors siblings).
+        Assert.True(ex.Line > 0, "Line should be populated from the offending value node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending value node.");
+    }
+
+    [Fact]
+    public void Parse_DependencyValueNotMapping_ThrowsRatherThanSilentlyDropping()
+    {
+        // Arrange — a dependency whose VALUE is a bare scalar where a
+        // '{ type: … }' mapping is expected.  Silently dropping it would leave a
+        // managed Aspire resource unprovisioned, surfacing later as a misattributed
+        // EnvironmentError (§12.1).  The parser must REJECT it.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db: "postgres"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert — the malformed value must surface as a YamlParseException.
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("dependency", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The message must name the requirement (a mapping such as '{ type: … }').
+        Assert.Contains("mapping", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // 1-based position is derived from the offending value node (mirrors siblings).
+        Assert.True(ex.Line > 0, "Line should be populated from the offending value node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending value node.");
+    }
+
+    [Fact]
+    public void Parse_ValidServiceMappingAndDependencyMapping_StillParseUnchanged()
+    {
+        // Arrange — back-compat: a normal '{ image: … }' service and a normal
+        // '{ type: … }' dependency must keep parsing exactly as before the
+        // malformed-value rejection was added.
+        const string yaml = """
+            environment:
+              services:
+                orders-api:
+                  image: myorg/orders-api:1.2.3
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — the valid service mapping is bound.
+        Assert.NotNull(doc.Environment?.Services);
+        Assert.True(doc.Environment.Services.ContainsKey("orders-api"));
+        Assert.Equal("myorg/orders-api:1.2.3", doc.Environment.Services["orders-api"].Image);
+
+        // Assert — the valid dependency mapping is bound.
+        Assert.NotNull(doc.Environment.Dependencies);
+        Assert.True(doc.Environment.Dependencies.ContainsKey("orders-db"));
+        Assert.Equal("postgres", doc.Environment.Dependencies["orders-db"].Type);
+        Assert.Equal("16", doc.Environment.Dependencies["orders-db"].Version);
+    }
+
     [Fact]
     public void Parse_DependencyExtra_IsRetainedInRawNode()
     {

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The worked-example provider under test. -->
+    <ProjectReference Include="..\Example.Steps.Hello\Example.Steps.Hello.csproj" />
+
+    <!-- Engine surface the fixture drives the example provider through, end to end:
+           • Platform.Sdk            — StepKindRegistry (reflective discovery).
+           • Platform.Engine.Authoring   — YamlDocumentParser + AstBuilder (front end).
+           • Platform.Engine.Compilation  — DocumentValidator (schema), CsxAssembler,
+                                            RoslynScriptCompiler (compile-once + run).
+           • Platform.Engine.Abstractions — Verdict, StepOutcome, VarKeys,
+                                            ScriptGlobalVariables (read the result). -->
+    <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+  </ItemGroup>
+
+</Project>

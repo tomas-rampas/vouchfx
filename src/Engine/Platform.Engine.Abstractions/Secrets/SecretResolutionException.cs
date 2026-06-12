@@ -55,4 +55,24 @@ public sealed class SecretResolutionException : Exception
         SecretSource = source ?? string.Empty;
         SecretPath = path ?? string.Empty;
     }
+
+    /// <summary>
+    /// Initialises a new instance with a message, the reference coordinates, and an
+    /// underlying transport/parse cause (e.g. an <see cref="System.Net.Http.HttpRequestException"/>
+    /// from the Vault source, S08-B-01).
+    /// </summary>
+    /// <param name="source">The resolver source identifier.</param>
+    /// <param name="path">The source-specific lookup path.</param>
+    /// <param name="message">An actionable British-English description.</param>
+    /// <param name="innerException">
+    /// The underlying cause.  It carries the reference coordinates, never a secret
+    /// <em>value</em> — no resolved value exists when resolution fails (§17).
+    /// </param>
+    public SecretResolutionException(
+        string source, string path, string message, Exception? innerException)
+        : base(message, innerException)
+    {
+        SecretSource = source ?? string.Empty;
+        SecretPath = path ?? string.Empty;
+    }
 }

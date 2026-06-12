@@ -13,6 +13,17 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup Label="S08-F-02 — frozen v1 provider-contract golden artifact">
+    <!--
+      The committed golden the SdkContractFreezeTests gate diffs against.  Copied
+      next to the test DLL so the test reads it from AppContext.BaseDirectory/Golden.
+      Treated as a non-compiled Content item; CopyToOutputDirectory keeps it fresh.
+    -->
+    <Content Include="Golden\platform-sdk-public-api.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />

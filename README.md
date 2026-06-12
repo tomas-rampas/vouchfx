@@ -23,14 +23,14 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Milestone M2 achieved; Phase 3 underway.** The engine compiles `.e2e.yaml` declarative integration
+> **Milestone M3 — full step set & SDK — is engineering-complete and in phase-exit review** (see [exit criteria](plan/m3-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
-> declarative seeding, `${secret:env/…}` resolution, and engine-owned RETRY polling (Polly v8),
-> emitting a schema-versioned JSON Lines event stream rendered to the terminal. A headless CLI runner
+> declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner
 > discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
-> Still to come: VSCode extension/LSP, scenario-level parallelism, and community provider tiers — see
+> Still to come: VSCode extension/LSP, HTML report and JUnit XML renderers, the full verdict taxonomy surface, and community provider tiers (Verified and Community governance) — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
 
@@ -126,6 +126,12 @@ vouchfx run --changed-since main
 
 # Combine filters (all must match — AND across dimensions)
 vouchfx run ./tests --tag integration --owner team-a --changed-since HEAD~1
+
+# Run scenarios in parallel (each owning its own container topology)
+vouchfx run --parallel 2
+
+# Watch a single file for changes and re-run automatically (topology re-used for steps-only edits)
+vouchfx run ./tests/users.e2e.yaml --watch
 ```
 
 The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment
@@ -191,9 +197,9 @@ engine internals.
 
 ## Contributing
 
-The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and
-orchestration first). Anyone working in this repository — human or agent — must honour the **hard
-invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
+**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract from the `Platform.Sdk` NuGet package, composition rules, and the Verified-tier rubric. The [`examples/Example.Steps.Hello`](examples/Example.Steps.Hello) provider is a copyable template demonstrating all four mandatory interfaces on a minimal, dependency-free step.
+
+**Contributing to the platform engine?** The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and orchestration first). Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
 ## Licence
 

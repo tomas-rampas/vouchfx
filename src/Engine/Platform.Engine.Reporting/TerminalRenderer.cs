@@ -20,6 +20,7 @@
 //     when present.  scenario-completed appends durationMs when present.
 
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using Platform.Engine.Abstractions.Events;
 
@@ -202,21 +203,7 @@ public sealed class TerminalRenderer
 
             case EventTypes.StepAttempt:
                 {
-                    var stepId = GetStr(envelope, "stepId") ?? "(unknown)";
-                    var attempt = GetInt(envelope, "attempt");
-                    var outcome = GetStr(envelope, "outcome") ?? "(pending)";
-                    var tMs = GetLong(envelope, "tMs");
-                    var attemptSuffix = tMs.HasValue
-                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", tMs.Value)
-                        : string.Empty;
-                    output.WriteLine(
-                        string.Format(
-                            CultureInfo.InvariantCulture,
-                            "    attempt {0} -> {1}{2}  [{3}]",
-                            attempt,
-                            outcome,
-                            attemptSuffix,
-                            stepId));
+                    RenderAttemptTimelineLine(envelope, output);
                     break;
                 }
 
@@ -242,6 +229,14 @@ public sealed class TerminalRenderer
                     // render time — the stream itself only ever carries the structured
                     // observation, never rendered text (§14).
                     RenderStepDiff(envelope, output, stepId, verdict, stepKinds, diffLookup);
+
+                    // S08-G-02 (T9): render the captured-variable provenance thread for
+                    // this step — every value it captured (name ← this step, JSONPath)
+                    // and every {placeholder}/${secret:…} substituted INTO it (with the
+                    // originating step id).  Rendered ONLY from the existing Captured /
+                    // Substitutions fields; secret-derived substitutions render a
+                    // redaction marker and never a value (§17).
+                    RenderProvenanceThread(envelope, output, stepId);
                     break;
                 }
 
@@ -354,6 +349,245 @@ public sealed class TerminalRenderer
         }
     }
 
+    /// <summary>
+    /// Renders the captured-variable provenance thread for a <c>step-completed</c>
+    /// event (S08-G-02, T9, docs/01 §14): the values this step <em>captured</em> and
+    /// the <c>{placeholder}</c> / <c>${secret:…}</c> references substituted <em>into</em>
+    /// it, so an author can trace a value end-to-end across the scenario.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rendered exclusively from the existing <c>captured</c> and <c>substitutions</c>
+    /// arrays on the step-completed event (frozen by T3); it adds no field to the event
+    /// contract.  The section is drawn only when the step has at least one capture or
+    /// substitution, so a plain step run produces no provenance noise.
+    /// </para>
+    /// <para>
+    /// <strong>§17 secret-safety.</strong>  A substitution whose <c>secretDerived</c>
+    /// flag is <see langword="true"/> renders as a redaction marker — its
+    /// <c>placeholder</c> field carries the non-sensitive secret <em>reference</em>
+    /// label (e.g. <c>env/API_TOKEN</c>), never a value, and the value is never present
+    /// in the stream to begin with.  The rendering makes the secret-derived provenance
+    /// visible WITHOUT the value.  Captured variable names and JSONPaths are metadata
+    /// (safe to show); captured values are not in the stream and are never invented.
+    /// </para>
+    /// <para>
+    /// The walk is a stateless function of THIS event's own fields, so an aggregated /
+    /// parallel multi-scenario stream (each scenario a distinct <c>runId</c>, T1) cannot
+    /// cross-contaminate: a step's captures and substitutions are read from the step's
+    /// own event, and the origin step id printed for a substitution is the one the
+    /// compiler recorded on that same event — no shared per-var state is keyed across
+    /// runs.
+    /// </para>
+    /// </remarks>
+    private static void RenderProvenanceThread(EventEnvelope envelope, TextWriter output, string stepId)
+    {
+        var captured = ReadArray(envelope, "captured");
+        var substitutions = ReadArray(envelope, "substitutions");
+
+        if (captured.Length == 0 && substitutions.Length == 0)
+        {
+            // No provenance to show for this step — emit nothing (no empty section).
+            return;
+        }
+
+        output.WriteLine("    provenance:");
+
+        // Captures: each value this step extracted, named and traced to its JSONPath.
+        // "captured 'orderId' <- step 'create-order' ($.id)".
+        foreach (var capture in captured)
+        {
+            if (capture.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var name = GetStrFromObject(capture, "name") ?? "(unknown)";
+            var path = GetStrFromObject(capture, "path") ?? "(unknown)";
+            var matched = GetBoolFromObject(capture, "matched");
+
+            // A capture whose JSONPath matched nothing is called out explicitly so the
+            // reader can see why a downstream substitution had no value to thread.
+            var matchSuffix = matched ? string.Empty : "   (no match)";
+
+            output.WriteLine(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "      captured '{0}' <- step '{1}' ({2}){3}",
+                    name,
+                    stepId,
+                    path,
+                    matchSuffix));
+        }
+
+        // Substitutions: each {placeholder} / ${secret:…} threaded INTO this step.
+        foreach (var substitution in substitutions)
+        {
+            if (substitution.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var placeholder = GetStrFromObject(substitution, "placeholder") ?? "(unknown)";
+            var secretDerived = GetBoolFromObject(substitution, "secretDerived");
+            var originStepId = GetStrFromObject(substitution, "originStepId");
+
+            if (secretDerived)
+            {
+                // §17: the placeholder field carries the non-sensitive secret REFERENCE
+                // label (e.g. env/API_TOKEN); render it with a redaction marker and never
+                // a value.  The value is not in the stream — the marker makes the
+                // secret-derived provenance visible WITHOUT it.
+                output.WriteLine(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "      substituted ${{secret:{0}}} (redacted) -> step '{1}'",
+                        placeholder,
+                        stepId));
+            }
+            else
+            {
+                // A plain placeholder: trace it back to the step that first captured it
+                // when that origin is known, else note it as untraced (e.g. it came from
+                // the variables block rather than a prior capture).
+                var origin = string.IsNullOrEmpty(originStepId)
+                    ? "(variables/untraced)"
+                    : string.Format(CultureInfo.InvariantCulture, "step '{0}'", originStepId);
+
+                output.WriteLine(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "      substituted '{{{0}}}' (from {1}) -> step '{2}'",
+                        placeholder,
+                        origin,
+                        stepId));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Renders a single attempt of a step as one legible line of the polling
+    /// timeline (S08-G-01, docs/01 §14.5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The line is indented beneath the step it belongs to and carries the
+    /// elapsed time relative to step start (rendered in seconds), the
+    /// one-based attempt counter, and the per-attempt outcome — turning a RETRY
+    /// step's asynchrony back into the story the author wrote rather than a
+    /// final pass-or-fail at the end of a timeout window.  Example:
+    /// </para>
+    /// <code>
+    ///       t=  0.5s   attempt 1   INCONCLUSIVE
+    ///       t=  1.5s   attempt 2   FAIL
+    /// </code>
+    /// <para>
+    /// Renders exclusively from the existing <c>StepAttemptEvent</c> fields
+    /// (<c>attempt</c>, <c>tMs</c>, <c>outcome</c>, <c>observation</c>); it adds
+    /// no field to the event contract.  The optional observation summary is the
+    /// provider's structured observation, which is metadata-only by construction
+    /// (§17) — no captured or secret value can appear here.  An attempt whose
+    /// outcome the engine has not yet resolved (a mid-RETRY poll with a null
+    /// <c>outcome</c>) renders a <c>(pending)</c> marker in place of a verdict.
+    /// </para>
+    /// </remarks>
+    private static void RenderAttemptTimelineLine(EventEnvelope envelope, TextWriter output)
+    {
+        var attempt = GetInt(envelope, "attempt");
+        var outcome = GetStr(envelope, "outcome") ?? "(pending)";
+        var tMs = GetLong(envelope, "tMs");
+
+        // Elapsed time relative to step start, in seconds with one decimal place,
+        // right-padded so the "attempt" columns line up across attempts (the §14.5
+        // example aligns on the elapsed column).  Absent timing renders as "?".
+        var elapsed = tMs.HasValue
+            ? string.Format(CultureInfo.InvariantCulture, "{0,5:0.0}s", tMs.Value / 1000.0)
+            : "    ?s";
+
+        var observationSummary = SummariseObservation(envelope);
+
+        output.WriteLine(
+            string.Format(
+                CultureInfo.InvariantCulture,
+                "      t={0}   attempt {1}   {2}{3}",
+                elapsed,
+                attempt,
+                outcome,
+                observationSummary));
+    }
+
+    /// <summary>
+    /// Produces a compact, secret-safe one-line summary of an attempt's structured
+    /// <c>observation</c> for the polling timeline, or the empty string when no
+    /// renderable observation is present.
+    /// </summary>
+    /// <remarks>
+    /// The observation is provider-supplied structured metadata (e.g.
+    /// <c>{"matched":0}</c> or a diff) and is metadata-only by construction (§17),
+    /// so it carries no captured or secret value.  Even so, the secret-safety
+    /// invariant here is kept <em>total</em>: nothing from the observation is ever
+    /// rendered verbatim.  An object/array is summarised by its shape (its keys or
+    /// length), and a SCALAR observation is summarised by its JSON value-kind
+    /// (<c>&lt;string&gt;</c> / <c>&lt;number&gt;</c> / <c>&lt;bool&gt;</c>) rather
+    /// than its literal value.  No Core provider emits a bare-scalar observation
+    /// today, but <c>StepAttemptEvent.Observation</c> advertises "raw response" as
+    /// legitimate, so a future provider could place a sensitive scalar there; a
+    /// shape hint ensures the polling timeline never prints that value.  The full
+    /// expected-vs-observed diff is left to the <c>step-completed</c> diff renderer.
+    /// A leading separator is included so the caller can concatenate the result
+    /// directly.
+    /// </remarks>
+    private static string SummariseObservation(EventEnvelope envelope)
+    {
+        if (envelope.Extra is null
+            || !envelope.Extra.TryGetValue("observation", out var observation)
+            || observation.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return string.Empty;
+        }
+
+        var summary = observation.ValueKind switch
+        {
+            // Scalars are rendered as a SHAPE HINT (their JSON value-kind), never
+            // verbatim: the keys-only secret-safety invariant is total, so a future
+            // provider that puts a sensitive scalar in the observation cannot leak it
+            // onto the timeline.  The full diff (if any) renders under step-completed.
+            JsonValueKind.String => "<string>",
+            JsonValueKind.Number => "<number>",
+            JsonValueKind.True or JsonValueKind.False => "<bool>",
+
+            // Objects and arrays get a brief shape hint rather than their full
+            // contents; the full diff is rendered under the step-completed line.
+            JsonValueKind.Object => DescribeObject(observation),
+            JsonValueKind.Array => string.Format(
+                CultureInfo.InvariantCulture,
+                "[{0} item(s)]",
+                observation.GetArrayLength()),
+
+            _ => string.Empty,
+        };
+
+        return string.IsNullOrEmpty(summary)
+            ? string.Empty
+            : "   " + summary;
+    }
+
+    /// <summary>
+    /// Describes a JSON object observation as a brief, comma-separated list of its
+    /// property names, e.g. <c>{matched, diff}</c>.  Property <em>values</em> are
+    /// deliberately omitted to keep the timeline terse and to avoid surfacing any
+    /// value that could be sensitive; the keys alone tell the reader what the
+    /// provider observed on this attempt.
+    /// </summary>
+    private static string DescribeObject(JsonElement observation)
+    {
+        var keys = observation
+            .EnumerateObject()
+            .Select(static p => p.Name);
+
+        return "{" + string.Join(", ", keys) + "}";
+    }
+
     // -------------------------------------------------------------------------
     // Extra-field accessors — all defensive; never throw.
     // -------------------------------------------------------------------------
@@ -449,5 +683,61 @@ public sealed class TerminalRenderer
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Returns the elements of the JSON array stored under <paramref name="key"/> in
+    /// <see cref="EventEnvelope.Extra"/>, or an empty list when the key is absent, not
+    /// an array, or <see langword="null"/>.  Defensive by design — never throws.
+    /// </summary>
+    /// <remarks>
+    /// Used to read the <c>captured</c> / <c>substitutions</c> provenance arrays that
+    /// ride on a <c>step-completed</c> event as extension data (S08-G-02).  Each
+    /// element is a <see cref="JsonElement"/> of kind <see cref="JsonValueKind.Object"/>
+    /// in practice; callers re-check the kind before reading sub-properties.
+    /// </remarks>
+    private static JsonElement[] ReadArray(EventEnvelope envelope, string key)
+    {
+        if (envelope.Extra is not null
+            && envelope.Extra.TryGetValue(key, out var element)
+            && element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().ToArray();
+        }
+
+        return Array.Empty<JsonElement>();
+    }
+
+    /// <summary>
+    /// Reads a string sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="null"/> if the
+    /// property is absent or not a JSON string.
+    /// </summary>
+    private static string? GetStrFromObject(JsonElement obj, string propertyName)
+    {
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind == JsonValueKind.String)
+        {
+            return prop.GetString();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads a boolean sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="false"/> if the
+    /// property is absent or not a JSON boolean (so an omitted <c>secretDerived</c> /
+    /// <c>matched</c> defaults to <see langword="false"/>).
+    /// </summary>
+    private static bool GetBoolFromObject(JsonElement obj, string propertyName)
+    {
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return prop.GetBoolean();
+        }
+
+        return false;
     }
 }
