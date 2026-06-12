@@ -8,5 +8,11 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
+    <!-- Not packable by default: only projects that opt in (the Provider SDK,
+         which sets <IsPackable>true</IsPackable>) produce a NuGet package. This
+         keeps `dotnet pack vouchfx.sln` from emitting engine/provider/test
+         packages (S08 T4 / S08-F-03). Test projects also pin this to false in
+         tests/Directory.Build.props. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 </Project>
