@@ -128,6 +128,11 @@ public sealed class HttpVaultKvClientTests
     [InlineData("/myapp/db")]
     [InlineData("myapp/db\n")]
     [InlineData("myapp/\tdb")]
+    [InlineData("myapp/db?x=y")]
+    [InlineData("myapp/db#frag")]
+    [InlineData("myapp/%2e%2e/sys")]
+    [InlineData("myapp/%2E%2E/sys")]
+    [InlineData("app/se%63ret")]
     public void ReadKeyValues_MalformedPath_ThrowsSecretResolutionExceptionBeforeRequest(string badPath)
     {
         // If validation did NOT run first, the faulting handler would throw an

@@ -188,14 +188,30 @@ public sealed class HttpVaultKvClient : IVaultKvClient
         {
             // A backslash is not a valid KV separator and can confuse path handling; a
             // control character (including embedded CR/LF) has no place in a KV path and
-            // could enable request smuggling against a permissive proxy.
-            if (ch == '\\' || char.IsControl(ch))
+            // could enable request smuggling against a permissive proxy.  A '?' would start
+            // a URI query string and a '#' a URI fragment once the path is spliced into the
+            // request URI — either silently truncates the read to a shorter path than the
+            // author wrote (e.g. 'myapp/db?x=y' reads 'myapp/db'), the same silent-misroute
+            // footgun this method exists to prevent.  A '%' is rejected outright because a
+            // percent-encoded sequence (e.g. '%2e%2e' or '%2E%2E') reads as the literal
+            // string '%2e%2e' here — slipping past the literal '.'/'..' dot-segment guard
+            // below — yet a permissive proxy or Vault's own decoding may collapse it back to
+            // a '.'/'..' segment and escape the intended mount (e.g. 'myapp/%2e%2e/sys' →
+            // '.../data/myapp/../sys' → '.../sys').  KV v2 logical paths have no legitimate
+            // use for '%', so rejecting it here COMPLEMENTS (does not replace) the literal
+            // dot-segment guard, closing the encoded-traversal variant the literal check
+            // cannot see.
+            if (ch == '\\' || ch == '?' || ch == '#' || ch == '%' || char.IsControl(ch))
             {
                 throw new SecretResolutionException(
                     "vault",
                     kvPath,
                     $"the Vault KV path '{kvPath}' contains an illegal character; a KV path " +
-                    "may not contain a backslash or a control character.");
+                    "may not contain a backslash, a control character, a '?'/'#' (which " +
+                    "would start a URI query string or fragment and truncate the read), or a " +
+                    "'%' (a percent-encoded sequence such as '%2e%2e' could smuggle a " +
+                    "'.'/'..' segment past the dot-segment check and escape the mount once " +
+                    "decoded).");
             }
         }
 
