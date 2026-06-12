@@ -24,12 +24,12 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
 
 ### Workstream B / F — Freeze the contracts
 
-#### S08-F-01 · Freeze the v1 JSON Schema
+#### S08-F-01 · Freeze the v1 JSON Schema ✓
 - **Owner:** TX · **Estimate:** 1.5d · **Depends on:** S02-C-02, S07-F-01 · **Spec:** DSL §8; MVP §8.3 (freeze v1 schema), §10 (contract-freeze gate)
 - Finalise and version-stamp the unified JSON Schema (draft 2020-12) for v1 so tooling builds against a
   stable contract.
 - **Acceptance:**
-  - The schema is tagged `v1`, composed from all six providers' fragments, and frozen against change.
+  - The schema is tagged `v1`, composed from all six providers' fragments, and frozen against change. ✓
 
 #### S08-F-02 · Freeze the v1 provider contract (with extension path)
 - **Owner:** TL · **Estimate:** 1.5d · **Depends on:** S05-F-01 · **Spec:** BP §13.8.1; MVP §8.3, §10 (engine-breaks-contract risk)

@@ -626,6 +626,10 @@ Crucially, the unified schema is assembled rather than authored. The platform's 
 
 Each provider's schema fragment contributes the fields specific to that step type. For example, the `mq-publish.kafka` provider contributes fields for `target`, `topic`, `key`, `payload`, `headers`, and the optional `avro` block; the `mq-expect.kafka` provider contributes `target`, `topic`, `match`, and the optional `avro` block. Dependencies in the environment section may also declare provider-specific flags — for example, a kafka dependency's `schemaRegistry: true` flag is a Kafka-specific extra that signals the provisioning of a Confluent Schema Registry sidecar.
 
+### The v1 schema is frozen
+
+The composed v1 JSON Schema — the root language schema plus the fragments from all six Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",

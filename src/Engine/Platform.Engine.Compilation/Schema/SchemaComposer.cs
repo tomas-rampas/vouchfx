@@ -49,6 +49,31 @@ public static class SchemaComposer
     };
 
     /// <summary>
+    /// The frozen language-schema version this composer emits.  The composed
+    /// schema self-identifies as this version via the
+    /// <c>x-vouchfx-schema-version</c> annotation (see <see cref="ComposeSchemaJson"/>),
+    /// so the snapshotted golden artifact is unambiguously the <c>v1</c> contract
+    /// (S08-F-01).
+    /// </summary>
+    public const string SchemaVersion = "v1";
+
+    /// <summary>
+    /// The annotation key under which the composed schema records its frozen
+    /// version.  Custom (<c>x-</c>-prefixed) keywords are ignored by the JSON
+    /// Schema validator, so this marker is documentation only and does not affect
+    /// validation behaviour.
+    /// </summary>
+    private const string SchemaVersionAnnotationKey = "x-vouchfx-schema-version";
+
+    private static readonly JsonSerializerOptions s_indentedJsonOptions = new()
+    {
+        WriteIndented = true,
+        // Preserve the schema text verbatim — JSON-escaping printable characters
+        // would mutate provider regex/description strings and defeat byte-stability.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
     /// Builds a unified <see cref="JsonSchema"/> that combines the embedded
     /// root-language schema with the <c>if</c>/<c>then</c> discriminator
     /// clauses contributed by every provider in <paramref name="registry"/>
@@ -67,6 +92,51 @@ public static class SchemaComposer
     /// </exception>
     public static JsonSchema ComposeSchema(StepKindRegistry registry)
     {
+        // Reuse the exact same composed JSON text that ComposeSchemaJson emits so
+        // the validated schema and the frozen golden can never drift apart
+        // (S08-F-01).  JsonSchema.FromText re-parses with all keyword handlers
+        // registered; the indentation/annotation are validation-irrelevant.
+        var composedJson = ComposeSchemaJson(registry);
+        return JsonSchema.FromText(composedJson);
+    }
+
+    /// <summary>
+    /// Composes the unified schema for <paramref name="registry"/> and returns it
+    /// as canonical, indented JSON text suitable for snapshotting and diffing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The output is <b>byte-stable</b> for a given set of provider fragments:
+    /// the <c>if</c>/<c>then</c> discriminator clauses are sorted by their
+    /// <c>&lt;family&gt;.&lt;provider&gt;</c> type key (so reflection/registration
+    /// order cannot perturb the bytes) and the JSON is written with
+    /// <see cref="JsonSerializerOptions.WriteIndented"/>.  This is what the
+    /// S08-F-01 freeze gate snapshots into <c>composed-schema.v1.json</c>.
+    /// </para>
+    /// <para>
+    /// <see cref="ComposeSchema"/> parses exactly this text, so the validated
+    /// schema and the frozen golden are guaranteed identical.
+    /// </para>
+    /// </remarks>
+    /// <param name="registry">
+    /// The frozen provider registry whose fragments contribute to the schema.
+    /// </param>
+    /// <returns>The composed schema as canonical, indented JSON text.</returns>
+    public static string ComposeSchemaJson(StepKindRegistry registry)
+    {
+        var rootObj = BuildComposedRootObject(registry);
+        return rootObj.ToJsonString(s_indentedJsonOptions);
+    }
+
+    /// <summary>
+    /// Parses the embedded root-language schema, injects the sorted provider
+    /// discriminator clauses and the version annotation, strips <c>$id</c>, and
+    /// returns the mutated <see cref="JsonObject"/>.  Shared by
+    /// <see cref="ComposeSchema"/> and <see cref="ComposeSchemaJson"/> so both see
+    /// identical content.
+    /// </summary>
+    private static JsonObject BuildComposedRootObject(StepKindRegistry registry)
+    {
         var rootJson = SchemaResources.ReadRootLanguageSchemaJson();
 
         // Parse the root schema JSON into a mutable JsonObject so we can
@@ -76,6 +146,11 @@ public static class SchemaComposer
                 "Root-language schema JSON parsed to null.");
 
         var rootObj = rootNode.AsObject();
+
+        // Stamp the frozen version onto the composed schema so the artifact
+        // self-identifies (S08-F-01).  The key is x-prefixed, so the validator
+        // ignores it — it is purely a documentation/freeze marker.
+        rootObj[SchemaVersionAnnotationKey] = JsonValue.Create(SchemaVersion);
 
         // Collect if/then clauses from providers that have a SchemaFragment.
         var ifThenClauses = BuildIfThenClauses(registry);
@@ -111,11 +186,7 @@ public static class SchemaComposer
         // public URI, so stripping $id is safe and correct.
         rootObj.Remove("$id");
 
-        // Re-serialise the mutated JSON object to text and parse it back
-        // through JsonSchema.FromText so we get the fully validated schema
-        // with all keyword handlers registered.
-        var composedJson = rootObj.ToJsonString();
-        return JsonSchema.FromText(composedJson);
+        return rootObj;
     }
 
     /// <summary>
@@ -181,7 +252,7 @@ public static class SchemaComposer
     /// </remarks>
     private static List<JsonObject> BuildIfThenClauses(StepKindRegistry registry)
     {
-        var clauses = new List<JsonObject>();
+        var keyed = new List<(string TypeKey, JsonObject Clause)>();
 
         foreach (var registered in registry.All)
         {
@@ -218,8 +289,21 @@ public static class SchemaComposer
                 ["then"] = fragmentNode,
             };
 
-            clauses.Add(clause);
+            keyed.Add((typeKey, clause));
         }
+
+        // Sort the clauses by their <family>.<provider> type key so the composed
+        // schema is BYTE-STABLE regardless of reflection/registration order
+        // (registry.All iterates a dictionary's values).  This ordering is
+        // validation-irrelevant: each clause's 'if' matches a distinct 'type'
+        // const, the discriminators are mutually exclusive, and exactly one
+        // branch ever applies to a given step.  A stable order is what lets the
+        // S08-F-01 freeze gate snapshot the schema and diff it deterministically.
+        keyed.Sort(static (a, b) => string.CompareOrdinal(a.TypeKey, b.TypeKey));
+
+        var clauses = new List<JsonObject>(keyed.Count);
+        foreach (var (_, clause) in keyed)
+            clauses.Add(clause);
 
         return clauses;
     }
