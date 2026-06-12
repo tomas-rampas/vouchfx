@@ -153,6 +153,12 @@ public sealed class ScenarioRunnerTests
     /// started, returning <see cref="Verdict.Inconclusive"/> (the test never ran)
     /// with a message naming the unknown source.  No Docker is required.
     /// </summary>
+    /// <remarks>
+    /// Uses <c>awssecrets</c> — a source the MVP engine does NOT know — to exercise the
+    /// rejection path.  The MVP sources are <c>env</c> (S05) and <c>vault</c> (S08), so a
+    /// reference to either of those would now validate and proceed; this test must name a
+    /// genuinely-unknown source to assert the pre-topology rejection.
+    /// </remarks>
     [Fact]
     public async Task RunAsync_UnknownSecretSource_ReturnsInconclusive_NoTopology()
     {
@@ -166,7 +172,7 @@ public sealed class ScenarioRunnerTests
                 type: http.rest
                 target: whoami
                 method: GET
-                path: /search?key=${secret:vault/api-key}
+                path: /search?key=${secret:awssecrets/api-key}
                 expect:
                   status: 200
             """;
@@ -184,7 +190,7 @@ public sealed class ScenarioRunnerTests
 
         var rendered = sw.ToString();
         Assert.Contains("get-with-secret", rendered, StringComparison.Ordinal);
-        Assert.Contains("vault", rendered, StringComparison.Ordinal);
+        Assert.Contains("awssecrets", rendered, StringComparison.Ordinal);
         // It must never be reported as a product defect.
         Assert.NotEqual(Verdict.Fail, verdict);
     }
@@ -243,6 +249,11 @@ public sealed class ScenarioRunnerTests
     /// non-empty query, a row assertion), so the secret-validation pass — not schema or
     /// provider validation — is what produces the <see cref="Verdict.Inconclusive"/>.
     /// No Docker is required.
+    /// <para>
+    /// Uses <c>awssecrets</c> — a source the MVP engine does NOT know (the MVP sources are
+    /// <c>env</c> and <c>vault</c>) — so the rejection is driven by the unknown source, not
+    /// by any since-added source becoming known.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task RunAsync_UnknownSecretSource_InDbAssertExpectRow_ReturnsInconclusive_NoTopology()
@@ -260,7 +271,7 @@ public sealed class ScenarioRunnerTests
                 expect:
                   rowCount: 1
                   row:
-                    status: ${secret:vault/expected-status}
+                    status: ${secret:awssecrets/expected-status}
             """;
 
         var sw = new StringWriter();
@@ -276,7 +287,7 @@ public sealed class ScenarioRunnerTests
 
         var rendered = sw.ToString();
         Assert.Contains("assert-secret-row", rendered, StringComparison.Ordinal);
-        Assert.Contains("vault", rendered, StringComparison.Ordinal);
+        Assert.Contains("awssecrets", rendered, StringComparison.Ordinal);
         // It must never be reported as a product defect, and must be caught
         // pre-topology (no EnvironmentError from a failed container start).
         Assert.NotEqual(Verdict.Fail, verdict);
