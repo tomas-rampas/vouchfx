@@ -24,9 +24,11 @@
 // tests/Platform.Engine.Compilation.Tests/AssemblyInfo.cs (which disables
 // intra-assembly parallelism for the memory-probe flake).
 //
-// Cross-assembly parallelism (VSTest running this DLL alongside other test DLLs)
-// is unaffected by this attribute; the integration CI job caps that separately
-// via .github/integration.runsettings (MaxCpuCount=1).
+// Cross-assembly overlap is not a concern under the pinned .NET 8 SDK
+// (global.json 8.0.400) with single-TFM test projects: `dotnet test <solution>`
+// runs ONE test host per project SEQUENTIALLY, so this DLL never runs alongside
+// another test DLL. Together with the in-assembly serialisation above, at most
+// one Aspire topology starts at a time.
 
 using Xunit;
 

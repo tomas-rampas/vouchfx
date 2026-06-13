@@ -252,19 +252,26 @@ jobs:
       # Until the Aspire topology tests are wired in S01-A-*, this filter
       # matches nothing and dotnet test exits 0 with "No tests found."
       #
-      # --settings .github/integration.runsettings sets MaxCpuCount=1 so VSTest
-      # runs the docker-bearing test assemblies ONE AT A TIME (serial test
-      # hosts).  Combined with the per-assembly DisableTestParallelization
-      # (Runtime.Tests + Orchestration.Tests), this guarantees at most ONE Aspire
-      # topology starts at any moment — fitting DCP's internal ~20s per-resource
-      # startup window on a loaded runner and killing the `startup` HealthGate
-      # flake.  CI-only: the fast `build` job keeps normal parallelism.
+      # Topology startup is serialised so at most ONE Aspire topology starts at a
+      # time — fitting DCP's internal ~20s per-resource startup window on a loaded
+      # runner and killing the intermittent `startup` HealthGate flake. Two facts
+      # combine to guarantee this:
+      #   • per-assembly [assembly: CollectionBehavior(DisableTestParallelization
+      #     = true)] in Runtime.Tests + Orchestration.Tests serialises the
+      #     topology-starting classes WITHIN each assembly; and
+      #   • under the pinned .NET 8 SDK (global.json 8.0.400), with single-TFM
+      #     classic-VSTest projects and no parallelism flag set, `dotnet test
+      #     <solution>` runs ONE test host per project SEQUENTIALLY by default, so
+      #     assemblies don't overlap either. (If a future SDK/MTP/`-m` change
+      #     enabled cross-assembly parallelism, revisit with the right lever.)
+      # (The Sprint08 parallel capstone intentionally runs two topologies at once
+      # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
+      # to, xUnit/VSTest scheduling.)
       - name: Integration tests (requires=docker)
         run: >
           dotnet test vouchfx.sln
           -c Release
           --no-build
-          --settings .github/integration.runsettings
           --filter "requires=docker"
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
