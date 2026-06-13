@@ -67,6 +67,8 @@ public sealed class ParallelArgParsingTests
             criteria: SelectionCriteria.None,
             parallel: 0,
             watch: false,
+            failOnEnvironmentError: false,
+            failOnInconclusive: false,
             output: sw,
             cancellationToken: default);
 

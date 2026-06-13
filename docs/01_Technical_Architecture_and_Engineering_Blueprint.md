@@ -1129,7 +1129,26 @@ The isolation contract must be stated explicitly, because it is the assumption e
 
 First, **each scenario gets a clean data baseline**. Respawn-based reset runs between scenarios on relational dependencies; for stores Respawn does not cover, the runner uses a per-store-type cleanup strategy described in the orchestration appendix. Second, **scenarios may share a topology or be given fresh ones**, and this is a declared choice: in sequential runs, by default a suite shares one provisioned topology across its scenarios for speed, with per-scenario data reset providing the isolation; a scenario that needs genuine infrastructure isolation — a destructive test, or one that reconfigures a broker — declares that it requires a private topology and the runner honours it. In parallel runs the picture changes because parallel scenarios cannot safely share a mutable topology. Third, **parallel scenarios use database-namespace isolation by default and full topology isolation on request**. The default for a parallel run is the cheaper option: scenarios share the topology but each scenario gets a private database schema (Postgres, SQL Server) or a private collection prefix (MongoDB) or a private Redis database number, so writes from one scenario are invisible to another without paying for a separate Postgres process. A scenario that genuinely requires a private topology — because it reconfigures a broker, or because the system under test maintains process-wide state across schemas — declares that explicitly and the runner provisions one for it. The expensive default of “private topology per parallel scenario”, which earlier drafts of this section described, is the explicit opt-in, not the default; the cheaper namespace-isolation default is what makes parallelism actually usable on developer hardware.
 
-## 16.4 Deliberate non-features
+## 16.4 Exit codes
+
+The runner's exit codes carry the verdict taxonomy all the way to the CI system, so that infrastructure breakage, inconclusive results, and genuine defects can be distinguished and handled separately. The mapping is controlled by two optional flags, both off by default, which implement the principle that **only Fail breaks CI by default**.
+
+| Exit code | Verdict | Meaning | Opt-in flag |
+|---|---|---|---|
+| 0 | Pass, EnvironmentError, Inconclusive | All scenarios passed, or only non-breaking verdicts occurred. | – |
+| 1 | Fail | One or more scenarios failed — a genuine defect in the system under test. Breaks CI by default. | – |
+| 2 | UsageError | Bad arguments, missing path, invalid `--parallel` value, or `--watch` combined with `--parallel`. The suite never ran. | – |
+| 3 | EnvironmentError | The aggregate verdict was EnvironmentError (infrastructure breakage: unhealthy container, image-pull failure, seed failure, tunnel collapse). Off by default; breaks CI only when `--fail-on-env-error` is set. | `--fail-on-env-error` |
+| 4 | Inconclusive | The aggregate verdict was Inconclusive (timeout, network partition outlasted grace, upstream capture unmet — the engine could not determine correctness). Off by default; breaks CI only when `--fail-on-inconclusive` is set. | `--fail-on-inconclusive` |
+
+The two opt-in flags are:
+
+- **`--fail-on-env-error`** — When set, an EnvironmentError verdict exits with code 3 instead of 0. Use this to gate on infrastructure failure in environments where infrastructure reliability is the team's responsibility.
+- **`--fail-on-inconclusive`** — When set, an Inconclusive verdict exits with code 4 instead of 0. Use this to gate on results the engine could not decide (timeout, partition, unmet upstream captures), in scenarios where deterministic decisions are required.
+
+The distinct codes 3 and 4 sit deliberately above the UsageError code (2) so there is no collision: 0 = success, 1 = a product defect, 2 = a usage error, 3 = infrastructure broke, 4 = the engine could not decide. This separation lets a CI system act on each outcome independently: fail the build on Fail (1), notify on-call about EnvironmentError (3), or escalate Inconclusive (4) to a reliability engineering team. The principle is that a team should be able to see infrastructure problems for what they are, not buried under a wall of failing tests.
+
+## 16.5 Deliberate non-features
 
 Two capabilities are withheld on purpose, and naming them prevents their absence from looking like an oversight. The runner does not automatically retry a failed test, because automatic retry hides flakiness rather than surfacing it, and a platform whose entire premise is trustworthy verdicts must not bury its own non-determinism. The runner also does not reorder tests to optimise runtime in a way that could change outcomes; selection is explicit and ordering within a scenario is fixed. A watch mode for fast local iteration and a CI sharding interface for splitting a large suite across parallel CI agents are in scope as conveniences, but neither changes the verdict a test produces.
 

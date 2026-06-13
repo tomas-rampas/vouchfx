@@ -134,8 +134,33 @@ vouchfx run --parallel 2
 vouchfx run ./tests/users.e2e.yaml --watch
 ```
 
-The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment
-errors occur), and **2** for usage errors. The output is a terminal report with colour-coded verdicts.
+The runner exits with a code that reflects the verdict taxonomy:
+
+| Exit code | Verdict | Condition | Opt-in flag |
+|---|---|---|---|
+| **0** | Success | Pass, or EnvironmentError/Inconclusive (off by default) | – |
+| **1** | Fail | One or more scenarios failed (a genuine defect) | – |
+| **2** | UsageError | Bad arguments, missing path, `--watch`+`--parallel` | – |
+| **3** | EnvironmentError | Infrastructure breakage (unhealthy container, image-pull/seed failure) | `--fail-on-env-error` |
+| **4** | Inconclusive | Engine could not decide (timeout, partition outlasted grace, upstream capture unmet) | `--fail-on-inconclusive` |
+
+By default, **only Fail (1) breaks CI** — environment errors and inconclusive results exit 0 unless you opt in via the flags above. This distinction lets you tell infrastructure breakage apart from a product defect.
+
+```bash
+# Fail breaks CI; environment errors and inconclusive results exit 0
+vouchfx run ./tests
+
+# Also gate on infrastructure failure
+vouchfx run ./tests --fail-on-env-error
+
+# Also gate on inconclusive results (timeout, unmet captures, etc.)
+vouchfx run ./tests --fail-on-inconclusive
+
+# Gate on both
+vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
+```
+
+The output is a terminal report with colour-coded verdicts.
 
 ## Sprint 1 de-risking results
 

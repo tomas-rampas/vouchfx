@@ -64,6 +64,8 @@ public sealed class WatchArgParsingTests
             criteria: SelectionCriteria.None,
             parallel: 2,
             watch: true,
+            failOnEnvironmentError: false,
+            failOnInconclusive: false,
             output: sw,
             cancellationToken: default);
 
