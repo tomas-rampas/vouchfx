@@ -137,6 +137,16 @@ vouchfx run ./tests/users.e2e.yaml --watch
 The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment
 errors occur), and **2** for usage errors. The output is a terminal report with colour-coded verdicts.
 
+## VSCode extension
+
+A VSCode extension lives at [`tools/vscode-vouchfx/`](tools/vscode-vouchfx/). It binds the frozen v1
+JSON Schema to `*.e2e.yaml` files (via the `redhat.vscode-yaml` language server), giving step-type-aware
+**autocomplete, hover, and inline validation** as you author a suite — a `.NET` CI gate keeps the editor's
+schema byte-for-byte in step with what the compiler accepts, so the editor can never suggest a construct
+the engine would reject. It also provides **C# syntax highlighting** inside `script.csharp` blocks. Full
+in-block C# IntelliSense (completion/diagnostics) is a documented fast-follow — see
+[`tools/vscode-vouchfx/docs/csharp-intellisense.md`](tools/vscode-vouchfx/docs/csharp-intellisense.md).
+
 ## Sprint 1 de-risking results
 
 - **Memory model verified** — a trivial script compiles once, runs 5,000 times in a collectible
