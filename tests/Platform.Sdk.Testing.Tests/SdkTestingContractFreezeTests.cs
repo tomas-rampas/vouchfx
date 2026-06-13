@@ -45,6 +45,16 @@ namespace Platform.Sdk.Testing.Tests;
 public sealed class SdkTestingContractFreezeTests
 {
     /// <summary>
+    /// Banner-line-1 title for the <c>Platform.Sdk.Testing</c> golden.  This surface is a
+    /// VERSIONED test-harness surface — NOT the frozen v1 <c>Platform.Sdk</c> provider
+    /// contract — so it carries its own self-describing title (the shared
+    /// <c>SdkPublicApiSignature.Build</c> banner-line-1 must not mislabel it as the frozen
+    /// provider contract).
+    /// </summary>
+    private const string BannerTitle =
+        "Platform.Sdk.Testing public surface — freeze-gated (a versioned testing surface, NOT the frozen v1 Platform.Sdk provider contract).";
+
+    /// <summary>
     /// The reflected public API of <c>Platform.Sdk.Testing</c> must be byte-for-byte
     /// (newline-normalised) identical to the committed golden.  If this fails, the
     /// published test-harness surface has drifted.
@@ -52,7 +62,7 @@ public sealed class SdkTestingContractFreezeTests
     [Fact]
     public void PlatformSdkTestingPublicApi_MatchesGolden_ByteForByte()
     {
-        var actual = SdkPublicApiSignature.Build(typeof(ProviderTestHarness).Assembly);
+        var actual = SdkPublicApiSignature.Build(typeof(ProviderTestHarness).Assembly, BannerTitle);
         var golden = ReadGolden();
 
         var actualNormalised = Normalise(actual);
@@ -71,17 +81,19 @@ public sealed class SdkTestingContractFreezeTests
     }
 
     /// <summary>
-    /// The harness's key published types must remain present in the frozen surface.  This
-    /// coarse completeness guard complements the byte-for-byte golden: it catches an
-    /// accidental surface SHRINK (a removed/renamed public type) with a harness-specific
-    /// message even before the golden diff is read.  A removal is a BREAKING change for
-    /// every downstream provider test project and must never happen silently in v1.x.
+    /// The harness's key published types must remain present in BOTH the committed golden
+    /// AND the LIVE reflected surface.  This coarse completeness guard complements the
+    /// byte-for-byte golden: it catches an accidental surface SHRINK (a removed/renamed
+    /// public type) with a harness-specific message even before the golden diff is read.
+    /// A removal is a BREAKING change for every downstream provider test project and must
+    /// never happen silently in v1.x.  Asserting against the LIVE
+    /// <see cref="SdkPublicApiSignature.Build"/> output (not only the committed golden)
+    /// makes the guard's promise literally true against the live assembly — so it cannot
+    /// pass on a stale golden after a type has actually been removed from the harness.
     /// </summary>
     [Fact]
-    public void KeyPublishedTypes_RemainPresentInGolden()
+    public void KeyPublishedTypes_RemainPresentInGoldenAndLiveSurface()
     {
-        var golden = Normalise(ReadGolden());
-
         // The published harness contract: the entry point, its result record, and the
         // three reusable engine-context stand-ins a provider author drives a provider with.
         string[] requiredHeaders =
@@ -93,17 +105,30 @@ public sealed class SdkTestingContractFreezeTests
             "class Platform.Sdk.Testing.Contexts.TestCompileContext",
         };
 
-        var goldenLines = golden.Split('\n');
+        // (1) Defend the committed golden artifact.
+        AssertHeadersPresent(Normalise(ReadGolden()), requiredHeaders, "golden");
+
+        // (2) Independently defend the LIVE reflected surface, so the guard cannot pass on
+        //     a stale golden after a type was actually removed/renamed in the assembly.
+        var live = Normalise(
+            SdkPublicApiSignature.Build(typeof(ProviderTestHarness).Assembly, BannerTitle));
+        AssertHeadersPresent(live, requiredHeaders, "live reflected surface");
+    }
+
+    // Asserts every required type header is present in the supplied signature text.
+    private static void AssertHeadersPresent(string signature, string[] requiredHeaders, string source)
+    {
+        var lines = signature.Split('\n');
 
         foreach (var header in requiredHeaders)
         {
             // Each type header is a line that STARTS with the kind+name (a record/class
             // line may carry a ": <bases>" suffix), so match on a prefix.
             Assert.True(
-                goldenLines.Any(line =>
+                lines.Any(line =>
                     line.Equals(header, StringComparison.Ordinal)
                     || line.StartsWith(header + " :", StringComparison.Ordinal)),
-                $"Frozen Platform.Sdk.Testing public type '{header}' is missing from the golden. "
+                $"Frozen Platform.Sdk.Testing public type '{header}' is missing from the {source}. "
                 + "The published harness surface is FROZEN — a public type may never be removed "
                 + "or renamed in the v1.x engine series (that is a breaking change for every "
                 + "downstream provider test project).");

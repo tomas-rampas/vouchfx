@@ -62,6 +62,14 @@ namespace Platform.Sdk.Tests;
 public sealed class SdkContractFreezeTests
 {
     /// <summary>
+    /// Banner-line-1 title for the <c>Platform.Sdk</c> golden — the FROZEN v1 provider
+    /// contract.  Kept byte-identical to <c>main</c> so the frozen provider golden does
+    /// not churn (only its shared line-2 provenance note changed on this branch).
+    /// </summary>
+    private const string BannerTitle =
+        "Platform.Sdk v1 provider contract — FROZEN for the v1.x engine series.";
+
+    /// <summary>
     /// The reflected public API of <c>Platform.Sdk</c> must be byte-for-byte
     /// (newline-normalised) identical to the committed golden.  If this fails,
     /// the v1 provider contract has drifted.
@@ -69,7 +77,7 @@ public sealed class SdkContractFreezeTests
     [Fact]
     public void PlatformSdkPublicApi_MatchesGolden_ByteForByte()
     {
-        var actual = SdkPublicApiSignature.Build(typeof(IStepProvider).Assembly);
+        var actual = SdkPublicApiSignature.Build(typeof(IStepProvider).Assembly, BannerTitle);
         var golden = ReadGolden();
 
         var actualNormalised = Normalise(actual);
