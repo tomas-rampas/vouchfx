@@ -58,7 +58,8 @@ public sealed class AssemblyVersionConflictException : Exception
     /// the recommended corrective action.
     /// </summary>
     /// <param name="conflicts">
-    /// The conflicts detected by <see cref="AssemblyGraphGuard.FindConflicts"/>;
+    /// The conflicts detected by
+    /// <see cref="AssemblyGraphGuard.FindConflicts(IEnumerable{AssemblyName})"/>;
     /// must be non-empty.
     /// </param>
     public AssemblyVersionConflictException(IReadOnlyList<AssemblyConflict> conflicts)
