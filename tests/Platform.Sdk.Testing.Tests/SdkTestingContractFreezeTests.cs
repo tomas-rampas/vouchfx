@@ -30,7 +30,6 @@ using System;
 using System.IO;
 using System.Linq;
 using Platform.Sdk.Testing;
-using Platform.Sdk.Testing.Contexts;
 using Platform.TestSupport;
 using Xunit;
 
