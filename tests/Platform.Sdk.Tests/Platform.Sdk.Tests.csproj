@@ -27,6 +27,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <!-- Shared canonical public-API signature builder (SdkPublicApiSignature) used by
+         both this gate and the Platform.Sdk.Testing freeze gate (S08-F-02 / M4). -->
+    <ProjectReference Include="..\Platform.TestSupport\Platform.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>
