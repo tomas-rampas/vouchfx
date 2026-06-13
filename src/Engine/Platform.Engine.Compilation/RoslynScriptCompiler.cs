@@ -272,7 +272,7 @@ public static class RoslynScriptCompiler
 
     /// <summary>
     /// Compiles an <see cref="AssembledScript"/> produced by
-    /// <see cref="CsxAssembler.Assemble"/> into a <see cref="CompiledScenario"/>
+    /// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/> into a <see cref="CompiledScenario"/>
     /// that pairs the emitted image with the originating step identifiers.
     /// </summary>
     /// <remarks>
@@ -286,7 +286,7 @@ public static class RoslynScriptCompiler
     /// </para>
     /// </remarks>
     /// <param name="assembled">
-    /// The assembled script produced by <see cref="CsxAssembler.Assemble"/>.
+    /// The assembled script produced by <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/>.
     /// </param>
     /// <param name="additionalReferencePaths">
     /// Optional list of absolute paths to assemblies that should be added as

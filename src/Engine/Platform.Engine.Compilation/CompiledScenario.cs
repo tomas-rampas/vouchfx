@@ -27,7 +27,7 @@ namespace Platform.Engine.Compilation;
 /// </param>
 /// <param name="StepIds">
 /// The step identifiers in the order they were passed to
-/// <see cref="CsxAssembler.Assemble"/>, preserved so callers can correlate
+/// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/>, preserved so callers can correlate
 /// execution results back to originating YAML steps.
 /// </param>
 public sealed record CompiledScenario(CompiledScript Compiled, IReadOnlyList<string> StepIds);

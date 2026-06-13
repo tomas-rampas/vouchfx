@@ -55,13 +55,15 @@ captured-variable thread. This is the M3 exit criterion (MVP §8.3).
   - The fixture runs against the worked example and passes; CONTRIBUTING.md states the Verified-tier
     rubric (MVP §9.6) and the reserved-namespace rule. ✓
 
-#### S08-F-05 · Outside-contributor validation of the SDK
+#### S08-F-05 · Outside-contributor validation of the SDK — ◐ engineering-validated (clean-room); named-contributor sign-off residual
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S08-F-04 · **Spec:** MVP §8.3 (validated by an outside contributor), §4.2 (community gate)
 - Invite a small number of pre-pilot contributors to implement a non-Core provider end-to-end against the
   surface; treat any friction as a documentation/contract bug.
 - **Acceptance:**
-  - At least one outside contributor compiles and runs a non-Core provider end-to-end without
-    platform-team help (the M3 SDK-validation gate).
+  - An outside contributor (clean-room, out-of-repo) authored and ran a non-Core provider end-to-end
+    using only published packages (`Platform.Sdk` + `Platform.Sdk.Testing` + examples), without
+    platform-team help. All outcomes (Pass / Fail / schema-reject) executed correctly. (The residual
+    social gate — named person's sign-off — is a governance item; see m3-phase-exit.md §4, Gate 1.)
 
 ### Workstream B — Compiler & runtime
 

@@ -31,7 +31,7 @@ namespace Platform.Engine.Compilation;
 ///   </description></item>
 ///   <item><description>
 ///     Per-run or customer satellite assemblies that the script depends on at runtime
-///     are supplied via <paramref name="collectibleProbingPaths"/>.  For each path
+///     are supplied via the <c>collectibleProbingPaths</c> constructor argument.  For each path
 ///     whose simple assembly name is <em>not</em> already present in the Default
 ///     context, the context records a <c>simpleName → absolutePath</c> mapping and
 ///     loads the assembly into itself on demand, so it unloads with the context.

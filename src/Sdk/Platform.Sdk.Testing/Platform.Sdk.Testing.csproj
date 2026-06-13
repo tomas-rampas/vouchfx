@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Sdk.Testing</RootNamespace>
+    <AssemblyName>Platform.Sdk.Testing</AssemblyName>
+  </PropertyGroup>
+
+  <!-- NuGet packaging (M3 SDK-validation gate): publish the out-of-repo provider
+       test harness as Platform.Sdk.Testing 1.0.0.  This package lets a provider
+       author exercise a single-step .e2e.yaml end to end using ONLY published
+       packages.  It is a TESTING SURFACE: it depends on the (versioned-not-frozen)
+       engine assemblies, NOT just the frozen v1 contract (that is Platform.Sdk). -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Platform.Sdk.Testing</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>Out-of-repo provider test harness for vouchfx step providers. Drives a single-step .e2e.yaml end to end (schema-validate → parse → AST → bind → validate → emit → compile-once → run-isolated) so a provider author can prove a custom provider works against the published engine. TESTING SURFACE — depends on the versioned-not-frozen engine assemblies; the frozen v1 provider contract is Platform.Sdk.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;testing;provider-sdk;test-harness</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Deterministic, reproducible packaging. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <!-- SourceLink + symbols (mirrors Platform.Sdk): let provider authors step into
+         the harness source.  PublishRepositoryUrl/EmbedUntrackedSources map PDB source
+         paths back to GitHub; IncludeSymbols + the snupkg format ships a separate
+         symbols package alongside the main .nupkg. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Each referenced project carries its own PackageId (Version 1.0.0), so under
+         central package management these ProjectReferences auto-emit as NuGet
+         <dependency> entries of Platform.Sdk.Testing 1.0.0 — no hand-wiring needed.
+           • Platform.Sdk            — the frozen v1 provider contract + StepKindRegistry.
+           • Platform.Engine.Abstractions — Verdict / StepOutcome / VarKeys / ScriptGlobalVariables.
+           • Platform.Engine.Authoring    — YamlDocumentParser + AstBuilder (front end).
+           • Platform.Engine.Compilation  — DocumentValidator, CsxAssembler, RoslynScriptCompiler. -->
+    <ProjectReference Include="..\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -205,7 +205,7 @@ internal static class ForbiddenScriptingApiScanner
     /// that decodes only what is needed to extract a generic type definition's full
     /// name from a TypeSpecification blob.  All methods return either the type's full
     /// name string or <see langword="null"/>; callers that do not need the result
-    /// receive <c>"<unsupported>"</c>.
+    /// receive <c>"&lt;unsupported&gt;"</c>.
     /// </summary>
     /// <remarks>
     /// Only <see cref="GetTypeFromReference"/>, <see cref="GetGenericInstantiation"/>,

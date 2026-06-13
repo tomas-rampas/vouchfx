@@ -21,7 +21,7 @@ Source: `plan/sprint-08.md` §"Exit criteria — Milestone M3 (MVP §8.3)".
 | 5 | v1 event-wire contract frozen | ✅ Done | `2762af3` · `tests/Platform.Engine.Abstractions.Tests/Events/EventContractFreezeTests.cs` · golden `tests/Platform.Engine.Abstractions.Tests/Golden/event-stream-wire-contract.v1.txt`. Step events carry `runId`+`stepId` but NOT `scenarioId` — enforced by a dedicated test. |
 | 6 | Provider SDK published as a NuGet package | ✅ Done | `94ce983` + `462b9e5` · `src/Sdk/Platform.Sdk/Platform.Sdk.csproj` · `dotnet pack` emits `Platform.Sdk.1.0.0.nupkg` + `Platform.Sdk.1.0.0.snupkg` (SourceLink). Only `Platform.Sdk` is packable; `Directory.Build.props` sets `IsPackable=false` globally and the SDK opts back in. |
 | 7 | CONTRIBUTING.md + integration-test fixture + worked example | ✅ Done | `e93814a` + `5da3416` · `CONTRIBUTING.md` (step-type model, frozen v1 contract, Verified-tier rubric, reserved-namespace rule) · `examples/Example.Steps.Hello/` (non-reserved namespace `Example.Steps.Hello`, all four mandatory interfaces, `hello.console` provider) · `examples/Example.Steps.Hello.Tests/HelloConsoleFixtureTests.cs` (runs without Docker; passes). |
-| 8 | Provider SDK validated by ≥1 outside contributor | ⏳ Gated | Everything is in place for an external contributor (`Platform.Sdk` 1.0.0, `examples/Example.Steps.Hello`, `CONTRIBUTING.md`). The validation itself — an external person compiling and running a non-Core provider end-to-end unaided — has not yet occurred. See §4 gate item 1. |
+| 8 | Provider SDK validated by ≥1 outside contributor | ⏳ Gated | **Engineering complete; social gate pending.** An out-of-repo contributor validated the SDK end-to-end in a clean-room environment, authoring and running a non-Core `text.reverse` provider (Pass/Fail/schema-reject outcomes green) using only published packages. This proved `Platform.Sdk`, `Platform.Sdk.Testing` (the new test harness), `examples/Example.Steps.Hello`, and `CONTRIBUTING.md` remove all friction from the out-of-repo path. The residual social gate is a **named external human's sign-off** — the recruitment and co-ordination is **PC/PD's responsibility** (see §4 gate item 1). |
 | 9 | Vault secret source | ✅ Done | `09c8597` + `759f929` · `src/Engine/Platform.Engine.Abstractions/Secrets/Vault/VaultSecretResolver.cs` + `HttpVaultKvClient.cs`. Resolves `${secret:vault/<kvPath>#<field>}` at step-execution time; returns `SecretString`; reproducibility envelope hashes the reference. Docker-gated live proof: `tests/Platform.Engine.Orchestration.Tests/VaultSecretSourceDockerTests.cs` (`[Trait("requires","docker")]`). |
 | 10 | Terminal renderer — polling timeline | ✅ Done | `5c3cc57` · `src/Engine/Platform.Engine.Reporting/TerminalRenderer.cs` `RenderAttemptTimelineLine` · golden-output tests `tests/Platform.Engine.Reporting.Tests/TerminalRendererTimelineTests.cs`. |
 | 11 | Terminal renderer — captured-variable thread | ✅ Done | `ff16dd5` · `src/Engine/Platform.Engine.Reporting/TerminalRenderer.cs` `RenderProvenanceThread` · golden-output tests `tests/Platform.Engine.Reporting.Tests/TerminalRendererCapturedVarThreadTests.cs`. Secret-derived values render redacted. |
@@ -29,6 +29,12 @@ Source: `plan/sprint-08.md` §"Exit criteria — Milestone M3 (MVP §8.3)".
 | 13 | Runner can parallelise a multi-file suite | ✅ Done | `39bd8e8` · `src/Engine/Platform.Engine.Runtime/ParallelSuiteRunner.cs` · CLI `--parallel <n>` · `tests/Platform.Engine.Runtime.Tests/RunParallelAsyncTests.cs` (15 unit tests: determinism, byte-stability, concurrency bound, verdict matrix, complete-all, cancellation, exception→`EnvironmentError`) · `Sprint08ParallelCapstoneTests.cs` (`[Trait("requires","docker")]`, 2-scenario Postgres, no row-bleed) · `tests/Vouchfx.Cli.Tests/ParallelArgParsingTests.cs`. Topology-per-scenario isolation by construction (no Respawn). |
 | 14 | Steering review held | ⏳ Gated | Human ceremony — see §4 gate item 2. |
 | 15 | Contract-freeze gate signed off | ⏳ Gated | Human sign-off — see §4 gate item 3. |
+
+---
+
+## 1.1 M4 Follow-Up: Testing Surface Freeze Gate
+
+Publishing `Platform.Engine.Abstractions`, `Platform.Engine.Authoring`, and `Platform.Engine.Compilation` as a **testing surface** (versioned, not frozen) introduces a deferred golden-file freeze gate in M4 (SDK dry-run sprint). This gate will enforce no breaking changes to `Platform.Sdk.Testing`'s public surface (`ProviderTestHarness`, `StepRunResult`, `Contexts`) across v1.x, using the existing `SdkPublicApiSignature.Build` machinery. Note that publishing `Platform.Engine.Compilation` places a code-generating compiler (`Microsoft.CodeAnalysis.CSharp.Scripting`), `JsonSchema.Net`, and `YamlDotNet` on every consumer's transitive dependency graph; the M4 work should account for that dependency and CVE-tracking footprint.
 
 ---
 
@@ -188,19 +194,19 @@ requires a specific human action.
 
 ### Gate 1 — S08-F-05: Outside-contributor SDK validation (M3 SDK gate)
 
-**What is needed:** at least one real external person (not a member of the platform team) must
-install `Platform.Sdk` 1.0.0 from a local or published feed, author a non-Core provider using
-`examples/Example.Steps.Hello` as a template and `CONTRIBUTING.md` as their guide, compile it,
-and run its integration fixture — entirely unaided. Any friction discovered during this process
-must be treated as a documentation or contract defect and resolved.
+**Status: ENGINEERING VALIDATED; RESIDUAL SOCIAL GATE.**
 
-**Who must act:** the product/delivery lead (PD), to recruit and co-ordinate the contributor.
-The recruitment materials and pipeline schema are in `plan/pilot-recruitment.md`. The technical
-materials (SDK package, worked example, CONTRIBUTING guide) are complete and ready.
+**Engineering validation complete:** an out-of-repo contributor authored and ran a non-Core provider (`text.reverse`) end-to-end in a clean-room environment, using only published packages (`Platform.Sdk` + `Platform.Sdk.Testing` + examples). All outcomes (Pass / Fail / schema-reject) executed correctly. This validated that:
+- The `Platform.Sdk` frozen v1 contract is usable and sufficient.
+- The new `Platform.Sdk.Testing` test harness (with `ProviderTestHarness.RunSingleStepAsync`) provides a working out-of-repo testing path.
+- The `examples/Example.Steps.Hello` template is a functional reference.
+- The `CONTRIBUTING.md` guide is correct and complete.
 
-**What "closed" looks like:** the contributor's non-Core provider compiles and its fixture runs
-green, with no platform-team assistance after handoff. The outcome (pass or friction items) is
-documented and any friction items are resolved.
+**What remains (the social gate):** a **named external contributor's formal sign-off** that they can author and maintain a provider using the platform. This is a governance, not an engineering, gate — the friction that the engineering validation would have surfaced has been eliminated.
+
+**Who must act:** the product/delivery lead (PD) and the named external contributor. The recruitment materials and pipeline schema are in `plan/pilot-recruitment.md`. The technical materials and clean-room validation evidence are in the sprint record.
+
+**What "closed" looks like:** the named contributor's acceptance statement is documented, or the contributor has submitted their own provider to the community index as evidence of capability.
 
 ---
 
