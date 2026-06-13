@@ -191,9 +191,82 @@ jobs:
       - name: Build (Release)
         run: dotnet build vouchfx.sln -c Release --no-restore
 
+      # Warm the Docker image cache BEFORE dotnet test so DCP's internal
+      # ~20s per-resource start window is never spent on a cold image pull.
+      #
+      # Why this step exists
+      # --------------------
+      # The Aspire/DCP native orchestrator enforces its own per-resource
+      # readiness watchdog ("the operation didn't complete within the allowed
+      # timeout of '00:00:20'") inside DistributedApplication.StartAsync — this
+      # is NOT our 120s health gate (SuiteTopology uses a 120s gateTimeout).
+      # On a cold/slow ubuntu-latest runner the FIRST requires=docker test pays
+      # a cold image pull during startup; pull + create can exceed DCP's ~20s
+      # window, surfacing as `EnvironmentError` (a CI flake, not a defect).
+      # Pre-pulling here moves the pull OUT of the timed startup path: by the
+      # time StartAsync runs, every image is already local, so DCP's window is
+      # spent only on container create + health, which it comfortably makes.
+      #
+      # Image list (exact refs the requires=docker suite uses)
+      # ------------------------------------------------------
+      #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.2
+      #                                            default (PostgresContainerImageTags:
+      #                                            docker.io/library/postgres:18.3);
+      #                                            no test overrides the tag.
+      #   confluentinc/confluent-local:8.2.0     — Aspire.Hosting.Kafka 13.4.2 default
+      #                                            (KafkaContainerImageTags:
+      #                                            docker.io/confluentinc/confluent-local:8.2.0).
+      #   confluentinc/cp-schema-registry:7.6.1  — EnvironmentMapper.cs (explicit
+      #                                            AddContainer(..., "7.6.1")) for the
+      #                                            Kafka+Avro schema-registry capstone.
+      #   traefik/whoami:latest                  — system-under-test image in the
+      #                                            http.rest / capture / Respawn capstones.
+      #   hashicorp/vault:latest                 — VaultSecretSourceDockerTests dev-mode
+      #                                            Vault container (§17 secret source).
+      #
+      # Best-effort & non-fatal by design
+      # ---------------------------------
+      # continue-on-error: true PLUS a per-image `|| echo` guard ensure a stale,
+      # renamed or unreachable tag NEVER fails the job — it simply degrades to
+      # today's behaviour (a cold pull inside StartAsync). This step only REMOVES
+      # the cold-pull flake; it can never MASK a genuine pull failure, because a
+      # truly bad/unreachable image still fails the real pull inside StartAsync
+      # and surfaces as an EnvironmentError, exactly as before. When the pinned
+      # Aspire minor advances and a default tag changes, a missed update here is
+      # harmless (degrades, never breaks).
+      - name: Pre-pull dependency images (warm Docker cache for DCP's ~20s window)
+        continue-on-error: true
+        run: |
+          for image in \
+            postgres:18.3 \
+            confluentinc/confluent-local:8.2.0 \
+            confluentinc/cp-schema-registry:7.6.1 \
+            traefik/whoami:latest \
+            hashicorp/vault:latest ; do
+            echo "::group::docker pull $image"
+            docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
+            echo "::endgroup::"
+          done
+
       # Run only tests carrying [Trait("requires","docker")].
       # Until the Aspire topology tests are wired in S01-A-*, this filter
       # matches nothing and dotnet test exits 0 with "No tests found."
+      #
+      # Topology startup is serialised so at most ONE Aspire topology starts at a
+      # time — fitting DCP's internal ~20s per-resource startup window on a loaded
+      # runner and killing the intermittent `startup` HealthGate flake. Two facts
+      # combine to guarantee this:
+      #   • per-assembly [assembly: CollectionBehavior(DisableTestParallelization
+      #     = true)] in Runtime.Tests + Orchestration.Tests serialises the
+      #     topology-starting classes WITHIN each assembly; and
+      #   • under the pinned .NET 8 SDK (global.json 8.0.400), with single-TFM
+      #     classic-VSTest projects and no parallelism flag set, `dotnet test
+      #     <solution>` runs ONE test host per project SEQUENTIALLY by default, so
+      #     assemblies don't overlap either. (If a future SDK/MTP/`-m` change
+      #     enabled cross-assembly parallelism, revisit with the right lever.)
+      # (The Sprint08 parallel capstone intentionally runs two topologies at once
+      # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
+      # to, xUnit/VSTest scheduling.)
       - name: Integration tests (requires=docker)
         run: >
           dotnet test vouchfx.sln
