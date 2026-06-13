@@ -251,11 +251,20 @@ jobs:
       # Run only tests carrying [Trait("requires","docker")].
       # Until the Aspire topology tests are wired in S01-A-*, this filter
       # matches nothing and dotnet test exits 0 with "No tests found."
+      #
+      # --settings .github/integration.runsettings sets MaxCpuCount=1 so VSTest
+      # runs the docker-bearing test assemblies ONE AT A TIME (serial test
+      # hosts).  Combined with the per-assembly DisableTestParallelization
+      # (Runtime.Tests + Orchestration.Tests), this guarantees at most ONE Aspire
+      # topology starts at any moment — fitting DCP's internal ~20s per-resource
+      # startup window on a loaded runner and killing the `startup` HealthGate
+      # flake.  CI-only: the fast `build` job keeps normal parallelism.
       - name: Integration tests (requires=docker)
         run: >
           dotnet test vouchfx.sln
           -c Release
           --no-build
+          --settings .github/integration.runsettings
           --filter "requires=docker"
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
