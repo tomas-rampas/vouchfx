@@ -1,0 +1,20 @@
+# Sources & build inputs — the compiled output lives in dist/
+src/**/*.ts
+src/test/**
+dist/test/**
+**/*.map
+tsconfig.json
+.eslintrc.json
+.gitignore
+.vscodeignore
+scripts/**
+
+# Dev-time / repo noise
+.vscode/**
+.github/**
+node_modules/**
+**/*.vsix
+
+# Keep the bundled schema: the manifest yamlValidation.url resolves to
+# ./src/schema/composed-schema.v1.json at runtime, so it MUST ship.
+!src/schema/composed-schema.v1.json
