@@ -57,7 +57,7 @@
         "vouchfx.schemaPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional absolute path (or path relative to the workspace root) to an internal/enterprise copy of the composed v1 JSON Schema. When set, it overrides the schema bundled with the extension for `*.e2e.yaml` files. Leave empty to use the frozen v1 schema shipped with the extension.",
+          "markdownDescription": "Optional absolute path (or path relative to the workspace root) to a **v1-compatible copy of the composed vouchfx schema** — for example an internal/offline mirror of the bundled `composed-schema.v1.json`, kept identical by the engine's sync gate. When set, it serves that copy for `*.e2e.yaml` files. This is for **relocating the same v1 schema** (e.g. enterprise/offline hosting), **not** for pointing at a different or divergent schema: the bundled binding remains active, so a divergent schema may surface conflicting validation. Leave empty to use the frozen v1 schema shipped with the extension.",
           "scope": "resource"
         }
       }

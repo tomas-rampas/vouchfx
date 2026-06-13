@@ -89,6 +89,11 @@ configured schema for `*.e2e.yaml` files instead of the bundled one. If the
 YAML extension is unavailable, activation degrades gracefully and contributes
 nothing — it never throws.
 
+This override is intended only for relocating the **same** v1 schema (e.g.
+offline or enterprise hosting of a copy of `composed-schema.v1.json`), not for
+pointing at a different or divergent schema: the bundled binding stays active,
+so a divergent schema may surface conflicting validation.
+
 ## Development
 
 ```bash
