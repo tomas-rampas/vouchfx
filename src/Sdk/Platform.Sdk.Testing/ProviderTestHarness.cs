@@ -48,6 +48,15 @@ namespace Platform.Sdk.Testing;
 /// <c>StepOutcome</c> back from <c>Vars</c>.
 /// </para>
 /// <para>
+/// <strong><c>verifyMode: RETRY</c> is honoured.</strong>  Just as the engine's
+/// <c>ProviderPipeline</c> does, the harness builds the <c>StepCompilePlan</c> with its
+/// <c>Retry</c> flag and timeout derived from the step's <c>verifyMode</c> and
+/// <c>timeout</c>, so a RETRY step is wrapped in the engine-owned polling loop and a
+/// never-satisfied RETRY resolves to <see cref="Verdict.Inconclusive"/> on timeout
+/// (never <see cref="Verdict.Fail"/>, §12.1).  The harness does <em>not</em> silently
+/// downgrade RETRY to IMMEDIATE.
+/// </para>
+/// <para>
 /// Providers are driven <strong>type-erased</strong>, exactly as the engine drives them:
 /// the harness resolves the provider from the <see cref="StepKindRegistry"/> and invokes
 /// its closed generic <c>IStepBinder&lt;T&gt;</c> / <c>IStepValidator&lt;T&gt;</c> /
@@ -106,6 +115,37 @@ public static class ProviderTestHarness
     /// <c>ScriptCompilationException</c> and is deliberately <em>not</em> swallowed, so the
     /// author sees it loudly.  Likewise a malformed YAML document, an unknown step type, or
     /// a provider that does not implement the required generic interfaces throws.
+    /// </para>
+    /// <para>
+    /// <strong>Scope — what this single-step path runs and what it does not.</strong>  It
+    /// runs schema → parse → bind → validate → emit → compile-once → run-isolated for one
+    /// dependency-free step.  It honours that step's <c>verifyMode</c> (IMMEDIATE or RETRY,
+    /// see below) and <c>timeout</c>.  It does <em>not</em> run the engine's resource
+    /// (<c>IResourceContributor</c>), host-resource (<c>IHostResourceContributor</c>), or
+    /// compile-reference (<c>ICompileReferenceContributor</c>) contributor stages — a
+    /// provider that needs infrastructure or extra compile references must be exercised with
+    /// a Docker integration fixture against the real engine and CLI.  It also does
+    /// <em>not</em> run the engine's startup-time reserved-namespace (<c>Platform.*</c>) or
+    /// forbidden-scripting-API guards, which the <c>vouchfx</c> CLI applies at suite-load
+    /// time.
+    /// </para>
+    /// <para>
+    /// <strong>RETRY is honoured (no silent downgrade).</strong>  A step with
+    /// <c>verifyMode: RETRY</c> is wrapped in the engine-owned polling loop exactly as the
+    /// engine's <c>ProviderPipeline</c> wraps it: a satisfied assertion returns
+    /// <see cref="Verdict.Pass"/>, while a never-satisfied assertion polls until the step's
+    /// <c>timeout</c> elapses and then resolves to <see cref="Verdict.Inconclusive"/> —
+    /// never <see cref="Verdict.Fail"/> (§12.1).  Keep the step's <c>timeout</c> small so
+    /// the test stays fast.
+    /// </para>
+    /// <para>
+    /// <strong>Missing-outcome divergence (deliberate).</strong>  When the step's emitted
+    /// block writes no <see cref="StepOutcome"/> under <c>Vars[VarKeys.Outcome(...)]</c>,
+    /// this harness throws an <see cref="InvalidOperationException"/>, whereas the engine's
+    /// production <c>ScenarioRunner</c> treats an absent outcome as
+    /// <see cref="Verdict.Inconclusive"/>.  The harness diverges on purpose: a correct
+    /// provider always writes an outcome, so a missing one is a contributor bug that the
+    /// loud throw surfaces immediately rather than masking as a soft Inconclusive verdict.
     /// </para>
     /// </remarks>
     /// <param name="yaml">
@@ -213,8 +253,20 @@ public static class ProviderTestHarness
         var fragment = ReflectEmit(instance, model, compileCtx);
 
         // 4. Assemble the fragment and compile ONCE (§5: compile-once / isolate / unload).
+        //    Build the StepCompilePlan EXACTLY as the engine's ProviderPipeline does, so a
+        //    `verifyMode: RETRY` step is wrapped in the engine-owned polling loop (§7) rather
+        //    than silently downgraded to IMMEDIATE.  The RETRY wrapper references
+        //    Platform.Engine.Abstractions.Retry.RetryRunner, which lives in
+        //    Platform.Engine.Abstractions — an assembly this harness references — so the
+        //    wrapped CSX is in the compile/reference closure and compiles here unchanged.
         //    A genuine compile error throws ScriptCompilationException — NOT swallowed.
-        var assembled = CsxAssembler.Assemble(new[] { (node.Id, fragment) });
+        var plan = new StepCompilePlan(
+            StepId: node.Id,
+            Fragment: fragment,
+            Retry: node.VerifyMode == VerifyMode.Retry,
+            TimeoutMs: node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
+            PollIntervalMs: null);
+        var assembled = CsxAssembler.Assemble(new[] { plan });
         var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource);
 
         // 5. Run in a fresh collectible context; the step writes its StepOutcome to Vars.

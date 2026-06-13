@@ -14,7 +14,22 @@ your provider in CI.
 **Scope:** the harness supports dependency-free single steps only. Providers requiring
 infrastructure via `IResourceContributor` or `IHostResourceContributor`, or extra
 compile references via `ICompileReferenceContributor`, must be exercised with a
-Docker integration test against the real engine and CLI.
+Docker integration test against the real engine and CLI. The harness also does **not**
+run the engine's startup-time reserved-namespace (`Platform.*`) or forbidden-scripting-API
+guards — those apply at `vouchfx` CLI suite-load time, not in this single-step path.
+
+**`verifyMode: RETRY` is honoured.** A step with `verifyMode: RETRY` is wrapped in the
+engine-owned polling loop, exactly as the engine does: a satisfied assertion returns
+`Verdict.Pass`, and a never-satisfied assertion polls until the step's `timeout` elapses
+and then resolves to `Verdict.Inconclusive` — never `Verdict.Fail`. Keep the step's
+`timeout` small so the test stays fast. The harness does **not** silently downgrade RETRY
+to IMMEDIATE.
+
+**Missing-outcome divergence (deliberate).** If your emitted block writes no `StepOutcome`
+under `Vars[VarKeys.Outcome(...)]`, the harness **throws** an `InvalidOperationException`,
+whereas the production engine treats an absent outcome as `Verdict.Inconclusive`. This is
+on purpose: a correct provider always writes an outcome, so a missing one is a bug the loud
+throw surfaces immediately rather than masking as a soft Inconclusive verdict.
 
 ## What it does
 

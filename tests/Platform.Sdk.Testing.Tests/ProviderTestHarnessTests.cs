@@ -81,6 +81,71 @@ public sealed class ProviderTestHarnessTests
     }
 
     /// <summary>
+    /// RETRY pass path: a <c>verifyMode: RETRY</c> step whose assertion is satisfied on the
+    /// first attempt resolves to <see cref="Verdict.Pass"/> quickly — proving the harness
+    /// routes RETRY steps through the engine-owned polling loop and that the loop short-
+    /// circuits on a Pass rather than waiting out the window.
+    /// </summary>
+    [Fact]
+    public async Task RetryStep_AssertionSatisfied_RunsThroughPollingLoop_Pass()
+    {
+        const string yaml = """
+            steps:
+              - id: say-echo
+                type: echo.console
+                message: "hello, harness"
+                expect: "hello, harness"
+                verifyMode: RETRY
+                timeout: 2s
+            """;
+
+        var result = await ProviderTestHarness.RunSingleStepAsync(
+            yaml, s_providerAssembly, stepId: "say-echo");
+
+        Assert.True(result.IsPass,
+            $"Expected a Pass; got Verdict={result.Verdict?.ToString() ?? "null"}. " +
+            $"Schema errors: [{string.Join("; ", result.SchemaErrors)}]. " +
+            $"Validation errors: [{string.Join("; ", result.ValidationErrors)}].");
+        Assert.Equal(Verdict.Pass, result.Verdict);
+    }
+
+    /// <summary>
+    /// RETRY timeout path (the RED→GREEN guard against the silent RETRY downgrade): a
+    /// <c>verifyMode: RETRY</c> step whose assertion is NEVER satisfied polls until its
+    /// short <c>timeout</c> elapses and then resolves to <see cref="Verdict.Inconclusive"/>
+    /// — the engine's sustained-Fail → Inconclusive-on-timeout behaviour (§12.1), NOT
+    /// <see cref="Verdict.Fail"/>.
+    /// </summary>
+    /// <remarks>
+    /// Under the previous harness — which assembled via the legacy tuple overload that
+    /// hard-codes <c>Retry: false</c> — this same YAML was run IMMEDIATE and returned
+    /// <see cref="Verdict.Fail"/> on the single attempt.  Asserting
+    /// <see cref="Verdict.Inconclusive"/> here is the proof that the silent downgrade is
+    /// gone and that the engine's RETRY polling path is exercised end to end through the
+    /// harness's compile/reference closure.
+    /// </remarks>
+    [Fact]
+    public async Task RetryStep_AssertionNeverSatisfied_PollsThenTimesOut_Inconclusive()
+    {
+        const string yaml = """
+            steps:
+              - id: say-echo
+                type: echo.console
+                message: "hello, harness"
+                expect: "goodbye, harness"
+                verifyMode: RETRY
+                timeout: 150ms
+            """;
+
+        var result = await ProviderTestHarness.RunSingleStepAsync(
+            yaml, s_providerAssembly, stepId: "say-echo");
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+        Assert.NotEqual(Verdict.Fail, result.Verdict);
+        Assert.False(result.IsPass);
+    }
+
+    /// <summary>
     /// Schema-reject path: omitting the provider's required <c>message</c> field fails
     /// schema validation, so the harness halts before running and returns
     /// <see cref="StepRunResult.Verdict"/> <see langword="null"/> with a populated
