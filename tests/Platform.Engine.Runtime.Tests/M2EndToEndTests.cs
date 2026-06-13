@@ -217,27 +217,56 @@ public sealed class M2EndToEndTests
             AssertStepRenderedPass(rendered, InsertStepId);
             AssertStepRenderedPass(rendered, AssertStepId);
 
-            // ── 3. DEFENCE-IN-DEPTH: terminal renderer surfaces no secret payload (§17) ─
+            // ── 3. DEFENCE-IN-DEPTH: terminal renderer never surfaces the secret VALUE (§17) ─
             // Scanning the rendered terminal output for the secret VALUE is a
             // defence-in-depth check, NOT the load-bearing no-leak proof.  The
-            // TerminalRenderer only ever emits a step id + verdict + duration (and a
-            // scenario/attempt summary); it silently drops the reproducibility-envelope
-            // event (default switch branch) and has NO path that writes a captured value,
-            // observation, header, or secret reference to the rendered output.  So the
-            // VALUE being absent here confirms the renderer surfaces no secret-bearing
-            // payload — useful, but near-tautological as a leak proof.  The load-bearing
-            // no-leak guarantees live elsewhere: (a) the IL/source no-bake assertions in
-            // SecretResolutionPipelineTests (the value is never compiled into the CSX
-            // source or the emitted IL), and (b) the reproducibility-envelope value-
-            // absence check in §4 below (the emitted envelope carries the secret
-            // REFERENCE hash, never the resolved value).
+            // TerminalRenderer emits a step id + verdict + duration, a scenario/attempt
+            // summary, and (since S08-G-02) a per-step captured-variable provenance thread
+            // that surfaces captures and {placeholder}/${secret:…} substitutions.  Crucially
+            // it never writes a resolved VALUE: a captured value is shown by name + JSONPath
+            // only, and a secret-derived substitution is shown as its REFERENCE path with the
+            // value "(redacted)".  So the VALUE being absent here confirms the renderer
+            // surfaces no secret value — useful, but near-tautological as a leak proof.  The
+            // load-bearing no-leak guarantees live elsewhere: (a) the IL/source no-bake
+            // assertions in SecretResolutionPipelineTests (the value is never compiled into
+            // the CSX source or the emitted IL), and (b) the reproducibility-envelope value-
+            // absence check in §4 below (the emitted envelope carries the secret REFERENCE
+            // hash, never the resolved value).
             Assert.DoesNotContain(SecretValue, rendered, StringComparison.Ordinal);
-            // The captured-var trace must carry the NON-SECRET hostname, never the
-            // Authorization / secret value: the only secret-shaped string in the
-            // scenario is the reference token, which is also never rendered (the
-            // renderer skips the reproducibility-envelope event, and step lines carry
-            // only verdict tokens).
-            Assert.DoesNotContain(referenceToken, rendered, StringComparison.Ordinal);
+            // The S08-G-02 captured-variable provenance renderer
+            // (TerminalRenderer.RenderProvenanceThread) intentionally surfaces the secret
+            // REFERENCE — its authored ${secret:…} path (here env/<envName>) — in the
+            // per-step provenance thread, with the RESOLVED VALUE shown as "(redacted)".
+            // This is §17-compliant: the reference is the non-sensitive, authored form
+            // (the reproducibility envelope HASHES the reference, never redacts it); only
+            // the resolved value is the secret, and its absence is the load-bearing
+            // invariant asserted by the rendered-output value-absence check above (and in
+            // the reproducibility envelope at §4 below).  So
+            // rather than asserting the reference never appears (it now legitimately does,
+            // redacted), we assert it appears ONLY in redacted provenance form:
+            //   (a) POSITIVE — the reference is surfaced with the value redacted; and
+            //   (b) DEFENCE-IN-DEPTH — no render path ever emits the bare reference
+            //       WITHOUT the "(redacted)" marker (so no current/future path can leak a
+            //       value in its place, or alongside it).
+            // The deeper no-bake guarantees still live in SecretResolutionPipelineTests
+            // (the value is never compiled into the CSX source or emitted IL), and the
+            // envelope value-absence check in §4 below proves the emitted envelope carries
+            // only the reference hash, never the resolved value.
+
+            // (a) POSITIVE: the provenance line surfaces the reference, value redacted.
+            var redactedProvenance = referenceToken + " (redacted)";
+            Assert.Contains(redactedProvenance, rendered, StringComparison.Ordinal);
+
+            // (b) DEFENCE-IN-DEPTH: every rendered line carrying the reference MUST also
+            // carry the "(redacted)" marker — the reference is never shown bare.
+            var renderedLines = rendered.Split('\n');
+            foreach (var line in renderedLines)
+            {
+                if (line.Contains(referenceToken, StringComparison.Ordinal))
+                {
+                    Assert.Contains("(redacted)", line, StringComparison.Ordinal);
+                }
+            }
             // Internal engine key prefixes must never leak into user-visible output.
             Assert.DoesNotContain(VarKeys.ConnectionsPrefix, rendered, StringComparison.Ordinal);
             Assert.DoesNotContain(VarKeys.CaptureStatusPrefix, rendered, StringComparison.Ordinal);
