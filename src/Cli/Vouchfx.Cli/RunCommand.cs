@@ -63,6 +63,8 @@ internal static class RunCommand
         var watchOption = BuildWatchOption();
         var failOnEnvironmentErrorOption = BuildFailOnEnvironmentErrorOption();
         var failOnInconclusiveOption = BuildFailOnInconclusiveOption();
+        var htmlReportOption = BuildHtmlReportOption();
+        var junitReportOption = BuildJunitReportOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
@@ -71,6 +73,8 @@ internal static class RunCommand
         command.Add(watchOption);
         command.Add(failOnEnvironmentErrorOption);
         command.Add(failOnInconclusiveOption);
+        command.Add(htmlReportOption);
+        command.Add(junitReportOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -82,6 +86,8 @@ internal static class RunCommand
             var watch = parseResult.GetValue(watchOption);
             var failOnEnvironmentError = parseResult.GetValue(failOnEnvironmentErrorOption);
             var failOnInconclusive = parseResult.GetValue(failOnInconclusiveOption);
+            var htmlReportPath = parseResult.GetValue(htmlReportOption);
+            var junitReportPath = parseResult.GetValue(junitReportOption);
             return ExecuteAsync(
                 path,
                 criteria,
@@ -89,6 +95,8 @@ internal static class RunCommand
                 watch,
                 failOnEnvironmentError,
                 failOnInconclusive,
+                htmlReportPath,
+                junitReportPath,
                 Console.Out,
                 cancellationToken);
         });
@@ -216,6 +224,41 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--html</c> option (S09-T3): write a self-contained HTML report to the given path.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no HTML artifact (today's behaviour unchanged).  When set, the report is written
+    /// from the SAME buffered event stream + diff lookup the terminal renderer consumes, so the
+    /// HTML view can never disagree with the terminal output (parity, S09-D-01).
+    /// </remarks>
+    internal static Option<string?> BuildHtmlReportOption() => new("--html")
+    {
+        Description =
+            "Write a self-contained HTML report to <path>. Rendered from the same event stream as "
+            + "the terminal output, so the two never disagree. Parent directories are created as "
+            + "needed; an existing file is overwritten. Omit for no HTML report (the default).",
+    };
+
+    /// <summary>
+    /// The <c>--junit</c> option (S09-T3): write a JUnit XML results file to the given path.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no JUnit artifact (today's behaviour unchanged).  When set, the file is written
+    /// from the SAME buffered event stream the terminal renderer consumes, and maps the four
+    /// §12.1 verdicts onto distinct JUnit primitives (Fail→failure, EnvError→error,
+    /// Inconclusive→skipped) so CI never conflates infra breakage with a defect.
+    /// </remarks>
+    internal static Option<string?> BuildJunitReportOption() => new("--junit")
+    {
+        Description =
+            "Write a JUnit XML results file to <path> for CI ingestion. Rendered from the same "
+            + "event stream as the terminal output; the four verdicts map to distinct JUnit "
+            + "primitives (Fail→failure, Environment-error→error, Inconclusive→skipped). Parent "
+            + "directories are created as needed; an existing file is overwritten. Omit for no "
+            + "JUnit report (the default).",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -287,6 +330,16 @@ internal static class RunCommand
     /// aggregate <see cref="Verdict.Inconclusive"/> exits with <see cref="ExitCodes.Inconclusive"/>
     /// (4) instead of 0.  Off by default — only <see cref="Verdict.Fail"/> breaks CI.
     /// </param>
+    /// <param name="htmlReportPath">
+    /// The <c>--html</c> path (S09-T3): when non-<see langword="null"/>, the runner writes a
+    /// self-contained HTML report there from the same buffered event stream + diff lookup the
+    /// terminal renderer uses.  <see langword="null"/> ⇒ no HTML artifact.
+    /// </param>
+    /// <param name="junitReportPath">
+    /// The <c>--junit</c> path (S09-T3): when non-<see langword="null"/>, the runner writes a
+    /// JUnit XML results file there from the same buffered event stream the terminal renderer
+    /// uses.  <see langword="null"/> ⇒ no JUnit artifact.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
@@ -306,6 +359,8 @@ internal static class RunCommand
         bool watch,
         bool failOnEnvironmentError,
         bool failOnInconclusive,
+        string? htmlReportPath,
+        string? junitReportPath,
         TextWriter output,
         CancellationToken cancellationToken)
     {
@@ -382,6 +437,12 @@ internal static class RunCommand
         // re-using the kept topology while the `environment` block is unchanged.  Watching is
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
+        //
+        // NOTE (S09-T3 scope): --html / --junit are NOT wired into watch mode.  Watch renders
+        // per re-run (not from one suite-wide buffer), and threading the report paths through
+        // WatchRunner / WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
+        // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
+        // whose value is the terminal feedback.  Deliberately left out rather than half-wired.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
@@ -437,6 +498,8 @@ internal static class RunCommand
                     output,
                     maxConcurrency: parallelDegree,
                     seedBaseDirectory: null,
+                    htmlReportPath: htmlReportPath,
+                    junitReportPath: junitReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
@@ -446,6 +509,8 @@ internal static class RunCommand
                     appHostAssemblyName,
                     output,
                     seedBaseDirectory: null,
+                    htmlReportPath: htmlReportPath,
+                    junitReportPath: junitReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;

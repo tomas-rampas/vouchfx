@@ -66,6 +66,8 @@ public sealed class WatchArgParsingTests
             watch: true,
             failOnEnvironmentError: false,
             failOnInconclusive: false,
+            htmlReportPath: null,
+            junitReportPath: null,
             output: sw,
             cancellationToken: default);
 

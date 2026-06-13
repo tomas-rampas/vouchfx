@@ -133,6 +133,17 @@ public static class ParallelSuiteRunner
     /// Base directory for relative <c>environment.seed</c> fixture paths.  Defaults to the current
     /// working directory when <see langword="null"/>.
     /// </param>
+    /// <param name="htmlReportPath">
+    /// Optional destination for a self-contained HTML report (S09-D-01, T3).  When
+    /// non-<see langword="null"/>, the report is written from the SAME concatenated event buffer
+    /// and diff lookup as the single terminal render (parity).  <see langword="null"/> ⇒ no HTML
+    /// report.
+    /// </param>
+    /// <param name="junitReportPath">
+    /// Optional destination for a JUnit XML results file (S09-D-01, T3).  When
+    /// non-<see langword="null"/>, the file is written from the SAME concatenated event buffer as
+    /// the single terminal render.  <see langword="null"/> ⇒ no JUnit report.
+    /// </param>
     /// <param name="cancellationToken">
     /// Honoured throughout: a cancelled scenario is recorded as <see cref="Verdict.Inconclusive"/>
     /// (never <see cref="Verdict.Fail"/>, §12.1), and every launched task is still awaited so every
@@ -153,6 +164,8 @@ public static class ParallelSuiteRunner
         TextWriter output,
         int? maxConcurrency = null,
         string? seedBaseDirectory = null,
+        string? htmlReportPath = null,
+        string? junitReportPath = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -178,6 +191,8 @@ public static class ParallelSuiteRunner
             // Default seam: the real no-render core that builds/owns/disposes a topology.
             runScenario: ScenarioRunner.RunScenarioOwningTopologyAsync,
             seedBaseDirectory,
+            htmlReportPath,
+            junitReportPath,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -196,6 +211,8 @@ public static class ParallelSuiteRunner
     /// <param name="maxConcurrency">Concurrency ceiling; <see langword="null"/> → default; ≥ 1.</param>
     /// <param name="runScenario">The scenario-core seam (default = the real topology-owning core).</param>
     /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="htmlReportPath">Optional HTML report destination (S09-T3); null ⇒ none.</param>
+    /// <param name="junitReportPath">Optional JUnit XML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="ct">The external cancellation token, honoured throughout.</param>
     /// <returns>The <see cref="SuiteResult"/>.</returns>
     internal static async Task<SuiteResult> RunParallelCoreAsync(
@@ -209,7 +226,9 @@ public static class ParallelSuiteRunner
         int? maxConcurrency,
         ScenarioCoreFunc runScenario,
         string? seedBaseDirectory,
-        CancellationToken ct)
+        string? htmlReportPath = null,
+        string? junitReportPath = null,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -294,7 +313,8 @@ public static class ParallelSuiteRunner
         // Determinism tail: flush each slot's raw early-exit text to the real output in declaration
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
-            scenarioNames, slotVerdicts, slotBuffers, slotRawWriters, output, diffLookup);
+            scenarioNames, slotVerdicts, slotBuffers, slotRawWriters, output, diffLookup,
+            htmlReportPath, junitReportPath);
     }
 
     /// <summary>
@@ -382,7 +402,8 @@ public static class ParallelSuiteRunner
     /// raw early-exit diagnostics to <paramref name="output"/> in declaration order, concatenates
     /// the slot event buffers in declaration order, renders them ONCE via
     /// <see cref="TerminalRenderer"/>, folds the slot verdicts via <see cref="ScenarioRunner.Elevate"/>,
-    /// and returns the <see cref="SuiteResult"/>.
+    /// writes the optional HTML / JUnit file reports from that SAME concatenated buffer + diff
+    /// lookup (S09-D-01, T3), and returns the <see cref="SuiteResult"/>.
     /// </summary>
     private static SuiteResult RenderAndAggregate(
         IReadOnlyList<string> scenarioNames,
@@ -390,7 +411,9 @@ public static class ParallelSuiteRunner
         List<string>[] slotBuffers,
         StringWriter[] slotRawWriters,
         TextWriter output,
-        Func<string, JsonElement, string?> diffLookup)
+        Func<string, JsonElement, string?> diffLookup,
+        string? htmlReportPath = null,
+        string? junitReportPath = null)
     {
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
@@ -420,6 +443,15 @@ public static class ParallelSuiteRunner
 
         // ONE render over the declaration-order concatenation — never per-scenario.
         TerminalRenderer.Render(allBuffers, output, diffLookup);
+
+        // Optional file reports (S09-D-01, T3): write the HTML / JUnit artifacts from the SAME
+        // concatenated buffer + diffLookup the single terminal render just consumed, so the
+        // parallel run's file reports are byte-for-byte the parity of its terminal output (and of
+        // the sequential path's reports for the same buffer).  A null path writes nothing.
+        // `output` is the diagnostics sink: a bad --html / --junit path is caught PER FILE and
+        // reported there, so report writing can NEVER change the already-computed verdict / exit
+        // code.
+        FileReportWriter.WriteFileReports(allBuffers, diffLookup, htmlReportPath, junitReportPath, output);
 
         return new SuiteResult(aggregate, perScenario);
     }

@@ -132,6 +132,12 @@ vouchfx run --parallel 2
 
 # Watch a single file for changes and re-run automatically (topology re-used for steps-only edits)
 vouchfx run ./tests/users.e2e.yaml --watch
+
+# Write a self-contained HTML report to disk
+vouchfx run ./tests --html ./report.html
+
+# Write a JUnit XML results file for CI ingestion
+vouchfx run ./tests --junit ./results.xml
 ```
 
 The runner exits with a code that reflects the verdict taxonomy:
@@ -161,6 +167,15 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 ```
 
 The output is a terminal report with colour-coded verdicts.
+
+### Report formats
+
+By default, `vouchfx run` outputs a terminal report only. You can optionally write a self-contained HTML report and/or a JUnit XML results file:
+
+- **`--html <path>`** — writes a self-contained HTML report (polling timeline, captured-variable provenance, failed-step diffs, and the reproducibility envelope) with no secret values embedded. The HTML report is rendered from the same event stream as the terminal output, so the two never disagree.
+- **`--junit <path>`** — writes a JUnit XML results file for CI integration. The four verdicts map to distinct JUnit primitives (Fail → `<failure>`, Environment-error → `<error>`, Inconclusive → `<skipped>`), so CI systems can distinguish infrastructure breakage from product defects.
+
+Both flags accept `--parallel` and sequential runs; neither works with `--watch` (which re-renders on each iteration rather than buffering one suite-wide stream). Parent directories are created as needed; existing files are overwritten.
 
 ## Sprint 1 de-risking results
 

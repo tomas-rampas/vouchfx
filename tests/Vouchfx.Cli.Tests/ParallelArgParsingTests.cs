@@ -69,6 +69,8 @@ public sealed class ParallelArgParsingTests
             watch: false,
             failOnEnvironmentError: false,
             failOnInconclusive: false,
+            htmlReportPath: null,
+            junitReportPath: null,
             output: sw,
             cancellationToken: default);
 
