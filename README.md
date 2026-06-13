@@ -28,9 +28,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner
-> discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
-> Still to come: VSCode extension/LSP, HTML report and JUnit XML renderers, the full verdict taxonomy surface, and community provider tiers (Verified and Community governance) — see
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal, a self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`).
+> Still to come: VSCode extension/LSP and the editor-side authoring surface, and community provider tiers (Verified and Community governance) — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
 
@@ -138,6 +137,12 @@ vouchfx run ./tests --html ./report.html
 
 # Write a JUnit XML results file for CI ingestion
 vouchfx run ./tests --junit ./results.xml
+
+# Run with both reports and taxonomy-aware CI gating (fail on environment errors or inconclusive results)
+vouchfx run ./tests --html ./report.html --junit ./results.xml --fail-on-env-error --fail-on-inconclusive
+
+# Run with selective CI gating (for example, fail on infra breakage but not timeouts)
+vouchfx run ./tests --fail-on-env-error
 ```
 
 The runner exits with a code that reflects the verdict taxonomy:
