@@ -13,12 +13,28 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup Label="S08-F-02 / M4 — frozen Platform.Sdk.Testing public-API golden artifact">
+    <!--
+      The committed golden the SdkTestingContractFreezeTests gate diffs against.
+      Copied next to the test DLL so the test reads it from
+      AppContext.BaseDirectory/Golden (mirrors Platform.Sdk.Tests' golden wiring).
+      Non-compiled Content; CopyToOutputDirectory keeps it fresh.
+    -->
+    <Content Include="Golden\platform-sdk-testing-public-api.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <!-- The harness under test.  Its transitive ProjectReferences (Platform.Sdk +
          the three engine assemblies) flow in, so the in-test echo.console provider
          and the tests can reference Platform.Sdk (IStepProvider, …) and
          Platform.Engine.Abstractions (Verdict) directly. -->
     <ProjectReference Include="..\..\src\Sdk\Platform.Sdk.Testing\Platform.Sdk.Testing.csproj" />
+    <!-- Shared canonical public-API signature builder (SdkPublicApiSignature) — the
+         SAME implementation Platform.Sdk.Tests uses, so the two goldens are
+         byte-comparable (S08-F-02 / M4 follow-up). -->
+    <ProjectReference Include="..\Platform.TestSupport\Platform.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>
