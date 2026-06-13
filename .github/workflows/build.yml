@@ -23,6 +23,16 @@
 #  integration  Forward-looking stub for Docker-dependent Aspire spike tests
 #               (requires=docker trait).  Non-blocking until tests exist.
 #               ubuntu-latest runners include Docker out of the box.
+#
+#  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
+#               (continue-on-error: true).  Surfaces known-vulnerable
+#               transitive packages via `dotnet list package --vulnerable
+#               --include-transitive` so maintainers retain continuous CVE
+#               visibility over the published-package footprint (the engine
+#               assemblies + Platform.Sdk.Testing now ship a code-generating
+#               compiler + JsonSchema.Net + YamlDotNet onto every consumer's
+#               transitive graph).  It deliberately NEVER gates merge: a
+#               newly-published upstream CVE must not break unrelated PRs.
 
 name: CI
 
@@ -192,3 +202,41 @@ jobs:
           --filter "requires=docker"
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
+
+  # ── Dependency vulnerability scan — ADVISORY, non-blocking ───────────────────
+  # Reports known-vulnerable transitive packages across the solution so a
+  # maintainer retains continuous CVE visibility over the published-package
+  # footprint.  This job is NON-BLOCKING:
+  #   * continue-on-error: true            → the job never fails the workflow;
+  #   * NOT a required check               → it gates no merge;
+  #   * `dotnet list package --vulnerable` → exits 0 even when it finds
+  #     vulnerabilities (it is a report, not a gate), so continue-on-error is
+  #     belt-and-braces and intentional.
+  # A newly-published upstream CVE must never break an otherwise-clean PR.
+  vuln-scan:
+    name: Dependency vulnerability scan (advisory, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      # Scan the whole solution's transitive graph for packages with a known
+      # advisory.  --include-transitive surfaces the indirect footprint (the
+      # bulk of the CVE surface flows through Aspire/Testcontainers deps).
+      # The command prints flagged packages, severities and advisory URLs to
+      # the Actions log; it exits 0 regardless of findings, so combined with
+      # continue-on-error this step is purely informational.
+      - name: List vulnerable packages (transitive, advisory)
+        continue-on-error: true
+        run: dotnet list vouchfx.sln package --vulnerable --include-transitive
