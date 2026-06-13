@@ -23,11 +23,11 @@ namespace Platform.Engine.Compilation;
 /// The assembled C# script source.  Contains deduplicated <c>using</c>
 /// directives, helper class definitions, and the concatenated statement blocks
 /// from every contributing fragment — in the order the steps were supplied to
-/// <see cref="CsxAssembler.Assemble"/>.
+/// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/>.
 /// </param>
 /// <param name="StepIds">
 /// The step identifiers in the order they were passed to
-/// <see cref="CsxAssembler.Assemble"/>.  Preserved here so callers can
+/// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/>.  Preserved here so callers can
 /// correlate compiled artefacts back to the originating YAML steps.
 /// </param>
 public sealed record AssembledScript(string CsxSource, IReadOnlyList<string> StepIds);

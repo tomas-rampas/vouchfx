@@ -61,7 +61,7 @@ public static class EventStreamJson
     ///   </description></item>
     /// </list>
     /// <para>
-    /// The instance is frozen via <see cref="JsonSerializerOptions.MakeReadOnly"/>
+    /// The instance is frozen via <see cref="JsonSerializerOptions.MakeReadOnly()"/>
     /// at construction time so that callers cannot mutate the shared options after
     /// first use, which would silently corrupt serialisation across the process.
     /// </para>

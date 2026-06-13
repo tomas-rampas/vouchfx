@@ -5,8 +5,36 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!-- NuGet packaging (M3 SDK-validation gate): published to enable the
+       Platform.Sdk.Testing provider harness.  TESTING SURFACE, NOT the frozen v1
+       provider contract (that is Platform.Sdk).  Mirrors the proven Platform.Sdk
+       packaging block; PackageId = the project name; semver-evolved per engine release.
+       Under central package management, the ProjectReferences to Platform.Engine.Abstractions
+       and Platform.Sdk (both packable) auto-emit as NuGet <dependency> entries. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>$(MSBuildProjectName)</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>vouchfx engine assembly — published to enable the Platform.Sdk.Testing provider harness. TESTING SURFACE, NOT the frozen v1 provider contract (that is Platform.Sdk). Semver-evolved per engine release.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;testing;engine</PackageTags>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
+    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

@@ -128,25 +128,75 @@ Two namespace prefixes are **reserved** and will be **refused at suite startup**
 
 ### Testing Your Provider
 
-The worked example includes an integration-test fixture ([`examples/Example.Steps.Hello.Tests/HelloConsoleFixtureTests.cs`](examples/Example.Steps.Hello.Tests/HelloConsoleFixtureTests.cs)) that runs the provider end-to-end:
+You have two complementary paths for testing:
 
-1. The reflective `StepKindRegistry` discovers the provider from its `[StepProvider]` attribute.
-2. A `.e2e.yaml` step using the provider validates against the composed JSON Schema.
-3. The provider's `Bind` → `Validate` → `Emit` pipeline produces a `CsxFragment`.
-4. The fragment is assembled and compiled **once** (the engine's memory model: compile-once, isolate, unload).
-5. The compiled delegate runs in an isolated `AssemblyLoadContext`.
-6. The step writes its `StepOutcome` (verdict + duration + observation) into `Vars`.
-7. The runner reads the outcome back from `Vars`.
+#### (a) Unit-test the provider's contract pipeline
 
-Copy this fixture pattern to unit-test your own provider without Docker (if your provider has no infrastructure dependency) or with minimal Aspire setup (if it does). The fixture shows you exactly how the engine exercises a provider.
+Reference the `Platform.Sdk` NuGet package plus `Platform.Sdk.Testing` in your test project:
 
-**Run tests locally:**
-
-```bash
-dotnet test examples/Example.Steps.Hello.Tests
+```xml
+<PackageReference Include="Platform.Sdk" Version="1.0.0" />
+<PackageReference Include="Platform.Sdk.Testing" Version="1.0.0" />
 ```
 
-**Include Docker integration tests** if your provider uses infrastructure (databases, brokers, etc.). The `HelloConsole` example has no infrastructure, so it runs without Docker. A real provider (e.g., a database assertion) would have a second test project with the `requires=docker` attribute to exercise the orchestration path.
+You can then exercise your provider's `Bind`, `Validate`, and `Emit` stages directly using the public `Platform.Sdk.Testing.Contexts` implementations:
+
+```csharp
+using Platform.Sdk;
+using Platform.Sdk.Testing.Contexts;
+
+// Test just the Emit stage with a TestCompileContext
+var ctx = new TestCompileContext(
+    stepId: "my-step",
+    suiteNamespace: "MyProviderTests",
+    captureExprs: null); // Omit to use an empty capture map
+
+var fragment = myProvider.Emit(model, ctx);
+
+// Assert on the fragment's required usings, helpers, and code generation
+Assert.Contains("System.Text.Json", fragment.RequiredUsings);
+```
+
+The `TestCompileContext` constructor takes:
+- `stepId` (string, required)
+- `suiteNamespace` (string, optional, defaults to `"VouchfxGenerated"`)
+- `captureExprs` (`IReadOnlyDictionary<string, CaptureExpr>?`, optional, defaults to empty)
+
+#### (b) Run end-to-end without Docker using `ProviderTestHarness`
+
+For providers with no infrastructure dependency, use the `ProviderTestHarness` to run a complete single-step scenario — schema validation, binding, validation, emission, compilation, and execution — all in one call:
+
+```csharp
+using Platform.Sdk.Testing;
+
+const string yaml = """
+    steps:
+      - id: my-step
+        type: myprovider.kind
+        field1: value1
+    """;
+
+var result = await ProviderTestHarness.RunSingleStepAsync(
+    yaml,
+    typeof(MyProvider).Assembly,
+    stepId: "my-step");
+
+Assert.True(result.IsPass);
+Assert.Empty(result.SchemaErrors);
+Assert.Empty(result.ValidationErrors);
+```
+
+Expected failures (schema or model validation) return `Verdict == null` with the error list populated; a genuine Roslyn compile error throws. This end-to-end path is dependency-free — no Docker needed.
+
+**For Docker integration tests:** If your provider manages infrastructure (databases, message brokers), the worked example ([`examples/Example.Steps.Hello.Tests/HelloConsoleFixtureTests.cs`](examples/Example.Steps.Hello.Tests/HelloConsoleFixtureTests.cs)) shows the pattern you would use within the vouchfx repository for full orchestration testing. That fixture runs the engine's own compile-and-run pipeline end-to-end with a live Aspire topology. The `Platform.Sdk.Testing.ProviderTestHarness` is the published, out-of-repo equivalent for dependency-free steps; a provider with infrastructure still needs a Docker integration test against the real engine to validate orchestration.
+
+**Run your dependency-free tests locally:**
+
+```bash
+dotnet test YourProvider.Tests -c Release --filter "requires!=docker"
+```
+
+**Include Docker integration tests** if your provider uses infrastructure. You would author those tests against the engine's topology in the repository's own test suite, or ship your provider as a separate repository with its own Docker-based integration fixture.
 
 ### Governance Tiers
 
