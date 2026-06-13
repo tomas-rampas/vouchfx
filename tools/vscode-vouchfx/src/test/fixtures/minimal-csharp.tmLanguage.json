@@ -1,0 +1,22 @@
+{
+  "comment": "Minimal stand-in for VSCode's built-in `source.cs` grammar. It exists ONLY so the tokenisation test can verify that the injection delegates the block-scalar body to `source.cs` (the real C# grammar resolves at runtime in VSCode). It recognises a few C# tokens — enough to assert C# scopes appear inside the embedded region.",
+  "scopeName": "source.cs",
+  "patterns": [
+    {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.cs"
+    },
+    {
+      "match": "\\b(var|for|return|true|false|null|new|if|else)\\b",
+      "name": "keyword.cs"
+    },
+    {
+      "match": "\"[^\"]*\"",
+      "name": "string.quoted.double.cs"
+    },
+    {
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+      "name": "variable.other.cs"
+    }
+  ]
+}

@@ -18,3 +18,10 @@ node_modules/**
 # Keep the bundled schema: the manifest yamlValidation.url resolves to
 # ./src/schema/composed-schema.v1.json at runtime, so it MUST ship.
 !src/schema/composed-schema.v1.json
+
+# The TextMate injection grammar (syntaxes/) and the human-eyeball fixture
+# (examples/) and the IntelliSense-status note (docs/) are NOT excluded above,
+# so they ship in the .vsix. The grammar MUST ship — contributes.grammars[0].path
+# resolves to ./syntaxes/csharp-in-e2eyaml.injection.json at runtime. This rule
+# defends it explicitly in case the src/** exclusion above is ever broadened.
+!syntaxes/**

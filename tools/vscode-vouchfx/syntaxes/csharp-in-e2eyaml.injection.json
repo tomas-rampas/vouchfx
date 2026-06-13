@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "vouchfx.injection.csharp-in-e2eyaml",
+  "injectionSelector": "L:source.yaml -comment -string",
+  "comment": "vouchfx — injects VSCode's built-in C# TextMate grammar (source.cs) into the YAML block scalar that follows a `code:` mapping key. The `code:` field is where a `script.csharp` step carries its author C#. Boundary rule: the body is the run of lines more-indented than the `code:` key, terminating at the first non-blank line indented at or below the key (the YAML block-scalar indentation rule), which the `while` clause enforces via the captured key indentation.",
+  "patterns": [
+    {
+      "include": "#csharp-code-block"
+    }
+  ],
+  "repository": {
+    "csharp-code-block": {
+      "comment": "Match a `code:` key whose value is a block scalar (| |- |+ > >- >+, with an optional explicit indentation digit), then keep every subsequent line that is blank or more-indented than the key as embedded C#. Capture group 1 is the key's leading indentation; the `while` backreference \\1 plus a required extra indent character enforces the dedent boundary.",
+      "begin": "^(\\s*)(code)\\s*(:)\\s*([|>][-+]?[1-9]?)\\s*(?:#.*)?$",
+      "beginCaptures": {
+        "2": {
+          "name": "entity.name.tag.yaml"
+        },
+        "3": {
+          "name": "punctuation.separator.key-value.mapping.yaml"
+        },
+        "4": {
+          "name": "keyword.control.flow.block-scalar.yaml"
+        }
+      },
+      "while": "^(?:\\1\\s+\\S|\\s*$)",
+      "contentName": "meta.embedded.block.csharp",
+      "patterns": [
+        {
+          "include": "source.cs"
+        }
+      ]
+    }
+  }
+}
