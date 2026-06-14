@@ -947,6 +947,13 @@ public sealed class HtmlRenderer
         private readonly Dictionary<(string RunId, string ScenarioId), ScenarioModel> _scenarioIndex = new();
         private readonly Dictionary<(string RunId, string StepId), StepModel> _stepIndex = new();
 
+        // The most-recently-INSERTED scenario per run, kept O(1) so attaching a
+        // newly-seen step does not re-scan the whole Scenarios list.  Updated ONLY
+        // when a brand-new scenario is added (never when an existing scenario is
+        // returned), which preserves the "last by insertion order, not last-touched"
+        // semantics the step-attachment logic relies on.
+        private readonly Dictionary<string, ScenarioModel> _lastScenarioByRun = new();
+
         public List<ScenarioModel> Scenarios { get; } = new();
 
         public List<EnvironmentErrorRow> EnvironmentErrors { get; } = new();
@@ -961,6 +968,11 @@ public sealed class HtmlRenderer
                 scenario = new ScenarioModel(runId, scenarioId);
                 _scenarioIndex[key] = scenario;
                 Scenarios.Add(scenario);
+
+                // Only a freshly-inserted scenario advances the per-run "last seen"
+                // pointer — returning an already-indexed scenario must NOT, or the
+                // pointer would track last-touched rather than last-inserted.
+                _lastScenarioByRun[runId] = scenario;
             }
 
             return scenario;
@@ -986,18 +998,7 @@ public sealed class HtmlRenderer
         }
 
         private ScenarioModel? LastScenarioForRun(string runId)
-        {
-            ScenarioModel? found = null;
-            foreach (var scenario in Scenarios)
-            {
-                if (string.Equals(scenario.RunId, runId, StringComparison.Ordinal))
-                {
-                    found = scenario;
-                }
-            }
-
-            return found;
-        }
+            => _lastScenarioByRun.TryGetValue(runId, out var scenario) ? scenario : null;
     }
 
     private sealed class ScenarioModel

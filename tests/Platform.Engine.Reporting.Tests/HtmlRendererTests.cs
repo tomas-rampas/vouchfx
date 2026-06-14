@@ -344,4 +344,120 @@ public sealed class HtmlRendererTests
         // The step itself is still located in the report.
         Assert.Contains("in-flight", output, StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 6 (C145-3): a step attaches to the MOST-RECENTLY-INSERTED scenario for
+    //                  its run — "last by insertion order", never "last touched".
+    //
+    // This locks the semantics the O(1) refactor must preserve.  Two scenarios
+    // (A then B) share one run; a step appears after each scenario-started, so s1
+    // must land under A and s2 under B.  A leading step with NO preceding
+    // scenario-started must attach to a synthesised "(scenario)".  The test holds
+    // both before the refactor (linear scan for the last matching scenario) and
+    // after it (an insertion-order index), and would FAIL a naive "last-touched"
+    // index that re-pointed the run at an already-seen scenario on every step.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_StepsAttachToMostRecentlyInsertedScenarioForTheirRun()
+    {
+        var lines = new[]
+        {
+            // A leading step with no preceding scenario-started → synthesised
+            // "(scenario)".
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-6",
+                StepId = "orphan-step",
+                Verdict = Verdict.Pass,
+                DurationMs = 1,
+            }),
+
+            // Scenario A opens, then its step s1.
+            Line(new ScenarioStartedEvent { RunId = "run-6", ScenarioId = "scenario-A" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-6",
+                StepId = "step-s1",
+                Verdict = Verdict.Pass,
+                DurationMs = 10,
+            }),
+
+            // Scenario B opens AFTER A (same run), then its step s2.  Once B is the
+            // most-recently-inserted scenario, s2 must land under B — not under A,
+            // and not under the orphan "(scenario)".
+            Line(new ScenarioStartedEvent { RunId = "run-6", ScenarioId = "scenario-B" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-6",
+                StepId = "step-s2",
+                Verdict = Verdict.Fail,
+                DurationMs = 20,
+            }),
+
+            // A scenario-completed for the OLDER scenario A re-touches A's model (it
+            // already exists, so GetOrAddScenario returns it).  Under a last-INSERTED
+            // index this leaves B as the run's "last" scenario; under a last-TOUCHED
+            // index it would wrongly re-point the run at A.  The NEXT step (s3) then
+            // discriminates the two: it must still attach to B, the last INSERTED
+            // scenario, not to the just-touched A.
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-6",
+                ScenarioId = "scenario-A",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-6",
+                StepId = "step-s3",
+                Verdict = Verdict.Pass,
+                DurationMs = 30,
+            }),
+
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-6",
+                ScenarioId = "scenario-B",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The synthesised scenario for the orphan step exists, and all three
+        // scenario sections are present.
+        Assert.Contains("Scenario: (scenario)", output, StringComparison.Ordinal);
+        Assert.Contains("Scenario: scenario-A", output, StringComparison.Ordinal);
+        Assert.Contains("Scenario: scenario-B", output, StringComparison.Ordinal);
+
+        // The report lays sections out in first-seen (insertion) order:
+        // (scenario) → scenario-A → scenario-B.
+        var orphanHeading = output.IndexOf("Scenario: (scenario)", StringComparison.Ordinal);
+        var headingA = output.IndexOf("Scenario: scenario-A", StringComparison.Ordinal);
+        var headingB = output.IndexOf("Scenario: scenario-B", StringComparison.Ordinal);
+        Assert.True(orphanHeading >= 0 && orphanHeading < headingA && headingA < headingB);
+
+        // Each step renders exactly once; locate each.
+        var orphanStep = output.IndexOf("orphan-step", StringComparison.Ordinal);
+        var s1 = output.IndexOf("step-s1", StringComparison.Ordinal);
+        var s2 = output.IndexOf("step-s2", StringComparison.Ordinal);
+        var s3 = output.IndexOf("step-s3", StringComparison.Ordinal);
+        Assert.True(orphanStep >= 0 && s1 >= 0 && s2 >= 0 && s3 >= 0);
+
+        // THE LOCK: orphan-step sits in the synthesised "(scenario)" section (before
+        // scenario-A's heading); s1 sits under scenario-A (between A's and B's
+        // headings); s2 AND s3 sit under scenario-B (after B's heading).  s3 is the
+        // discriminator: it arrives AFTER scenario-A's completed event re-touches A,
+        // so a "last-touched" index would have mislocated it under scenario-A; a
+        // "last-inserted" index keeps it under B.
+        Assert.True(orphanStep > orphanHeading && orphanStep < headingA);
+        Assert.True(s1 > headingA && s1 < headingB);
+        Assert.True(s2 > headingB);
+        Assert.True(s3 > headingB);
+    }
 }
