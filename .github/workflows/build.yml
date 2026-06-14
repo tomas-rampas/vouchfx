@@ -339,11 +339,12 @@ jobs:
   # `vscode` (no Node engine floor), and the full chain
   # (npm ci → lint → compile → test → package) was verified green locally.
   # LTS 22 is the correct CI baseline: the `test` script runs
-  # `node --test "dist/test/**/*.test.js"`, and `node --test` only EXPANDS glob
-  # patterns on Node ≥21.  On Node 20 the quoted glob is taken literally, matches
-  # zero files and exits 1; Node 22 (active LTS) expands it like local dev (Node
-  # ≥21) and the suite runs.  Do not regress below 22, and do not regress to a
-  # non-LTS.
+  # `node --test "dist/test/**/*.test.js"`, which relies on the test runner
+  # expanding that quoted glob.  Observed on the previously-pinned Node 20 runner,
+  # `node --test` took the glob literally (`Could not find '…/dist/test/**/*.test.js'`),
+  # matched zero files and exited 1.  Node 22 (active LTS) expands it as local dev
+  # (Node 25) does and the suite runs.  Do not regress below 22, and do not regress
+  # to a non-LTS.
   vscode-extension:
     name: VSCode extension build (non-blocking)
     runs-on: ubuntu-latest
