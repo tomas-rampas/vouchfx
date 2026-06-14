@@ -125,7 +125,7 @@ Replace `<commit-sha>` with a full 40-character commit SHA (not a branch or tag,
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `scenario-path` | string | `.` | File or directory (relative to the caller's checkout) where `.e2e.yaml` scenarios live. A directory is searched recursively; a single file runs just that file. |
+| `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search for `.e2e.yaml` scenarios. Searched recursively. |
 | `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or — when binary packaging lands in Sprint 11 — to pin a released version. |
 | `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
 | `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |

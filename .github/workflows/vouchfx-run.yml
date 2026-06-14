@@ -46,10 +46,9 @@ on:
     inputs:
       scenario-path:
         description: >-
-          Path (file or directory) the consumer's *.e2e.yaml suite lives at, relative
-          to the caller's checked-out repository root. A directory is searched
-          recursively; a single file runs just that file. Defaults to the repository
-          root.
+          Path to a DIRECTORY containing the consumer's *.e2e.yaml suite, relative to
+          the caller's checked-out repository root. The directory is searched
+          recursively for *.e2e.yaml files. Defaults to the repository root.
         type: string
         required: false
         default: "."
@@ -192,17 +191,25 @@ jobs:
       #    product Fail gates the consumer's CI by default, env-errors/inconclusives only on
       #    opt-in. `--` separates `dotnet run` options from the vouchfx arguments.
       #    The scenario path is resolved against the consumer checkout (the default working
-      #    directory, GITHUB_WORKSPACE), NOT the vouchfx source tree.
+      #    directory, $GITHUB_WORKSPACE), NOT the vouchfx source tree.
+      #    SECURITY: the caller-supplied `scenario-path` is bound to an `env:` var and
+      #    dereferenced as "$SCENARIO_PATH" rather than interpolated into the shell line
+      #    via ${{ … }}, so a value containing shell metacharacters cannot be executed
+      #    (the same pattern the pre-warm step uses for PREWARM_IMAGES).  The boolean
+      #    fail-on-* inputs are `type: boolean`, so their ${{ … && '--flag' || '' }}
+      #    expansion can only emit the fixed flag literal or nothing — no injection surface.
       - name: Run vouchfx suite
+        env:
+          SCENARIO_PATH: ${{ inputs.scenario-path }}
         run: >-
           dotnet run
           --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj
           -c Release
           --no-build
           --
-          run "${{ inputs.scenario-path }}"
-          --junit "${{ github.workspace }}/results.xml"
-          --html "${{ github.workspace }}/report.html"
+          run "$SCENARIO_PATH"
+          --junit "$GITHUB_WORKSPACE/results.xml"
+          --html "$GITHUB_WORKSPACE/report.html"
           ${{ inputs.fail-on-env-error && '--fail-on-env-error' || '' }}
           ${{ inputs.fail-on-inconclusive && '--fail-on-inconclusive' || '' }}
 
