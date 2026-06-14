@@ -522,6 +522,16 @@ public static class ScenarioRunner
     /// paths are resolved (S05-A-01).  Defaults to the current working directory
     /// when <see langword="null"/>.
     /// </param>
+    /// <param name="htmlReportPath">
+    /// Optional destination for a self-contained HTML report (S09-D-01, T3).  When
+    /// non-<see langword="null"/>, the report is written from the SAME event buffer and
+    /// diff lookup as the terminal render (parity).  <see langword="null"/> ⇒ no HTML report.
+    /// </param>
+    /// <param name="junitReportPath">
+    /// Optional destination for a JUnit XML results file (S09-D-01, T3).  When
+    /// non-<see langword="null"/>, the file is written from the SAME event buffer as the
+    /// terminal render.  <see langword="null"/> ⇒ no JUnit report.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations.
     /// </param>
@@ -555,6 +565,8 @@ public static class ScenarioRunner
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory = null,
+        string? htmlReportPath = null,
+        string? junitReportPath = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -795,6 +807,14 @@ public static class ScenarioRunner
             }
 
             TerminalRenderer.Render(allBuffers, output, diffLookup);
+
+            // Optional file reports (S09-D-01, T3): write the HTML / JUnit artifacts from the
+            // SAME buffer + diffLookup the terminal render just consumed, so all three renderers
+            // see byte-identical input (parity).  A null path writes nothing.  `output` is the
+            // diagnostics sink: a bad --html / --junit path is caught PER FILE and reported
+            // there, so report writing can NEVER change the already-computed verdict / exit code.
+            FileReportWriter.WriteFileReports(allBuffers, diffLookup, htmlReportPath, junitReportPath, output);
+
             return new SuiteResult(suiteAggregate, results);
         }
     }

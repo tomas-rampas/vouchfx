@@ -28,9 +28,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner
-> discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation.
-> Still to come: VSCode extension/LSP, HTML report and JUnit XML renderers, the full verdict taxonomy surface, and community provider tiers (Verified and Community governance) — see
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal, a self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`).
+> Still to come: VSCode extension/LSP and the editor-side authoring surface, and community provider tiers (Verified and Community governance) — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
 
@@ -132,10 +131,56 @@ vouchfx run --parallel 2
 
 # Watch a single file for changes and re-run automatically (topology re-used for steps-only edits)
 vouchfx run ./tests/users.e2e.yaml --watch
+
+# Write a self-contained HTML report to disk
+vouchfx run ./tests --html ./report.html
+
+# Write a JUnit XML results file for CI ingestion
+vouchfx run ./tests --junit ./results.xml
+
+# Run with both reports and taxonomy-aware CI gating (fail on environment errors or inconclusive results)
+vouchfx run ./tests --html ./report.html --junit ./results.xml --fail-on-env-error --fail-on-inconclusive
+
+# Run with selective CI gating (for example, fail on infra breakage but not timeouts)
+vouchfx run ./tests --fail-on-env-error
 ```
 
-The runner exits with code **1** if any test fails, **0** if all pass (or only inconclusive/environment
-errors occur), and **2** for usage errors. The output is a terminal report with colour-coded verdicts.
+The runner exits with a code that reflects the verdict taxonomy:
+
+| Exit code | Verdict | Condition | Opt-in flag |
+|---|---|---|---|
+| **0** | Success | Pass, or EnvironmentError/Inconclusive (off by default) | – |
+| **1** | Fail | One or more scenarios failed (a genuine defect) | – |
+| **2** | UsageError | Bad arguments, missing path, `--watch`+`--parallel` | – |
+| **3** | EnvironmentError | Infrastructure breakage (unhealthy container, image-pull/seed failure) | `--fail-on-env-error` |
+| **4** | Inconclusive | Engine could not decide (timeout, partition outlasted grace, upstream capture unmet) | `--fail-on-inconclusive` |
+
+By default, **only Fail (1) breaks CI** — environment errors and inconclusive results exit 0 unless you opt in via the flags above. This distinction lets you tell infrastructure breakage apart from a product defect.
+
+```bash
+# Fail breaks CI; environment errors and inconclusive results exit 0
+vouchfx run ./tests
+
+# Also gate on infrastructure failure
+vouchfx run ./tests --fail-on-env-error
+
+# Also gate on inconclusive results (timeout, unmet captures, etc.)
+vouchfx run ./tests --fail-on-inconclusive
+
+# Gate on both
+vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
+```
+
+The output is a terminal report with colour-coded verdicts.
+
+### Report formats
+
+By default, `vouchfx run` outputs a terminal report only. You can optionally write a self-contained HTML report and/or a JUnit XML results file:
+
+- **`--html <path>`** — writes a self-contained HTML report (polling timeline, captured-variable provenance, failed-step diffs, and the reproducibility envelope) with no secret values embedded. The HTML report is rendered from the same event stream as the terminal output, so the two never disagree.
+- **`--junit <path>`** — writes a JUnit XML results file for CI integration. The four verdicts map to distinct JUnit primitives (Fail → `<failure>`, Environment-error → `<error>`, Inconclusive → `<skipped>`), so CI systems can distinguish infrastructure breakage from product defects.
+
+Both flags accept `--parallel` and sequential runs; neither works with `--watch` (which re-renders on each iteration rather than buffering one suite-wide stream). Parent directories are created as needed; existing files are overwritten.
 
 ## Sprint 1 de-risking results
 
