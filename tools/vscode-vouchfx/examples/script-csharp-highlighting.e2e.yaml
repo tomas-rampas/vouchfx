@@ -31,8 +31,10 @@ steps:
   # the block-scalar end boundary is wrong.
   - id: assert-shape
     type: db-assert.postgres
+    target: appdb
     query: SELECT 1
-    expectRows: 1
+    expect:
+      rowCount: 1
 
   - id: compute-folded
     type: script.csharp
