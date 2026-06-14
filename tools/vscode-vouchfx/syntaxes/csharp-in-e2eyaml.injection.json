@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "scopeName": "vouchfx.injection.csharp-in-e2eyaml",
   "injectionSelector": "L:source.yaml -comment -string",
-  "comment": "vouchfx — injects VSCode's built-in C# TextMate grammar (source.cs) into the YAML block scalar that follows a `code:` mapping key. The `code:` field is where a `script.csharp` step carries its author C#. Boundary rule: the body is the run of lines more-indented than the `code:` key, terminating at the first non-blank line indented at or below the key (the YAML block-scalar indentation rule), which the `while` clause enforces via the captured key indentation.",
+  "comment": "vouchfx — injects VSCode's built-in C# TextMate grammar (source.cs) into the YAML block scalar that follows a `code:` mapping key. The `code:` field is where a `script.csharp` step carries its author C#. Boundary rule: the body is the run of lines more-indented than the `code:` key, terminating at the first non-blank line indented at or below the key (the YAML block-scalar indentation rule), which the `while` clause enforces via the captured key indentation plus one space and a lookahead for the content (so the body characters are tokenised by source.cs rather than consumed by the boundary match).",
   "patterns": [
     {
       "include": "#csharp-code-block"
@@ -10,8 +10,8 @@
   ],
   "repository": {
     "csharp-code-block": {
-      "comment": "Match a `code:` key whose value is a block scalar (| |- |+ > >- >+, with an optional explicit indentation digit), then keep every subsequent line that is blank or more-indented than the key as embedded C#. Capture group 1 is the key's leading indentation; the `while` backreference \\1 plus a required extra indent character enforces the dedent boundary.",
-      "begin": "^(\\s*)(code)\\s*(:)\\s*([|>][-+]?[1-9]?)\\s*(?:#.*)?$",
+      "comment": "Match a `code:` key whose value is a block scalar (| |- |+ > >- >+), then keep every subsequent line that is blank or more-indented than the key as embedded C#. The indicator (group 4) may carry an optional explicit indentation digit (1..9) and an optional chomping indicator (- or +) in EITHER order, so `|2-` and `>4+` are accepted as well as `|-3` and `>+1`. Capture group 1 is the key's leading indentation. The `while` clause matches the key indentation plus one space and then uses a LOOKAHEAD `(?=\\s*\\S)` for the content, so it consumes only the indentation (scoped as whitespace via `whileCaptures`) and leaves the body characters to be tokenised by `source.cs` — without the lookahead the first content character of every body line would be swallowed and mis-scoped.",
+      "begin": "^(\\s*)(code)\\s*(:)\\s*([|>](?:[+-][1-9]?|[1-9][+-]?)?)\\s*(?:#.*)?$",
       "beginCaptures": {
         "2": {
           "name": "entity.name.tag.yaml"
@@ -23,7 +23,12 @@
           "name": "keyword.control.flow.block-scalar.yaml"
         }
       },
-      "while": "^(?:\\1\\s+\\S|\\s*$)",
+      "while": "^(?:\\1\\s(?=\\s*\\S)|\\s*$)",
+      "whileCaptures": {
+        "0": {
+          "name": "punctuation.whitespace.indentation.yaml"
+        }
+      },
       "contentName": "meta.embedded.block.csharp",
       "patterns": [
         {

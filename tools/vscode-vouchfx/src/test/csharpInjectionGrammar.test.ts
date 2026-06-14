@@ -64,6 +64,78 @@ test('injection grammar parses as JSON and is a well-formed TextMate injection',
   );
 });
 
+interface CodeBlockRule {
+  begin?: string;
+  while?: string;
+  whileCaptures?: Record<string, unknown>;
+}
+
+function codeBlockRule(): CodeBlockRule {
+  const grammar = JSON.parse(readFileSync(INJECTION_PATH, 'utf8')) as InjectionGrammar;
+  const rule = grammar.repository?.['csharp-code-block'] as CodeBlockRule | undefined;
+  assert.ok(rule, 'the repository must define the csharp-code-block rule');
+  return rule;
+}
+
+test('the begin indicator accepts the indentation digit and chomping in EITHER order', () => {
+  const rule = codeBlockRule();
+  assert.ok(typeof rule.begin === 'string', 'the rule must declare a begin pattern');
+  // The begin pattern is anchored (^…$); RegExp on a single line mirrors how the
+  // TextMate engine applies it line-by-line.
+  const begin = new RegExp(rule.begin as string);
+
+  // Each of these is a valid YAML block-scalar header for `code:` and MUST start
+  // the injection. The indicator may be a bare `|`/`>`, carry a chomping sign, an
+  // indentation digit, or both — in either order.
+  const matches = [
+    'code: |',
+    'code: |-',
+    'code: |+',
+    'code: >',
+    'code: >-',
+    'code: >+',
+    'code: |2-', // indentation-then-chomping order
+    'code: >4+', // indentation-then-chomping order (folded)
+    'code: |-3', // chomping-then-indentation order
+    'code: >+1', // chomping-then-indentation order (folded)
+    'code: |9',
+    '    code: |2-', // leading indentation is captured by group 1
+    'code: | # trailing comment',
+  ];
+  for (const line of matches) {
+    assert.ok(begin.test(line), `begin must match a valid block-scalar header: "${line}"`);
+  }
+
+  // These are NOT valid single-indicator block-scalar headers and must NOT start
+  // the injection: a doubled chomping sign, a two-digit indentation, a zero
+  // indentation, or a plain (non-block) scalar.
+  const nonMatches = [
+    'code: |--', // doubled chomping indicator
+    'code: |12', // two-digit indentation is illegal
+    'code: |0', // zero indentation is illegal (YAML indent is 1..9)
+    'code: hello', // plain scalar, not a block scalar
+    'code:', // no value at all
+  ];
+  for (const line of nonMatches) {
+    assert.ok(!begin.test(line), `begin must NOT match an invalid header: "${line}"`);
+  }
+});
+
+test('the while clause declares whileCaptures so its consumed indentation is scoped', () => {
+  const rule = codeBlockRule();
+  assert.ok(typeof rule.while === 'string', 'the rule must declare a while pattern');
+  // The while clause must match indentation plus a single space and then use a
+  // lookahead for the content, so the body characters fall through to source.cs.
+  assert.ok(
+    (rule.while as string).includes('(?='),
+    'the while pattern must use a lookahead so body characters are not consumed',
+  );
+  assert.ok(
+    rule.whileCaptures && typeof rule.whileCaptures === 'object',
+    'the rule must declare whileCaptures to scope the consumed indentation',
+  );
+});
+
 test('injection grammar is registered in package.json contributes.grammars', () => {
   interface GrammarContribution {
     scopeName?: string;
@@ -173,6 +245,14 @@ interface ScopedLine {
    * used here only tags the constructs it recognises.)
    */
   readonly hasCsharpToken: boolean;
+  /**
+   * True when the FIRST non-whitespace token of the line is tokenised by the
+   * included C# grammar (carries `source.cs` or a `.cs` rule scope). This is the
+   * precise proof that the `while` clause consumes only indentation: if it ate
+   * the first content character, that character would carry the embedded content
+   * scope but NOT a `.cs` scope.
+   */
+  readonly firstContentIsCsharp: boolean;
   readonly scopesByToken: ReadonlyArray<readonly string[]>;
 }
 
@@ -193,8 +273,19 @@ function tokeniseLines(grammar: IGrammar, lines: string[]): ScopedLine[] {
     const hasCsharpToken = result.tokens.some((tok) =>
       tok.scopes.some((s) => s === CSHARP_SCOPE || s.endsWith('.cs')),
     );
+    const firstContentToken = nonBlank[0];
+    const firstContentIsCsharp =
+      firstContentToken !== undefined &&
+      firstContentToken.scopes.some((s) => s === CSHARP_SCOPE || s.endsWith('.cs'));
 
-    out.push({ text, isCsharp, hasEmbeddedScope, hasCsharpToken, scopesByToken });
+    out.push({
+      text,
+      isCsharp,
+      hasEmbeddedScope,
+      hasCsharpToken,
+      firstContentIsCsharp,
+      scopesByToken,
+    });
   }
   return out;
 }
@@ -234,6 +325,14 @@ test('literal block scalar after `code:` is scoped as embedded C#; the boundary 
     assert.ok(
       t[idx].hasCsharpToken,
       `body line ${idx} must be delegated to ${CSHARP_SCOPE}: "${t[idx].text}"`,
+    );
+    // The precise boundary: the FIRST non-whitespace character of the body line
+    // must itself be tokenised by source.cs. With the old `while` pattern
+    // (`^(?:\1\s+\S|\s*$)`), the `\S` consumed that first character, leaving it
+    // in the embedded region but NOT delegated to the C# grammar.
+    assert.ok(
+      t[idx].firstContentIsCsharp,
+      `the first content character of body line ${idx} must be C#, not consumed by the while clause: "${t[idx].text}"`,
     );
   }
 
