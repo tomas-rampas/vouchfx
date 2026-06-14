@@ -1,0 +1,44 @@
+# Outline fixture — exercises the parseE2eOutline helper end to end.
+#
+# It mixes a metadata.name, a literal `code: |` block scalar (whose interior
+# lines must NOT be mistaken for new steps), a folded `>-` scalar, an inline
+# comment, and one step deliberately WITHOUT an `id:` (which must be skipped).
+metadata:
+  name: outline-fixture-demo
+  owner: tooling
+  tags: [demo, outline]
+
+variables:
+  greeting: hello
+
+steps:
+  - id: compute
+    type: script.csharp
+    code: |
+      // This whole block is C# — none of these lines is a new step.
+      var id = Vars["greeting"]?.ToString() ?? "world";
+      var count = 0;
+      for (var i = 0; i < 3; i++)
+      {
+          count += i;
+      }
+      Vars["message"] = $"{id} ({count})";
+
+  # The next step's keys must be recognised as a fresh `steps` item.
+  - id: assert-shape
+    type: db-assert.postgres
+    target: appdb
+    query: SELECT 1
+    expect:
+      rowCount: 1
+
+  # An id-less step: it must be skipped by the outline (no TestItem to anchor).
+  - type: script.csharp
+    code: |
+      var orphan = true;
+
+  - id: compute-folded
+    type: script.csharp
+    code: >-
+      Vars["folded"] = "still C#";
+      var ok = true;

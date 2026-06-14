@@ -1,0 +1,21 @@
+{"v":1,"schemaVersion":"v1","type":"suite-started","ts":"2026-06-14T09:00:00.000Z","runId":"run-1"}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-06-14T09:00:00.100Z","runId":"run-1","scenarioId":"checkout-happy-path","file":"checkout-happy-path.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-06-14T09:00:00.200Z","runId":"run-1","stepId":"place-order","kind":"http.rest"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-06-14T09:00:00.300Z","runId":"run-1","stepId":"place-order","verdict":"PASS","durationMs":42}
+
+this line is intentionally blank above and this prose line is intentionally malformed and must be skipped
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-06-14T09:00:00.400Z","runId":"run-1","scenarioId":"checkout-happy-path","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-06-14T09:00:01.000Z","runId":"run-1","scenarioId":"checkout-rejects-bad-card","file":"checkout-rejects-bad-card.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"some-future-event-renderers-must-ignore","ts":"2026-06-14T09:00:01.050Z","runId":"run-1","unknownField":123}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-06-14T09:00:01.100Z","runId":"run-1","stepId":"assert-status","verdict":"FAIL","durationMs":88}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-06-14T09:00:01.200Z","runId":"run-1","scenarioId":"checkout-rejects-bad-card","verdict":"FAIL","counts":{"pass":0,"fail":1,"envError":0,"inconclusive":0}}
+{ this { is : not valid json and must be skipped without throwing
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-06-14T09:00:02.000Z","runId":"run-2","scenarioId":"checkout-db-unreachable","file":"checkout-db-unreachable.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"environment-error","ts":"2026-06-14T09:00:02.050Z","runId":"run-2","errorKind":"HealthGate","resourceName":"appdb","detail":"container 'appdb' never reported healthy"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-06-14T09:00:02.100Z","runId":"run-2","stepId":"query-orders","verdict":"ENV_ERROR","durationMs":5}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-06-14T09:00:02.200Z","runId":"run-2","scenarioId":"checkout-db-unreachable","verdict":"ENV_ERROR","counts":{"pass":0,"fail":0,"envError":1,"inconclusive":0}}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-06-14T09:00:03.000Z","runId":"run-3","scenarioId":"checkout-webhook-timeout","file":"checkout-webhook-timeout.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-06-14T09:00:03.100Z","runId":"run-3","stepId":"await-webhook","kind":"webhook-listen.http","verifyMode":"RETRY"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-06-14T09:00:33.100Z","runId":"run-3","stepId":"await-webhook","verdict":"INCONCLUSIVE","durationMs":30000}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-06-14T09:00:33.200Z","runId":"run-3","scenarioId":"checkout-webhook-timeout","verdict":"INCONCLUSIVE","counts":{"pass":0,"fail":0,"envError":0,"inconclusive":1}}
+{"v":1,"schemaVersion":"v1","type":"suite-completed","ts":"2026-06-14T09:00:33.300Z","runId":"run-1"}

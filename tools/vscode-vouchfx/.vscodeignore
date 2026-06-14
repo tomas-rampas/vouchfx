@@ -15,6 +15,18 @@ scripts/**
 node_modules/**
 **/*.vsix
 
+# RUNTIME DEPENDENCY — `yaml` (eemeli/yaml) MUST ship: there is no bundler
+# (the build is plain `tsc`), so `dist/e2eYamlOutline.js` does `require('yaml')`
+# from node_modules at runtime. `yaml` has ZERO runtime dependencies. Node
+# resolves `main: ./dist/index.js`, so ONLY `dist/`, `package.json` and the
+# `util.js` re-export shim are load-bearing — the `browser/` build is for
+# bundlers and is deliberately NOT re-included (keeping the VSIX lean). We
+# whitelist the exact load-bearing paths rather than the whole package so the
+# browser build stays excluded regardless of `.vscodeignore` negation ordering.
+!node_modules/yaml/dist/**
+!node_modules/yaml/package.json
+!node_modules/yaml/util.js
+
 # Keep the bundled schema: the manifest yamlValidation.url resolves to
 # ./src/schema/composed-schema.v1.json at runtime, so it MUST ship.
 !src/schema/composed-schema.v1.json
