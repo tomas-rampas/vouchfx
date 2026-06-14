@@ -156,109 +156,120 @@ public sealed class HtmlRenderer
                 continue;
             }
 
-            EventEnvelope envelope;
+            // The parse AND the per-line field extraction share one try/catch so a single
+            // unreadable line is skipped without aborting the whole render.  A lone /
+            // unpaired UTF-16 surrogate in a string VALUE (e.g. the JSON escape "\uD800"
+            // with no low-surrogate partner) PARSES fine — JsonDocument.Parse succeeds and
+            // the value lands in Extra as a JsonElement of kind String — but throws
+            // InvalidOperationException ("Cannot read incomplete UTF-16…") LATER, when
+            // GetString() reads it during model-building.  That read happens here, in the
+            // switch, so the guard must span the extraction too; catching only JsonException
+            // (which fires at parse time) would let the InvalidOperationException escape and
+            // abort the entire report.  Both are tolerated per-line per §14 — the offending
+            // line is skipped and the rest of the stream still renders.
             try
             {
-                envelope = EventStreamJson.FromLine(line);
+                var envelope = EventStreamJson.FromLine(line);
+
+                switch (envelope.Type)
+                {
+                    case EventTypes.ScenarioStarted:
+                        {
+                            var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                            model.GetOrAddScenario(envelope.RunId, scenarioId);
+                            break;
+                        }
+
+                    case EventTypes.StepStarted:
+                        {
+                            var startedRunId = envelope.RunId;
+                            var startedStepId = GetStr(envelope, "stepId");
+                            var startedKind = GetStr(envelope, "kind");
+                            if (!string.IsNullOrEmpty(startedRunId)
+                                && startedStepId is not null
+                                && startedKind is not null)
+                            {
+                                stepKinds[(startedRunId, startedStepId)] = startedKind;
+                            }
+
+                            break;
+                        }
+
+                    case EventTypes.StepAttempt:
+                        {
+                            var stepId = GetStr(envelope, "stepId");
+                            if (stepId is null)
+                            {
+                                break;
+                            }
+
+                            var step = model.GetOrAddStep(envelope.RunId, stepId);
+                            step.Attempts.Add(new AttemptRow(
+                                Attempt: GetInt(envelope, "attempt"),
+                                TMs: GetLong(envelope, "tMs"),
+                                Outcome: GetStr(envelope, "outcome"),
+                                ObservationSummary: SummariseObservation(envelope)));
+                            break;
+                        }
+
+                    case EventTypes.StepCompleted:
+                        {
+                            var stepId = GetStr(envelope, "stepId");
+                            if (stepId is null)
+                            {
+                                break;
+                            }
+
+                            var step = model.GetOrAddStep(envelope.RunId, stepId);
+                            step.Verdict = GetStr(envelope, "verdict");
+                            step.DurationMs = GetLong(envelope, "durationMs");
+                            step.Completed = envelope;
+                            break;
+                        }
+
+                    case EventTypes.ScenarioCompleted:
+                        {
+                            var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                            var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
+                            scenario.Verdict = GetStr(envelope, "verdict");
+                            scenario.DurationMs = GetLong(envelope, "durationMs");
+                            scenario.Counts = ReadCounts(envelope);
+                            break;
+                        }
+
+                    case EventTypes.EnvironmentError:
+                        {
+                            model.EnvironmentErrors.Add(new EnvironmentErrorRow(
+                                ResourceName: GetStr(envelope, "resourceName") ?? "(unknown)",
+                                ErrorKind: GetStr(envelope, "errorKind") ?? "(unknown)",
+                                RegistryHost: GetStr(envelope, "registryHost"),
+                                Detail: GetStr(envelope, "detail")));
+                            break;
+                        }
+
+                    case EventTypes.ReproducibilityEnvelope:
+                        {
+                            model.Envelopes.Add(new EnvelopeRow(
+                                ScenarioId: GetStr(envelope, "scenarioId") ?? "(unknown)",
+                                EnvSchemaVersion: GetStr(envelope, "envSchemaVersion"),
+                                SecretReferences: ReadArray(envelope, "secretReferences"),
+                                Fixtures: ReadArray(envelope, "fixtures")));
+                            break;
+                        }
+
+                    // Unknown / unrendered event types (suite-started, suite-completed, and
+                    // any type a future engine release introduces) are silently ignored —
+                    // the core §14 forward-compatibility guarantee.
+                    default:
+                        break;
+                }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Malformed JSON — skip this line and continue, exactly like the
-                // terminal renderer (§14 tolerance).
+                // Malformed JSON (JsonException at parse) OR an unreadable string value such
+                // as a lone surrogate (InvalidOperationException at GetString) — skip this
+                // line and continue, exactly like the terminal renderer (§14 tolerance).
                 continue;
-            }
-
-            switch (envelope.Type)
-            {
-                case EventTypes.ScenarioStarted:
-                    {
-                        var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
-                        model.GetOrAddScenario(envelope.RunId, scenarioId);
-                        break;
-                    }
-
-                case EventTypes.StepStarted:
-                    {
-                        var startedRunId = envelope.RunId;
-                        var startedStepId = GetStr(envelope, "stepId");
-                        var startedKind = GetStr(envelope, "kind");
-                        if (!string.IsNullOrEmpty(startedRunId)
-                            && startedStepId is not null
-                            && startedKind is not null)
-                        {
-                            stepKinds[(startedRunId, startedStepId)] = startedKind;
-                        }
-
-                        break;
-                    }
-
-                case EventTypes.StepAttempt:
-                    {
-                        var stepId = GetStr(envelope, "stepId");
-                        if (stepId is null)
-                        {
-                            break;
-                        }
-
-                        var step = model.GetOrAddStep(envelope.RunId, stepId);
-                        step.Attempts.Add(new AttemptRow(
-                            Attempt: GetInt(envelope, "attempt"),
-                            TMs: GetLong(envelope, "tMs"),
-                            Outcome: GetStr(envelope, "outcome"),
-                            ObservationSummary: SummariseObservation(envelope)));
-                        break;
-                    }
-
-                case EventTypes.StepCompleted:
-                    {
-                        var stepId = GetStr(envelope, "stepId");
-                        if (stepId is null)
-                        {
-                            break;
-                        }
-
-                        var step = model.GetOrAddStep(envelope.RunId, stepId);
-                        step.Verdict = GetStr(envelope, "verdict");
-                        step.DurationMs = GetLong(envelope, "durationMs");
-                        step.Completed = envelope;
-                        break;
-                    }
-
-                case EventTypes.ScenarioCompleted:
-                    {
-                        var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
-                        var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
-                        scenario.Verdict = GetStr(envelope, "verdict");
-                        scenario.DurationMs = GetLong(envelope, "durationMs");
-                        scenario.Counts = ReadCounts(envelope);
-                        break;
-                    }
-
-                case EventTypes.EnvironmentError:
-                    {
-                        model.EnvironmentErrors.Add(new EnvironmentErrorRow(
-                            ResourceName: GetStr(envelope, "resourceName") ?? "(unknown)",
-                            ErrorKind: GetStr(envelope, "errorKind") ?? "(unknown)",
-                            RegistryHost: GetStr(envelope, "registryHost"),
-                            Detail: GetStr(envelope, "detail")));
-                        break;
-                    }
-
-                case EventTypes.ReproducibilityEnvelope:
-                    {
-                        model.Envelopes.Add(new EnvelopeRow(
-                            ScenarioId: GetStr(envelope, "scenarioId") ?? "(unknown)",
-                            EnvSchemaVersion: GetStr(envelope, "envSchemaVersion"),
-                            SecretReferences: ReadArray(envelope, "secretReferences"),
-                            Fixtures: ReadArray(envelope, "fixtures")));
-                        break;
-                    }
-
-                // Unknown / unrendered event types (suite-started, suite-completed, and
-                // any type a future engine release introduces) are silently ignored —
-                // the core §14 forward-compatibility guarantee.
-                default:
-                    break;
             }
         }
 

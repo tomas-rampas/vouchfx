@@ -18,12 +18,17 @@
 //     (its shape carries verdicts + messages, not per-step diffs — JunitXmlRenderer.Render
 //     has no diffLookup parameter).
 //   • RESILIENCE: each report is written independently and the file-system / path exception
-//     family is caught PER FILE.  A caller-supplied bad --html / --junit path therefore can
-//     NEVER abort the other report and can NEVER crash the run — report writing must not
-//     change the already-computed verdict / exit code (a typo'd path must not manufacture a
-//     CI failure from a passing suite, nor mask a real Fail).  The optional `diagnostics`
-//     sink receives a single type-name-only notice per failed report (§17 redaction — never
-//     ex.Message, never the resolved path).  A genuine renderer bug is NOT swallowed.
+//     family — plus InvalidOperationException as defence in depth — is caught PER FILE.  A
+//     caller-supplied bad --html / --junit path therefore can NEVER abort the other report
+//     and can NEVER crash the run — report writing must not change the already-computed
+//     verdict / exit code (a typo'd path must not manufacture a CI failure from a passing
+//     suite, nor mask a real Fail).  InvalidOperationException is caught because an
+//     Extra-borne string value carrying a lone UTF-16 surrogate throws it at GetString()
+//     read time: the renderers' per-line guard already tolerates this (the line is skipped),
+//     so it should never reach here, but containing it here too guarantees report writing
+//     cannot change the verdict even if some future value still surfaces one.  The optional
+//     `diagnostics` sink receives a single type-name-only notice per failed report
+//     (§17 redaction — never ex.Message, never the resolved path).
 //   • UTF-8 WITHOUT a BOM: a leading BOM trips some XML/HTML consumers and CI ingesters,
 //     so the encoding is `new UTF8Encoding(false)` (emit-BOM = false) — never the
 //     BOM-emitting Encoding.UTF8.
@@ -91,12 +96,18 @@ internal static class FileReportWriter
     /// empty string).  When a path is non-null and non-empty, its parent directory is created
     /// if missing and the file is created/overwritten as UTF-8 without a BOM.
     /// <para>
-    /// Only the file-system / path exception family is caught per report
+    /// The file-system / path exception family is caught per report
     /// (<see cref="IOException"/>, <see cref="UnauthorizedAccessException"/>,
     /// <see cref="ArgumentException"/>, <see cref="NotSupportedException"/>,
-    /// <see cref="System.Security.SecurityException"/>).  A renderer / programming fault is
-    /// deliberately <i>not</i> swallowed and still surfaces — the buffered event stream handed
-    /// here is always valid, so a render-time throw signals a genuine bug, not a bad path.
+    /// <see cref="System.Security.SecurityException"/>), together with
+    /// <see cref="InvalidOperationException"/> as defence in depth: an Extra-borne string
+    /// value carrying a lone UTF-16 surrogate throws it at <c>GetString()</c> read time.
+    /// The renderers' per-line guard already tolerates that (the offending line is skipped),
+    /// so it should never reach here, but catching it guarantees report writing can never
+    /// change the already-computed verdict / exit code even if some future value still
+    /// surfaces one.  Any other renderer / programming fault is deliberately <i>not</i>
+    /// swallowed and still surfaces — the buffered event stream handed here is otherwise
+    /// always valid, so such a throw signals a genuine bug, not a bad path.
     /// </para>
     /// </remarks>
     public static void WriteFileReports(
@@ -123,8 +134,14 @@ internal static class FileReportWriter
                 or UnauthorizedAccessException
                 or ArgumentException
                 or NotSupportedException
-                or System.Security.SecurityException)
+                or System.Security.SecurityException
+                or InvalidOperationException)
             {
+                // InvalidOperationException is included as defence in depth: a renderer's
+                // per-line guard already tolerates a lone-surrogate string value (which
+                // throws InvalidOperationException at GetString time), but if any future
+                // value still surfaces one here it must NOT abort report writing or change
+                // the already-computed verdict / exit code.
                 diagnostics?.WriteLine(
                     $"Report write failed for 'html' (verdict unaffected): {ex.GetType().Name}");
             }
@@ -141,8 +158,14 @@ internal static class FileReportWriter
                 or UnauthorizedAccessException
                 or ArgumentException
                 or NotSupportedException
-                or System.Security.SecurityException)
+                or System.Security.SecurityException
+                or InvalidOperationException)
             {
+                // InvalidOperationException is included as defence in depth: a renderer's
+                // per-line guard already tolerates a lone-surrogate string value (which
+                // throws InvalidOperationException at GetString time), but if any future
+                // value still surfaces one here it must NOT abort report writing or change
+                // the already-computed verdict / exit code.
                 diagnostics?.WriteLine(
                     $"Report write failed for 'junit' (verdict unaffected): {ex.GetType().Name}");
             }

@@ -127,46 +127,57 @@ public sealed class JunitXmlRenderer
                 continue;
             }
 
-            EventEnvelope envelope;
+            // The parse AND the per-line field extraction share one try/catch so a single
+            // unreadable line is skipped without aborting the whole render.  A lone /
+            // unpaired UTF-16 surrogate in a string VALUE (e.g. the JSON escape "\uD800"
+            // with no low-surrogate partner) PARSES fine — JsonDocument.Parse succeeds and
+            // the value lands in Extra as a JsonElement of kind String — but throws
+            // InvalidOperationException ("Cannot read incomplete UTF-16…") LATER, when
+            // GetString() reads it during model-building.  That read happens here, in the
+            // switch, so the guard must span the extraction too; catching only JsonException
+            // (which fires at parse time) would let the InvalidOperationException escape and
+            // abort the entire report.  Both are tolerated per-line per §14 — the offending
+            // line is skipped and the rest of the stream still renders.
             try
             {
-                envelope = EventStreamJson.FromLine(line);
+                var envelope = EventStreamJson.FromLine(line);
+
+                switch (envelope.Type)
+                {
+                    case EventTypes.ScenarioStarted:
+                        {
+                            var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                            var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
+                            scenario.File ??= GetStr(envelope, "file");
+                            break;
+                        }
+
+                    case EventTypes.ScenarioCompleted:
+                        {
+                            var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                            var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
+                            scenario.Verdict = GetStr(envelope, "verdict");
+                            scenario.DurationMs = GetLong(envelope, "durationMs");
+                            scenario.Counts = ReadCounts(envelope);
+                            break;
+                        }
+
+                    // Step and other events do not change the per-scenario JUnit shape (JUnit
+                    // carries verdicts + messages, not per-step rows or rendered diffs), so
+                    // they are ignored here — along with every unknown / future event type,
+                    // the core §14 forward-compatibility guarantee.  Crucially this means no
+                    // step observation or captured value is ever read, keeping the report
+                    // secret-safe by construction.
+                    default:
+                        break;
+                }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Malformed JSON — skip this line and continue, exactly like the sibling
-                // renderers (§14 tolerance).
+                // Malformed JSON (JsonException at parse) OR an unreadable string value such
+                // as a lone surrogate (InvalidOperationException at GetString) — skip this
+                // line and continue, exactly like the sibling renderers (§14 tolerance).
                 continue;
-            }
-
-            switch (envelope.Type)
-            {
-                case EventTypes.ScenarioStarted:
-                    {
-                        var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
-                        var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
-                        scenario.File ??= GetStr(envelope, "file");
-                        break;
-                    }
-
-                case EventTypes.ScenarioCompleted:
-                    {
-                        var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
-                        var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
-                        scenario.Verdict = GetStr(envelope, "verdict");
-                        scenario.DurationMs = GetLong(envelope, "durationMs");
-                        scenario.Counts = ReadCounts(envelope);
-                        break;
-                    }
-
-                // Step and other events do not change the per-scenario JUnit shape (JUnit
-                // carries verdicts + messages, not per-step rows or rendered diffs), so
-                // they are ignored here — along with every unknown / future event type,
-                // the core §14 forward-compatibility guarantee.  Crucially this means no
-                // step observation or captured value is ever read, keeping the report
-                // secret-safe by construction.
-                default:
-                    break;
             }
         }
 
@@ -369,6 +380,15 @@ public sealed class JunitXmlRenderer
     /// unambiguously parseable, whereas a substitution would invent text the author never
     /// wrote), while preserving the three permitted whitespace controls and every other
     /// character — including legal astral-plane text carried by valid surrogate pairs.
+    /// <para>
+    /// A LONE / unpaired surrogate is a separate concern that never reaches this method.
+    /// For an Extra-borne string field it is NOT rejected at parse — it is accepted as a
+    /// <c>JsonElement</c> of kind String and throws <see cref="InvalidOperationException"/>
+    /// only when read via <c>GetString()</c> during model-building; the renderer's
+    /// per-line guard tolerates that read failure (the line is skipped, §14), so a lone
+    /// surrogate never arrives here.  Only the (typed) envelope fields are validated at
+    /// deserialisation; an Extra string field is not.
+    /// </para>
     /// </remarks>
     /// <param name="value">The dynamic string to escape; <see langword="null"/> yields the empty string.</param>
     /// <returns>The XML-safe form of <paramref name="value"/>.</returns>
@@ -423,9 +443,13 @@ public sealed class JunitXmlRenderer
     /// char: a C0 control below U+0020 that is not one of the three permitted whitespace
     /// controls TAB (U+0009), LF (U+000A) or CR (U+000D), or one of the two BMP
     /// non-characters U+FFFE / U+FFFF (which fall outside the permitted
-    /// <c>[#xE000-#xFFFD]</c> range).  Lone/unpaired surrogates are already rejected by
-    /// System.Text.Json at deserialisation, and valid surrogate pairs (astral-plane text)
-    /// are legal XML, so neither is handled here.
+    /// <c>[#xE000-#xFFFD]</c> range).  Valid surrogate PAIRS (astral-plane text) are legal
+    /// XML and pass through untouched.  A LONE / unpaired surrogate is never seen here:
+    /// for an Extra-borne string field it is NOT rejected at parse (only typed envelope
+    /// fields are validated at deserialisation) — it throws
+    /// <see cref="InvalidOperationException"/> when read via <c>GetString()</c>, which the
+    /// renderer's per-line guard tolerates by skipping the line (§14), so it never flows
+    /// into <see cref="XmlEscape(string?)"/>.
     /// </summary>
     private static bool IsForbiddenXmlCharacter(char ch)
         => (ch < ' ' && ch is not ('\t' or '\n' or '\r'))

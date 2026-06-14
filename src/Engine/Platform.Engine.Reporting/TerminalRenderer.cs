@@ -142,34 +142,47 @@ public sealed class TerminalRenderer
                 continue;
             }
 
-            EventEnvelope envelope;
+            // The parse AND the per-line field extraction (step-kind recording plus the
+            // RenderEnvelope read of every Extra field) share one try/catch so a single
+            // unreadable line is skipped without aborting the whole render.  A lone /
+            // unpaired UTF-16 surrogate in a string VALUE (e.g. the JSON escape "\uD800"
+            // with no low-surrogate partner) PARSES fine — JsonDocument.Parse succeeds and
+            // the value lands in Extra as a JsonElement of kind String — but throws
+            // InvalidOperationException ("Cannot read incomplete UTF-16…") LATER, when
+            // GetString() reads it during rendering.  That read happens below, so the guard
+            // must span the extraction too; catching only JsonException (which fires at
+            // parse time) would let the InvalidOperationException escape and abort the
+            // entire render.  Both are tolerated per-line per §14 — the offending line is
+            // skipped and the rest of the stream still renders.
             try
             {
-                envelope = EventStreamJson.FromLine(line);
+                var envelope = EventStreamJson.FromLine(line);
+
+                // Record step kinds so step-completed events can resolve their kind.
+                if (envelope.Type == EventTypes.StepStarted)
+                {
+                    // runId is a typed envelope field (mapped from the wire "runId"); it
+                    // does not ride in Extra, so it is read directly rather than via GetStr.
+                    var startedRunId = envelope.RunId;
+                    var startedStepId = GetStr(envelope, "stepId");
+                    var startedKind = GetStr(envelope, "kind");
+                    if (!string.IsNullOrEmpty(startedRunId) && startedStepId is not null && startedKind is not null)
+                    {
+                        stepKinds[(startedRunId, startedStepId)] = startedKind;
+                    }
+                }
+
+                RenderEnvelope(envelope, output, stepKinds, diffLookup);
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Malformed JSON — skip this line and continue with the rest of the
-                // stream.  A diagnostic comment is intentionally omitted here to keep
-                // the stub output clean; a future production renderer may write one.
+                // Malformed JSON (JsonException at parse) OR an unreadable string value such
+                // as a lone surrogate (InvalidOperationException at GetString) — skip this
+                // line and continue with the rest of the stream.  A diagnostic comment is
+                // intentionally omitted here to keep the stub output clean; a future
+                // production renderer may write one.
                 continue;
             }
-
-            // Record step kinds so step-completed events can resolve their kind.
-            if (envelope.Type == EventTypes.StepStarted)
-            {
-                // runId is a typed envelope field (mapped from the wire "runId"); it does
-                // not ride in Extra, so it is read directly rather than via GetStr.
-                var startedRunId = envelope.RunId;
-                var startedStepId = GetStr(envelope, "stepId");
-                var startedKind = GetStr(envelope, "kind");
-                if (!string.IsNullOrEmpty(startedRunId) && startedStepId is not null && startedKind is not null)
-                {
-                    stepKinds[(startedRunId, startedStepId)] = startedKind;
-                }
-            }
-
-            RenderEnvelope(envelope, output, stepKinds, diffLookup);
         }
     }
 
