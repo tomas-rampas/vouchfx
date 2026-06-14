@@ -68,6 +68,7 @@ public sealed class WatchArgParsingTests
             failOnInconclusive: false,
             htmlReportPath: null,
             junitReportPath: null,
+            eventsReportPath: null,
             output: sw,
             cancellationToken: default);
 

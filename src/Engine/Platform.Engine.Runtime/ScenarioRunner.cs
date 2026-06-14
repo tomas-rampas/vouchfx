@@ -532,6 +532,13 @@ public static class ScenarioRunner
     /// non-<see langword="null"/>, the file is written from the SAME event buffer as the
     /// terminal render.  <see langword="null"/> ⇒ no JUnit report.
     /// </param>
+    /// <param name="eventsReportPath">
+    /// Optional destination for the raw JSON Lines event stream (S10).  When
+    /// non-<see langword="null"/>, the SAME event buffer the terminal render consumed is written
+    /// there <em>verbatim</em> (one line per element, UTF-8 without a BOM) — an additive raw
+    /// passthrough of the frozen v1 stream for a downstream consumer.  <see langword="null"/> ⇒ no
+    /// events artifact.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations.
     /// </param>
@@ -567,6 +574,7 @@ public static class ScenarioRunner
         string? seedBaseDirectory = null,
         string? htmlReportPath = null,
         string? junitReportPath = null,
+        string? eventsReportPath = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -808,12 +816,14 @@ public static class ScenarioRunner
 
             TerminalRenderer.Render(allBuffers, output, diffLookup);
 
-            // Optional file reports (S09-D-01, T3): write the HTML / JUnit artifacts from the
-            // SAME buffer + diffLookup the terminal render just consumed, so all three renderers
-            // see byte-identical input (parity).  A null path writes nothing.  `output` is the
-            // diagnostics sink: a bad --html / --junit path is caught PER FILE and reported
-            // there, so report writing can NEVER change the already-computed verdict / exit code.
-            FileReportWriter.WriteFileReports(allBuffers, diffLookup, htmlReportPath, junitReportPath, output);
+            // Optional file reports (S09-D-01, T3; S10 events): write the HTML / JUnit artifacts —
+            // and the raw JSON Lines events stream — from the SAME buffer + diffLookup the terminal
+            // render just consumed, so every renderer (and the raw events file) sees byte-identical
+            // input (parity).  A null path writes nothing.  `output` is the diagnostics sink: a bad
+            // --html / --junit / --events path is caught PER FILE and reported there, so report
+            // writing can NEVER change the already-computed verdict / exit code.
+            FileReportWriter.WriteFileReports(
+                allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
             return new SuiteResult(suiteAggregate, results);
         }

@@ -65,6 +65,7 @@ internal static class RunCommand
         var failOnInconclusiveOption = BuildFailOnInconclusiveOption();
         var htmlReportOption = BuildHtmlReportOption();
         var junitReportOption = BuildJunitReportOption();
+        var eventsOption = BuildEventsOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
@@ -75,6 +76,7 @@ internal static class RunCommand
         command.Add(failOnInconclusiveOption);
         command.Add(htmlReportOption);
         command.Add(junitReportOption);
+        command.Add(eventsOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -88,6 +90,7 @@ internal static class RunCommand
             var failOnInconclusive = parseResult.GetValue(failOnInconclusiveOption);
             var htmlReportPath = parseResult.GetValue(htmlReportOption);
             var junitReportPath = parseResult.GetValue(junitReportOption);
+            var eventsReportPath = parseResult.GetValue(eventsOption);
             return ExecuteAsync(
                 path,
                 criteria,
@@ -97,6 +100,7 @@ internal static class RunCommand
                 failOnInconclusive,
                 htmlReportPath,
                 junitReportPath,
+                eventsReportPath,
                 Console.Out,
                 cancellationToken);
         });
@@ -259,6 +263,29 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--events</c> option (S10), aliased as <c>--json</c>: write the raw buffered JSON
+    /// Lines event stream to the given path, VERBATIM.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no events artifact (today's behaviour unchanged).  When set, the SAME buffered
+    /// event stream the terminal / HTML / JUnit renderers consume is written byte-for-byte — one
+    /// JSON object per line, UTF-8 without a BOM — so a downstream consumer (e.g. the VSCode Test
+    /// Explorer) sees exactly the frozen v1 stream the engine emitted.  This is ADDITIVE: it
+    /// re-emits the existing event records, it does NOT change any record or the wire contract.
+    /// <c>--events</c> and <c>--json</c> are ONE option with two names (the alias mechanism), so
+    /// either spelling binds the same value.
+    /// </remarks>
+    internal static Option<string?> BuildEventsOption() => new("--events", "--json")
+    {
+        Description =
+            "Write the raw JSON Lines event stream to the given path. Re-emits the same event "
+            + "stream the terminal / HTML / JUnit reports are rendered from, verbatim — one JSON "
+            + "object per line, UTF-8 without a BOM. Parent directories are created as needed; an "
+            + "existing file is overwritten. Aliased as --json. Omit for no events file (the "
+            + "default).",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -340,6 +367,13 @@ internal static class RunCommand
     /// JUnit XML results file there from the same buffered event stream the terminal renderer
     /// uses.  <see langword="null"/> ⇒ no JUnit artifact.
     /// </param>
+    /// <param name="eventsReportPath">
+    /// The <c>--events</c> / <c>--json</c> path (S10): when non-<see langword="null"/>, the runner
+    /// writes the raw buffered JSON Lines event stream there VERBATIM (the same buffer the terminal
+    /// renderer uses, one object per line, UTF-8 without a BOM).  <see langword="null"/> ⇒ no events
+    /// artifact.  Like <c>--html</c> / <c>--junit</c> it is NOT wired into watch mode (same scope
+    /// note as those flags below).
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
@@ -361,6 +395,7 @@ internal static class RunCommand
         bool failOnInconclusive,
         string? htmlReportPath,
         string? junitReportPath,
+        string? eventsReportPath,
         TextWriter output,
         CancellationToken cancellationToken)
     {
@@ -438,11 +473,12 @@ internal static class RunCommand
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
         //
-        // NOTE (S09-T3 scope): --html / --junit are NOT wired into watch mode.  Watch renders
-        // per re-run (not from one suite-wide buffer), and threading the report paths through
-        // WatchRunner / WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
-        // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
-        // whose value is the terminal feedback.  Deliberately left out rather than half-wired.
+        // NOTE (S09-T3 / S10 scope): --html / --junit / --events are NOT wired into watch mode.
+        // Watch renders per re-run (not from one suite-wide buffer), and threading the report /
+        // events paths through WatchRunner / WatchSession / RunScenarioAgainstKeptTopologyAsync —
+        // plus deciding the overwrite-on-every-save semantics — is meaningful complexity for an
+        // interactive loop whose value is the terminal feedback.  --events follows the SAME scope
+        // as --html / --junit: deliberately left out rather than half-wired.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
@@ -500,6 +536,7 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
+                    eventsReportPath: eventsReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
@@ -511,6 +548,7 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
+                    eventsReportPath: eventsReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
