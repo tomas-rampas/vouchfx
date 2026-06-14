@@ -173,6 +173,67 @@ The distinction lets CI systems handle each outcome independently: fail the buil
 
 **Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
 
+### CI integration with GitLab CI
+
+vouchfx ships an **`include`-able GitLab CI/CD template** (`ci/gitlab/vouchfx-run.gitlab-ci.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts with native GitLab test-report rendering. It is the **GitLab equivalent of the reusable GitHub Actions workflow**, with identical inputs (as CI/CD variables), build-from-source install, exit-code gating, and artefact-upload behaviour.
+
+**Quick start.** In your repository's `.gitlab-ci.yml`, add:
+
+```yaml
+include:
+  - project: vouchfx-org/vouchfx
+    ref: <40-char-commit-sha>
+    file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
+
+vouchfx-run:
+  variables:
+    VOUCHFX_SCENARIO_PATH: ./tests/e2e
+    VOUCHFX_FAIL_ON_ENV_ERROR: "false"
+```
+
+Replace `<40-char-commit-sha>` with a full 40-character commit SHA (not a branch or tag, for supply-chain hygiene).
+
+**Configuration variables.** The template accepts these configuration variables (the GitLab analogue of GitHub workflow inputs):
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `VOUCHFX_SCENARIO_PATH` | string | `.` | Directory (relative to the project root) to search recursively for `.e2e.yaml` scenarios. |
+| `VOUCHFX_REPO_URL` | string | `$CI_REPOSITORY_URL` | Git URL of the vouchfx repository to build from source. Defaults to the calling project; override to track a fork. |
+| `VOUCHFX_REF` | string | `$CI_COMMIT_SHA` | Git ref (commit SHA, tag, or branch) of `VOUCHFX_REPO_URL` to build. Recommended: a full commit SHA for supply-chain repeatability. |
+| `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:8.0` | .NET 8 SDK container image the job runs in. vouchfx targets .NET 8 LTS. |
+| `VOUCHFX_FAIL_ON_ENV_ERROR` | string | `"false"` | When truthy, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
+| `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Pin each entry to an immutable image digest. |
+
+**Docker-in-Docker and the privileged-runner requirement.** vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern with a `docker:dind` service. **Important caveat:** dind requires a **privileged runner**. The `docker:dind` service only starts on a GitLab Runner configured with `privileged = true` (Docker executor) or an equivalently-privileged Kubernetes executor; gitlab.com's shared SaaS Linux runners provide this. A self-managed runner must be explicitly configured for it.
+
+**Alternative for a non-privileged runner.** If your runner cannot run privileged dind, use a **socket-bind runner**: mount the host daemon socket into the build (`volumes = ["/var/run/docker.sock:/var/run/docker.sock", …]` in the runner config), then drop the `services:` block and `dind`/TLS variables and set `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not needing privileged mode — choose per your security posture.
+
+**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The template clones `VOUCHFX_REPO_URL` at the requested `VOUCHFX_REF`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same template contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+
+**Exit-code gating semantics and artefacts.** The template respects the verdict taxonomy (§12.1 of the Architecture Blueprint) and always publishes reports (via `when: always`) even when the run fails — artefacts are available precisely when a suite does not pass:
+
+- **Exit 0 (success)** — By default, a passing suite or one with only EnvironmentError / Inconclusive verdicts.
+- **Exit 1 (Fail)** — One or more scenarios failed. **Always breaks CI** — this is the default gating.
+- **Exit 3 (EnvironmentError)** — Infrastructure breakage. Breaks CI only when `VOUCHFX_FAIL_ON_ENV_ERROR` is truthy.
+- **Exit 4 (Inconclusive)** — Engine could not decide. Breaks CI only when `VOUCHFX_FAIL_ON_INCONCLUSIVE` is truthy.
+
+Reports are stored under the job's default artefact path and include:
+
+- **`results.xml`** — JUnit XML results for CI ingestion; surfaced natively in GitLab's pipeline and merge-request test-report UI.
+- **`report.html`** — A self-contained HTML report with polling timelines, captured-variable provenance, failed-step diffs, and the reproducibility envelope, with no secret values embedded.
+
+**Supply-chain hygiene.** For production use, follow these pinning recommendations:
+
+1. **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch or tag.
+2. **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
+3. **Pin each `VOUCHFX_PREWARM_IMAGES` entry to an immutable image digest** (`name@sha256:…`), not a floating tag.
+4. **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`) rather than the floating tag.
+
+**Verification status (important).** The GitLab template is **static-validated only** (yamllint + GitLab CI JSON schema + behavioural-equivalence cross-check against the GitHub workflow), but has **not been run on a live GitLab instance** — a live pipeline / `ci/lint` run is an infrastructure-gated follow-up. The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed containers are reachable under sibling Docker-in-Docker** (the template sets `TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw Testcontainers) — that dind-to-DCP networking is the primary unknown.
+
+See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](ci/gitlab/vouchfx-run.gitlab-ci.yml) and [`ci/gitlab/README.md`](ci/gitlab/README.md) for the complete reference and implementation details.
+
 ## Running tests with the CLI
 
 Once built, the `vouchfx` command discovers and runs tests. Place `.e2e.yaml` files anywhere in your project and run:

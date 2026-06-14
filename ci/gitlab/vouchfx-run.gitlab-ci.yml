@@ -1,0 +1,299 @@
+# ci/gitlab/vouchfx-run.gitlab-ci.yml — INCLUDE-able "run a vouchfx suite" template (S10-C-02).
+#
+# The GitLab CI equivalent of the reusable GitHub Actions workflow
+# (.github/workflows/vouchfx-run.yml). It runs a vouchfx `.e2e.yaml` suite end-to-end
+# against an orchestrated container topology and publishes the JUnit + HTML reports as
+# job artefacts (with the JUnit results surfaced natively in the GitLab MR / pipeline UI).
+#
+# ── How to use it ───────────────────────────────────────────────────────────────────
+# Add this template to your own `.gitlab-ci.yml` with `include:` and the `vouchfx-run`
+# job it defines is added to your pipeline. Configure it with CI/CD VARIABLES (the
+# GitLab analogue of the GitHub workflow's `inputs:` — see the table at the bottom of
+# this header). You can either set the variables globally, or extend the job to scope
+# them. Two equivalent caller shapes:
+#
+#   # (a) include + set variables on the imported job by re-declaring it:
+#   include:
+#     - project: "your-org/vouchfx"
+#       ref: "<40-char-commit-sha>"            # PIN to a SHA — see supply-chain note below
+#       file: "/ci/gitlab/vouchfx-run.gitlab-ci.yml"
+#
+#   vouchfx-run:
+#     variables:
+#       VOUCHFX_SCENARIO_PATH: "./tests/e2e"
+#       VOUCHFX_FAIL_ON_ENV_ERROR: "true"
+#       VOUCHFX_PREWARM_IMAGES: "traefik/whoami@sha256:<digest>"
+#
+#   # (b) include + extend the hidden base into your own job name:
+#   include:
+#     - project: "your-org/vouchfx"
+#       ref: "<40-char-commit-sha>"
+#       file: "/ci/gitlab/vouchfx-run.gitlab-ci.yml"
+#
+#   e2e:
+#     extends: .vouchfx-run
+#     variables:
+#       VOUCHFX_SCENARIO_PATH: "./tests/e2e"
+#
+# (This template ships BOTH: a hidden `.vouchfx-run` base holding all the behaviour, and a
+# ready-to-run `vouchfx-run` job that simply `extends:` it. Use whichever caller shape you
+# prefer.)
+#
+# ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
+# vouchfx is NOT (yet) a published `dotnet tool` or container — it is an Aspire-host
+# executable (src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj, OutputType Exe, IsAspireHost).
+# So by default this template INSTALLS vouchfx by building it from source: it clones the
+# vouchfx repository at a pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path,
+# runs `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
+#   Real packaging (a published binary / container image) is a LATER (Sprint 11)
+#   dependency — exactly as in the GitHub template. When it lands, a consumer keeps this
+#   same template contract and simply overrides VOUCHFX_REPO_URL / VOUCHFX_REF to track
+#   the packaged release; the install step is intentionally the only thing that changes.
+#
+# ── Docker is REQUIRED (the topology) — and the privileged-runner caveat ────────────
+# vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a
+# Docker daemon. This template uses the standard GitLab Docker-in-Docker (dind) pattern:
+# a `docker:dind` `services:` entry provides the daemon, and DOCKER_HOST / the TLS vars
+# below point the build's Docker client (and Testcontainers/Aspire/DCP) at it.
+#
+#   CAVEAT — dind needs a PRIVILEGED runner. The `docker:dind` service only starts on a
+#   GitLab Runner configured with `privileged = true` (the Docker executor) or an
+#   equivalently-privileged Kubernetes executor. gitlab.com's shared SaaS Linux runners
+#   provide this; a self-managed runner must be configured for it. If your runner CANNOT
+#   run privileged dind, use the ALTERNATIVE: a Docker-socket-bind runner — mount the
+#   host daemon socket into the build (runner config `volumes = ["/var/run/docker.sock:/var/run/docker.sock", ...]`),
+#   then DROP the `services:` block and the dind/TLS variables below and instead set
+#   `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not
+#   needing privileged mode; choose per your security posture. (Either way Testcontainers
+#   reaches the same daemon — see TESTCONTAINERS_HOST_OVERRIDE below.)
+#
+# ── Supply-chain hygiene (please read before including this template) ───────────────
+#   • PIN the `include:` `ref:` to a full commit SHA, NOT a moving branch or tag. A
+#     branch/tag ref lets the template definition change underneath you; a SHA is immutable.
+#   • PIN VOUCHFX_REF to a commit SHA or release tag, never a branch (same reason).
+#   • PIN every entry in VOUCHFX_PREWARM_IMAGES to an immutable image DIGEST
+#     (name@sha256:...), NOT a floating tag — a digest guarantees you pull the exact image
+#     you reviewed; `:latest` can change.
+#   • PIN VOUCHFX_DOTNET_IMAGE to a digest (mcr.microsoft.com/dotnet/sdk:8.0@sha256:...)
+#     rather than the floating `:8.0` tag for a fully repeatable build image.
+#     (The defaults below use tags only to stay legible in this reference; production
+#     callers should supply digests.)
+#
+# ── Configuration variables (the GitLab analogue of the GH workflow `inputs:`) ──────
+#   VOUCHFX_SCENARIO_PATH      (default ".")   Path to a DIRECTORY containing the consumer's
+#                                              *.e2e.yaml suite, relative to the cloned
+#                                              project root. Searched recursively. Bound to
+#                                              the job env and dereferenced as "$VOUCHFX_SCENARIO_PATH"
+#                                              (never spliced into the shell) so a value with
+#                                              shell metacharacters cannot be executed.
+#   VOUCHFX_REPO_URL           (default this   The git URL to clone vouchfx from for the
+#                              repo's URL)     build-from-source install. Defaults to the
+#                                              including project's own repository ($CI_REPOSITORY_URL,
+#                                              which carries the CI job token so a private repo
+#                                              clones without extra credentials).
+#   VOUCHFX_REF                (default this    The git ref (branch, tag, or — recommended —
+#                              commit's SHA)    a full commit SHA) of VOUCHFX_REPO_URL to build
+#                                              vouchfx from. Defaults to $CI_COMMIT_SHA so the
+#                                              engine and this template stay in lock-step.
+#   VOUCHFX_DOTNET_IMAGE       (default          The .NET 8 SDK container image the job runs in
+#                              mcr.microsoft.com  (and that carries the `dotnet` CLI used to build
+#                              /dotnet/sdk:8.0)   and run vouchfx). vouchfx targets .NET 8 LTS.
+#   VOUCHFX_FAIL_ON_ENV_ERROR  (default "false") When truthy, pass --fail-on-env-error so an
+#                                              Environment-error verdict (unhealthy container,
+#                                              image-pull / seed / tunnel failure) fails the job
+#                                              with exit 3. Off by default: per the verdict
+#                                              taxonomy only a product Fail breaks CI by default.
+#   VOUCHFX_FAIL_ON_INCONCLUSIVE (default "false") When truthy, pass --fail-on-inconclusive so an
+#                                              Inconclusive verdict (timeout, partition outlasted
+#                                              grace, upstream capture unmet) fails the job with
+#                                              exit 4. Off by default: only Fail breaks CI.
+#   VOUCHFX_PREWARM_IMAGES     (default "")     Optional whitespace/newline-separated list of
+#                                              container images to `docker pull` BEFORE the run,
+#                                              to warm the Docker cache and dodge Aspire/DCP's
+#                                              ~20s per-resource cold-start watchdog. Each pull
+#                                              is best-effort and non-fatal. SUPPLY-CHAIN: pin
+#                                              each entry to an image DIGEST (name@sha256:...).
+
+# ── Hidden base job: all the behaviour, none of the pipeline-stage assumptions. ────────
+# A consumer can `extends: .vouchfx-run`, or just configure the concrete `vouchfx-run`
+# job declared at the bottom (which itself `extends:` this).
+.vouchfx-run:
+  # The .NET 8 SDK image carries the `dotnet` CLI used to build and run vouchfx. Pin to a
+  # digest in production (see the supply-chain note in the header).
+  image: "$VOUCHFX_DOTNET_IMAGE"
+
+  # Docker-in-Docker: the `docker:dind` service provides the daemon the Aspire/Testcontainers
+  # topology talks to. REQUIRES a privileged runner (see the dind caveat in the header).
+  services:
+    - name: "docker:27-dind"
+      alias: docker
+
+  variables:
+    # ── Knobs (defaults; a consumer overrides any of these). GitLab evaluates these with
+    #    `$VAR` fallback chaining at job start, so e.g. VOUCHFX_REPO_URL inherits
+    #    $CI_REPOSITORY_URL unless the caller sets it. ──────────────────────────────────
+    VOUCHFX_SCENARIO_PATH: "."
+    VOUCHFX_REPO_URL: "$CI_REPOSITORY_URL"
+    VOUCHFX_REF: "$CI_COMMIT_SHA"
+    VOUCHFX_DOTNET_IMAGE: "mcr.microsoft.com/dotnet/sdk:8.0"
+    VOUCHFX_FAIL_ON_ENV_ERROR: "false"
+    VOUCHFX_FAIL_ON_INCONCLUSIVE: "false"
+    VOUCHFX_PREWARM_IMAGES: ""
+
+    # ── Docker-in-Docker wiring. The dind service listens on TCP with TLS on :2376; the
+    #    build's Docker client + Testcontainers/Aspire/DCP reach it via DOCKER_HOST. ──────
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+    # Testcontainers (used by Aspire/DCP under the hood) honours DOCKER_HOST, but when the
+    # daemon is a sibling dind service the *containers it starts* publish ports on the
+    # `docker` host, not on `localhost`. TESTCONTAINERS_HOST_OVERRIDE tells Testcontainers
+    # the reachable hostname for those mapped ports so the engine's clients can connect.
+    # (For a socket-bind runner — DOCKER_HOST=unix:///var/run/docker.sock — drop this.)
+    TESTCONTAINERS_HOST_OVERRIDE: "docker"
+    # Skip Ryuk's reaper: in dind it cannot reliably reach back, and we tear topology down
+    # ourselves (HeadlessTopology.DisposeAsync). Harmless on a fresh, ephemeral dind.
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+
+    # ── .NET CLI quality-of-life (mirrors the GH workflow env). ─────────────────────────
+    DOTNET_NOLOGO: "true"
+    DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+    # Clone vouchfx into a sub-path of the build so building the engine never collides with
+    # the consumer's own files (the analogue of the GH workflow's `path: .vouchfx-src`).
+    VOUCHFX_SRC_DIR: ".vouchfx-src"
+
+  # `before_script` performs the INSTALL (build-from-source) + optional image pre-warm; the
+  # main `script` performs the RUN + exit-code gate. Splitting them keeps the run command — the
+  # behaviourally load-bearing line — easy to read.
+  before_script:
+    # 1. Wait for the dind daemon to accept connections, then prove the client can reach it.
+    #    `docker info` is the canonical readiness probe; the dind service usually comes up in
+    #    a second or two, so a short bounded retry avoids a flaky "daemon not ready" race.
+    - |
+      echo "Waiting for the Docker-in-Docker daemon to become ready…"
+      for i in $(seq 1 30); do
+        if docker info >/dev/null 2>&1; then
+          echo "Docker daemon is ready."
+          break
+        fi
+        if [ "$i" -eq 30 ]; then
+          echo "ERROR: Docker daemon did not become ready in time. Is the runner privileged (dind)?" >&2
+          exit 1
+        fi
+        sleep 1
+      done
+
+    # 2. Install the .NET 8 SDK's tooling sanity check (the image already ships it).
+    - dotnet --info
+
+    # 3. Clone the vouchfx SOURCE at the requested repo/ref into a sub-path. A shallow,
+    #    single-branch clone keeps it fast. VOUCHFX_REPO_URL / VOUCHFX_REF are consumer-
+    #    supplied, so they are dereferenced as shell variables (never spliced) — a value
+    #    with shell metacharacters is passed as one argument, it cannot be executed.
+    #    (Real packaging will later replace this build-from-source step; see the header.)
+    - |
+      # The URL is deliberately NOT echoed: if a consumer overrides VOUCHFX_REPO_URL with a
+      # URL that embeds credentials, printing it would leak them to the job log. (The default
+      # $CI_REPOSITORY_URL carries the job token, which GitLab masks — but a custom URL would not.)
+      echo "Cloning vouchfx at ref '$VOUCHFX_REF' into '$VOUCHFX_SRC_DIR'…"
+      # `--branch` accepts a branch or tag; a shallow single-branch clone keeps it fast. If
+      # VOUCHFX_REF is a raw commit SHA, `--branch` rejects it and we fall back to a FULL clone
+      # (no --depth, so the SHA is present in history to check out below).
+      git clone --depth 1 --branch "$VOUCHFX_REF" "$VOUCHFX_REPO_URL" "$VOUCHFX_SRC_DIR" 2>/dev/null \
+        || git clone "$VOUCHFX_REPO_URL" "$VOUCHFX_SRC_DIR"
+      # HARD-GATE the checkout: a bad/typo'd or unreachable VOUCHFX_REF must FAIL the job, never
+      # silently fall through to the default branch and build an unintended ref. (For a branch/tag
+      # the shallow clone already checked it out, so this is a no-op; for a SHA it selects it.)
+      if ! ( cd "$VOUCHFX_SRC_DIR" && git checkout --quiet "$VOUCHFX_REF" ); then
+        echo "ERROR: could not check out VOUCHFX_REF='$VOUCHFX_REF' — refusing to build an unintended ref." >&2
+        exit 1
+      fi
+
+    # 4. Build vouchfx (Release) from source. Building the CLI project pulls in the six Core
+    #    providers it references; the resulting `vouchfx` executable is the Aspire host that
+    #    carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost).
+    - dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
+
+    # 5. OPTIONAL image pre-warm. Pull each requested image BEFORE the run so DCP's internal
+    #    ~20s per-resource startup watchdog is never spent on a cold pull (the documented
+    #    CI-flake mitigation, mirroring build.yml and the GH template). Best-effort and
+    #    non-fatal: a per-image `|| echo` guard means a stale/unreachable tag degrades to a
+    #    cold pull rather than failing the job. Skipped entirely when the list is empty.
+    #    VOUCHFX_PREWARM_IMAGES is consumer-supplied, so it is iterated via the env var, not
+    #    spliced into the command line. SUPPLY-CHAIN: pin each entry to a DIGEST.
+    - |
+      if [ -n "$VOUCHFX_PREWARM_IMAGES" ]; then
+        echo "Pre-warming container images (best-effort, non-fatal)…"
+        printf '%s\n' "$VOUCHFX_PREWARM_IMAGES" | tr -s '[:space:]' '\n' | while IFS= read -r image; do
+          # Skip blank lines (trailing newline / whitespace in the multi-line value).
+          [ -z "$image" ] && continue
+          echo "docker pull $image"
+          docker pull "$image" \
+            || echo "WARNING: pre-pull of '$image' failed (non-fatal; DCP will cold-pull it during StartAsync)."
+        done
+      fi
+
+  # 6. Run the suite + GATE on the exit code. `dotnet run --project` invokes the just-built
+  #    `vouchfx` executable (the install is build-from-source). The CLI flags map directly to
+  #    the variables:
+  #      --junit results.xml   → JUnit XML for CI ingestion (always written; surfaced natively
+  #                              via `artifacts:reports:junit` below)
+  #      --html  report.html   → self-contained HTML report (always written)
+  #      --fail-on-env-error / --fail-on-inconclusive → appended ONLY when opted in
+  #    Exit-code gating is the engine's: 0 Pass / 1 Fail (always gates) / 2 usage /
+  #    3 EnvError (only with --fail-on-env-error) / 4 Inconclusive (only with
+  #    --fail-on-inconclusive). A non-zero exit fails this script line, and so the job — so a
+  #    product Fail gates the consumer's CI by default, env-errors/inconclusives only on opt-in.
+  #    `--` separates `dotnet run` options from the vouchfx arguments. The fail-on flags are
+  #    assembled into a shell array from the truthy-ness of the two variables (the analogue of
+  #    the GH workflow's `${{ … && '--flag' || '' }}`), so the only thing the variables can
+  #    contribute is the fixed flag literal or nothing — no injection surface. VOUCHFX_SCENARIO_PATH
+  #    is dereferenced as "$VOUCHFX_SCENARIO_PATH", never spliced.
+  script:
+    - |
+      # Assemble the opt-in gating flags from the two variables. A value of
+      # "true"/"1"/"yes"/"on" (any case) is truthy; anything else (incl. the "false" default)
+      # contributes no flag.
+      FAIL_FLAGS=""
+      case "$(printf '%s' "$VOUCHFX_FAIL_ON_ENV_ERROR" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|on) FAIL_FLAGS="$FAIL_FLAGS --fail-on-env-error" ;;
+      esac
+      case "$(printf '%s' "$VOUCHFX_FAIL_ON_INCONCLUSIVE" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|on) FAIL_FLAGS="$FAIL_FLAGS --fail-on-inconclusive" ;;
+      esac
+      echo "Running vouchfx suite at '$VOUCHFX_SCENARIO_PATH' (gating flags:${FAIL_FLAGS:- none})…"
+      # shellcheck disable=SC2086  # FAIL_FLAGS is a deliberately word-split list of fixed literals.
+      dotnet run \
+        --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
+        -c Release \
+        --no-build \
+        -- \
+        run "$VOUCHFX_SCENARIO_PATH" \
+        --junit "$CI_PROJECT_DIR/results.xml" \
+        --html "$CI_PROJECT_DIR/report.html" \
+        $FAIL_FLAGS
+
+  # 7. ALWAYS publish the reports, even when the run failed (a Fail still produces a
+  #    results.xml + report.html — those artefacts are most valuable precisely when the suite
+  #    did not pass). `when: always` so a non-zero run exit does not skip the upload — the
+  #    analogue of the GH workflow's `if: always()`. `reports:junit:` ALSO surfaces the JUnit
+  #    results natively in the GitLab pipeline / MR test report.
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - results.xml
+      - report.html
+    reports:
+      junit: results.xml
+
+# ── Concrete, ready-to-run job. A consumer who included this file gets `vouchfx-run` in
+#    their pipeline out of the box; they configure it by re-declaring it with `variables:`
+#    (caller shape (a) in the header) or ignore it and `extends: .vouchfx-run` themselves
+#    (caller shape (b)). It lands in the standard `test` stage. ───────────────────────────
+vouchfx-run:
+  extends: .vouchfx-run
+  stage: test
