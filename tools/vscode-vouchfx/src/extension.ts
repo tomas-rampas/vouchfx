@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { resolveSchemaPath } from './schemaPath';
+import { registerTestController } from './testController';
 
 /**
  * File-name glob that identifies a vouchfx test document. Kept identical to the
@@ -120,6 +121,13 @@ function isE2eDocument(resource: string): boolean {
  * binding, which itself requires the YAML server to take effect.
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // Test Explorer integration (S10-G-01). Registered FIRST and independently of
+  // the schema-contributor wiring below: the schema logic has early `return`s
+  // (e.g. when redhat.vscode-yaml is absent), and the Test Explorer must not be
+  // gated on the YAML language server being present. `registerTestController`
+  // is itself fail-soft and never throws.
+  registerTestController(context);
+
   // file: URI of the schema shipped inside the extension. The packaged VSIX
   // keeps src/schema/composed-schema.v1.json (see .vscodeignore), so this
   // resolves both in development and when installed.

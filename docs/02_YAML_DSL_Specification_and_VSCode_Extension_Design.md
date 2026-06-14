@@ -724,6 +724,52 @@ With the binding in place, the editor behaves as it would for any well-supported
 
 **Delivered (Sprint 9, S09-C-01):** The frozen v1 JSON Schema is bundled with the extension and bound declaratively via the `yamlValidation` contribution point, served by the Red Hat YAML language server dependency. The schema is a byte-for-byte copy of the engine's canonical v1 schema, and a CI test (`VsCodeShippedSchemaSyncTests`) enforces that the shipped copy remains in sync. For enterprise deployments, the `vouchfx.schemaPath` configuration setting allows pointing at an alternative copy of the same v1 schema (e.g., offline or internal hosting); this setting relocates the schema only and does not diverge from the frozen v1 contract.
 
+## 10.4 Test Explorer integration
+
+**Delivered (Sprint 10, S10-G-01):** The extension contributes a VSCode Test Controller that discovers `*.e2e.yaml` files in the workspace and renders a tree of scenarios and steps in the Test Explorer view. Running tests from the Test Explorer invokes the `vouchfx` CLI and surfaces per-step verdicts with line-level error decoration in the editor. The live end-to-end acceptance (verdicts reflected and Fail-decorated lines shown) is contingent on the companion CLI release (Sprint-10 .NET PR #148, which delivers the `--events` and `--no-decorations` flags); until that merge, the Test Explorer run handler fails soft with items marked `errored` and a `vouchfx.cliPath` configuration notice.
+
+### Discovery and tree structure
+
+A FileSystemWatcher monitors the workspace for `*.e2e.yaml` files. Each discovered file becomes a parent TestItem, labelled by its `metadata.name` or filename if metadata is absent. Within each file, the extension parses the YAML outline and creates a child TestItem for every step bearing an `id` field, anchored at the 0-based line number on which the step declaration begins. This information comes from a pure parsing routine (`parseE2eOutline`) that uses the `yaml` package's `LineCounter` to map byte offsets to line numbers; malformed YAML files yield empty outlines rather than throwing. The tree updates automatically as files are created, modified, or deleted; an explicit refresh button (built into VSCode's Test Explorer) rescans the workspace.
+
+### Run profile and CLI contract
+
+The extension registers a Run profile that, when invoked, spawns the `vouchfx` CLI for each selected file with the arguments:
+
+```
+<cliPath> run <file> --events <tmpEventsFile> --no-decorations
+```
+
+The `<cliPath>` is resolved from the `vouchfx.cliPath` configuration setting (default: bare `"vouchfx"` command); the `<file>` is the absolute path to the `.e2e.yaml` file; and `<tmpEventsFile>` is a unique temp-directory path where the CLI writes its JSON Lines event stream. The `--no-decorations` flag suppresses the engine's ANSI colour and formatting codes, as the Test Explorer surface handles visual styling. **This CLI contract is the interface between the VSCode extension (consumer, delivered in S10) and the reporting/CLI work (producer, delivered in Sprint-10 .NET PR #148).** Until #148 merges, the two flags are unavailable; the run handler detects this and degrades gracefully (see Fail-soft error handling below).
+
+### Verdict mapping to editor state
+
+The extension reads the emitted `--events` stream via a pure JSON Lines parser (`parseEvents`) that extracts `scenario-started`, `step-completed`, and `scenario-completed` events. Each step event carries the step's `id` and a `verdict` wire token: `"PASS"`, `"FAIL"`, `"ENV_ERROR"`, or `"INCONCLUSIVE"`. The pure `mapVerdict` function maps these tokens to VSCode TestItem states and human-readable labels:
+
+| Wire token | Editor state | Label | Meaning |
+|---|---|---|---|
+| PASS | passed | Pass | The step's assertions held. |
+| FAIL | failed | Fail | The step's assertions did not hold (product defect). |
+| ENV_ERROR | errored | Environment error | Infrastructure failure (container unhealthy, service unreachable, etc.); not a defect in the system under test. |
+| INCONCLUSIVE | skipped | Inconclusive | The engine could not reach a verdict (timeout, unmet dependency on earlier step's capture); the result is uncertain rather than green or red. |
+
+This four-way mapping keeps the verdict taxonomy distinct on the editor surface, mirroring the §12.1 invariant that the four verdicts must never be conflated. Environment errors and inconclusive results are never silently reported as passes.
+
+### Failed step decoration
+
+When a step completes with a FAIL verdict, the extension attaches a TestMessage to the TestItem whose `location` is the step's YAML range (start and end line). VSCode uses this location to decorate the originating line in the editor with an error gutter icon and inline message, so the author sees immediately which step needs attention without switching panels.
+
+### YAML-to-line mapping
+
+The event stream emitted by the `--events` flag carries no source-location information (step events include only the step `id`, not the YAML line number). The extension's outline parser runs independently on the file text, building a map of step id → line range; when a step event arrives, it is matched by id to the corresponding outline entry and decorated at that line. This decoupling — discovery and run are separate pure functions — means the editor surface tolerates file changes between discovery and run; if the file changed, the old outline is stale and the decoration may land on a line that no longer holds the same step, but the run completes rather than failing.
+
+### Fail-soft error handling
+
+- When the CLI path does not resolve to an executable, the spawn fails. The run handler catches the error, marks the file and all its steps `errored` with a diagnostic message, and shows a **one-time warning notice** (per extension activation) mentioning the `vouchfx.cliPath` setting.
+- When the CLI exits with a non-zero status and produces no events, the items are marked `errored` with a message including the exit code and stderr output (truncated to 800 characters for inline display).
+- When the events file is unreadable or contains no usable events (e.g., the CLI exited 0 but wrote no JSON Lines), items are marked `errored` with a message explaining that no events were produced.
+- The run handler is wrapped in a try-catch that swallows all unexpected errors; Test Explorer integration never throws and never regresses the schema authoring experience.
+
 # 11. Embedded C# Intelligence
 
 Schema validation makes the declarative YAML safe, but it stops at the boundary of a script step. The moment an author writes C# inside a script step, schema validation has nothing to say. The extension provides syntax colouring for embedded C# and records full IntelliSense as a documented fast-follow.
