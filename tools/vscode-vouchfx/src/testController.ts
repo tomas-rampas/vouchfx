@@ -438,7 +438,9 @@ function applyState(
       run.errored(item, buildMessage(item, message));
       return;
     case 'skipped':
-      // Inconclusive surfaces as skipped; still annotate so the reason is clear.
+      // Inconclusive surfaces as skipped. VSCode's run.skipped() takes no message,
+      // so the reason is not shown inline on the item; the verdict still appears in
+      // the run output / report.
       run.skipped(item);
       return;
     default:

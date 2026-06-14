@@ -123,7 +123,17 @@ When a step fails (FAIL verdict), the error decorates the failing YAML line in t
 
 ### vouchfx.cliPath
 
-The `vouchfx.cliPath` setting lets you point the Test Explorer at a non-standard CLI location:
+The `vouchfx.cliPath` setting lets you point the Test Explorer at a non-standard CLI location. It must be a **single executable path or name** (not a multi-token shell command), because the extension invokes it with an argument array and `shell: false`.
+
+**Default (installed globally):**
+
+```json
+{
+  "vouchfx.cliPath": "vouchfx"
+}
+```
+
+**Absolute path to a built binary:**
 
 ```json
 {
@@ -131,11 +141,21 @@ The `vouchfx.cliPath` setting lets you point the Test Explorer at a non-standard
 }
 ```
 
-or use a development build:
+**Development build from source:**
+
+If you want to run `dotnet run` from source, create a small wrapper script (e.g. `run-vouchfx.sh` on Unix, `run-vouchfx.bat` on Windows) at the repository root:
+
+*run-vouchfx.sh:*
+```bash
+#!/bin/sh
+exec dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- "$@"
+```
+
+Then configure the extension to use the wrapper:
 
 ```json
 {
-  "vouchfx.cliPath": "dotnet run --project ./src/Cli/Cli.csproj --"
+  "vouchfx.cliPath": "./run-vouchfx.sh"
 }
 ```
 
