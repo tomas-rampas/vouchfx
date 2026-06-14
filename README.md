@@ -104,6 +104,75 @@ Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a bl
 5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
 (Docker) job.
 
+### CI integration with GitHub Actions
+
+vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
+
+**Quick start.** In your repository's workflow, add:
+
+```yaml
+jobs:
+  vouchfx-e2e:
+    uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+    with:
+      scenario-path: ./tests/e2e
+      fail-on-env-error: false
+```
+
+Replace `<commit-sha>` with a full 40-character commit SHA (not a branch or tag, for supply-chain hygiene).
+
+**Workflow inputs.** The reusable workflow accepts these configuration inputs:
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `scenario-path` | string | `.` | File or directory (relative to the caller's checkout) where `.e2e.yaml` scenarios live. A directory is searched recursively; a single file runs just that file. |
+| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or — when binary packaging lands in Sprint 11 — to pin a released version. |
+| `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
+| `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
+| `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
+| `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Syntax: one image per line (e.g., `traefik/whoami:latest`). |
+| `runs-on` | string | `ubuntu-latest` | The GitHub Actions runner label to use. Must provide Docker; `ubuntu-latest` does. |
+
+**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The workflow checks out `vouchfx-repo` at the requested `vouchfx-ref`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same workflow contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+
+**Exit-code gating semantics.** The workflow respects the verdict taxonomy (§12.1 of the Architecture Blueprint) to distinguish infrastructure breakage from product defects:
+
+- **Exit 0 (success)** — By default, a passing suite or one with only EnvironmentError / Inconclusive verdicts.
+- **Exit 1 (Fail)** — One or more scenarios failed. **Always breaks CI** — this is the default gating.
+- **Exit 3 (EnvironmentError)** — Infrastructure breakage (unhealthy container, image-pull failure, seed failure). Breaks CI only when `fail-on-env-error: true`.
+- **Exit 4 (Inconclusive)** — Engine could not decide (timeout, partition, unmet capture). Breaks CI only when `fail-on-inconclusive: true`.
+
+The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`, page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
+
+**Artefacts.** The workflow always runs the suite and **always publishes the reports** (via `if: always()`) even when the run fails, so artefacts are available precisely when a suite does not pass. Reports are stored under the job's `vouchfx-reports` artefact name and include:
+
+- **`results.xml`** — JUnit XML results for CI ingestion; the four verdicts map to distinct JUnit primitives (Fail → `<failure>`, EnvironmentError → `<error>`, Inconclusive → `<skipped>`).
+- **`report.html`** — A self-contained HTML report with polling timelines, captured-variable provenance, failed-step diffs, and the reproducibility envelope, with no secret values embedded.
+
+**Supply-chain hygiene.** For production use, follow these pinning recommendations:
+
+1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
+   ```yaml
+   uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+   ```
+   A branch/tag ref lets the workflow definition change underneath you; a SHA is immutable.
+
+2. **Pin `vouchfx-ref` to a commit SHA or release tag**, never a branch:
+   ```yaml
+   vouchfx-ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+   ```
+
+3. **Pin each `prewarm-images` entry to an immutable image digest**, not a floating tag:
+   ```yaml
+   prewarm-images: |
+     traefik/whoami@sha256:abc123...
+     postgres@sha256:def456...
+   ```
+   A digest guarantees you pull the exact image you reviewed; `:latest` can change.
+
+**Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
+
 ## Running tests with the CLI
 
 Once built, the `vouchfx` command discovers and runs tests. Place `.e2e.yaml` files anywhere in your project and run:

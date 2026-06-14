@@ -1,0 +1,221 @@
+# .github/workflows/vouchfx-run.yml — REUSABLE "run a vouchfx suite" workflow (S10-C-01).
+#
+# A reusable GitHub Actions workflow (`on: workflow_call`) that runs a vouchfx
+# `.e2e.yaml` suite end-to-end against an orchestrated container topology and
+# publishes the JUnit + HTML reports as build artefacts.  Call it from your own
+# workflow with `uses:` (see the worked example at the bottom of this header, and the
+# reference caller in .github/workflows/vouchfx-run-reference.yml).
+#
+# ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
+# vouchfx is NOT (yet) a published `dotnet tool` or container — it is an Aspire-host
+# executable (src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj, OutputType Exe, IsAspireHost).
+# So by default this workflow INSTALLS vouchfx by building it from source: it checks
+# out the vouchfx repository at a pinned ref (`vouchfx-repo` / `vouchfx-ref`), runs
+# `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
+#   Real packaging (a published binary / container image) is a LATER (Sprint 11)
+#   dependency.  When it lands, a consumer can keep this same workflow contract and
+#   simply override `vouchfx-repo` / `vouchfx-ref` to track the packaged release —
+#   the install step is intentionally the only thing that changes.
+#
+# ── Supply-chain hygiene (please read before calling this workflow) ─────────────────
+#   • PIN the `uses:` reference to a full commit SHA, NOT a moving branch or tag, e.g.
+#         uses: your-org/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
+#     A branch/tag ref lets the workflow definition change underneath you; a SHA is
+#     immutable.  Likewise pin `vouchfx-ref` to a SHA or release tag, never a branch.
+#   • PIN every entry in `prewarm-images` to an immutable image DIGEST, NOT a floating
+#     tag, e.g.  `traefik/whoami@sha256:<digest>`  instead of  `traefik/whoami:latest`.
+#     A digest guarantees you pull the exact image you reviewed; `:latest` can change.
+#     (The defaults below use tags only to stay legible in this reference; production
+#     callers should supply digests.)
+#
+# ── Worked example (caller) ─────────────────────────────────────────────────────────
+#   jobs:
+#     e2e:
+#       uses: your-org/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+#       with:
+#         scenario-path: ./tests/e2e
+#         fail-on-env-error: true
+#         prewarm-images: |
+#           traefik/whoami@sha256:<digest>
+#           postgres@sha256:<digest>
+
+name: Run vouchfx suite (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      scenario-path:
+        description: >-
+          Path (file or directory) the consumer's *.e2e.yaml suite lives at, relative
+          to the caller's checked-out repository root. A directory is searched
+          recursively; a single file runs just that file. Defaults to the repository
+          root.
+        type: string
+        required: false
+        default: "."
+
+      vouchfx-repo:
+        description: >-
+          The `owner/name` of the repository to obtain vouchfx from (build-from-source
+          install). Defaults to this repository. Override (with vouchfx-ref) to track a
+          different fork, or — once real packaging ships (Sprint 11) — a packaged release.
+        type: string
+        required: false
+        default: ${{ github.repository }}
+
+      vouchfx-ref:
+        description: >-
+          The git ref (branch, tag, or — recommended for supply-chain hygiene — a full
+          commit SHA) of `vouchfx-repo` to build vouchfx from. Defaults to this
+          workflow's own ref so the engine and this workflow definition stay in lock-step.
+        type: string
+        required: false
+        default: ${{ github.sha }}
+
+      dotnet-version:
+        description: >-
+          The .NET SDK version to install for building vouchfx and running the suite.
+          vouchfx targets .NET 8; "8.0.x" resolves the latest 8.0 feature band on the runner.
+        type: string
+        required: false
+        default: "8.0.x"
+
+      fail-on-env-error:
+        description: >-
+          When true, pass --fail-on-env-error so an Environment-error verdict (unhealthy
+          container, image-pull / seed / tunnel failure) fails the job with exit 3. Off by
+          default: per the verdict taxonomy only a product Fail breaks CI by default.
+        type: boolean
+        required: false
+        default: false
+
+      fail-on-inconclusive:
+        description: >-
+          When true, pass --fail-on-inconclusive so an Inconclusive verdict (timeout,
+          partition outlasted grace, upstream capture unmet) fails the job with exit 4. Off
+          by default: per the verdict taxonomy only a product Fail breaks CI by default.
+        type: boolean
+        required: false
+        default: false
+
+      prewarm-images:
+        description: >-
+          Optional newline-separated list of container images to `docker pull` BEFORE the
+          run, to warm the Docker cache and dodge Aspire/DCP's ~20s per-resource cold-start
+          watchdog (mirrors build.yml). Each pull is best-effort and non-fatal — a stale or
+          unreachable tag only degrades to a cold pull during startup, it never fails the
+          job. SUPPLY-CHAIN: pin each entry to an immutable image DIGEST (name@sha256:...),
+          not a floating tag.
+        type: string
+        required: false
+        default: ""
+
+      runs-on:
+        description: >-
+          The runner label the job executes on. Must provide Docker (the topology uses
+          Testcontainers via Aspire); the default ubuntu-latest does.
+        type: string
+        required: false
+        default: "ubuntu-latest"
+
+# Read-only token: this reusable workflow only reads source and uploads artefacts.
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  run-suite:
+    name: Run vouchfx suite
+    runs-on: ${{ inputs.runs-on }}
+
+    steps:
+      # 1. Check out the CONSUMER's repository (their *.e2e.yaml scenarios). This is the
+      #    default checkout — `scenario-path` is resolved relative to this working tree.
+      - name: Check out consumer scenarios
+        uses: actions/checkout@v6
+
+      # 2. Check out the vouchfx SOURCE at the requested repo/ref into a sibling path, so
+      #    building the engine never collides with the consumer's own files. (Real
+      #    packaging will later replace this build-from-source step; see the header.)
+      - name: Check out vouchfx source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.vouchfx-repo }}
+          ref: ${{ inputs.vouchfx-ref }}
+          path: .vouchfx-src
+
+      # 3. Install the .NET 8 SDK used to build vouchfx and run the suite.
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      # 4. Build vouchfx (Release) from source. Building the CLI project pulls in the six
+      #    Core providers it references; the resulting `vouchfx` executable is the Aspire
+      #    host that carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost).
+      - name: Build vouchfx (Release, from source)
+        working-directory: .vouchfx-src
+        run: dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
+
+      # 5. OPTIONAL image pre-warm. Pull each requested image BEFORE the run so DCP's
+      #    internal ~20s per-resource startup watchdog is never spent on a cold pull (the
+      #    documented CI-flake mitigation, mirroring build.yml). Best-effort and non-fatal:
+      #    a per-image `|| echo` guard means a stale/unreachable tag degrades to a cold pull
+      #    rather than failing the job. Skipped entirely when `prewarm-images` is empty.
+      #    SUPPLY-CHAIN: callers should pin each entry to an image DIGEST (name@sha256:...).
+      - name: Pre-warm container images (best-effort, non-fatal)
+        if: inputs.prewarm-images != ''
+        env:
+          PREWARM_IMAGES: ${{ inputs.prewarm-images }}
+        run: |
+          echo "$PREWARM_IMAGES" | while IFS= read -r image; do
+            # Skip blank lines (trailing newline / indentation in the multiline input).
+            image="$(echo "$image" | xargs)"
+            [ -z "$image" ] && continue
+            echo "::group::docker pull $image"
+            docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
+            echo "::endgroup::"
+          done
+
+      # 6. Run the suite. `dotnet run --project` invokes the just-built `vouchfx` executable
+      #    (the install is build-from-source). The CLI flags map directly to the inputs:
+      #      --junit results.xml   → JUnit XML for CI ingestion (always written)
+      #      --html  report.html   → self-contained HTML report (always written)
+      #      --fail-on-env-error / --fail-on-inconclusive → added only when opted in
+      #    Exit-code gating is the engine's: 0 Pass / 1 Fail (always gates) / 2 usage /
+      #    3 EnvError (only with --fail-on-env-error) / 4 Inconclusive (only with
+      #    --fail-on-inconclusive). A non-zero exit fails this step, and so the job — so a
+      #    product Fail gates the consumer's CI by default, env-errors/inconclusives only on
+      #    opt-in. `--` separates `dotnet run` options from the vouchfx arguments.
+      #    The scenario path is resolved against the consumer checkout (the default working
+      #    directory, GITHUB_WORKSPACE), NOT the vouchfx source tree.
+      - name: Run vouchfx suite
+        run: >-
+          dotnet run
+          --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj
+          -c Release
+          --no-build
+          --
+          run "${{ inputs.scenario-path }}"
+          --junit "${{ github.workspace }}/results.xml"
+          --html "${{ github.workspace }}/report.html"
+          ${{ inputs.fail-on-env-error && '--fail-on-env-error' || '' }}
+          ${{ inputs.fail-on-inconclusive && '--fail-on-inconclusive' || '' }}
+
+      # 7. ALWAYS publish the reports, even when the run step failed (a Fail still produces
+      #    a results.xml + report.html — those artefacts are most valuable precisely when
+      #    the suite did not pass). if: always() so a non-zero run exit does not skip upload.
+      - name: Upload vouchfx reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vouchfx-reports
+          path: |
+            results.xml
+            report.html
+          retention-days: 7
+          if-no-files-found: warn
