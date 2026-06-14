@@ -293,12 +293,24 @@ public sealed class HtmlRenderer
         output.WriteLine("<html lang=\"en\">");
         output.WriteLine("<head>");
         output.WriteLine("<meta charset=\"utf-8\">");
+        // Viewport meta (WCAG 1.4.10 reflow): declare the layout viewport so the report
+        // reflows to the device width instead of rendering at a fixed desktop width on a
+        // narrow screen.  It is self-contained — a single inline <meta> with no fetch —
+        // so it preserves the no-external-reference invariant.
+        output.WriteLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
         output.WriteLine("<title>vouchfx report</title>");
         WriteStyle(output);
         output.WriteLine("</head>");
         output.WriteLine("<body>");
 
         output.WriteLine("<h1>vouchfx report</h1>");
+
+        // <main> landmark (WCAG 1.3.1 info-and-relationships): one programmatically-
+        // determinable main-content region a screen reader can jump to.  The single <h1>
+        // sits just before it (a conventional, equally valid placement); the report body
+        // — run summary, scenario sections, environment errors and the reproducibility
+        // envelope — is the main content.
+        output.WriteLine("<main>");
 
         WriteRunSummary(output, model);
 
@@ -309,6 +321,8 @@ public sealed class HtmlRenderer
 
         WriteEnvironmentErrors(output, model);
         WriteReproducibilityEnvelopes(output, model);
+
+        output.WriteLine("</main>");
 
         output.WriteLine("</body>");
         output.WriteLine("</html>");
@@ -331,7 +345,11 @@ public sealed class HtmlRenderer
         output.WriteLine("h2 { font-size: 1.2rem; margin-top: 1.5rem; }");
         output.WriteLine(".scenario { border: 1px solid #cccccc; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0; }");
         output.WriteLine(".step { padding: 0.4rem 0.6rem; margin: 0.4rem 0; border-left: 6px solid #888888; }");
-        output.WriteLine(".verdict { font-weight: 700; font-family: monospace; padding: 0.05rem 0.4rem; border-radius: 3px; }");
+        // Base .verdict rule.  The per-verdict `.verdict-X .verdict` descendant rules below
+        // override colour/background; this fallback (#1a1a1a on #f0f0f0 ≈ 16:1, AA-safe)
+        // is defence-in-depth so an ORPHAN .verdict span — one outside any verdict-X
+        // ancestor — never renders as default-on-default and loses contrast (WCAG 1.4.3).
+        output.WriteLine(".verdict { font-weight: 700; font-family: monospace; padding: 0.05rem 0.4rem; border-radius: 3px; color: #1a1a1a; background: #f0f0f0; }");
         // verdict-pass: solid left rule + check symbol via ::before, dark-on-light text.
         output.WriteLine(".verdict-pass { border-left-color: #1b7f3b; }");
         output.WriteLine(".verdict-pass .verdict { color: #0f5d29; background: #e6f4ea; }");
@@ -356,8 +374,16 @@ public sealed class HtmlRenderer
         output.WriteLine(".verdict-unknown { border-left-style: double; border-left-color: #888888; }");
         output.WriteLine(".verdict-unknown .verdict { color: #4a4a4a; background: #eeeeee; }");
         output.WriteLine(".verdict-unknown .verdict::before { content: \"\\2014  \"; }");
-        output.WriteLine(".summary { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0.5rem 0; }");
-        output.WriteLine(".summary span { padding: 0.2rem 0.6rem; border: 1px solid #cccccc; border-radius: 3px; }");
+        // Run-summary table.  The grid lines are now INFORMATIVE structure (they delimit
+        // the verdict→count cells), so the border uses #767676 — ≥3:1 against white per
+        // WCAG 1.4.11 non-text contrast — NOT the decorative #cccccc used elsewhere.
+        output.WriteLine("table.summary { border-collapse: collapse; }");
+        output.WriteLine("table.summary th, table.summary td { text-align: left; padding: 0.2rem 0.6rem; border: 1px solid #767676; }");
+        // Visible keyboard-focus indicator (WCAG 2.4.7).  No interactive element exists in
+        // the report today; this is a forward obligation so that any future <a>/<button>/
+        // <summary> ships a clear focus ring.  It is purely additive — crucially there is
+        // NO `outline: none` anywhere, which would suppress the default indicator.
+        output.WriteLine("a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid #1b4fd6; outline-offset: 2px; }");
         output.WriteLine(".timeline { font-family: monospace; font-size: 0.9rem; margin: 0.3rem 0 0.3rem 1rem; }");
         output.WriteLine(".provenance { margin: 0.3rem 0 0.3rem 1rem; font-size: 0.9rem; }");
         output.WriteLine(".redacted { font-style: italic; color: #6b4600; }");
@@ -383,21 +409,34 @@ public sealed class HtmlRenderer
             inconclusive += scenario.Counts.Inconclusive;
         }
 
+        // Render the run summary as a REAL data table (WCAG 1.3.1): a verdict→count grid
+        // whose row/column relationships are programmatically determinable.  A <caption>
+        // names the table, <th scope="col"> heads the columns, and each row's leading
+        // <th scope="row"> associates the count cell with its verdict — relationships a
+        // screen reader can announce that a flat <div> of spans could not convey.
         output.WriteLine("<section class=\"summary-block\">");
         output.WriteLine("<h2>Run summary</h2>");
-        output.WriteLine("<div class=\"summary\">");
-        output.WriteLine(FormatCount("verdict-pass", "PASS", pass));
-        output.WriteLine(FormatCount("verdict-fail", "FAIL", fail));
-        output.WriteLine(FormatCount("verdict-env-error", "ENV_ERROR", envError));
-        output.WriteLine(FormatCount("verdict-inconclusive", "INCONCLUSIVE", inconclusive));
-        output.WriteLine("</div>");
+        output.WriteLine("<table class=\"summary\">");
+        output.WriteLine("<caption>Run summary by verdict</caption>");
+        output.WriteLine("<thead><tr><th scope=\"col\">Verdict</th><th scope=\"col\">Count</th></tr></thead>");
+        output.WriteLine("<tbody>");
+        output.WriteLine(FormatCountRow("verdict-pass", "PASS", pass));
+        output.WriteLine(FormatCountRow("verdict-fail", "FAIL", fail));
+        output.WriteLine(FormatCountRow("verdict-env-error", "ENV_ERROR", envError));
+        output.WriteLine(FormatCountRow("verdict-inconclusive", "INCONCLUSIVE", inconclusive));
+        output.WriteLine("</tbody>");
+        output.WriteLine("</table>");
         output.WriteLine("</section>");
     }
 
-    private static string FormatCount(string verdictClass, string label, int count)
+    // The verdict label is a fixed, internal token (PASS/FAIL/ENV_ERROR/INCONCLUSIVE) and
+    // the count is an int, so neither is attacker-controlled; both are nonetheless routed
+    // through the same invariant-culture write discipline as every other emitted value so
+    // the run-summary path stays uniform with the rest of the renderer.
+    private static string FormatCountRow(string verdictClass, string label, int count)
         => string.Format(
             CultureInfo.InvariantCulture,
-            "<span class=\"{0}\"><span class=\"verdict\">{1}</span> {2}</span>",
+            "<tr class=\"{0}\"><th scope=\"row\"><span class=\"verdict\">{1}</span></th><td>{2}</td></tr>",
             verdictClass,
             label,
             count);

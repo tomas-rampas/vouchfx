@@ -144,6 +144,21 @@ public static class ParallelSuiteRunner
     /// non-<see langword="null"/>, the file is written from the SAME concatenated event buffer as
     /// the single terminal render.  <see langword="null"/> ⇒ no JUnit report.
     /// </param>
+    /// <param name="eventsReportPath">
+    /// Optional destination for the raw JSON Lines event stream (S10).  When
+    /// non-<see langword="null"/>, the SAME concatenated event buffer the single terminal render
+    /// consumed is written there <em>verbatim</em> (one line per element, UTF-8 without a BOM) — an
+    /// additive raw passthrough of the frozen v1 stream.  <see langword="null"/> ⇒ no events
+    /// artifact.
+    /// </param>
+    /// <param name="decorate">
+    /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single render over
+    /// the declaration-order concatenation decorates each step-verdict line with an ANSI colour + a
+    /// per-verdict shape glyph; when <see langword="false"/> (the default) the render is plain text.
+    /// The verdict TEXT tokens (the WCAG-1.4.1 guarantee) are unconditional and independent of this
+    /// flag.  Computed by the caller (CLI) from <c>--no-decorations</c> + <c>NO_COLOR</c> + output
+    /// redirection so the renderer stays a pure function of its inputs.
+    /// </param>
     /// <param name="cancellationToken">
     /// Honoured throughout: a cancelled scenario is recorded as <see cref="Verdict.Inconclusive"/>
     /// (never <see cref="Verdict.Fail"/>, §12.1), and every launched task is still awaited so every
@@ -166,6 +181,8 @@ public static class ParallelSuiteRunner
         string? seedBaseDirectory = null,
         string? htmlReportPath = null,
         string? junitReportPath = null,
+        string? eventsReportPath = null,
+        bool decorate = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -193,6 +210,8 @@ public static class ParallelSuiteRunner
             seedBaseDirectory,
             htmlReportPath,
             junitReportPath,
+            eventsReportPath,
+            decorate,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -213,6 +232,12 @@ public static class ParallelSuiteRunner
     /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
     /// <param name="htmlReportPath">Optional HTML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="junitReportPath">Optional JUnit XML report destination (S09-T3); null ⇒ none.</param>
+    /// <param name="eventsReportPath">Optional raw JSON Lines events destination (S10); null ⇒ none.</param>
+    /// <param name="decorate">
+    /// Accessibility decoration flag (S10-G-03a): decorate the single render with ANSI colour + a
+    /// per-verdict shape glyph when <see langword="true"/>; plain text when <see langword="false"/>
+    /// (the default).  The verdict TEXT tokens are unconditional regardless.
+    /// </param>
     /// <param name="ct">The external cancellation token, honoured throughout.</param>
     /// <returns>The <see cref="SuiteResult"/>.</returns>
     internal static async Task<SuiteResult> RunParallelCoreAsync(
@@ -228,6 +253,8 @@ public static class ParallelSuiteRunner
         string? seedBaseDirectory,
         string? htmlReportPath = null,
         string? junitReportPath = null,
+        string? eventsReportPath = null,
+        bool decorate = false,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -314,7 +341,7 @@ public static class ParallelSuiteRunner
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
             scenarioNames, slotVerdicts, slotBuffers, slotRawWriters, output, diffLookup,
-            htmlReportPath, junitReportPath);
+            htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
 
     /// <summary>
@@ -402,8 +429,9 @@ public static class ParallelSuiteRunner
     /// raw early-exit diagnostics to <paramref name="output"/> in declaration order, concatenates
     /// the slot event buffers in declaration order, renders them ONCE via
     /// <see cref="TerminalRenderer"/>, folds the slot verdicts via <see cref="ScenarioRunner.Elevate"/>,
-    /// writes the optional HTML / JUnit file reports from that SAME concatenated buffer + diff
-    /// lookup (S09-D-01, T3), and returns the <see cref="SuiteResult"/>.
+    /// writes the optional HTML / JUnit file reports — and the raw JSON Lines events stream (S10) —
+    /// from that SAME concatenated buffer + diff lookup (S09-D-01, T3), and returns the
+    /// <see cref="SuiteResult"/>.
     /// </summary>
     private static SuiteResult RenderAndAggregate(
         IReadOnlyList<string> scenarioNames,
@@ -413,7 +441,9 @@ public static class ParallelSuiteRunner
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
         string? htmlReportPath = null,
-        string? junitReportPath = null)
+        string? junitReportPath = null,
+        string? eventsReportPath = null,
+        bool decorate = false)
     {
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
@@ -441,17 +471,20 @@ public static class ParallelSuiteRunner
             aggregate = ScenarioRunner.Elevate(aggregate, slotVerdicts[i]);
         }
 
-        // ONE render over the declaration-order concatenation — never per-scenario.
-        TerminalRenderer.Render(allBuffers, output, diffLookup);
+        // ONE render over the declaration-order concatenation — never per-scenario.  When
+        // `decorate` is set (interactive TTY, S10-G-03a) the step-verdict lines carry the colour +
+        // shape-glyph accessibility decorations; otherwise the render is plain text.
+        TerminalRenderer.Render(allBuffers, output, decorate, diffLookup);
 
-        // Optional file reports (S09-D-01, T3): write the HTML / JUnit artifacts from the SAME
-        // concatenated buffer + diffLookup the single terminal render just consumed, so the
-        // parallel run's file reports are byte-for-byte the parity of its terminal output (and of
-        // the sequential path's reports for the same buffer).  A null path writes nothing.
-        // `output` is the diagnostics sink: a bad --html / --junit path is caught PER FILE and
-        // reported there, so report writing can NEVER change the already-computed verdict / exit
-        // code.
-        FileReportWriter.WriteFileReports(allBuffers, diffLookup, htmlReportPath, junitReportPath, output);
+        // Optional file reports (S09-D-01, T3; S10 events): write the HTML / JUnit artifacts — and
+        // the raw JSON Lines events stream — from the SAME concatenated buffer + diffLookup the
+        // single terminal render just consumed, so the parallel run's file reports are byte-for-byte
+        // the parity of its terminal output (and of the sequential path's reports for the same
+        // buffer).  A null path writes nothing.  `output` is the diagnostics sink: a bad --html /
+        // --junit / --events path is caught PER FILE and reported there, so report writing can NEVER
+        // change the already-computed verdict / exit code.
+        FileReportWriter.WriteFileReports(
+            allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
         return new SuiteResult(aggregate, perScenario);
     }
