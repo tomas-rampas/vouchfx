@@ -97,25 +97,26 @@ All text-and-background colour pairs meet the AA floor of **4.5:1** contrast rat
 
 | Class | Foreground | Background | Ratio | Level |
 |-------|-----------|------------|-------|-------|
-| `.verdict-pass` | `#0f5d29` (dark green) | `#e6f4ea` (light green) | 7.0:1 | AA |
-| `.verdict-fail` | `#8a0017` (dark red) | `#fce8e6` (light red) | 7.3:1 | AA |
-| `.verdict-env-error` | `#6b4600` (dark amber) | `#fff4e5` (light amber) | 8.5:1 | AA |
-| `.verdict-inconclusive` | `#333366` (dark blue) | `#ececf7` (light blue) | 8.1:1 | AA |
-| `.verdict-unknown` | `#4a4a4a` (dark grey) | `#eeeeee` (light grey) | 7.0:1 | AA |
-| Body text | `#1a1a1a` | `#ffffff` | 17.0:1 | AAA |
-| Redacted marker (§17) | `#6b4600` | `#ffffff` | 8.5:1 | AA |
-| Diff panel text | `#1a1a1a` | `#f5f5f5` | 16.2:1 | AA |
+| `.verdict-pass` | `#0f5d29` (dark green) | `#e6f4ea` (light green) | 7.06:1 | AA |
+| `.verdict-fail` | `#8a0017` (dark red) | `#fce8e6` (light red) | 8.52:1 | AA |
+| `.verdict-env-error` | `#6b4600` (dark amber) | `#fff4e5` (light amber) | 7.73:1 | AA |
+| `.verdict-inconclusive` | `#333366` (dark blue) | `#ececf7` (light blue) | 9.91:1 | AA |
+| `.verdict-unknown` | `#4a4a4a` (dark grey) | `#eeeeee` (light grey) | 7.64:1 | AA |
+| Body text | `#1a1a1a` | `#ffffff` | 17.40:1 | AAA |
+| Redacted marker (§17) | `#6b4600` | `#ffffff` | 8.40:1 | AA |
+| Diff panel text | `#1a1a1a` | `#f5f5f5` | 15.96:1 | AA |
+| Base `.verdict` fallback (R-4) | `#1a1a1a` | `#f0f0f0` | 15.27:1 | AA |
 
 Non-text graphical elements (the left border cues) meet the **3.0:1** floor per WCAG 1.4.11:
 
 | Border colour | Background | Ratio | Level |
 |---|---|---|---|
-| `#1b7f3b` (PASS solid) | `#ffffff` | 5.1:1 | AA |
-| `#b00020` (FAIL solid) | `#ffffff` | 7.2:1 | AA |
-| `#8a5a00` (ENV_ERROR dashed) | `#ffffff` | 8.8:1 | AA |
-| `#4a4a8a` (INCONCLUSIVE dotted) | `#ffffff` | 5.0:1 | AA |
-| `#888888` (UNKNOWN double) | `#ffffff` | 5.5:1 | AA |
-| `#767676` (summary-table grid) | `#ffffff` | 5.8:1 | AA |
+| `#1b7f3b` (PASS solid) | `#ffffff` | 5.07:1 | AA |
+| `#b00020` (FAIL solid) | `#ffffff` | 7.33:1 | AA |
+| `#8a5a00` (ENV_ERROR dashed) | `#ffffff` | 5.93:1 | AA |
+| `#4a4a8a` (INCONCLUSIVE dotted) | `#ffffff` | 7.96:1 | AA |
+| `#888888` (UNKNOWN double) | `#ffffff` | 3.54:1 | AA |
+| `#767676` (summary-table grid) | `#ffffff` | 4.54:1 | AA |
 
 The summary-table border uses `#767676` (an informative structure cue, not decorative) rather than `#cccccc` to maintain the 3.0:1 non-text floor.
 
@@ -181,7 +182,7 @@ The following remediations were applied in S10-G-03 to achieve the conformance s
 | **R-1** | No main content landmark | Added `<main>` wrapper around body content (run summary, scenarios, errors, envelope) | 1.3.1 Info-and-relationships |
 | **R-2** | Fixed-width rendering on narrow screens | Added `<meta name="viewport" content="width=device-width, initial-scale=1">` | 1.4.10 Reflow |
 | **R-3** | Run-summary layout not semantically table | Replaced `<div>` layout with real `<table>` with `<caption>`, `<th scope="col">`, and `<th scope="row">` | 1.3.1 Info-and-relationships; 1.4.11 Non-text contrast |
-| **R-4** | Orphan verdict spans at risk of invisible text | Added base `.verdict { color: #1a1a1a; background: #f0f0f0; }` fallback rule (16:1 contrast) | 1.4.3 Minimum contrast |
+| **R-4** | Orphan verdict spans at risk of invisible text | Added base `.verdict { color: #1a1a1a; background: #f0f0f0; }` fallback rule (15.27:1 contrast) | 1.4.3 Minimum contrast |
 
 All remediations are additive and maintain backward compatibility with the event stream contract (§14.4).
 

@@ -31,6 +31,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
+using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Reporting;
 using Xunit;
 
@@ -94,6 +95,47 @@ public sealed class HtmlRendererWcagTests
     {
         using var writer = new StringWriter();
         HtmlRenderer.Render(FourVerdictStream(), writer);
+        return writer.ToString();
+    }
+
+    /// <summary>
+    /// The four-verdict stream PLUS a <c>reproducibility-envelope</c> event, so the
+    /// renderer draws the deeper envelope panel (h2 → h3 → h4) and the heading hierarchy
+    /// is exercised below its h2 floor.  The envelope carries only non-sensitive
+    /// REFERENCES — a secret reference digest (source + hash, never a value) and a
+    /// fixture content digest — mirroring how <see cref="HtmlRendererTests"/> builds one
+    /// (§17: references only, no values).
+    /// </summary>
+    private static string[] FourVerdictStreamWithEnvelope()
+    {
+        var stream = FourVerdictStream().ToList();
+
+        // Splice the envelope in before the ScenarioCompletedEvent terminator, matching
+        // the ordering HtmlRendererTests uses (envelope between started and completed).
+        stream.Insert(stream.Count - 1, Line(new ReproducibilityEnvelopeEvent
+        {
+            RunId = "run-wcag",
+            ScenarioId = "order-flow",
+            EnvSchemaVersion = ReproducibilityEnvelope.CurrentSchemaVersion,
+            SecretReferences = new[]
+            {
+                new SecretReferenceDigest(
+                    "env",
+                    "a1b2c3d4e5f6071829304152637485960718293041526374859607182930a1b2"),
+            },
+            Fixtures = new[]
+            {
+                new FixtureDigest("fixtures/orders.sql", "deadbeefcafef00d"),
+            },
+        }));
+
+        return stream.ToArray();
+    }
+
+    private static string RenderFourVerdictsWithEnvelope()
+    {
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(FourVerdictStreamWithEnvelope(), writer);
         return writer.ToString();
     }
 
@@ -208,17 +250,22 @@ public sealed class HtmlRendererWcagTests
         }
 
         // --- Non-verdict text pairs (no `.verdict-*` wrapper): body text, the redacted
-        // marker on white, and diff text on its panel.  Pinned to the documented hexes,
-        // and each hex is asserted present in the <style> so the pin cannot drift.
+        // marker on white, diff text on its panel, and the base `.verdict` fallback (R-4)
+        // that styles an orphan verdict span outside any `.verdict-*` wrapper.  Pinned to
+        // the documented hexes, and BOTH the foreground and the background of each pair
+        // are asserted present in the <style> so the pin cannot drift (the base-fallback
+        // background #f0f0f0 is what distinguishes that rule from body text).
         var nonVerdictTextPairs = new (string Fg, string Bg, string Where)[]
         {
             ("#1a1a1a", "#ffffff", "body text on page"),
             ("#6b4600", "#ffffff", "redacted marker on page"),
             ("#1a1a1a", "#f5f5f5", "diff text on diff panel"),
+            ("#1a1a1a", "#f0f0f0", "base .verdict fallback (R-4) for an orphan verdict span"),
         };
         foreach (var (fg, bg, where) in nonVerdictTextPairs)
         {
             Assert.Contains(fg, style, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(bg, style, StringComparison.OrdinalIgnoreCase);
             var ratio = ContrastRatio(fg, bg);
             Assert.True(
                 ratio >= 4.5,
@@ -293,6 +340,19 @@ public sealed class HtmlRendererWcagTests
         var levels = ExtractHeadingLevels(RenderFourVerdicts());
         Assert.NotEmpty(levels);
         AssertNoDeeperJumpThanOne(levels);
+
+        // The reproducibility-envelope panel is the only path that descends past h2 into
+        // h3/h4 (WriteReproducibilityEnvelopes).  Render a stream that carries an envelope
+        // and assert the deeper headings (a) actually appear — so this is not vacuous —
+        // and (b) still respect the one-level-deeper rule across the richer document.
+        var withEnvelope = RenderFourVerdictsWithEnvelope();
+        Assert.Contains("<h3", withEnvelope, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<h4", withEnvelope, StringComparison.OrdinalIgnoreCase);
+
+        var deeperLevels = ExtractHeadingLevels(withEnvelope);
+        Assert.Contains(3, deeperLevels);
+        Assert.Contains(4, deeperLevels);
+        AssertNoDeeperJumpThanOne(deeperLevels);
 
         // The detector must actually reject a jump (h2 → h4), else the real-output pass
         // above would be meaningless.
