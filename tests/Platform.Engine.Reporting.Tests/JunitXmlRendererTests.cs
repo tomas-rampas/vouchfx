@@ -339,4 +339,94 @@ public sealed class JunitXmlRendererTests
         var testcase = doc.Descendants("testcase").Single();
         Assert.Equal("only-survivor", (string?)testcase.Attribute("name"));
     }
+
+    // -------------------------------------------------------------------------
+    // Test 6 (C145-2): XML-1.0-forbidden C0 control characters are dropped.
+    //
+    // XML 1.0 permits only three characters below U+0020 — TAB (U+0009), LF
+    // (U+000A) and CR (U+000D).  Every other C0 control (U+0000–U+0008, U+000B,
+    // U+000C, U+000E–U+001F) is FORBIDDEN and cannot even be represented as a
+    // numeric character reference, so if a dynamic string (a scenario id, a
+    // failure message, …) carries one the emitted document is non-parseable and
+    // breaks CI ingestion.  XmlEscape must therefore DROP the forbidden controls
+    // while preserving TAB/LF/CR and still entity-escaping the markup chars.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_ForbiddenC0ControlCharacters_AreDroppedAndDocumentParses()
+    {
+        // The XML-1.0-forbidden C0 controls, built from code points (no literal
+        // control bytes in the source): NUL, BEL, BS, VT, FF and a high one at
+        // U+001F.  None of these may appear in XML 1.0 — not even as a numeric
+        // character reference.
+        var forbidden = new[]
+        {
+            (char)0x00, (char)0x07, (char)0x08, (char)0x0B, (char)0x0C, (char)0x1F,
+        };
+        var forbiddenText = new string(forbidden);
+
+        // The three LEGAL whitespace controls and the five markup chars, woven in
+        // alongside the forbidden controls so the fix cannot pass by either
+        // stripping ALL controls or by mangling the markup escaping.
+        const string legal = "\t\n\r";
+        const string markup = "&<>\"'";
+
+        var scenarioId = "scn" + forbiddenText + legal + markup;
+        var failureMessage = "boom" + forbiddenText + legal + markup;
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-6", ScenarioId = scenarioId, File = "ctrl.e2e.yaml" }),
+
+            // A failed step whose observation message carries the same hostile text
+            // so the forbidden controls also reach a <failure> body, not only an
+            // attribute value.
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"step-completed\",\"ts\":\"2026-01-01T00:00:00Z\","
+                + "\"runId\":\"run-6\",\"stepId\":\"hostile-step\",\"verdict\":\"FAIL\",\"durationMs\":1,"
+                + "\"observation\":{\"message\":"
+                + System.Text.Json.JsonSerializer.Serialize(failureMessage) + "}}",
+
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-6",
+                ScenarioId = scenarioId,
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // (a) The full document parses — a single forbidden control anywhere would
+        //     make XDocument.Parse throw (this is the RED assertion before the fix).
+        var doc = XDocument.Parse(output);
+
+        // (b) None of the forbidden C0 control characters survive into the output.
+        foreach (var forbiddenChar in forbidden)
+        {
+            Assert.DoesNotContain(forbiddenChar.ToString(), output, StringComparison.Ordinal);
+        }
+
+        // (c) The LEGAL whitespace controls DO survive (escaping must not be a blanket
+        //     "strip all controls").  The scenario id — which carries the TAB/LF/CR — is
+        //     echoed into the <failure> element BODY, whose text content preserves TAB
+        //     and LF verbatim (unlike an attribute value, which the parser normalises to
+        //     spaces).  Parse the failure element and confirm TAB and LF survived; if
+        //     the renderer had stripped them, the legitimate whitespace would be gone.
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.NotNull((string?)testcase.Attribute("name"));
+
+        var failureBody = doc.Descendants("failure").Single().Value;
+        Assert.Contains("\t", failureBody, StringComparison.Ordinal);
+        Assert.Contains("\n", failureBody, StringComparison.Ordinal);
+
+        // (d) The markup chars are still entity-escaped — the control-character
+        //     handling did not disturb the existing & < > " ' escaping.
+        Assert.Contains("&amp;", output, StringComparison.Ordinal);
+        Assert.Contains("&lt;", output, StringComparison.Ordinal);
+        Assert.Contains("&gt;", output, StringComparison.Ordinal);
+    }
 }
+

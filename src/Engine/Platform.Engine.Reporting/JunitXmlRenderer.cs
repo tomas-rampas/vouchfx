@@ -4,8 +4,9 @@
 // Design — a sibling of TerminalRenderer / HtmlRenderer, deliberately mirroring them:
 //   • Driven by the SAME buffered JSON Lines event stream the other renderers consume
 //     — "render the one stream differently, never a per-audience pipeline" (§14).  This
-//     class adds no field to the event contract and does not touch the runners or the
-//     CLI.  The CLI --junit flag wiring is a separate later task.
+//     class adds no field to the event contract: it is a pure stream→XML transform.
+//     The CLI (--junit) merely selects this renderer and feeds it the buffered stream;
+//     the renderer itself neither reads nor mutates the runners or the CLI.
 //   • Same TOLERANCE: blank / whitespace-only lines are skipped, malformed JSON is
 //     caught per-line, unknown event types and unknown fields are ignored (they ride in
 //     EventEnvelope.Extra and are never surfaced) — the §14 forward-compatibility
@@ -354,6 +355,16 @@ public sealed class JunitXmlRenderer
     /// replaced FIRST so that the entity replacements introduced for the other
     /// characters are not themselves re-escaped.
     /// </summary>
+    /// <remarks>
+    /// XML 1.0 forbids every C0 control character below U+0020 EXCEPT TAB (U+0009),
+    /// LF (U+000A) and CR (U+000D) — and the forbidden ones cannot even be represented
+    /// as numeric character references.  A single such character anywhere in a dynamic
+    /// string (a scenario id, a failure message, …) would make the emitted document
+    /// non-parseable and break CI ingestion.  We therefore DROP the forbidden C0
+    /// controls outright (dropping leaves the result unambiguously parseable, whereas a
+    /// substitution would invent text the author never wrote), while preserving the
+    /// three permitted whitespace controls and every other character.
+    /// </remarks>
     /// <param name="value">The dynamic string to escape; <see langword="null"/> yields the empty string.</param>
     /// <returns>The XML-safe form of <paramref name="value"/>.</returns>
     private static string XmlEscape(string? value)
@@ -384,6 +395,14 @@ public sealed class JunitXmlRenderer
                     builder.Append("&apos;");
                     break;
                 default:
+                    // Drop XML-1.0-forbidden C0 control characters (everything below
+                    // U+0020 except the three permitted whitespace controls TAB/LF/CR);
+                    // emit every other character verbatim.
+                    if (IsForbiddenXmlControl(ch))
+                    {
+                        break;
+                    }
+
                     builder.Append(ch);
                     break;
             }
@@ -391,6 +410,14 @@ public sealed class JunitXmlRenderer
 
         return builder.ToString();
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="ch"/> is a C0 control
+    /// character that XML 1.0 forbids — i.e. below U+0020 and not one of the three
+    /// permitted whitespace controls TAB (U+0009), LF (U+000A) or CR (U+000D).
+    /// </summary>
+    private static bool IsForbiddenXmlControl(char ch)
+        => ch < ' ' && ch is not ('\t' or '\n' or '\r');
 
     // -------------------------------------------------------------------------
     // Extra-field accessors — all defensive; never throw.  Ported from the sibling
