@@ -358,12 +358,17 @@ public sealed class JunitXmlRenderer
     /// <remarks>
     /// XML 1.0 forbids every C0 control character below U+0020 EXCEPT TAB (U+0009),
     /// LF (U+000A) and CR (U+000D) — and the forbidden ones cannot even be represented
-    /// as numeric character references.  A single such character anywhere in a dynamic
+    /// as numeric character references.  The XML 1.0 <c>Char</c> production additionally
+    /// forbids the two BMP non-characters U+FFFE and U+FFFF (both fall outside the
+    /// permitted <c>[#xE000-#xFFFD]</c> range), and these are reachable here because
+    /// System.Text.Json deserialises them into ordinary .NET string characters that flow
+    /// through a scenario id or file path.  A single such character anywhere in a dynamic
     /// string (a scenario id, a failure message, …) would make the emitted document
-    /// non-parseable and break CI ingestion.  We therefore DROP the forbidden C0
-    /// controls outright (dropping leaves the result unambiguously parseable, whereas a
-    /// substitution would invent text the author never wrote), while preserving the
-    /// three permitted whitespace controls and every other character.
+    /// non-parseable and break CI ingestion.  We therefore DROP the forbidden C0 controls
+    /// AND the two BMP non-characters U+FFFE/U+FFFF outright (dropping leaves the result
+    /// unambiguously parseable, whereas a substitution would invent text the author never
+    /// wrote), while preserving the three permitted whitespace controls and every other
+    /// character — including legal astral-plane text carried by valid surrogate pairs.
     /// </remarks>
     /// <param name="value">The dynamic string to escape; <see langword="null"/> yields the empty string.</param>
     /// <returns>The XML-safe form of <paramref name="value"/>.</returns>
@@ -395,10 +400,11 @@ public sealed class JunitXmlRenderer
                     builder.Append("&apos;");
                     break;
                 default:
-                    // Drop XML-1.0-forbidden C0 control characters (everything below
-                    // U+0020 except the three permitted whitespace controls TAB/LF/CR);
-                    // emit every other character verbatim.
-                    if (IsForbiddenXmlControl(ch))
+                    // Drop the XML-1.0-forbidden characters reachable in a single BMP
+                    // char — the C0 controls below U+0020 (except the three permitted
+                    // whitespace controls TAB/LF/CR) and the two BMP non-characters
+                    // U+FFFE/U+FFFF; emit every other character verbatim.
+                    if (IsForbiddenXmlCharacter(ch))
                     {
                         break;
                     }
@@ -412,12 +418,18 @@ public sealed class JunitXmlRenderer
     }
 
     /// <summary>
-    /// Returns <see langword="true"/> when <paramref name="ch"/> is a C0 control
-    /// character that XML 1.0 forbids — i.e. below U+0020 and not one of the three
-    /// permitted whitespace controls TAB (U+0009), LF (U+000A) or CR (U+000D).
+    /// Returns <see langword="true"/> when <paramref name="ch"/> is a character that the
+    /// XML 1.0 <c>Char</c> production forbids and that is reachable here in a single BMP
+    /// char: a C0 control below U+0020 that is not one of the three permitted whitespace
+    /// controls TAB (U+0009), LF (U+000A) or CR (U+000D), or one of the two BMP
+    /// non-characters U+FFFE / U+FFFF (which fall outside the permitted
+    /// <c>[#xE000-#xFFFD]</c> range).  Lone/unpaired surrogates are already rejected by
+    /// System.Text.Json at deserialisation, and valid surrogate pairs (astral-plane text)
+    /// are legal XML, so neither is handled here.
     /// </summary>
-    private static bool IsForbiddenXmlControl(char ch)
-        => ch < ' ' && ch is not ('\t' or '\n' or '\r');
+    private static bool IsForbiddenXmlCharacter(char ch)
+        => (ch < ' ' && ch is not ('\t' or '\n' or '\r'))
+           || ch is (char)0xFFFE or (char)0xFFFF;
 
     // -------------------------------------------------------------------------
     // Extra-field accessors — all defensive; never throw.  Ported from the sibling

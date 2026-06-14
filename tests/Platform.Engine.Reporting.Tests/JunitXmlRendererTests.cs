@@ -341,15 +341,22 @@ public sealed class JunitXmlRendererTests
     }
 
     // -------------------------------------------------------------------------
-    // Test 6 (C145-2): XML-1.0-forbidden C0 control characters are dropped.
+    // Test 6 (C145-2 / C146): XML-1.0-forbidden characters reachable in a single
+    // BMP char are dropped.
     //
     // XML 1.0 permits only three characters below U+0020 — TAB (U+0009), LF
     // (U+000A) and CR (U+000D).  Every other C0 control (U+0000–U+0008, U+000B,
     // U+000C, U+000E–U+001F) is FORBIDDEN and cannot even be represented as a
-    // numeric character reference, so if a dynamic string (a scenario id, a
-    // failure message, …) carries one the emitted document is non-parseable and
-    // breaks CI ingestion.  XmlEscape must therefore DROP the forbidden controls
-    // while preserving TAB/LF/CR and still entity-escaping the markup chars.
+    // numeric character reference.  The XML 1.0 Char production ALSO forbids the
+    // two BMP non-characters U+FFFE and U+FFFF (they fall outside the permitted
+    // [#xE000-#xFFFD] range), and these are reachable because System.Text.Json
+    // deserialises "U+FFFE"/"U+FFFF" into ordinary .NET string characters that flow through
+    // a scenario id or file path.  So if a dynamic string (a scenario id, a
+    // failure message, …) carries any of these the emitted document is
+    // non-parseable and breaks CI ingestion.  XmlEscape must therefore DROP the
+    // forbidden controls AND U+FFFE/U+FFFF while preserving TAB/LF/CR, still
+    // entity-escaping the markup chars, and leaving legitimate astral-plane text
+    // (a valid surrogate pair, e.g. an emoji) untouched.
     // -------------------------------------------------------------------------
 
     [Fact]
@@ -365,14 +372,25 @@ public sealed class JunitXmlRendererTests
         };
         var forbiddenText = new string(forbidden);
 
+        // The two BMP non-characters U+FFFE/U+FFFF, also XML-1.0-illegal and also
+        // reachable here (System.Text.Json deserialises them verbatim).  Built
+        // from integer casts — NEVER literal "U+FFFE"/"U+FFFF" bytes in the source.
+        var nonCharacters = new[] { (char)0xFFFE, (char)0xFFFF };
+        var nonCharacterText = new string(nonCharacters);
+
+        // A legitimate astral-plane character — a grinning-face emoji encoded as a
+        // VALID surrogate pair.  This is legal XML and MUST survive unchanged; it
+        // guards against an over-broad predicate that strips anything "weird".
+        const string astral = "\U0001F600";
+
         // The three LEGAL whitespace controls and the five markup chars, woven in
         // alongside the forbidden controls so the fix cannot pass by either
         // stripping ALL controls or by mangling the markup escaping.
         const string legal = "\t\n\r";
         const string markup = "&<>\"'";
 
-        var scenarioId = "scn" + forbiddenText + legal + markup;
-        var failureMessage = "boom" + forbiddenText + legal + markup;
+        var scenarioId = "scn" + forbiddenText + nonCharacterText + astral + legal + markup;
+        var failureMessage = "boom" + forbiddenText + nonCharacterText + astral + legal + markup;
 
         var lines = new[]
         {
@@ -408,6 +426,19 @@ public sealed class JunitXmlRendererTests
         {
             Assert.DoesNotContain(forbiddenChar.ToString(), output, StringComparison.Ordinal);
         }
+
+        // (b2) Neither BMP non-character (U+FFFE/U+FFFF) survives — these are the
+        //      characters that, before the fix, made XDocument.Parse throw
+        //      ("... 0xFFFF ... is an invalid character"); the parse in (a) would be
+        //      RED and this assertion never reached.
+        foreach (var nonCharacter in nonCharacters)
+        {
+            Assert.DoesNotContain(nonCharacter.ToString(), output, StringComparison.Ordinal);
+        }
+
+        // (b3) The legitimate astral-plane emoji (a VALID surrogate pair) IS preserved
+        //      — guarding against an over-broad predicate that strips legal characters.
+        Assert.Contains(astral, output, StringComparison.Ordinal);
 
         // (c) The LEGAL whitespace controls DO survive (escaping must not be a blanket
         //     "strip all controls").  The scenario id — which carries the TAB/LF/CR — is
