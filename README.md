@@ -28,7 +28,7 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream rendered to the terminal, a self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, and C# syntax highlighting in `script.csharp` blocks (with full in-block C# IntelliSense as a documented fast-follow).
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow).
 > Still to come: community provider tiers (Verified and Community governance) — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
@@ -199,8 +199,10 @@ A VSCode extension lives at [`tools/vscode-vouchfx/`](tools/vscode-vouchfx/). It
 JSON Schema to `*.e2e.yaml` files (via the `redhat.vscode-yaml` language server), giving step-type-aware
 **autocomplete, hover, and inline validation** as you author a suite — a `.NET` CI gate keeps the editor's
 schema byte-for-byte in step with what the compiler accepts, so the editor can never suggest a construct
-the engine would reject. It also provides **C# syntax highlighting** inside `script.csharp` blocks. Full
-in-block C# IntelliSense (completion/diagnostics) is a documented fast-follow — see
+the engine would reject. It also provides **C# syntax highlighting** inside `script.csharp` blocks and
+**Test Explorer integration** that discovers `.e2e.yaml` files in the workspace and runs scenarios/steps
+with per-step verdicts and failing-line decoration in the editor. Full in-block C# IntelliSense
+(completion/diagnostics) is a documented fast-follow — see
 [`tools/vscode-vouchfx/docs/csharp-intellisense.md`](tools/vscode-vouchfx/docs/csharp-intellisense.md).
 
 ## Sprint 1 de-risking results
