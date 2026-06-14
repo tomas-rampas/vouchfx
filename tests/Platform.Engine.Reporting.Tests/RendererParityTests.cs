@@ -351,12 +351,14 @@ public sealed class RendererParityTests
 
         // HTML: the run-summary block tallies one of each verdict, consistent with the
         // JUnit aggregate (the per-scenario VerdictCounts summed across scenarios).  The
-        // summary emits "<verdict>PASS</verdict> 1" etc.; assert each count of 1 is
-        // present for its verdict label.
-        Assert.Contains(">PASS</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">FAIL</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">ENV_ERROR</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">INCONCLUSIVE</span> 1<", htmlOutput, StringComparison.Ordinal);
+        // summary is now a real <table> (WCAG 1.3.1): each verdict is a row whose label
+        // sits in a <th scope="row"> and whose count sits in the adjacent <td>, so the
+        // markup is "…<span class="verdict">PASS</span></th><td>1</td>".  Assert each
+        // count of 1 is present for its verdict label in that row shape.
+        Assert.Contains(">PASS</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">FAIL</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">ENV_ERROR</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">INCONCLUSIVE</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
 
         // Terminal: each scenario-completed summary line carries its own per-verdict
         // count of 1.  The single passing scenario's summary line shows pass=1, the
