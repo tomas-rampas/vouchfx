@@ -266,12 +266,15 @@
       esac
       echo "Running vouchfx suite at '$VOUCHFX_SCENARIO_PATH' (gating flags:${FAIL_FLAGS:- none})…"
       # shellcheck disable=SC2086  # FAIL_FLAGS is a deliberately word-split list of fixed literals.
+      # `dotnet run --project <csproj>` runs the app with its CWD set to the PROJECT
+      # directory, NOT $CI_PROJECT_DIR — so a RELATIVE scenario path would misresolve under
+      # the vouchfx source tree. Pass it (and the report paths) as ABSOLUTE $CI_PROJECT_DIR/…
       dotnet run \
         --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
         -c Release \
         --no-build \
         -- \
-        run "$VOUCHFX_SCENARIO_PATH" \
+        run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
         --junit "$CI_PROJECT_DIR/results.xml" \
         --html "$CI_PROJECT_DIR/report.html" \
         $FAIL_FLAGS

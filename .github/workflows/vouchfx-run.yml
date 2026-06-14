@@ -190,8 +190,11 @@ jobs:
       #    --fail-on-inconclusive). A non-zero exit fails this step, and so the job — so a
       #    product Fail gates the consumer's CI by default, env-errors/inconclusives only on
       #    opt-in. `--` separates `dotnet run` options from the vouchfx arguments.
-      #    The scenario path is resolved against the consumer checkout (the default working
-      #    directory, $GITHUB_WORKSPACE), NOT the vouchfx source tree.
+      #    WORKING-DIRECTORY: `dotnet run --project <csproj>` runs the app with its CWD set to
+      #    the PROJECT directory (.vouchfx-src/src/Cli/Vouchfx.Cli), NOT the consumer checkout,
+      #    so a RELATIVE scenario path would misresolve under the vouchfx source tree. We
+      #    therefore pass the scenario path and the report paths as ABSOLUTE
+      #    ($GITHUB_WORKSPACE/…), which resolve correctly regardless of the run CWD.
       #    SECURITY: the caller-supplied `scenario-path` is bound to an `env:` var and
       #    dereferenced as "$SCENARIO_PATH" rather than interpolated into the shell line
       #    via ${{ … }}, so a value containing shell metacharacters cannot be executed
@@ -207,7 +210,7 @@ jobs:
           -c Release
           --no-build
           --
-          run "$SCENARIO_PATH"
+          run "$GITHUB_WORKSPACE/$SCENARIO_PATH"
           --junit "$GITHUB_WORKSPACE/results.xml"
           --html "$GITHUB_WORKSPACE/report.html"
           ${{ inputs.fail-on-env-error && '--fail-on-env-error' || '' }}
