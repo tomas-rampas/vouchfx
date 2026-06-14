@@ -399,6 +399,12 @@ engine internals.
 
 **Contributing to the platform engine?** The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and orchestration first). Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
+## Security
+
+For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
+
+Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) is in place and activates when binary packaging ships in a future sprint.
+
 ## Licence
 
 Apache-2.0 — see [`LICENSE`](LICENSE).

@@ -1,0 +1,198 @@
+# .github/workflows/release.yml — vouchfx signed-release SKELETON (S10-D-01)
+# =============================================================================
+# STATUS: SKELETON. NON-DESTRUCTIVE. NOT YET PRODUCING REAL ARTIFACTS.
+#
+# vouchfx is NOT packaged yet — the real release artifacts (a signed release
+# manifest + the engine/CLI packages) are an S11 deliverable. This workflow
+# stands up the *signing pipeline* now so the only residue is "wire the real
+# build output here when S11 packaging lands" — there is NO key to provision.
+#
+# It deliberately:
+#   • triggers ONLY on a published GitHub Release or a `v*` tag push — so it can
+#     NEVER fire on an ordinary push or pull request to a branch;
+#   • builds a clearly-marked PLACEHOLDER artifact (a manifest describing the
+#     intended release contents) where the real `dotnet pack`/publish output will
+#     go once S11 produces it;
+#   • signs/attests that artifact KEYLESSLY (see "Keyless model" below);
+#   • is annotated at every activation point with `# ACTIVATES (S11):` so the
+#     real wiring is a search-and-replace, not a redesign.
+#
+# -----------------------------------------------------------------------------
+# KEYLESS SIGNING MODEL (no pre-provisioned secret key)
+# -----------------------------------------------------------------------------
+# We use Sigstore "keyless" signing driven by the workflow's GitHub OIDC
+# identity — there is NO long-lived private key stored as a repo/org secret.
+#
+#   1. GitHub issues this job a short-lived **OIDC token** (requires the
+#      `id-token: write` permission below). That token asserts the workflow
+#      identity, e.g. `https://github.com/tomas-rampas/vouchfx/.github/workflows/
+#      release.yml@refs/tags/v1.2.3`.
+#   2. Sigstore **Fulcio** exchanges that OIDC token for a SHORT-LIVED (~10 min)
+#      X.509 signing certificate bound to that identity. The private key exists
+#      only in-memory for the lifetime of the job and is then discarded —
+#      nothing to store, rotate, or leak.
+#   3. The signature + certificate are recorded in the **Rekor** public
+#      transparency log, giving tamper-evident, publicly auditable provenance.
+#
+# Two complementary, free, keyless mechanisms are wired below:
+#
+#   • `actions/attest-build-provenance` — generates a signed **SLSA build
+#     provenance** attestation for each artifact, stored with the repo. Requires
+#     `attestations: write` + `id-token: write`. Consumers verify with:
+#         gh attestation verify <artifact> --repo tomas-rampas/vouchfx
+#
+#   • **cosign keyless** (`cosign sign-blob --yes`) — produces a detached
+#     `.sig` + `.pem` (certificate) + `.bundle` for the artifact, anchored in
+#     Rekor. Consumers verify with:
+#         cosign verify-blob <artifact> \
+#           --bundle <artifact>.cosign.bundle \
+#           --certificate-identity-regexp \
+#             '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+#           --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#
+# Both anchor trust in OIDC identity + the public transparency log — NOT in a
+# secret we have to manage. That is the whole point of "keyless".
+# =============================================================================
+
+name: Release (signed, keyless — SKELETON)
+
+# --- Triggers ----------------------------------------------------------------
+# ONLY on a published Release or a version tag. Deliberately NO `push:` to a
+# branch and NO `pull_request:` — so this can never fire on ordinary CI.
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - "v*"
+
+# Least privilege at the workflow level. Jobs do NOT inherit anything beyond
+# this; `id-token`/`attestations` are the minimum for keyless attestation.
+permissions:
+  contents: read
+
+# Never run two releases for the same ref concurrently; never cancel a release
+# mid-flight (cancelling a signing job could orphan a partial attestation).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # Single source of truth for where the release artifact(s) live. S11 wires the
+  # real `dotnet pack`/publish output into this directory.
+  ARTIFACT_DIR: "release-artifacts"
+
+jobs:
+  build-and-sign:
+    name: Build, attest & sign release artifacts (keyless)
+    runs-on: ubuntu-latest
+
+    # Minimum permissions for keyless signing/attestation:
+    #   id-token: write     -> mint the OIDC token Fulcio/cosign exchange for a
+    #                          short-lived signing certificate
+    #   attestations: write -> let actions/attest-build-provenance store the
+    #                          SLSA provenance attestation against the repo
+    #   contents: read      -> check out the source (NOT write — this skeleton
+    #                          never mutates the repo or the release)
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+
+    steps:
+      - name: Checkout (read-only)
+        uses: actions/checkout@v6
+
+      # ---------------------------------------------------------------------
+      # (a) BUILD THE RELEASE ARTIFACT
+      #
+      # ACTIVATES (S11): replace this placeholder step with the real release
+      # build, e.g.:
+      #     - uses: actions/setup-dotnet@v5
+      #       with: { dotnet-version: "8.0.x" }
+      #     - run: dotnet pack vouchfx.sln -c Release -o "$ARTIFACT_DIR"
+      #     # and/or `dotnet publish` the CLI, and emit the S11 release manifest.
+      #
+      # Until then we emit a NON-DESTRUCTIVE placeholder manifest describing the
+      # intended release so the rest of the pipeline (attest + sign) is exercised
+      # end-to-end against a real file, with zero risk of publishing anything.
+      # ---------------------------------------------------------------------
+      - name: Build release artifact (PLACEHOLDER — wire real output in S11)
+        id: build
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+          manifest="$ARTIFACT_DIR/vouchfx-release-manifest.json"
+          # Placeholder content. The REAL artifacts (engine/CLI packages + the
+          # S11 release manifest) replace this. Kept deterministic & harmless.
+          cat > "$manifest" <<EOF
+          {
+            "schema": "vouchfx.release-manifest/placeholder",
+            "status": "SKELETON — not a real release artifact",
+            "note": "ACTIVATES when S11 packaging produces artifacts; wire real build output into \$ARTIFACT_DIR.",
+            "repository": "${GITHUB_REPOSITORY}",
+            "ref": "${GITHUB_REF}",
+            "sha": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}"
+          }
+          EOF
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "Built placeholder artifact:"
+          ls -l "$ARTIFACT_DIR"
+
+      # ---------------------------------------------------------------------
+      # (b1) ATTEST — keyless SLSA build provenance via GitHub OIDC.
+      # No key: uses the job's OIDC identity + Sigstore Fulcio/Rekor.
+      # Verify later with: gh attestation verify <file> --repo $GITHUB_REPOSITORY
+      #
+      # ACTIVATES (S11): point `subject-path` at the real artifacts (a glob such
+      # as "${{ env.ARTIFACT_DIR }}/*.nupkg" once packages exist).
+      # ---------------------------------------------------------------------
+      - name: Attest build provenance (keyless, SLSA)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.build.outputs.manifest }}
+
+      # ---------------------------------------------------------------------
+      # (b2) SIGN — cosign keyless `sign-blob`. Installs cosign, then signs the
+      # artifact using the workflow's OIDC identity (no key files). Emits a
+      # self-contained `.cosign.bundle` (signature + cert + Rekor proof).
+      # `--yes` accepts the keyless prompt non-interactively.
+      #
+      # ACTIVATES (S11): loop over the real artifact set instead of the single
+      # placeholder manifest.
+      # ---------------------------------------------------------------------
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign artifact (cosign keyless)
+        env:
+          # cosign reads the experimental keyless flow off the ambient OIDC
+          # token; COSIGN_EXPERIMENTAL is honoured by older cosign and harmless
+          # on current versions.
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          artifact="${{ steps.build.outputs.manifest }}"
+          echo "Keyless-signing: $artifact"
+          cosign sign-blob --yes \
+            --bundle "${artifact}.cosign.bundle" \
+            "$artifact"
+          echo "Wrote bundle: ${artifact}.cosign.bundle"
+
+      # ---------------------------------------------------------------------
+      # (c) PUBLISH the signed artifact + its verification material as a
+      # workflow artifact. NON-DESTRUCTIVE: this uploads to the workflow run
+      # only — it does NOT push to a registry, attach to the Release, or
+      # publish to NuGet. S11 decides the real distribution channel.
+      # ---------------------------------------------------------------------
+      - name: Upload signed artifact + verification material
+        uses: actions/upload-artifact@v7
+        with:
+          name: vouchfx-release-signed-skeleton
+          path: |
+            ${{ env.ARTIFACT_DIR }}/**
+          if-no-files-found: error
+          retention-days: 7
