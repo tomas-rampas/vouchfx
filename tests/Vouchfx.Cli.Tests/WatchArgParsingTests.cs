@@ -64,6 +64,10 @@ public sealed class WatchArgParsingTests
             criteria: SelectionCriteria.None,
             parallel: 2,
             watch: true,
+            failOnEnvironmentError: false,
+            failOnInconclusive: false,
+            htmlReportPath: null,
+            junitReportPath: null,
             output: sw,
             cancellationToken: default);
 

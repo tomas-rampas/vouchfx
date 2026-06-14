@@ -8,4 +8,12 @@
     <ProjectReference Include="..\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
   </ItemGroup>
 
+  <!-- Expose the internal FileReportWriter seam (S09-D-01, T3) to the runtime (which both
+       runner paths call after their terminal render) and to the reporting test project (which
+       unit-tests the wiring directly, Docker-free). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Platform.Engine.Runtime" />
+    <InternalsVisibleTo Include="Platform.Engine.Reporting.Tests" />
+  </ItemGroup>
+
 </Project>

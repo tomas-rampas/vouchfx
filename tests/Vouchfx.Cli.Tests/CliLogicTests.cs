@@ -55,14 +55,59 @@ public sealed class ProviderRegistryFactoryTests
 
 public sealed class ExitCodesTests
 {
+    // The full taxonomy-aware exit-code table (S09-C-03): every verdict × every combination
+    // of the two opt-in flags {failOnEnvError, failOnInconclusive}.  The invariant under test:
+    //   • Fail            → TestFailure (1) ALWAYS — only Fail breaks CI by default;
+    //   • EnvironmentError → 0 by default, EnvironmentError (3) only when --fail-on-env-error;
+    //   • Inconclusive     → 0 by default, Inconclusive (4) only when --fail-on-inconclusive;
+    //   • Pass             → Success (0) always.
+    // The distinct codes 3/4 let CI tell infra breakage from a timeout from a genuine defect,
+    // and side-step UsageError=2 (reserved for parse errors) so there is no collision.
     [Theory]
-    [InlineData(Verdict.Pass, ExitCodes.Success)]
-    [InlineData(Verdict.Inconclusive, ExitCodes.Success)]
-    [InlineData(Verdict.EnvironmentError, ExitCodes.Success)]
-    [InlineData(Verdict.Fail, ExitCodes.TestFailure)]
-    public void FromVerdict_MapsPerTaxonomy(Verdict verdict, int expected)
+    // Pass — always 0, regardless of flags.
+    [InlineData(Verdict.Pass, false, false, ExitCodes.Success)]
+    [InlineData(Verdict.Pass, true, false, ExitCodes.Success)]
+    [InlineData(Verdict.Pass, false, true, ExitCodes.Success)]
+    [InlineData(Verdict.Pass, true, true, ExitCodes.Success)]
+    // Fail — always 1 (TestFailure), regardless of flags.
+    [InlineData(Verdict.Fail, false, false, ExitCodes.TestFailure)]
+    [InlineData(Verdict.Fail, true, false, ExitCodes.TestFailure)]
+    [InlineData(Verdict.Fail, false, true, ExitCodes.TestFailure)]
+    [InlineData(Verdict.Fail, true, true, ExitCodes.TestFailure)]
+    // EnvironmentError — 0 by default; 3 only when failOnEnvironmentError is set.
+    [InlineData(Verdict.EnvironmentError, false, false, ExitCodes.Success)]
+    [InlineData(Verdict.EnvironmentError, true, false, ExitCodes.EnvironmentError)]
+    [InlineData(Verdict.EnvironmentError, false, true, ExitCodes.Success)]
+    [InlineData(Verdict.EnvironmentError, true, true, ExitCodes.EnvironmentError)]
+    // Inconclusive — 0 by default; 4 only when failOnInconclusive is set.
+    [InlineData(Verdict.Inconclusive, false, false, ExitCodes.Success)]
+    [InlineData(Verdict.Inconclusive, true, false, ExitCodes.Success)]
+    [InlineData(Verdict.Inconclusive, false, true, ExitCodes.Inconclusive)]
+    [InlineData(Verdict.Inconclusive, true, true, ExitCodes.Inconclusive)]
+    public void FromVerdict_MapsPerTaxonomy(
+        Verdict verdict,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        int expected)
     {
-        Assert.Equal(expected, ExitCodes.FromVerdict(verdict));
+        Assert.Equal(
+            expected,
+            ExitCodes.FromVerdict(verdict, failOnEnvironmentError, failOnInconclusive));
+    }
+
+    [Fact]
+    public void DistinctCodes_DoNotCollideWithEachOtherOrUsageError()
+    {
+        // 3/4 are deliberately chosen to side-step UsageError=2 (parse errors) and 0/1.
+        int[] codes =
+        {
+            ExitCodes.Success,
+            ExitCodes.TestFailure,
+            ExitCodes.UsageError,
+            ExitCodes.EnvironmentError,
+            ExitCodes.Inconclusive,
+        };
+        Assert.Equal(codes.Length, codes.Distinct().Count());
     }
 }
 

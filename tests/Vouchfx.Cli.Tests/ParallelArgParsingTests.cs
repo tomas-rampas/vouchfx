@@ -67,6 +67,10 @@ public sealed class ParallelArgParsingTests
             criteria: SelectionCriteria.None,
             parallel: 0,
             watch: false,
+            failOnEnvironmentError: false,
+            failOnInconclusive: false,
+            htmlReportPath: null,
+            junitReportPath: null,
             output: sw,
             cancellationToken: default);
 

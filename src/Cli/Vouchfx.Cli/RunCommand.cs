@@ -61,12 +61,20 @@ internal static class RunCommand
         var changedSinceOption = BuildChangedSinceOption();
         var parallelOption = BuildParallelOption();
         var watchOption = BuildWatchOption();
+        var failOnEnvironmentErrorOption = BuildFailOnEnvironmentErrorOption();
+        var failOnInconclusiveOption = BuildFailOnInconclusiveOption();
+        var htmlReportOption = BuildHtmlReportOption();
+        var junitReportOption = BuildJunitReportOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
         command.Add(changedSinceOption);
         command.Add(parallelOption);
         command.Add(watchOption);
+        command.Add(failOnEnvironmentErrorOption);
+        command.Add(failOnInconclusiveOption);
+        command.Add(htmlReportOption);
+        command.Add(junitReportOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -76,7 +84,21 @@ internal static class RunCommand
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
             var parallel = parseResult.GetValue(parallelOption);
             var watch = parseResult.GetValue(watchOption);
-            return ExecuteAsync(path, criteria, parallel, watch, Console.Out, cancellationToken);
+            var failOnEnvironmentError = parseResult.GetValue(failOnEnvironmentErrorOption);
+            var failOnInconclusive = parseResult.GetValue(failOnInconclusiveOption);
+            var htmlReportPath = parseResult.GetValue(htmlReportOption);
+            var junitReportPath = parseResult.GetValue(junitReportOption);
+            return ExecuteAsync(
+                path,
+                criteria,
+                parallel,
+                watch,
+                failOnEnvironmentError,
+                failOnInconclusive,
+                htmlReportPath,
+                junitReportPath,
+                Console.Out,
+                cancellationToken);
         });
 
         return command;
@@ -161,6 +183,82 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--fail-on-env-error</c> flag (S09-C-03): opt in to gating CI on an
+    /// <see cref="Verdict.EnvironmentError"/> aggregate verdict (exit
+    /// <see cref="ExitCodes.EnvironmentError"/>, 3).
+    /// </summary>
+    /// <remarks>
+    /// Off by default — per the verdict taxonomy (§12.1) only <see cref="Verdict.Fail"/> breaks
+    /// CI by default, so an environment error (unhealthy container, image-pull / seed / tunnel
+    /// failure) exits 0 unless this flag is set.  When set, it exits with the <em>distinct</em>
+    /// code 3 so CI can tell infra breakage apart from a product Fail (1).
+    /// </remarks>
+    internal static Option<bool> BuildFailOnEnvironmentErrorOption() => new("--fail-on-env-error")
+    {
+        Description =
+            "Treat an Environment-error verdict as a CI failure (exit 3). Off by default — only "
+            + "Fail breaks CI. Use this to gate on infrastructure breakage (unhealthy container, "
+            + "image-pull / seed / tunnel failure); the distinct code 3 keeps it separable from a "
+            + "product Fail (1).",
+    };
+
+    /// <summary>
+    /// The <c>--fail-on-inconclusive</c> flag (S09-C-03): opt in to gating CI on an
+    /// <see cref="Verdict.Inconclusive"/> aggregate verdict (exit
+    /// <see cref="ExitCodes.Inconclusive"/>, 4).
+    /// </summary>
+    /// <remarks>
+    /// Off by default — per the verdict taxonomy (§12.1) only <see cref="Verdict.Fail"/> breaks
+    /// CI by default, so an inconclusive result (timeout, partition outlasted grace, upstream
+    /// capture unmet) exits 0 unless this flag is set.  When set, it exits with the
+    /// <em>distinct</em> code 4 so CI can tell a timeout apart from a product Fail (1) and from
+    /// infra breakage (3).
+    /// </remarks>
+    internal static Option<bool> BuildFailOnInconclusiveOption() => new("--fail-on-inconclusive")
+    {
+        Description =
+            "Treat an Inconclusive verdict as a CI failure (exit 4). Off by default — only Fail "
+            + "breaks CI. Use this to gate on results the engine could not decide (timeout, "
+            + "partition outlasted grace, upstream capture unmet); the distinct code 4 keeps it "
+            + "separable from a product Fail (1) and an Environment error (3).",
+    };
+
+    /// <summary>
+    /// The <c>--html</c> option (S09-T3): write a self-contained HTML report to the given path.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no HTML artifact (today's behaviour unchanged).  When set, the report is written
+    /// from the SAME buffered event stream + diff lookup the terminal renderer consumes, so the
+    /// HTML view can never disagree with the terminal output (parity, S09-D-01).
+    /// </remarks>
+    internal static Option<string?> BuildHtmlReportOption() => new("--html")
+    {
+        Description =
+            "Write a self-contained HTML report to <path>. Rendered from the same event stream as "
+            + "the terminal output, so the two never disagree. Parent directories are created as "
+            + "needed; an existing file is overwritten. Omit for no HTML report (the default).",
+    };
+
+    /// <summary>
+    /// The <c>--junit</c> option (S09-T3): write a JUnit XML results file to the given path.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no JUnit artifact (today's behaviour unchanged).  When set, the file is written
+    /// from the SAME buffered event stream the terminal renderer consumes, and maps the four
+    /// §12.1 verdicts onto distinct JUnit primitives (Fail→failure, EnvError→error,
+    /// Inconclusive→skipped) so CI never conflates infra breakage with a defect.
+    /// </remarks>
+    internal static Option<string?> BuildJunitReportOption() => new("--junit")
+    {
+        Description =
+            "Write a JUnit XML results file to <path> for CI ingestion. Rendered from the same "
+            + "event stream as the terminal output; the four verdicts map to distinct JUnit "
+            + "primitives (Fail→failure, Environment-error→error, Inconclusive→skipped). Parent "
+            + "directories are created as needed; an existing file is overwritten. Omit for no "
+            + "JUnit report (the default).",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -222,6 +320,26 @@ internal static class RunCommand
     /// <paramref name="parallel"/> (combining them is a usage error); requires the selection to
     /// resolve to exactly one file.
     /// </param>
+    /// <param name="failOnEnvironmentError">
+    /// The <c>--fail-on-env-error</c> flag (S09-C-03): when <see langword="true"/>, an aggregate
+    /// <see cref="Verdict.EnvironmentError"/> exits with <see cref="ExitCodes.EnvironmentError"/>
+    /// (3) instead of 0.  Off by default — only <see cref="Verdict.Fail"/> breaks CI.
+    /// </param>
+    /// <param name="failOnInconclusive">
+    /// The <c>--fail-on-inconclusive</c> flag (S09-C-03): when <see langword="true"/>, an
+    /// aggregate <see cref="Verdict.Inconclusive"/> exits with <see cref="ExitCodes.Inconclusive"/>
+    /// (4) instead of 0.  Off by default — only <see cref="Verdict.Fail"/> breaks CI.
+    /// </param>
+    /// <param name="htmlReportPath">
+    /// The <c>--html</c> path (S09-T3): when non-<see langword="null"/>, the runner writes a
+    /// self-contained HTML report there from the same buffered event stream + diff lookup the
+    /// terminal renderer uses.  <see langword="null"/> ⇒ no HTML artifact.
+    /// </param>
+    /// <param name="junitReportPath">
+    /// The <c>--junit</c> path (S09-T3): when non-<see langword="null"/>, the runner writes a
+    /// JUnit XML results file there from the same buffered event stream the terminal renderer
+    /// uses.  <see langword="null"/> ⇒ no JUnit artifact.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
@@ -239,6 +357,10 @@ internal static class RunCommand
         SelectionCriteria criteria,
         int? parallel,
         bool watch,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        string? htmlReportPath,
+        string? junitReportPath,
         TextWriter output,
         CancellationToken cancellationToken)
     {
@@ -315,6 +437,12 @@ internal static class RunCommand
         // re-using the kept topology while the `environment` block is unchanged.  Watching is
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
+        //
+        // NOTE (S09-T3 scope): --html / --junit are NOT wired into watch mode.  Watch renders
+        // per re-run (not from one suite-wide buffer), and threading the report paths through
+        // WatchRunner / WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
+        // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
+        // whose value is the terminal feedback.  Deliberately left out rather than half-wired.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
@@ -370,6 +498,8 @@ internal static class RunCommand
                     output,
                     maxConcurrency: parallelDegree,
                     seedBaseDirectory: null,
+                    htmlReportPath: htmlReportPath,
+                    junitReportPath: junitReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
@@ -379,6 +509,8 @@ internal static class RunCommand
                     appHostAssemblyName,
                     output,
                     seedBaseDirectory: null,
+                    htmlReportPath: htmlReportPath,
+                    junitReportPath: junitReportPath,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
@@ -387,7 +519,7 @@ internal static class RunCommand
         // Fold the parse-failures (Inconclusive) into the suite verdict so the exit code
         // reflects the whole discovery, not just the scenarios that compiled.
         var aggregate = AggregateVerdict(suiteVerdict, failures.Count);
-        return ExitCodes.FromVerdict(aggregate);
+        return ExitCodes.FromVerdict(aggregate, failOnEnvironmentError, failOnInconclusive);
     }
 
     /// <summary>
