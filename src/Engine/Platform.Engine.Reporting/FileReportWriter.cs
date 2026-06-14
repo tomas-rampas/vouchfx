@@ -75,10 +75,19 @@ internal static class FileReportWriter
     /// The destination for the JUnit XML results file, or <see langword="null"/> to write no
     /// JUnit report (absent <c>--junit</c> ⇒ no artifact).
     /// </param>
+    /// <param name="eventsPath">
+    /// The destination for the raw JSON Lines event stream (S10), or <see langword="null"/> to
+    /// write no events file (absent <c>--events</c> / <c>--json</c> ⇒ no artifact).  When set, the
+    /// <paramref name="eventLines"/> buffer is written <b>verbatim</b> — one element per line,
+    /// <c>\n</c>-joined, UTF-8 without a BOM — re-emitting the EXISTING frozen v1 event stream
+    /// byte-for-byte so a downstream consumer (e.g. the VSCode Test Explorer) sees exactly what the
+    /// terminal / HTML / JUnit renderers saw.  No record or wire-contract change: this is an
+    /// additive raw passthrough of the same buffer.
+    /// </param>
     /// <param name="diagnostics">
     /// An optional sink for one-line failure notices.  When writing a report fails for a
-    /// file-system / path reason (a caller-supplied bad <c>--html</c> / <c>--junit</c> path,
-    /// a permission or directory error), a single diagnostic line is written here and the
+    /// file-system / path reason (a caller-supplied bad <c>--html</c> / <c>--junit</c> /
+    /// <c>--events</c> path, a permission or directory error), a single diagnostic line is written here and the
     /// failure is swallowed — <b>report writing must never change the run's verdict or exit
     /// code</b>.  Each report is attempted independently, so a bad path for one cannot abort
     /// the other.  The notice carries the exception <i>type name only</i> — never
@@ -115,7 +124,8 @@ internal static class FileReportWriter
         Func<string, JsonElement, string?>? diffLookup,
         string? htmlPath,
         string? junitPath,
-        TextWriter? diagnostics = null)
+        TextWriter? diagnostics = null,
+        string? eventsPath = null)
     {
         ArgumentNullException.ThrowIfNull(eventLines);
 
@@ -168,6 +178,38 @@ internal static class FileReportWriter
                 // the already-computed verdict / exit code.
                 diagnostics?.WriteLine(
                     $"Report write failed for 'junit' (verdict unaffected): {ex.GetType().Name}");
+            }
+        }
+
+        // ── Raw JSON Lines event stream (S10) ─────────────────────────────────────────────
+        // --events / --json re-emits the buffered event stream VERBATIM: one element per line,
+        // '\n'-joined, UTF-8 without a BOM, no renderer in between.  This is an additive raw
+        // passthrough of the SAME frozen v1 buffer the renderers above consumed — no record or
+        // wire-contract change — so a downstream consumer (the VSCode Test Explorer) sees exactly
+        // the lines the engine emitted.  Caught PER FILE with the SAME exception family as HTML /
+        // JUnit (incl. InvalidOperationException as defence in depth): a bad --events path must
+        // NEVER abort the HTML / JUnit writes nor change the already-computed verdict / exit code.
+        if (!string.IsNullOrEmpty(eventsPath))
+        {
+            try
+            {
+                using var writer = CreateWriter(eventsPath);
+                // string.Join keeps the buffer byte-exact: no trailing newline, '\n' separators
+                // only (CreateWriter does not translate line endings — StreamWriter writes the
+                // literal '\n' bytes), and no per-line transformation.
+                writer.Write(string.Join('\n', eventLines));
+            }
+            catch (Exception ex) when (ex is IOException
+                or UnauthorizedAccessException
+                or ArgumentException
+                or NotSupportedException
+                or System.Security.SecurityException
+                or InvalidOperationException)
+            {
+                // Same defence-in-depth rationale as the HTML / JUnit catches above: a bad path or
+                // a stray surfaced exception must NOT abort report writing or change the verdict.
+                diagnostics?.WriteLine(
+                    $"Report write failed for 'events' (verdict unaffected): {ex.GetType().Name}");
             }
         }
     }

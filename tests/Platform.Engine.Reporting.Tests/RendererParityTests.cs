@@ -76,6 +76,10 @@ public sealed class RendererParityTests
     // static field so the per-call array allocation (CA1861) is avoided.
     private static readonly string[] NewlineSeparators = { "\r\n", "\n" };
 
+    // The three non-clean JUnit child primitives, hoisted to a static field so the
+    // per-iteration array allocation in the mutual-exclusivity loop (CA1861) is avoided.
+    private static readonly string[] JunitPrimitiveElements = { "failure", "error", "skipped" };
+
     // -------------------------------------------------------------------------
     // The fixed buffer: four scenarios, one per verdict, authored as the runner
     // would emit them.  Built ONCE and rendered three times.
@@ -308,6 +312,242 @@ public sealed class RendererParityTests
     }
 
     // -------------------------------------------------------------------------
+    // S10-G-02: each .NET surface represents the FOUR §12.1 verdicts MUTUALLY
+    // DISTINCTLY.  The parity test above proves the three renderers AGREE on each
+    // scenario's verdict; these three tests additionally prove that no single
+    // surface silently COLLAPSES any two of the four verdicts onto the same
+    // representation — the failure mode §12.1 warns about (conflating an
+    // environment error with a defect destroys trust).  One fixed 4-verdict
+    // buffer; the four verdicts must map to four DISTINCT tokens/classes/primitives
+    // on every surface.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Terminal (plain mode): the four distinct verdict TEXT tokens
+    /// <c>PASS</c>/<c>FAIL</c>/<c>ENV_ERROR</c>/<c>INCONCLUSIVE</c> are each present in
+    /// the output and are mutually distinct (four scenarios → four distinct tokens).
+    /// </summary>
+    [Fact]
+    public void Terminal_RepresentsFourVerdicts_MutuallyDistinctly()
+    {
+        var buffer = BuildFixedBuffer();
+
+        using var terminalWriter = new StringWriter();
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        var output = terminalWriter.ToString();
+
+        // The four canonical verdict tokens must all appear in the plain-mode output.
+        Assert.Contains("PASS", output, StringComparison.Ordinal);
+        Assert.Contains("FAIL", output, StringComparison.Ordinal);
+        Assert.Contains("ENV_ERROR", output, StringComparison.Ordinal);
+        Assert.Contains("INCONCLUSIVE", output, StringComparison.Ordinal);
+
+        // The per-scenario verdict the terminal asserts must be four DISTINCT tokens —
+        // one per scenario, none collapsed onto another.  ExtractTerminalVerdicts reads
+        // the token from each scenario-completed summary line.
+        var perScenario = ExtractTerminalVerdicts(output);
+        var distinctTokens = perScenario.Values.ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(4, distinctTokens.Count);
+        Assert.Equal(
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "PASS", "FAIL", "ENV_ERROR", "INCONCLUSIVE",
+            },
+            distinctTokens);
+    }
+
+    /// <summary>
+    /// HTML: the four distinct per-verdict CSS classes
+    /// (<c>verdict-pass</c>/<c>verdict-fail</c>/<c>verdict-env-error</c>/<c>verdict-inconclusive</c>)
+    /// each appear, AND each is co-emitted with its distinct human-readable label — four
+    /// distinct (class, label) pairs, so the report never colours two verdicts the same
+    /// nor labels two distinct classes identically.
+    /// </summary>
+    [Fact]
+    public void Html_RepresentsFourVerdicts_AsDistinctClassLabelPairs()
+    {
+        var buffer = BuildFixedBuffer();
+
+        using var htmlWriter = new StringWriter();
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        var output = htmlWriter.ToString();
+
+        // The canonical (CSS class → label) pairing for each of the four verdicts.
+        var expectedPairs = new (string CssClass, string Label)[]
+        {
+            ("verdict-pass", "PASS"),
+            ("verdict-fail", "FAIL"),
+            ("verdict-env-error", "ENV_ERROR"),
+            ("verdict-inconclusive", "INCONCLUSIVE"),
+        };
+
+        // Each distinct class must appear, and so must its distinct label.  The four
+        // classes are mutually distinct (set count 4) and the four labels likewise.
+        Assert.Equal(4, expectedPairs.Select(p => p.CssClass).ToHashSet(StringComparer.Ordinal).Count);
+        Assert.Equal(4, expectedPairs.Select(p => p.Label).ToHashSet(StringComparer.Ordinal).Count);
+
+        foreach (var (cssClass, label) in expectedPairs)
+        {
+            Assert.Contains(cssClass, output, StringComparison.Ordinal);
+            // The label is rendered inside a verdict span as ">{LABEL}</span>"; assert that
+            // distinct shape so a bare substring (e.g. PASS inside INCONCLUSIVE-free text)
+            // cannot accidentally satisfy the check.
+            Assert.Contains(">" + label + "</span>", output, StringComparison.Ordinal);
+        }
+
+        // The per-scenario (class, label) pairs the HTML emits must themselves be four
+        // distinct pairs — proving no two scenarios share a class or a label.  The
+        // ExtractHtmlVerdicts helper already cross-checks, per scenario, that the section
+        // CSS-class token AGREES with the heading's label text; here we assert the four
+        // resulting verdict tokens are mutually distinct.
+        var perScenario = ExtractHtmlVerdicts(output);
+        var distinctTokens = perScenario.Values.ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(4, distinctTokens.Count);
+        Assert.Equal(
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "PASS", "FAIL", "ENV_ERROR", "INCONCLUSIVE",
+            },
+            distinctTokens);
+    }
+
+    /// <summary>
+    /// JUnit: the four verdicts map to the four DISTINCT JUnit primitives — Pass → a clean
+    /// <c>&lt;testcase&gt;</c> (no child), Fail → <c>&lt;failure&gt;</c>, EnvironmentError →
+    /// <c>&lt;error&gt;</c>, Inconclusive → <c>&lt;skipped&gt;</c> — across the WHOLE
+    /// 4-scenario document: exactly ONE of each primitive, and the original vouchfx verdict
+    /// survives via the <c>vouchfx.verdict</c> property on every testcase.  This proves the
+    /// verdict never collapses onto a single JUnit primitive when crossing the audience.
+    /// </summary>
+    [Fact]
+    public void Junit_RepresentsFourVerdicts_AsFourDistinctPrimitives()
+    {
+        var buffer = BuildFixedBuffer();
+
+        using var junitWriter = new StringWriter();
+        JunitXmlRenderer.Render(buffer, junitWriter);
+        var doc = XDocument.Parse(junitWriter.ToString());
+
+        var testcases = doc.Descendants("testcase").ToList();
+        Assert.Equal(4, testcases.Count);
+
+        // Across the four-scenario document there is EXACTLY one of each non-clean
+        // primitive, and exactly one CLEAN testcase (Pass).  Distinctness over the whole
+        // document — not just per scenario — is what proves no two verdicts collapsed onto
+        // the same primitive (e.g. EnvError emitted as <failure> like Fail).
+        var failureCount = testcases.Count(tc => tc.Element("failure") is not null);
+        var errorCount = testcases.Count(tc => tc.Element("error") is not null);
+        var skippedCount = testcases.Count(tc => tc.Element("skipped") is not null);
+        var cleanCount = testcases.Count(tc =>
+            tc.Element("failure") is null &&
+            tc.Element("error") is null &&
+            tc.Element("skipped") is null);
+
+        Assert.Equal(1, failureCount);
+        Assert.Equal(1, errorCount);
+        Assert.Equal(1, skippedCount);
+        Assert.Equal(1, cleanCount);
+
+        // No testcase carries more than one primitive (a clean+failure hybrid would be a
+        // mapping bug); the four counts already sum to 4 over 4 testcases, but assert the
+        // mutual exclusivity directly so a regression names itself.
+        foreach (var tc in testcases)
+        {
+            var children = JunitPrimitiveElements
+                .Count(name => tc.Element(name) is not null);
+            Assert.True(
+                children <= 1,
+                $"JUnit testcase '{(string?)tc.Attribute("name")}' carries {children} verdict "
+                + "primitives; each verdict must map to exactly one distinct primitive.");
+        }
+
+        // The original vouchfx verdict survives on every testcase via the
+        // vouchfx.verdict property, and those four surviving verdicts are themselves the
+        // four distinct §12.1 tokens — so the lossless mapping is bijective, not collapsed.
+        var survivingVerdicts = ExtractJunitVerdicts(junitWriter.ToString());
+        Assert.Equal(ExpectedVerdicts, survivingVerdicts);
+        Assert.Equal(4, survivingVerdicts.Values.ToHashSet(StringComparer.Ordinal).Count);
+    }
+
+    // -------------------------------------------------------------------------
+    // S10-G-02: the canonical EDITOR-SURFACE mapping table (the contract the
+    // VSCode TestController — task T4 / S10-G-01 — must honour) is pinned HERE as
+    // the .NET-side source of truth.  The editor renderer is TypeScript, so this
+    // table cannot be asserted by exercising a renderer; instead it is pinned as a
+    // pure data table the TS side MUST mirror (Pass→passed, Fail→failed,
+    // EnvironmentError→errored, Inconclusive→skipped), guarding cross-surface
+    // consistency.  This mirrors the JUnit primitive mapping above (clean/failure/
+    // error/skipped) one-for-one, which is the cross-surface invariant: the editor's
+    // four TestRun states line up with JUnit's four primitives line up with the
+    // four §12.1 verdicts.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The canonical, frozen mapping from each §12.1 verdict to the VSCode
+    /// <c>TestRun</c> state the editor TestController must report.  The four verdicts
+    /// map to the four standard <c>vscode.TestRun</c> outcomes
+    /// (<c>passed</c>/<c>failed</c>/<c>errored</c>/<c>skipped</c>) — the TypeScript editor
+    /// surface MUST mirror this table.  Pinned as a dictionary so a drift in the .NET-side
+    /// contract is a red test; the editor's own tests assert the TS mirror against it.
+    /// </summary>
+    private static readonly SortedDictionary<Verdict, string> EditorStateMapping =
+        new()
+        {
+            [Verdict.Pass] = "passed",
+            [Verdict.Fail] = "failed",
+            [Verdict.EnvironmentError] = "errored",
+            [Verdict.Inconclusive] = "skipped",
+        };
+
+    /// <summary>
+    /// Pins the canonical editor-state mapping: each verdict maps to its expected VSCode
+    /// <c>TestRun</c> state, and the four states are mutually distinct.  This is the
+    /// source-of-truth table the TypeScript TestController mirrors (S10-G-01 / T4).
+    /// </summary>
+    [Theory]
+    [InlineData(Verdict.Pass, "passed")]
+    [InlineData(Verdict.Fail, "failed")]
+    [InlineData(Verdict.EnvironmentError, "errored")]
+    [InlineData(Verdict.Inconclusive, "skipped")]
+    public void EditorStateMapping_PinsCanonicalVerdictToTestRunState(Verdict verdict, string expectedState)
+    {
+        Assert.True(
+            EditorStateMapping.TryGetValue(verdict, out var actualState),
+            $"The editor-state mapping table has no entry for verdict '{verdict}'. Every "
+            + "§12.1 verdict MUST map to a VSCode TestRun state the TestController honours.");
+        Assert.Equal(expectedState, actualState);
+    }
+
+    /// <summary>
+    /// The editor-state mapping is total over the four §12.1 verdicts and injective: all
+    /// four verdicts are covered, and the four TestRun states are mutually distinct (no two
+    /// verdicts collapse onto the same editor outcome).  This locks the table as a 1:1
+    /// mapping — the cross-surface guarantee for the editor audience.
+    /// </summary>
+    [Fact]
+    public void EditorStateMapping_IsTotalAndInjective_OverFourVerdicts()
+    {
+        // Total: every declared Verdict enum value has a mapping (so a future verdict
+        // forces a deliberate update here).
+        foreach (var verdict in Enum.GetValues<Verdict>())
+        {
+            Assert.True(
+                EditorStateMapping.ContainsKey(verdict),
+                $"Verdict '{verdict}' is not mapped to an editor TestRun state. The taxonomy "
+                + "is the four §12.1 verdicts; every one must have a distinct editor state.");
+        }
+
+        // Exactly the four §12.1 verdicts, and exactly four distinct editor states.
+        Assert.Equal(4, EditorStateMapping.Count);
+        Assert.Equal(4, EditorStateMapping.Values.ToHashSet(StringComparer.Ordinal).Count);
+
+        // The states are the four standard vscode.TestRun outcomes.
+        Assert.Equal(
+            new HashSet<string>(StringComparer.Ordinal) { "passed", "failed", "errored", "skipped" },
+            EditorStateMapping.Values.ToHashSet(StringComparer.Ordinal));
+    }
+
+    // -------------------------------------------------------------------------
     // The aggregate counts agree across the renderers that expose them.
     // -------------------------------------------------------------------------
 
@@ -351,12 +591,14 @@ public sealed class RendererParityTests
 
         // HTML: the run-summary block tallies one of each verdict, consistent with the
         // JUnit aggregate (the per-scenario VerdictCounts summed across scenarios).  The
-        // summary emits "<verdict>PASS</verdict> 1" etc.; assert each count of 1 is
-        // present for its verdict label.
-        Assert.Contains(">PASS</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">FAIL</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">ENV_ERROR</span> 1<", htmlOutput, StringComparison.Ordinal);
-        Assert.Contains(">INCONCLUSIVE</span> 1<", htmlOutput, StringComparison.Ordinal);
+        // summary is now a real <table> (WCAG 1.3.1): each verdict is a row whose label
+        // sits in a <th scope="row"> and whose count sits in the adjacent <td>, so the
+        // markup is "…<span class="verdict">PASS</span></th><td>1</td>".  Assert each
+        // count of 1 is present for its verdict label in that row shape.
+        Assert.Contains(">PASS</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">FAIL</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">ENV_ERROR</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
+        Assert.Contains(">INCONCLUSIVE</span></th><td>1</td>", htmlOutput, StringComparison.Ordinal);
 
         // Terminal: each scenario-completed summary line carries its own per-verdict
         // count of 1.  The single passing scenario's summary line shows pass=1, the

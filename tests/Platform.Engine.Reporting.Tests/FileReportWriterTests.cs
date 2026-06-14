@@ -395,6 +395,160 @@ public sealed class FileReportWriterTests
         Assert.Null(ex);
     }
 
+    // ── Events stream (the raw JSON Lines writer, S10) ──────────────────────────────────
+    //
+    // --events <path> re-emits the EXISTING buffered JSON Lines event stream VERBATIM (one
+    // object per line) so a downstream tool (VSCode Test Explorer) can consume the per-step
+    // stream.  It is the SAME `eventLines` buffer the terminal / HTML / JUnit renderers see —
+    // this is the parity guarantee at the raw level: the file is byte-identical to the buffer.
+
+    [Fact]
+    public void EventsPath_WritesBufferVerbatim_NewlineJoined_NoBom()
+    {
+        var buffer = SampleBuffer(); // 4 lines.
+        var dir = NewTempDir();
+        var eventsPath = Path.Combine(dir, "events.jsonl");
+
+        try
+        {
+            FileReportWriter.WriteFileReports(
+                buffer, diffLookup: null, htmlPath: null, junitPath: null, eventsPath: eventsPath);
+
+            Assert.True(File.Exists(eventsPath), "The events stream should have been written.");
+
+            // VERBATIM: the file content is EXACTLY the buffer lines joined by '\n'.  Byte-compare
+            // the raw bytes so a stray '\r', a BOM, or a trailing newline would all fail the test.
+            var expected = string.Join("\n", buffer);
+            var actualBytes = File.ReadAllBytes(eventsPath);
+            var expectedBytes = new UTF8Encoding(false).GetBytes(expected);
+            Assert.Equal(expectedBytes, actualBytes);
+
+            // Explicit no-BOM assertion (the byte-compare above already excludes one, but this is
+            // the load-bearing §17 / consumer-compat invariant, so assert it directly too).
+            AssertNoBom(eventsPath);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void EventsPath_Absent_WritesNoFile()
+    {
+        var dir = NewTempDir();
+        var htmlPath = Path.Combine(dir, "report.html");
+
+        try
+        {
+            // No eventsPath supplied (defaulted null): the HTML report is written, but no events
+            // artifact and nothing with a .jsonl extension.
+            FileReportWriter.WriteFileReports(
+                SampleBuffer(), diffLookup: null, htmlPath, junitPath: null, eventsPath: null);
+
+            Assert.True(File.Exists(htmlPath), "HTML report should have been written.");
+
+            var files = Directory.GetFiles(dir).Select(Path.GetFileName).ToArray();
+            Assert.DoesNotContain(files, f => f!.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void EventsPath_CreatesMissingParentDirectories_AndOverwrites()
+    {
+        var dir = NewTempDir();
+        // A nested path whose parent directory does not yet exist.
+        var eventsPath = Path.Combine(dir, "nested", "deep", "events.jsonl");
+
+        try
+        {
+            FileReportWriter.WriteFileReports(
+                SampleBuffer(), diffLookup: null, htmlPath: null, junitPath: null, eventsPath: eventsPath);
+            Assert.True(File.Exists(eventsPath), "Events stream (and its parent dirs) should have been created.");
+
+            // Overwrite: a second write with a smaller buffer must fully replace the first.
+            var smaller = new[]
+            {
+                Line(new ScenarioStartedEvent { RunId = "run-2", ScenarioId = "tiny" }),
+            };
+            FileReportWriter.WriteFileReports(
+                smaller, diffLookup: null, htmlPath: null, junitPath: null, eventsPath: eventsPath);
+
+            var content = File.ReadAllText(eventsPath);
+            Assert.Equal(smaller[0], content);
+            Assert.DoesNotContain("checkout", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BadEventsPath_DoesNotThrow_StillWritesHtmlAndJunit_AndDiagnoses()
+    {
+        var dir = NewTempDir();
+        var htmlPath = Path.Combine(dir, "report.html");
+        var junitPath = Path.Combine(dir, "report.xml");
+        var diagnostics = new StringWriter();
+
+        try
+        {
+            // A bad events path must NOT abort the valid HTML / JUnit writes, and must NOT throw
+            // out of the seam (a typo'd --events path must never change the run's verdict).
+            var ex = Record.Exception(() => FileReportWriter.WriteFileReports(
+                SampleBuffer(), diffLookup: null, htmlPath, junitPath, diagnostics, eventsPath: InvalidPath));
+
+            // (a) It does NOT throw — the verdict / exit code is unaffected.
+            Assert.Null(ex);
+
+            // (b) A single diagnostic line names the failed report + the exception TYPE only
+            //     (never the message, never the resolved path — §17 redaction).
+            var diag = diagnostics.ToString();
+            Assert.Contains("Report write failed for 'events'", diag, StringComparison.Ordinal);
+            Assert.Contains("verdict unaffected", diag, StringComparison.Ordinal);
+            Assert.Contains(nameof(ArgumentException), diag, StringComparison.Ordinal);
+            // No path text leaked: the NUL-bearing path fragment must not appear in the diagnostic.
+            Assert.DoesNotContain("bad", diag, StringComparison.Ordinal);
+
+            // (c) The VALID HTML + JUnit files WERE still written — one bad path aborts neither.
+            Assert.True(File.Exists(htmlPath), "HTML report should still have been written.");
+            Assert.True(File.Exists(junitPath), "JUnit report should still have been written.");
+            _ = XDocument.Parse(File.ReadAllText(junitPath));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BadEventsPath_WithNullDiagnostics_StillDoesNotThrow()
+    {
+        // The diagnostics sink is optional; a bad events path must be swallowed even with no sink.
+        var ex = Record.Exception(() => FileReportWriter.WriteFileReports(
+            SampleBuffer(), diffLookup: null, htmlPath: null, junitPath: null, diagnostics: null,
+            eventsPath: InvalidPath));
+
+        Assert.Null(ex);
+    }
+
     private static void AssertNoBom(string path)
     {
         var bytes = File.ReadAllBytes(path);

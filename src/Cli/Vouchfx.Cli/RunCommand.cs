@@ -65,6 +65,8 @@ internal static class RunCommand
         var failOnInconclusiveOption = BuildFailOnInconclusiveOption();
         var htmlReportOption = BuildHtmlReportOption();
         var junitReportOption = BuildJunitReportOption();
+        var eventsOption = BuildEventsOption();
+        var noDecorationsOption = BuildNoDecorationsOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
@@ -75,6 +77,8 @@ internal static class RunCommand
         command.Add(failOnInconclusiveOption);
         command.Add(htmlReportOption);
         command.Add(junitReportOption);
+        command.Add(eventsOption);
+        command.Add(noDecorationsOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -88,6 +92,21 @@ internal static class RunCommand
             var failOnInconclusive = parseResult.GetValue(failOnInconclusiveOption);
             var htmlReportPath = parseResult.GetValue(htmlReportOption);
             var junitReportPath = parseResult.GetValue(junitReportOption);
+            var eventsReportPath = parseResult.GetValue(eventsOption);
+            var noDecorations = parseResult.GetValue(noDecorationsOption);
+
+            // Accessibility (S10-G-03a): decorate the terminal report (ANSI colour + per-verdict
+            // shape glyph) ONLY for an interactive TTY that has not opted out.  Plain text is the
+            // safe default for piped / redirected / CI / test output and for the NO_COLOR
+            // convention, and is what a screen reader wants.  The verdict TEXT tokens (the
+            // WCAG-1.4.1 guarantee) are unconditional and unaffected — this toggles only the
+            // optional colour + glyph layer.  Computed HERE (the CLI), not in the renderer: the
+            // renderer stays a pure function of its inputs and never probes the environment.
+            var decorate =
+                !noDecorations
+                && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"))
+                && !Console.IsOutputRedirected;
+
             return ExecuteAsync(
                 path,
                 criteria,
@@ -97,6 +116,8 @@ internal static class RunCommand
                 failOnInconclusive,
                 htmlReportPath,
                 junitReportPath,
+                eventsReportPath,
+                decorate,
                 Console.Out,
                 cancellationToken);
         });
@@ -259,6 +280,56 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--events</c> option (S10), aliased as <c>--json</c>: write the raw buffered JSON
+    /// Lines event stream to the given path, VERBATIM.
+    /// </summary>
+    /// <remarks>
+    /// Absent ⇒ no events artifact (today's behaviour unchanged).  When set, the SAME buffered
+    /// event stream the terminal / HTML / JUnit renderers consume is written byte-for-byte — one
+    /// JSON object per line, UTF-8 without a BOM — so a downstream consumer (e.g. the VSCode Test
+    /// Explorer) sees exactly the frozen v1 stream the engine emitted.  This is ADDITIVE: it
+    /// re-emits the existing event records, it does NOT change any record or the wire contract.
+    /// <c>--events</c> and <c>--json</c> are ONE option with two names (the alias mechanism), so
+    /// either spelling binds the same value.
+    /// </remarks>
+    internal static Option<string?> BuildEventsOption() => new("--events", "--json")
+    {
+        Description =
+            "Write the raw JSON Lines event stream to the given path. Re-emits the same event "
+            + "stream the terminal / HTML / JUnit reports are rendered from, verbatim — one JSON "
+            + "object per line, UTF-8 without a BOM. Parent directories are created as needed; an "
+            + "existing file is overwritten. Aliased as --json. Omit for no events file (the "
+            + "default).",
+    };
+
+    /// <summary>
+    /// The <c>--no-decorations</c> flag (S10-G-03a): render the terminal report as PLAIN text —
+    /// no ANSI colour and no per-verdict shape glyph — for a screen-reader / CI-clean view.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Off by default.  When OFF, the report is decorated (colour + glyph) ONLY when the output
+    /// is an interactive TTY and the <c>NO_COLOR</c> convention is not set; piped / redirected /
+    /// CI output is plain regardless.  Setting this flag forces plain text even on a TTY.
+    /// </para>
+    /// <para>
+    /// Decorations are PURELY additive and accessibility-redundant: the four §12.1 verdicts are
+    /// always distinguished by their TEXT token (<c>PASS</c> / <c>FAIL</c> / <c>ENV_ERROR</c> /
+    /// <c>INCONCLUSIVE</c>) — the WCAG-1.4.1 guarantee — so turning decorations off loses no
+    /// information, only the colour + glyph convenience.
+    /// </para>
+    /// </remarks>
+    internal static Option<bool> BuildNoDecorationsOption() => new("--no-decorations")
+    {
+        Description =
+            "Render the terminal report as plain text — no ANSI colour and no per-verdict shape "
+            + "glyph — for a screen-reader / CI-friendly view. Off by default; when off, colour + "
+            + "glyph are added only for an interactive TTY with NO_COLOR unset. The verdict text "
+            + "tokens (PASS / FAIL / ENV_ERROR / INCONCLUSIVE) are always shown, so this loses no "
+            + "information.",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -340,6 +411,23 @@ internal static class RunCommand
     /// JUnit XML results file there from the same buffered event stream the terminal renderer
     /// uses.  <see langword="null"/> ⇒ no JUnit artifact.
     /// </param>
+    /// <param name="eventsReportPath">
+    /// The <c>--events</c> / <c>--json</c> path (S10): when non-<see langword="null"/>, the runner
+    /// writes the raw buffered JSON Lines event stream there VERBATIM (the same buffer the terminal
+    /// renderer uses, one object per line, UTF-8 without a BOM).  <see langword="null"/> ⇒ no events
+    /// artifact.  Like <c>--html</c> / <c>--junit</c> it is NOT wired into watch mode (same scope
+    /// note as those flags below).
+    /// </param>
+    /// <param name="decorate">
+    /// The computed terminal-decoration flag (S10-G-03a): when <see langword="true"/>, the
+    /// non-watch runners decorate each step-verdict line with an ANSI colour + a per-verdict shape
+    /// glyph; when <see langword="false"/> the report is plain text.  Computed by the caller from
+    /// <c>--no-decorations</c> + the <c>NO_COLOR</c> convention + <see cref="Console.IsOutputRedirected"/>
+    /// so the renderer stays a pure function of its inputs.  The verdict TEXT tokens (the WCAG-1.4.1
+    /// guarantee) are unconditional and independent of this flag.  Like <c>--html</c> / <c>--junit</c>
+    /// / <c>--events</c> it is NOT threaded into watch mode (same scope note as those flags below):
+    /// the watch loop renders plain.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
@@ -361,6 +449,8 @@ internal static class RunCommand
         bool failOnInconclusive,
         string? htmlReportPath,
         string? junitReportPath,
+        string? eventsReportPath,
+        bool decorate,
         TextWriter output,
         CancellationToken cancellationToken)
     {
@@ -438,11 +528,13 @@ internal static class RunCommand
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
         //
-        // NOTE (S09-T3 scope): --html / --junit are NOT wired into watch mode.  Watch renders
-        // per re-run (not from one suite-wide buffer), and threading the report paths through
-        // WatchRunner / WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
-        // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
-        // whose value is the terminal feedback.  Deliberately left out rather than half-wired.
+        // NOTE (S09-T3 / S10 scope): --html / --junit / --events / --no-decorations are NOT wired
+        // into watch mode.  Watch renders per re-run (not from one suite-wide buffer), and threading
+        // the report / events paths through WatchRunner / WatchSession /
+        // RunScenarioAgainstKeptTopologyAsync — plus deciding the overwrite-on-every-save semantics
+        // — is meaningful complexity for an interactive loop whose value is the terminal feedback.
+        // --events and the --no-decorations `decorate` flag follow the SAME scope as --html /
+        // --junit: deliberately left out rather than half-wired (the watch loop renders plain).
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
@@ -500,6 +592,8 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
+                    eventsReportPath: eventsReportPath,
+                    decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
@@ -511,6 +605,8 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
+                    eventsReportPath: eventsReportPath,
+                    decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
