@@ -15,7 +15,9 @@
 //     resolveHandler (re-)scans on demand.
 //   • Run — for each requested file the CLI is spawned as
 //       <cliPath> run <file> --events <tmpEventsFile> --no-decorations
-//     and on exit the temp events file is parsed; each step is reported via
+//     where <tmpEventsFile> lives inside an exclusive `mkdtemp` directory that is
+//     removed in full on every exit path. On exit the temp events file is parsed;
+//     each step is reported via
 //     run.passed/failed/errored/skipped per `mapVerdict`. A Fail attaches a
 //     TestMessage whose `location` is the step's YAML line, so the failing line
 //     is decorated in the editor and the true verdict is named.
@@ -29,13 +31,14 @@
 
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 import { E2eOutlineStep, parseE2eOutline } from './e2eYamlOutline';
 import { ParsedScenario, parseEvents } from './eventsParse';
-import { mapVerdict } from './verdictMap';
+import { rollupState } from './rollup';
+import { eventsPathIn, makeTempEventsDir, safeRemoveDir } from './tempDir';
+import { EditorState, mapVerdict } from './verdictMap';
 
 /** Glob identifying a vouchfx test document — kept identical to the manifest. */
 const E2E_GLOB = '**/*.e2e.yaml';
@@ -289,43 +292,53 @@ async function runOneFile(
   }
 
   const cliPath = resolveCliPath(uri);
-  const eventsPath = makeTempEventsPath();
 
-  let cliResult: CliResult;
+  // Create an EXCLUSIVE 0700 temp directory (mkdtemp atomically makes a fresh
+  // dir we own) and place the events file inside it. This removes the shared
+  // /tmp pre-creation / symlink-target window a predictable filename leaves open.
+  const tempDir = makeTempEventsDir();
+  const eventsPath = eventsPathIn(tempDir);
+
+  // A single cleanup point: remove the whole owned directory on EVERY exit path
+  // (normal completion, spawn-error early return, and cancellation), preserving
+  // the "always cleaned up" guarantee.
   try {
-    cliResult = await spawnCli(cliPath, uri.fsPath, eventsPath, run.token);
-  } catch (error) {
-    failSoft(run, fileItem, stepItems, notice, cliPath, describeSpawnError(error));
-    safeUnlink(eventsPath);
-    return;
+    let cliResult: CliResult;
+    try {
+      cliResult = await spawnCli(cliPath, uri.fsPath, eventsPath, run.token);
+    } catch (error) {
+      failSoft(run, fileItem, stepItems, notice, cliPath, describeSpawnError(error));
+      return;
+    }
+
+    // Read whatever events the CLI produced (it may have written some before a
+    // non-zero exit — e.g. a Fail run still emits a full stream).
+    let eventsText = '';
+    try {
+      eventsText = fs.readFileSync(eventsPath, 'utf8');
+    } catch {
+      // No events file at all.
+    }
+
+    const parsed = parseEvents(eventsText);
+    const scenario = pickScenario(parsed.scenarios, uri);
+
+    if (scenario === undefined || scenario.steps.length === 0) {
+      // The CLI ran but yielded no usable events. If it also exited non-zero with
+      // no output, that is almost certainly a CLI/config problem.
+      const detail =
+        cliResult.code === 0
+          ? 'The run produced no events to report.'
+          : `The CLI exited with code ${cliResult.code} and produced no events.` +
+            (cliResult.stderr ? `\n${truncate(cliResult.stderr)}` : '');
+      failSoft(run, fileItem, stepItems, notice, cliPath, detail);
+      return;
+    }
+
+    reportScenario(run, fileItem, stepItems, scenario);
+  } finally {
+    safeRemoveDir(tempDir);
   }
-
-  // Read whatever events the CLI produced (it may have written some before a
-  // non-zero exit — e.g. a Fail run still emits a full stream).
-  let eventsText = '';
-  try {
-    eventsText = fs.readFileSync(eventsPath, 'utf8');
-  } catch {
-    // No events file at all.
-  }
-  safeUnlink(eventsPath);
-
-  const parsed = parseEvents(eventsText);
-  const scenario = pickScenario(parsed.scenarios, uri);
-
-  if (scenario === undefined || scenario.steps.length === 0) {
-    // The CLI ran but yielded no usable events. If it also exited non-zero with
-    // no output, that is almost certainly a CLI/config problem.
-    const detail =
-      cliResult.code === 0
-        ? 'The run produced no events to report.'
-        : `The CLI exited with code ${cliResult.code} and produced no events.` +
-          (cliResult.stderr ? `\n${truncate(cliResult.stderr)}` : '');
-    failSoft(run, fileItem, stepItems, notice, cliPath, detail);
-    return;
-  }
-
-  reportScenario(run, fileItem, stepItems, scenario);
 }
 
 /** Reports a parsed scenario's per-step verdicts onto the Test Explorer. */
@@ -337,18 +350,26 @@ function reportScenario(
 ): void {
   const stepItemById = new Map(stepItems.map((s) => [stepLocalId(s), s]));
 
+  // Track every observed step state so a truncated stream (no scenario verdict)
+  // can roll the file up to the worst observed step state rather than `skipped`.
+  const observedStates: EditorState[] = [];
+
   for (const parsedStep of scenario.steps) {
     const item = stepItemById.get(parsedStep.stepId);
     if (item === undefined) {
       // A step in the events that has no TestItem (e.g. the file changed since
-      // discovery). Nothing on the surface to decorate; skip it.
+      // discovery). It has nothing on the surface to decorate, but it still
+      // counts towards the file roll-up (a failing unmatched step must not be
+      // hidden), so record its state.
+      observedStates.push(mapVerdict(parsedStep.verdict).state);
       continue;
     }
-    applyVerdict(run, item, parsedStep.verdict);
+    observedStates.push(applyVerdict(run, item, parsedStep.verdict));
   }
 
   // Any known step the events did not mention is reported as skipped so the UI
-  // never leaves a stale "running" spinner.
+  // never leaves a stale "running" spinner. A `skipped` cannot lower the roll-up
+  // below the worst observed verdict, so it need not be recorded here.
   const reported = new Set(scenario.steps.map((s) => s.stepId));
   for (const item of stepItems) {
     if (!reported.has(stepLocalId(item))) {
@@ -356,11 +377,22 @@ function reportScenario(
     }
   }
 
-  // Roll the scenario verdict up onto the file item.
-  if (scenario.verdict !== null) {
+  // Roll the scenario verdict up onto the file item. When a `scenario-completed`
+  // arrived, `rollupState` honours that aggregate verdict verbatim; on a
+  // truncated stream (verdict === null) it elevates to the worst observed step
+  // state (errored > failed > skipped > passed) so a partial run with a failing
+  // step is never mis-presented as `skipped`.
+  const fileState = rollupState(observedStates, scenario.verdict);
+  if (fileState === null) {
+    // No scenario verdict and no observed steps: nothing decisive to report.
+    // Fall back to skipped so the UI does not leave a stale spinner (the
+    // no-events case is handled earlier in `runOneFile` via `failSoft`).
+    run.skipped(fileItem);
+  } else if (scenario.verdict !== null) {
+    // Honour the named aggregate verdict (attaches the verdict-specific message).
     applyVerdict(run, fileItem, scenario.verdict);
   } else {
-    run.skipped(fileItem);
+    applyState(run, fileItem, fileState, `Partial run — worst step verdict: ${fileState}`);
   }
 }
 
@@ -369,26 +401,48 @@ function reportScenario(
  * attaches a TestMessage located at the item's YAML line, naming the true
  * verdict; the other non-pass states attach a plain message naming the verdict
  * so the four-way taxonomy is legible on the surface.
+ *
+ * @returns The {@link EditorState} actually applied, so callers can roll the
+ *   observed step states up to a file-level state.
  */
-function applyVerdict(run: vscode.TestRun, item: vscode.TestItem, verdictToken: string): void {
+function applyVerdict(
+  run: vscode.TestRun,
+  item: vscode.TestItem,
+  verdictToken: string,
+): EditorState {
   const { state, verdict } = mapVerdict(verdictToken);
+  applyState(run, item, state, `vouchfx verdict: ${verdict}`);
+  return state;
+}
 
+/**
+ * Drives a resolved {@link EditorState} onto a TestItem, attaching `message` for
+ * the non-pass states so the four-way taxonomy stays legible on the surface.
+ * Used both for a named wire verdict (via {@link applyVerdict}) and for the
+ * truncated-stream file roll-up, where there is no single wire token.
+ */
+function applyState(
+  run: vscode.TestRun,
+  item: vscode.TestItem,
+  state: EditorState,
+  message: string,
+): void {
   switch (state) {
     case 'passed':
       run.passed(item);
       return;
     case 'failed':
-      run.failed(item, buildMessage(item, `vouchfx verdict: ${verdict}`));
+      run.failed(item, buildMessage(item, message));
       return;
     case 'errored':
-      run.errored(item, buildMessage(item, `vouchfx verdict: ${verdict}`));
+      run.errored(item, buildMessage(item, message));
       return;
     case 'skipped':
       // Inconclusive surfaces as skipped; still annotate so the reason is clear.
       run.skipped(item);
       return;
     default:
-      run.errored(item, buildMessage(item, `vouchfx verdict: ${verdict}`));
+      run.errored(item, buildMessage(item, message));
       return;
   }
 }
@@ -466,21 +520,6 @@ function spawnCli(
       resolve({ code, stderr });
     });
   });
-}
-
-/** A unique temp path for one run's events file. */
-function makeTempEventsPath(): string {
-  const name = `vouchfx-events-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`;
-  return path.join(os.tmpdir(), name);
-}
-
-/** Deletes a file, ignoring any error (it may never have been created). */
-function safeUnlink(p: string): void {
-  try {
-    fs.unlinkSync(p);
-  } catch {
-    // Ignore.
-  }
 }
 
 // ---------------------------------------------------------------------------

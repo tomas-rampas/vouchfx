@@ -95,7 +95,7 @@ A Run profile invokes the `vouchfx` CLI as:
 <cliPath> run <file> --events <tmpEventsFile> --no-decorations
 ```
 
-The extension parses the emitted `--events` JSON Lines stream, resolves each step's verdict, and reports the outcome via the Test Explorer surface. Each verdict maps to a VSCode TestItem state:
+The extension parses the emitted `--events` JSON Lines stream, resolves each step's verdict, and reports the outcome via the Test Explorer surface. The `--events` and `--no-decorations` CLI options are provided by the companion vouchfx reporting and CLI work (Sprint-10 .NET PR #148); until that PR is merged and the CLI becomes available on PATH, Test Explorer runs fail soft with items marked `errored` and a `vouchfx.cliPath` notice (see [Fail-soft behaviour](#fail-soft-behaviour) below). Each verdict maps to a VSCode TestItem state:
 
 | vouchfx verdict | VSCode state | What it means |
 | --- | --- | --- |

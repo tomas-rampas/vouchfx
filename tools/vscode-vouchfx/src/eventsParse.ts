@@ -105,7 +105,14 @@ export function parseEvents(jsonl: string): ParsedEvents {
       }
 
       case EVENT_STEP_COMPLETED: {
-        // Attach to the most-recently-started scenario; drop if none is active.
+        // ASSUMPTION (pinned): the extension runs exactly ONE file/scenario per
+        // CLI invocation, so "the active scenario" is unambiguous — the last
+        // `scenario-started` seen. Attaching each `step-completed` to that
+        // most-recently-started scenario is therefore correct here. It would
+        // MIS-ATTRIBUTE under `--parallel` interleaving, or if a future run path
+        // aggregates multiple files into one stream: in that case correlation
+        // must key off the event's own runId/scenarioId rather than recency.
+        // Drop a `step-completed` that arrives before any scenario-started.
         if (active === null) {
           break;
         }

@@ -726,13 +726,13 @@ With the binding in place, the editor behaves as it would for any well-supported
 
 ## 10.4 Test Explorer integration
 
-**Delivered (Sprint 10, S10-G-01):** The extension contributes a VSCode Test Controller that discovers `*.e2e.yaml` files in the workspace and renders a tree of scenarios and steps in the Test Explorer view. Running tests from the Test Explorer invokes the `vouchfx` CLI and surfaces per-step verdicts with line-level error decoration in the editor.
+**Delivered (Sprint 10, S10-G-01):** The extension contributes a VSCode Test Controller that discovers `*.e2e.yaml` files in the workspace and renders a tree of scenarios and steps in the Test Explorer view. Running tests from the Test Explorer invokes the `vouchfx` CLI and surfaces per-step verdicts with line-level error decoration in the editor. The live end-to-end acceptance (verdicts reflected and Fail-decorated lines shown) is contingent on the companion CLI release (Sprint-10 .NET PR #148, which delivers the `--events` and `--no-decorations` flags); until that merge, the Test Explorer run handler fails soft with items marked `errored` and a `vouchfx.cliPath` configuration notice.
 
 ### Discovery and tree structure
 
 A FileSystemWatcher monitors the workspace for `*.e2e.yaml` files. Each discovered file becomes a parent TestItem, labelled by its `metadata.name` or filename if metadata is absent. Within each file, the extension parses the YAML outline and creates a child TestItem for every step bearing an `id` field, anchored at the 0-based line number on which the step declaration begins. This information comes from a pure parsing routine (`parseE2eOutline`) that uses the `yaml` package's `LineCounter` to map byte offsets to line numbers; malformed YAML files yield empty outlines rather than throwing. The tree updates automatically as files are created, modified, or deleted; an explicit refresh button (built into VSCode's Test Explorer) rescans the workspace.
 
-### Run profile and CLI invocation
+### Run profile and CLI contract
 
 The extension registers a Run profile that, when invoked, spawns the `vouchfx` CLI for each selected file with the arguments:
 
@@ -740,7 +740,7 @@ The extension registers a Run profile that, when invoked, spawns the `vouchfx` C
 <cliPath> run <file> --events <tmpEventsFile> --no-decorations
 ```
 
-The `<cliPath>` is resolved from the `vouchfx.cliPath` configuration setting (default: bare `"vouchfx"` command); the `<file>` is the absolute path to the `.e2e.yaml` file; and `<tmpEventsFile>` is a unique temp-directory path where the CLI writes its JSON Lines event stream. The `--no-decorations` flag suppresses the engine's ANSI colour and formatting codes, as the Test Explorer surface handles visual styling.
+The `<cliPath>` is resolved from the `vouchfx.cliPath` configuration setting (default: bare `"vouchfx"` command); the `<file>` is the absolute path to the `.e2e.yaml` file; and `<tmpEventsFile>` is a unique temp-directory path where the CLI writes its JSON Lines event stream. The `--no-decorations` flag suppresses the engine's ANSI colour and formatting codes, as the Test Explorer surface handles visual styling. **This CLI contract is the interface between the VSCode extension (consumer, delivered in S10) and the reporting/CLI work (producer, delivered in Sprint-10 .NET PR #148).** Until #148 merges, the two flags are unavailable; the run handler detects this and degrades gracefully (see Fail-soft error handling below).
 
 ### Verdict mapping to editor state
 
