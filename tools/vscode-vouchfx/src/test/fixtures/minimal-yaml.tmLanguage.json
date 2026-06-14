@@ -1,0 +1,21 @@
+{
+  "comment": "Minimal stand-in for VSCode's built-in `source.yaml` grammar. It exists ONLY so the tokenisation test has a host scope (source.yaml) for the real injection to attach to; it does NOT reproduce the full YAML grammar. It tokenises mapping keys so the test can assert that a `code:` block-scalar body becomes embedded C# while neighbouring keys stay YAML.",
+  "scopeName": "source.yaml",
+  "patterns": [
+    {
+      "match": "^\\s*(#.*)$",
+      "name": "comment.line.number-sign.yaml"
+    },
+    {
+      "match": "^\\s*([A-Za-z0-9_-]+)(:)",
+      "captures": {
+        "1": { "name": "entity.name.tag.yaml" },
+        "2": { "name": "punctuation.separator.key-value.mapping.yaml" }
+      }
+    },
+    {
+      "match": ".+",
+      "name": "string.unquoted.plain.yaml"
+    }
+  ]
+}

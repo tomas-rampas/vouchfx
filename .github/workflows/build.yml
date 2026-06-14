@@ -313,3 +313,88 @@ jobs:
       - name: List vulnerable packages (transitive, advisory)
         continue-on-error: true
         run: dotnet list vouchfx.sln package --vulnerable --include-transitive
+
+  # ── VSCode extension build — NON-BLOCKING ────────────────────────────────────
+  # Builds, lints, tests and packages the greenfield TypeScript VSCode extension
+  # at tools/vscode-vouchfx/.  This extension is OUT of the .NET solution
+  # (vouchfx.sln), so it is invisible to every .NET job above; this job is the
+  # only thing that exercises it in CI.
+  #
+  # This job is NON-BLOCKING (continue-on-error: true) and is NOT a required
+  # check — it must NEVER gate merge:
+  #   * The extension is new (greenfield), so its Node toolchain is allowed to be
+  #     skipped or flaky without blocking unrelated .NET PRs.
+  #   * The AUTHORITATIVE editor-schema-vs-compiler contract gate is the .NET test
+  #     `VsCodeShippedSchemaSyncTests` (Platform.Engine.Compilation.Tests), which
+  #     runs in the BLOCKING `build` job (`--filter "requires!=docker"`). That
+  #     test asserts the schema shipped with the extension equals the composer's
+  #     output and remains the single source of truth even if this Node job is
+  #     skipped or flaky.
+  # This job only PROVES the extension compiles, lints, tests and packages — it
+  # makes no contract assertion of its own.
+  #
+  # Node version: LTS 22 (NOT the non-LTS Node 25 the extension was authored on
+  # locally).  The committed package-lock.json (lockfileVersion 3) makes
+  # `npm ci` reproducible; the package.json `engines` field pins only
+  # `vscode` (no Node engine floor), and the full chain
+  # (npm ci → lint → compile → test → package) was verified green locally.
+  # LTS 22 is the correct CI baseline: the `test` script runs
+  # `node --test "dist/test/**/*.test.js"`, which relies on the test runner
+  # expanding that quoted glob.  Observed on the previously-pinned Node 20 runner,
+  # `node --test` took the glob literally (`Could not find '…/dist/test/**/*.test.js'`),
+  # matched zero files and exited 1.  Node 22 (active LTS) expands it as local dev
+  # (Node 25) does and the suite runs.  Do not regress below 22, and do not regress
+  # to a non-LTS.
+  vscode-extension:
+    name: VSCode extension build (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    # All npm steps run inside the extension package directory.
+    defaults:
+      run:
+        working-directory: tools/vscode-vouchfx
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # LTS Node 22 with npm caching keyed on the extension's own lock file.
+      - name: Set up Node.js (LTS 22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: tools/vscode-vouchfx/package-lock.json
+
+      # Reproducible clean install from the committed lockfile (lockfileVersion 3).
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      # ESLint over src (npm run lint → `eslint src --ext ts`).
+      - name: Lint (eslint)
+        run: npm run lint
+
+      # TypeScript compile (npm run compile → `tsc -p ./`).
+      - name: Compile (tsc)
+        run: npm run compile
+
+      # Node built-in test runner (npm test → `node --test "dist/test/**/*.test.js"`;
+      # its `pretest` recompiles, so this is safe even standalone).
+      - name: Test (node --test)
+        run: npm test
+
+      # Package the .vsix via @vscode/vsce (npm run package → `vsce package`).
+      - name: Package extension (vsce package)
+        run: npm run package
+
+      # Publish the produced .vsix for inspection/download.  if: always() so the
+      # artefact is captured even if a later step in this non-blocking job fails.
+      - name: Upload .vsix artefact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode-vouchfx-vsix
+          path: tools/vscode-vouchfx/*.vsix
+          retention-days: 7
+          if-no-files-found: ignore

@@ -722,27 +722,27 @@ With the binding in place, the editor behaves as it would for any well-supported
 
 ## 10.3 Schema hosting and resolution
 
-The schema referenced by the contribution point is hosted at a stable URL and versioned, as section 8.3 describes. The extension resolves the correct schema version for each file and caches it locally so that validation continues to work offline. For enterprise customers whose networks block outbound requests, the extension can be configured to resolve the schema from a path inside the workspace or an internal server instead.
+**Delivered (Sprint 9, S09-C-01):** The frozen v1 JSON Schema is bundled with the extension and bound declaratively via the `yamlValidation` contribution point, served by the Red Hat YAML language server dependency. The schema is a byte-for-byte copy of the engine's canonical v1 schema, and a CI test (`VsCodeShippedSchemaSyncTests`) enforces that the shipped copy remains in sync. For enterprise deployments, the `vouchfx.schemaPath` configuration setting allows pointing at an alternative copy of the same v1 schema (e.g., offline or internal hosting); this setting relocates the schema only and does not diverge from the frozen v1 contract.
 
 # 11. Embedded C# Intelligence
 
-Schema validation makes the declarative YAML safe, but it stops at the boundary of a script step. The moment an author writes C# inside a script step, schema validation has nothing to say. The extension therefore goes well beyond static schema checking and brings genuine C# language intelligence into those embedded blocks.
+Schema validation makes the declarative YAML safe, but it stops at the boundary of a script step. The moment an author writes C# inside a script step, schema validation has nothing to say. The extension provides syntax colouring for embedded C# and records full IntelliSense as a documented fast-follow.
 
-## 11.1 Reusing the .NET language server
+## 11.1 C# syntax highlighting (delivered)
 
-Rather than reimplement C# analysis, the extension integrates with the established .NET language tooling — OmniSharp and the local .NET language server. When the author opens a `script` step, the C# it contains is handed to that language server. The result is the same experience a developer expects in an ordinary C# file: full IntelliSense over the available types, real-time Roslyn-based linting, and signature help. The author writing an assertion against a captured variable sees autocomplete on that variable's members exactly as they would in a normal project.
+**Delivered (Sprint 9, S09-C-02):** A TextMate injection grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar into the block scalar that follows a `code:` key in a `script.csharp` step. This provides syntax highlighting (colours for keywords, strings, member access, etc.) while the surrounding YAML remains YAML-coloured. The highlighting runs entirely inside the TextMate tokeniser and requires no language service, project, or network access. It does not provide completion, type checking, or diagnostics — those features are recorded as a documented fast-follow (see section 11.3).
 
-## 11.2 NuGet and preprocessor directives
+## 11.2 C# IntelliSense (documented fast-follow)
 
-Script blocks may pull in external packages. The extension supports the C# scripting preprocessor directives inside embedded blocks — notably the `#r` directive that references an assembly or NuGet package. When an author adds an `#r` directive, the editor resolves the referenced package and extends IntelliSense to cover the types it provides. This is the editor-side counterpart of the architecture's dynamic assembly resolution: the same customer library that the Roslyn engine loads at execution time is also visible to the author at design time.
+**Deferred (Sprint 10 or later):** Full embedded C# IntelliSense — completion, type checking, diagnostics, and go-to-definition on members of `Vars`, `Services`, `Secrets`, and `Webhooks` — is a documented fast-follow, not delivered in v1. The intended approach and concrete technical reasons for the deferral are recorded in `tools/vscode-vouchfx/docs/csharp-intellisense.md`. The barrier is not scope but technology: the modern C# Dev Kit / Roslyn LSP does not cleanly support virtual-document completion forwarding for in-memory `.cs` files not bound to an MSBuild project, and YAML ↔ virtual-document position mapping is non-trivial; the robust long-term solution is a custom Roslyn language-server host, a multi-sprint effort. Until then, syntax highlighting plus YAML schema validation is the supported v1 authoring experience.
 
-## 11.3 The embedded-block challenge
+## 11.3 Planned approach for C# IntelliSense
 
-Providing C# intelligence inside a YAML file is technically harder than it appears, because the C# is not in a C# file — it is a string value under a `code` key. The extension handles this with embedded-language support: it identifies the region of the document that is C#, presents that region to the C# language server as if it were a standalone script with the platform's global context in scope, and maps diagnostics back to the correct line in the YAML file. The author sees an error underlined on the right line of their test file even though the analysis happened on an extracted fragment. Getting this mapping right is the principal engineering effort in the extension and is called out as a risk in section 15.
+When the fast-follow is scheduled, the preferred path is an embedded "virtual document": the extension synthesises an in-memory `.cs` by concatenating a preamble that declares the engine's global variables (`Platform.Engine.Abstractions.ScriptGlobalVariables` — `Vars`, `Services`, `Secrets`, `Webhooks`) with the author's block-scalar body, then forwards completion and diagnostic requests to the installed C# language server and maps positions back into the `.e2e.yaml` document. The planned approach and technical trade-offs are fully documented in `tools/vscode-vouchfx/docs/csharp-intellisense.md`.
 
 ## 11.4 Language support and accessibility commitments
 
-The extension's user-facing strings — diagnostic messages, command labels, hover documentation — are English-only at v1.0. The codebase is structured so that these strings are localisable rather than hard-coded literals, so a future localisation effort is configuration rather than rewrite, but no second language is translated for v1.0. The **Accessibility **commitments stated in the architecture blueprint's reporting section (§14.11) apply equally to the extension's surfaces: WCAG 2.1 AA for the inline-decoration colour scheme (paired with shape or text for colour-blind users), keyboard navigation through the Test Explorer panel, and semantic markup in any HTML the extension renders.
+The extension's user-facing strings — diagnostic messages, command labels, hover documentation — are English-only at v1.0. The codebase is structured so that these strings are localisable rather than hard-coded literals, so a future localisation effort is configuration rather than rewrite, but no second language is translated for v1.0. The **Accessibility** commitments stated in the architecture blueprint's reporting section (§14.11) apply equally to the extension's surfaces: WCAG 2.1 AA for the inline-decoration colour scheme (paired with shape or text for colour-blind users), keyboard navigation through the Test Explorer panel, and semantic markup in any HTML the extension renders.
 
 # 12. Semantic Project Validation
 
@@ -808,13 +808,15 @@ The positional `<path>` argument specifies the directory to search for scenarios
 | `--parallel <n>` | Run up to N scenarios concurrently, each owning its own container topology. Opt-in parallelism: each concurrent scenario multiplies container cost, so omitting this flag runs scenarios sequentially against one shared topology (the default). Must be 1 or greater. Cannot be combined with `--watch`. |
 | `--watch` | Run once, then watch the `.e2e.yaml` file and re-run automatically on save. Re-uses the already-built container topology while the `environment` block is unchanged; rebuilds the topology only when the environment changes. Useful for fast local iteration on a single file. Press Ctrl-C to stop. Cannot be combined with `--parallel`. |
 
-Exit codes follow the verdict taxonomy:
+**Delivered (Sprint 9, S09-C-03):** Exit codes follow the verdict taxonomy, with opt-in flags to gate CI on infrastructure errors and timeouts:
 
-| Exit code | Meaning |
-|---|---|
-| 0 | All scenarios passed; or scenarios were inconclusive / environment errors (not counted as failures). |
-| 1 | At least one scenario failed (i.e. the test assertions did not hold). |
-| 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref). |
+| Exit code | Meaning | How to trigger |
+|---|---|---|
+| 0 | Success — all scenarios passed, or only environment errors / inconclusive (the default, **only `Fail` breaks CI by default**). | Default. All scenarios Pass, or only EnvironmentError / Inconclusive and no opt-in flags set. |
+| 1 | Test failure — at least one scenario failed (the test assertions did not hold). | Default; always exits 1 on Fail. |
+| 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref). | Default; returned by System.CommandLine on parse errors. |
+| 3 | Environment error — the aggregate verdict was EnvironmentError and the author opted in. | Set `--fail-on-env-error` to exit 3 instead of 0 when infrastructure breaks (container fails to start, tunnel collapses, etc.). |
+| 4 | Inconclusive — the aggregate verdict was Inconclusive and the author opted in. | Set `--fail-on-inconclusive` to exit 4 instead of 0 on timeout or unmet capture dependency. |
 
 Examples:
 
@@ -842,6 +844,15 @@ vouchfx run ./tests/users.e2e.yaml --watch
 
 # Run scenarios in parallel (two at a time, each with its own topology)
 vouchfx run --parallel 2
+
+# Produce an HTML report (self-contained, standalone, with reproducibility envelope)
+vouchfx run --html report.html
+
+# Produce JUnit XML for CI aggregation
+vouchfx run --junit results.xml
+
+# Combine: run, fail on environment errors, write both reports
+vouchfx run ./tests --fail-on-env-error --html report.html --junit results.xml
 ```
 
 # 14. Result Reporting from the Author's Perspective
