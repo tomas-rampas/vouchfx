@@ -98,7 +98,7 @@ so a divergent schema may surface conflicting validation.
 
 ```bash
 npm install
-npm run compile   # tsc -> dist/, then copies the schema into dist/
+npm run compile   # tsc -> dist/
 npm run lint
 npm test          # node:test over the compiled manifest/schema checks
 npm run package   # produces vouchfx-<version>.vsix

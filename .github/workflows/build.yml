@@ -374,7 +374,7 @@ jobs:
       - name: Lint (eslint)
         run: npm run lint
 
-      # TypeScript compile + schema copy (npm run compile → `tsc -p ./ && copy-schema`).
+      # TypeScript compile (npm run compile → `tsc -p ./`).
       - name: Compile (tsc)
         run: npm run compile
 
