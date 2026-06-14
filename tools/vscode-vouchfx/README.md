@@ -77,11 +77,87 @@ position-mapping is non-trivial; a custom Roslyn LSP is a multi-sprint effort.
 The full rationale and planned approach are in
 [`docs/csharp-intellisense.md`](./docs/csharp-intellisense.md).
 
+## Test Explorer
+
+**Delivered (Sprint 10, S10-G-01):** The extension contributes a Test Controller that discovers `*.e2e.yaml` files and renders their scenarios and steps as a tree in VSCode's Test Explorer.
+
+### Discovery
+
+- One parent TestItem per `.e2e.yaml` file in the workspace, labelled by `metadata.name` or the filename if metadata is absent.
+- One child TestItem per id-bearing step, anchored at the YAML line on which the step begins.
+- The tree updates automatically as files are created, modified, or deleted; a manual refresh button rescans the workspace.
+
+### Running tests
+
+A Run profile invokes the `vouchfx` CLI as:
+
+```
+<cliPath> run <file> --events <tmpEventsFile> --no-decorations
+```
+
+The extension parses the emitted `--events` JSON Lines stream, resolves each step's verdict, and reports the outcome via the Test Explorer surface. The `--events` and `--no-decorations` CLI options are provided by the companion vouchfx reporting and CLI work (Sprint-10 .NET PR #148); until that PR is merged and the CLI becomes available on PATH, Test Explorer runs fail soft with items marked `errored` and a `vouchfx.cliPath` notice (see [Fail-soft behaviour](#fail-soft-behaviour) below). Each verdict maps to a VSCode TestItem state:
+
+| vouchfx verdict | VSCode state | What it means |
+| --- | --- | --- |
+| PASS | passed | The step's assertions held. |
+| FAIL | failed | The step's assertions did not hold; a defect in the system under test. |
+| ENV_ERROR | errored | Infrastructure failure (container did not start, database unreachable, etc.); not a product defect. |
+| INCONCLUSIVE | skipped | The engine could not reach a verdict (timeout, unmet dependency on earlier capture); the test is inconclusive rather than green or red. |
+
+### Fail-soft behaviour
+
+- When the CLI is missing, not executable, or returns a non-zero exit with no events, the affected items are marked `errored` with a clear message.
+- A **one-time warning notice** mentions `vouchfx.cliPath` so the author can configure the CLI path if it is not on `PATH`.
+- The run handler never throws; Test Explorer integration never regresses the schema authoring experience.
+
+### Failed step decoration
+
+When a step fails (FAIL verdict), the error decorates the failing YAML line in the editor, so the author sees at a glance which step needs attention. The message carries the true vouchfx verdict.
+
 ## Configuration
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
+| `vouchfx.cliPath` | `string` | `"vouchfx"` | Path or command to the vouchfx CLI. Set this if the CLI is not on your `PATH` or is installed in a non-standard location. |
 | `vouchfx.schemaPath` | `string` | `""` | Optional override pointing at an internal/enterprise copy of the composed v1 schema. Absolute, or relative to the workspace root. When empty, the bundled schema is used. |
+
+### vouchfx.cliPath
+
+The `vouchfx.cliPath` setting lets you point the Test Explorer at a non-standard CLI location. It must be a **single executable path or name** (not a multi-token shell command), because the extension invokes it with an argument array and `shell: false`.
+
+**Default (installed globally):**
+
+```json
+{
+  "vouchfx.cliPath": "vouchfx"
+}
+```
+
+**Absolute path to a built binary:**
+
+```json
+{
+  "vouchfx.cliPath": "/usr/local/bin/vouchfx"
+}
+```
+
+**Development build from source:**
+
+If you want to run `dotnet run` from source, create a small wrapper script (e.g. `run-vouchfx.sh` on Unix, `run-vouchfx.bat` on Windows) at the repository root:
+
+*run-vouchfx.sh:*
+```bash
+#!/bin/sh
+exec dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- "$@"
+```
+
+Then configure the extension to use the wrapper:
+
+```json
+{
+  "vouchfx.cliPath": "./run-vouchfx.sh"
+}
+```
 
 When `vouchfx.schemaPath` is set, the extension registers programmatically with
 the YAML language server (via its `registerContributor` API) and serves the

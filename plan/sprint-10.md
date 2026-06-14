@@ -22,11 +22,11 @@ and GitLab CI templates run the suite and publish artifacts; and the documentati
 
 ### Workstream G — Result reporting & diagnostics
 
-#### S10-G-01 · VSCode Test Explorer integration
+#### S10-G-01 · VSCode Test Explorer integration ✓
 - **Owner:** PC · **Estimate:** 2.5d · **Depends on:** S09-C-01, S09-G-01 · **Spec:** BP §14; MVP §8.4 (Test Explorer), §3.1
 - Surface scenarios/steps in Test Explorer; a failure decorates the originating YAML line.
 - **Acceptance:**
-  - Running from Test Explorer reflects per-step verdicts; a Fail decorates the correct line.
+  - Engineering-complete on this branch (consumer built, unit-tested); live end-to-end acceptance (reflecting per-step verdicts and decorating the correct line) is pending the companion .NET PR #148 (which delivers the CLI's `--events` and `--no-decorations` options) and a manual VSCode demo after that merge.
 
 #### S10-G-02 · Full verdict taxonomy across all surfaces (incl. Inconclusive) ✓
 - **Owner:** PC · **Estimate:** 2d · **Depends on:** S09-D-01 · **Spec:** BP §12.1; MVP §8.4 (verdict taxonomy), §12.1 invariant

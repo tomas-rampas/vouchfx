@@ -68,6 +68,14 @@ test('the vouchfx.schemaPath override setting is declared', () => {
   assert.equal(property.default, '');
 });
 
+test('the vouchfx.cliPath setting is declared with the vouchfx default', () => {
+  const manifest = readJson('package.json') as PackageManifest;
+  const property = manifest.contributes?.configuration?.properties?.['vouchfx.cliPath'];
+  assert.ok(property, 'vouchfx.cliPath must be declared (Test Explorer needs it)');
+  assert.equal(property.type, 'string');
+  assert.equal(property.default, 'vouchfx');
+});
+
 test('activationEvents register against YAML / *.e2e.yaml', () => {
   const manifest = readJson('package.json') as PackageManifest;
   const events = manifest.activationEvents ?? [];
