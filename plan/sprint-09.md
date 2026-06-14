@@ -22,61 +22,78 @@ report (with the reproducibility envelope) and JUnit XML output are produced fro
 
 ### Workstream C — Authoring tooling
 
-#### S09-C-01 · VSCode extension — schema-driven YAML autocomplete & validation
+#### S09-C-01 · VSCode extension — schema-driven YAML autocomplete & validation ✓
 - **Owner:** TX · **Estimate:** 2.5d · **Depends on:** S08-F-01 · **Spec:** DSL §10; MVP §8.4 (VSCode extension), §3.1
 - Bind the frozen v1 JSON Schema to `.e2e.yaml` files for autocomplete, hover, and inline validation.
 - **Acceptance:**
-  - Authoring a step offers schema-accurate completion and flags invalid fields against the v1 schema.
+  - Authoring a step offers schema-accurate completion and flags invalid fields against the v1 schema. ✓
 
-#### S09-C-02 · VSCode extension — embedded C# IntelliSense in `script.csharp`
+#### S09-C-02 · VSCode extension — embedded C# IntelliSense in `script.csharp` ✓
 - **Owner:** TX · **Estimate:** 3d · **Depends on:** S09-C-01 · **Spec:** DSL §10; MVP §8.4, §10 (embedded-IntelliSense risk)
 - Provide embedded C# IntelliSense in `script.csharp` blocks via the .NET language server. **Risk gate:**
   if this proves harder than estimated, ship schema-only YAML for v1 and fast-follow the C# intelligence
   (MVP §10 mitigation) — decided with TL by sprint mid-point.
 - **Acceptance:**
   - C# completion/diagnostics work inside a `script.csharp` block against `Vars`; **or** the documented
-    fallback is invoked and recorded.
+    fallback is invoked and recorded. ✓ **Delivered via documented fallback:** C# syntax highlighting shipped (TextMate injection grammar); full C# IntelliSense recorded as a fast-follow in `tools/vscode-vouchfx/docs/csharp-intellisense.md`.
 
-#### S09-C-03 · CLI — deterministic, taxonomy-aware exit codes
+#### S09-C-03 · CLI — deterministic, taxonomy-aware exit codes ✓
 - **Owner:** TX · **Estimate:** 1.5d · **Depends on:** S07-C-01 · **Spec:** BP §12.1, §16; MVP §8.4 (CLI runner), §4.2 (CI fitness)
 - Finalise CI-friendly output and deterministic exit codes that distinguish the four verdicts; **only
   `Fail` breaks the build by default** — Environment error and Inconclusive use distinct non-Fail codes.
 - **Acceptance:**
   - A genuine failure returns the Fail exit code; an environment error and an inconclusive return their
-    own codes and do **not** fail CI by default.
+    own codes and do **not** fail CI by default. ✓
 
 ### Workstream G — Result reporting & diagnostics
 
-#### S09-G-01 · Standalone HTML report with the reproducibility envelope
+#### S09-G-01 · Standalone HTML report with the reproducibility envelope ✓
 - **Owner:** PC · **Estimate:** 2.5d · **Depends on:** S08-G-01, S08-G-02 · **Spec:** BP §14, §17; MVP §8.4 (HTML report), §3.1
 - Render a self-contained HTML report to disk from the event stream, embedding the reproducibility
   envelope (hashing secret references, never values), the polling timeline, and the captured-variable
   thread.
 - **Acceptance:**
   - The HTML report opens standalone, shows all four verdict categories distinctly, and contains no
-    secret values.
+    secret values. ✓
 
-#### S09-G-02 · JUnit XML output for CI gates
+#### S09-G-02 · JUnit XML output for CI gates ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S02-G-01 · **Spec:** BP §14; MVP §8.4 (JUnit XML), §3.1
 - Emit JUnit XML from the same stream so CI systems can gate and display results, mapping the taxonomy
   faithfully (Environment error / Inconclusive not silently collapsed into failure).
 - **Acceptance:**
-  - JUnit XML validates against common CI consumers; the four verdicts survive the mapping.
+  - JUnit XML validates against common CI consumers; the four verdicts survive the mapping. ✓
 
 ### Workstream D — Integration
 
-#### S09-D-01 · Renderer parity check across surfaces
+#### S09-D-01 · Renderer parity check across surfaces ✓
 - **Owner:** TL · **Estimate:** 1d · **Depends on:** S09-G-01, S09-G-02 · **Spec:** BP §14 (one stream, many renderers)
 - Verify terminal, HTML, and JUnit renderers are all driven by the single event stream and agree on
   verdicts (no per-audience pipeline divergence).
 - **Acceptance:**
-  - The same suite yields consistent verdicts across all three renderers from one stream.
+  - The same suite yields consistent verdicts across all three renderers from one stream. ✓
 
 ## Exit criteria (sprint demo)
 
 - Authoring a `.e2e.yaml` in VSCode shows schema completion and (or fallback) C# IntelliSense; the CLI
   runs it with taxonomy-aware exit codes; the run produces an HTML report and JUnit XML from the one
   stream.
+
+### Sprint 9 reproducible demo
+
+1. Author a `.e2e.yaml` file in VSCode with the vouchfx extension installed.
+   - Schema completion fires on step fields; hover shows field documentation.
+   - C# code inside a `script.csharp` block is syntax-highlighted (TextMate grammar).
+   
+2. Run the suite from the CLI with report output:
+   ```bash
+   vouchfx run ./suite --fail-on-env-error --html report.html --junit results.xml
+   ```
+   
+3. Observe:
+   - **Exit code:** 0 (pass), 1 (fail), 2 (usage error), 3 (`--fail-on-env-error` set + EnvironmentError verdict), 4 (`--fail-on-inconclusive` set + Inconclusive verdict).
+   - **Terminal:** tree-structured renderer with colour-coded verdicts, polling timeline (if RETRY), captured-variable thread.
+   - **report.html:** standalone self-contained HTML file with reproducibility envelope (engine version, schema version, provider versions, image digests, variable values, YAML hashes), verdict summary, polling attempt timeline, and captured-variable provenance. No secret values in the file.
+   - **results.xml:** JUnit XML with the four verdicts mapped faithfully (EnvironmentError and Inconclusive not collapsed to failure), importable by CI systems.
 
 ## Risks mitigated this sprint (MVP §10)
 

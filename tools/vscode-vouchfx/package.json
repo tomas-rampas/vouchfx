@@ -1,0 +1,86 @@
+{
+  "name": "vouchfx",
+  "displayName": "vouchfx",
+  "description": "Schema-aware authoring for vouchfx .e2e.yaml integration tests: completion, hover and inline validation driven by the frozen v1 JSON Schema.",
+  "version": "0.1.0",
+  "publisher": "vouchfx",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tomas-rampas/vouchfx.git",
+    "directory": "tools/vscode-vouchfx"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "vouchfx",
+    "e2e",
+    "yaml",
+    "json-schema",
+    "integration-testing"
+  ],
+  "main": "./dist/extension.js",
+  "extensionDependencies": [
+    "redhat.vscode-yaml"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "workspaceContains:**/*.e2e.yaml"
+  ],
+  "contributes": {
+    "yamlValidation": [
+      {
+        "fileMatch": "*.e2e.yaml",
+        "url": "./src/schema/composed-schema.v1.json"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "vouchfx.injection.csharp-in-e2eyaml",
+        "path": "./syntaxes/csharp-in-e2eyaml.injection.json",
+        "injectTo": [
+          "source.yaml"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.csharp": "csharp"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "vouchfx",
+      "properties": {
+        "vouchfx.schemaPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional absolute path (or path relative to the workspace root) to a **v1-compatible copy of the composed vouchfx schema** — for example an internal/offline mirror of the bundled `composed-schema.v1.json`, kept identical by the engine's sync gate. When set, it serves that copy for `*.e2e.yaml` files. This is for **relocating the same v1 schema** (e.g. enterprise/offline hosting), **not** for pointing at a different or divergent schema: the bundled binding remains active, so a divergent schema may surface conflicting validation. Leave empty to use the frozen v1 schema shipped with the extension.",
+          "scope": "resource"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile",
+    "test": "node --test \"dist/test/**/*.test.js\"",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "@vscode/vsce": "^3.2.1",
+    "eslint": "^8.57.1",
+    "typescript": "^5.7.2",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  }
+}

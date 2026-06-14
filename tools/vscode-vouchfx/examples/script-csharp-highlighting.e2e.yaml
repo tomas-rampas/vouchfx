@@ -1,0 +1,44 @@
+# vouchfx fixture — open this in VSCode (with the extension installed) to eyeball
+# C# syntax highlighting inside the `script.csharp` step's `code:` block scalar.
+#
+# Everything under `code: |` should be coloured as C# (keywords, strings,
+# member access). The surrounding YAML keys (`id`, `type`, `timeout`) and the
+# next step must stay YAML-coloured — that proves the block-scalar boundary is
+# respected.
+metadata:
+  name: script-csharp-highlighting-demo
+  owner: tooling
+  tags: [demo, vscode]
+
+variables:
+  greeting: hello
+
+steps:
+  - id: compute
+    type: script.csharp
+    code: |
+      // This whole block should highlight as C#.
+      var id = Vars["greeting"]?.ToString() ?? "world";
+      var count = 0;
+      for (var i = 0; i < 3; i++)
+      {
+          count += i;
+      }
+      Vars["message"] = $"{id} ({count})";
+      Console.WriteLine(Vars["message"]);
+
+  # This step's keys must render as YAML again — if they pick up C# colours,
+  # the block-scalar end boundary is wrong.
+  - id: assert-shape
+    type: db-assert.postgres
+    target: appdb
+    query: SELECT 1
+    expect:
+      rowCount: 1
+
+  - id: compute-folded
+    type: script.csharp
+    # A folded block scalar (`>`) with chomping is also valid C# carrier.
+    code: >-
+      Vars["folded"] = "still C#";
+      var ok = true;

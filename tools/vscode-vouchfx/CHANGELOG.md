@@ -1,0 +1,31 @@
+# Changelog
+
+All notable changes to the vouchfx VSCode extension are documented here. The
+format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - Unreleased
+
+### Added
+
+- Initial scaffold of the vouchfx VSCode extension.
+- Bundled, offline-safe copy of the frozen **v1** composed JSON Schema, bound to
+  `*.e2e.yaml` files via `contributes.yamlValidation` (delegating schema
+  completion, hover and validation to the Red Hat YAML language server).
+- `vouchfx.schemaPath` setting: an optional override pointing at an
+  internal/enterprise schema copy, registered programmatically with the YAML
+  language server.
+- **C# syntax highlighting** inside `script.csharp` `code:` block scalars, via a
+  TextMate injection grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) that
+  embeds the built-in C# grammar (`source.cs`) into the YAML block scalar,
+  bounded by the YAML indentation rule. Registered through
+  `contributes.grammars` and bundled in the `.vsix`. An example fixture
+  (`examples/script-csharp-highlighting.e2e.yaml`) is included for visual
+  verification.
+- A "C# IntelliSense (status)" note recording that full in-block C# completion /
+  diagnostics is a documented **fast-follow** (see `docs/csharp-intellisense.md`)
+  — v1 ships schema intelligence + C# syntax highlighting.
+- Node `node:test` unit tests validating the manifest wiring and the bundled
+  schema (existence, parseability, `x-vouchfx-schema-version: v1`), plus
+  structural and real-tokenisation (`vscode-textmate` + `vscode-oniguruma`)
+  tests proving the C# injection grammar's block-scalar boundary.
