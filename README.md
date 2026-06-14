@@ -104,6 +104,13 @@ Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a bl
 5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
 (Docker) job.
 
+## Getting started
+
+**New to vouchfx?** Start here. The [Getting Started guide](docs/getting-started.md) walks you through
+your first test in 60 minutes: checking prerequisites, building from source, authoring a minimal
+`.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
+generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
+
 ### CI integration with GitHub Actions
 
 vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
