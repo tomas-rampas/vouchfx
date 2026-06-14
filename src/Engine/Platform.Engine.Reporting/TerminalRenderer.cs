@@ -178,9 +178,12 @@ public sealed class TerminalRenderer
             {
                 // Malformed JSON (JsonException at parse) OR an unreadable string value such
                 // as a lone surrogate (InvalidOperationException at GetString) — skip this
-                // line and continue with the rest of the stream.  A diagnostic comment is
-                // intentionally omitted here to keep the stub output clean; a future
-                // production renderer may write one.
+                // line and continue with the rest of the stream.  This ALSO tolerates a line
+                // whose EventStreamJson.FromLine itself throws InvalidOperationException — a
+                // null / non-object / missing-required-field line — which is skipped here
+                // just like malformed JSON.  A diagnostic comment is intentionally omitted
+                // here to keep the stub output clean; a future production renderer may write
+                // one.
                 continue;
             }
         }

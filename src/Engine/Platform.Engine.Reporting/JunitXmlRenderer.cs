@@ -177,6 +177,9 @@ public sealed class JunitXmlRenderer
                 // Malformed JSON (JsonException at parse) OR an unreadable string value such
                 // as a lone surrogate (InvalidOperationException at GetString) — skip this
                 // line and continue, exactly like the sibling renderers (§14 tolerance).
+                // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
+                // InvalidOperationException — a null / non-object / missing-required-field
+                // line — which is skipped here just like malformed JSON.
                 continue;
             }
         }

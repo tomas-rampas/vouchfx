@@ -269,6 +269,9 @@ public sealed class HtmlRenderer
                 // Malformed JSON (JsonException at parse) OR an unreadable string value such
                 // as a lone surrogate (InvalidOperationException at GetString) — skip this
                 // line and continue, exactly like the terminal renderer (§14 tolerance).
+                // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
+                // InvalidOperationException — a null / non-object / missing-required-field
+                // line — which is skipped here just like malformed JSON.
                 continue;
             }
         }
@@ -531,7 +534,24 @@ public sealed class HtmlRenderer
             return;
         }
 
-        var diff = diffLookup(kind, observation);
+        // The diff is computed at EMIT time — OUTSIDE the per-line build guard — and the
+        // provider delegate reads string values out of the stored observation.  If the
+        // observation carries a string value with a lone / unpaired UTF-16 surrogate (a
+        // SUT-derived observation can), the delegate's GetString() throws
+        // InvalidOperationException; left unguarded that would abort WriteDocument
+        // mid-stream and truncate the HTML file.  Treat an unreadable observation like a
+        // missing one — OMIT the diff fragment — so the rest of the document still renders
+        // to completion.  JsonException is caught for safety.
+        string? diff;
+        try
+        {
+            diff = diffLookup(kind, observation);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+        {
+            return;
+        }
+
         if (string.IsNullOrEmpty(diff))
         {
             return;
@@ -853,7 +873,20 @@ public sealed class HtmlRenderer
             && envelope.Extra.TryGetValue(key, out var element)
             && element.ValueKind == JsonValueKind.String)
         {
-            return element.GetString();
+            // Defensive read — uniform with GetStrFromObject.  A string VALUE carrying a
+            // lone / unpaired UTF-16 surrogate parses fine but throws
+            // InvalidOperationException at GetString().  BuildModel already calls this
+            // INSIDE its per-line guard (so such a line is skipped there), but reading
+            // defensively here too keeps both string-extraction helpers identical and
+            // safe should any future EMIT-time caller route through this overload.
+            try
+            {
+                return element.GetString();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+            {
+                return null;
+            }
         }
 
         return null;
@@ -930,7 +963,29 @@ public sealed class HtmlRenderer
         if (obj.TryGetProperty(propertyName, out var prop)
             && prop.ValueKind == JsonValueKind.String)
         {
-            return prop.GetString();
+            // Defensive read.  Unlike BuildModel's guarded reads, the nested-object
+            // string fields surfaced here (provenance name/path/placeholder/originStepId,
+            // reproducibility source/referenceHash/reference/contentHash) are read at EMIT
+            // time inside WriteDocument — OUTSIDE the per-line try/catch — because the
+            // renderer stores the whole step-completed / envelope and defers their reads to
+            // write time.  A string VALUE carrying a lone / unpaired UTF-16 surrogate (the
+            // JSON escape "\uD800" with no low-surrogate partner) PARSES fine but throws
+            // InvalidOperationException ("Cannot read incomplete UTF-16…") at GetString().
+            // If that escaped out here it would abort WriteDocument mid-stream and leave a
+            // TRUNCATED HTML file (the writer streams straight to the output).  Treat an
+            // unreadable value EXACTLY like a missing field — return null — so the single
+            // affected provenance row / reproducibility entry is OMITTED while the rest of
+            // the document renders to completion (all closing tags present).  Per §17 an
+            // omitted-because-unreadable field leaks nothing: it simply disappears.
+            // JsonException is caught for safety though no read here parses fresh JSON.
+            try
+            {
+                return prop.GetString();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+            {
+                return null;
+            }
         }
 
         return null;

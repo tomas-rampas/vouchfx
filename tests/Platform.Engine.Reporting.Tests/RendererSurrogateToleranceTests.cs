@@ -210,4 +210,197 @@ public sealed class RendererSurrogateToleranceTests
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // The EMIT-TIME path the surrogate-in-scenarioId tests above do NOT cover
+    // (HtmlRenderer-only; peer-review MAJOR).
+    //
+    // HtmlRenderer uses a TWO-PASS shape: the GUARDED BuildModel reads only
+    // scenarioId / stepId / verdict / durationMs / counts, then STORES the whole
+    // step-completed / reproducibility envelope and DEFERS the GetString() reads of
+    // captured / substitutions / secretReferences / fixtures / observation to EMIT
+    // time in WriteDocument — which runs OUTSIDE the per-line try/catch.  A lone /
+    // unpaired UTF-16 surrogate in any of THOSE string values therefore still threw
+    // InvalidOperationException uncaught, mid-document, leaving a TRUNCATED HTML file
+    // (the writer streams straight to the output).  JUnit (full BuildModel) and the
+    // terminal renderer (reads now inside the widened try) are already covered; this
+    // is the HtmlRenderer-only emit-time gap.  Some of these fields are SUT-derived
+    // (a captured value, an observation), so reachability is real.
+    //
+    // The fix makes HtmlRenderer's emit-time string extraction defensive: an
+    // UNREADABLE value is treated as ABSENT (exactly like a missing field), so only
+    // the affected provenance row is omitted while the document renders to completion.
+    // -------------------------------------------------------------------------
+
+    // A hand-built step-completed line whose captured[0].name string VALUE carries a
+    // LONE high surrogate.  stepId / verdict / durationMs are clean (BuildModel reads
+    // those INSIDE its guard), so the line is fully accepted by BuildModel; the
+    // poison surfaces only at EMIT time, when WriteProvenanceThread reads captured[0]
+    // .name via GetStrFromObject -> GetString().  The valid captured[1] entry proves
+    // the rest of the same step's provenance still renders.
+    private const string LoneSurrogateCapturedStepLine =
+        "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"step-completed\","
+        + "\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-good\","
+        + "\"stepId\":\"emit-poison-step\",\"verdict\":\"PASS\",\"durationMs\":3,"
+        + "\"captured\":["
+        + "{\"name\":\"bad\\uD800var\",\"path\":\"$.poison\",\"matched\":true},"
+        + "{\"name\":\"cleanvar\",\"path\":\"$.clean\",\"matched\":true}"
+        + "]}";
+
+    // A buffer that places the poison-captured step inside a VALID scenario,
+    // sandwiched between two clean scenarios, so the emit-time tolerance assertion can
+    // prove the document still completes and every other section survives.
+    private static string[] BufferWithUnreadableEmitTimeField() => new[]
+    {
+        Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "before-bad", File = "before.e2e.yaml" }),
+        Line(new ScenarioCompletedEvent
+        {
+            RunId = "run-good",
+            ScenarioId = "before-bad",
+            Verdict = Verdict.Pass,
+            Counts = new VerdictCounts { Pass = 1 },
+        }),
+
+        // A clean scenario that OWNS the poison step.  The scenario, its heading and
+        // its own clean captured entry must all still render.
+        Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "host-scenario", File = "host.e2e.yaml" }),
+        LoneSurrogateCapturedStepLine,
+        Line(new ScenarioCompletedEvent
+        {
+            RunId = "run-good",
+            ScenarioId = "host-scenario",
+            Verdict = Verdict.Pass,
+            Counts = new VerdictCounts { Pass = 1 },
+        }),
+
+        Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "after-bad", File = "after.e2e.yaml" }),
+        Line(new ScenarioCompletedEvent
+        {
+            RunId = "run-good",
+            ScenarioId = "after-bad",
+            Verdict = Verdict.Pass,
+            Counts = new VerdictCounts { Pass = 1 },
+        }),
+    };
+
+    // Guard the central premise of the emit-time test: the crafted line PARSES, its
+    // captured[0].name is a String JsonElement, and reading it via GetString() throws
+    // InvalidOperationException (the precise emit-time failure HtmlRenderer must now
+    // tolerate) — NOT a parse-time JsonException.
+    [Fact]
+    public void EmitTimeCraftedLine_Parses_ButNestedCapturedNameThrowsOnRead()
+    {
+        var envelope = EventStreamJson.FromLine(LoneSurrogateCapturedStepLine);
+        Assert.NotNull(envelope.Extra);
+
+        // captured parses to an Array; stepId / verdict / durationMs are all clean.
+        Assert.True(envelope.Extra!.TryGetValue("captured", out var captured));
+        Assert.Equal(JsonValueKind.Array, captured.ValueKind);
+
+        var first = captured.EnumerateArray().First();
+        Assert.True(first.TryGetProperty("name", out var nameEl));
+        Assert.Equal(JsonValueKind.String, nameEl.ValueKind);
+
+        // Reading the nested name — what WriteProvenanceThread does at EMIT time —
+        // throws InvalidOperationException, the failure the deferred read must tolerate.
+        var ex = Record.Exception(() => nameEl.GetString());
+        Assert.IsType<InvalidOperationException>(ex);
+    }
+
+    // RED -> GREEN: an unreadable EMIT-TIME field (captured[0].name) must NOT throw out
+    // of Render and must NOT truncate the document.  Before the fix WriteProvenanceThread
+    // threw InvalidOperationException mid-WriteDocument, leaving a partial HTML file with
+    // no closing tags and the post-poison sections missing.
+    [Fact]
+    public void HtmlRenderer_UnreadableEmitTimeField_RendersCompleteDocument_OmitsOnlyBadFragment()
+    {
+        var buffer = BufferWithUnreadableEmitTimeField();
+        using var writer = new StringWriter();
+
+        // (a) Render must NOT throw — the emit-time read is now defensive.
+        var ex = Record.Exception(() => HtmlRenderer.Render(buffer, writer));
+        Assert.Null(ex); // RED before the fix: InvalidOperationException out of WriteDocument.
+
+        var output = writer.ToString();
+
+        // (b) The document is COMPLETE — not truncated mid-stream.  HTML is not strictly
+        //     XML (the <!DOCTYPE>, inline CSS, and HTML void elements are not XML), so
+        //     completeness is asserted structurally: the document opens, the closing
+        //     <body>/<html> trailer is present, and the trailer is the LAST meaningful
+        //     content (nothing was cut off before it).
+        Assert.Contains("<!DOCTYPE html>", output, StringComparison.Ordinal);
+        Assert.Contains("</body>", output, StringComparison.Ordinal);
+        Assert.Contains("</html>", output, StringComparison.Ordinal);
+        Assert.EndsWith("</html>", output.TrimEnd(), StringComparison.Ordinal);
+
+        // The provenance section the poison step belongs to was reached and emitted at
+        // least one terminated row — proving WriteDocument did NOT abort BEFORE the poison
+        // step's provenance, and the provenance list was properly closed.
+        Assert.Contains("<div class=\"provenance\">", output, StringComparison.Ordinal);
+
+        // (c) Every valid scenario still renders — including the poison step's OWN
+        //     host scenario and the scenarios AFTER it (which a truncation would lose).
+        Assert.Contains("before-bad", output, StringComparison.Ordinal);
+        Assert.Contains("host-scenario", output, StringComparison.Ordinal);
+        Assert.Contains("after-bad", output, StringComparison.Ordinal);
+
+        // (d) The rest of the offending scenario's content survives: the poison step id
+        //     and its CLEAN sibling capture both render — only the unreadable value is gone.
+        Assert.Contains("emit-poison-step", output, StringComparison.Ordinal);
+        Assert.Contains("cleanvar", output, StringComparison.Ordinal);
+
+        // (e) The poison capture's ROW still renders, with its unreadable name omitted: its
+        //     OTHER (readable) fields survive — the JSONPath "$.poison" is shown — and the
+        //     name degrades to the same "(unknown)" placeholder a MISSING name already
+        //     renders, so the row is present but value-less rather than dropped.  (We do not
+        //     assert the absence of the literal "bad" token: the surrogate is unreadable, so
+        //     the value can never reach the output at all, and "bad" also legitimately occurs
+        //     in the "before-bad" / "after-bad" scenario ids.)
+        Assert.Contains("$.poison", output, StringComparison.Ordinal);
+        Assert.Contains("(unknown)", output, StringComparison.Ordinal);
+    }
+
+    // RED -> GREEN for the file seam: FileReportWriter streams HtmlRenderer.Render
+    // straight to a FileStream, so a mid-document throw (swallowed by the per-file
+    // InvalidOperationException catch) would still leave a TRUNCATED file on disk.  This
+    // asserts the written HTML file is COMPLETE (terminated) — the check the existing
+    // FileReportWriter surrogate test (scenarioId path) does not make.
+    [Fact]
+    public void FileReportWriter_UnreadableEmitTimeField_WritesCompleteHtmlFile_NotTruncated()
+    {
+        var buffer = BufferWithUnreadableEmitTimeField();
+        var dir = Path.Combine(Path.GetTempPath(), "vouchfx-surr-emit-" + Guid.NewGuid().ToString("n"));
+        var htmlPath = Path.Combine(dir, "report.html");
+
+        try
+        {
+            var ex = Record.Exception(() => FileReportWriter.WriteFileReports(
+                buffer, diffLookup: null, htmlPath, junitPath: null));
+
+            // The seam never throws — the run's verdict / exit code is unaffected.
+            Assert.Null(ex);
+            Assert.True(File.Exists(htmlPath), "HTML report should still have been written.");
+
+            var html = File.ReadAllText(htmlPath);
+
+            // The on-disk file is COMPLETE: it opens with the DOCTYPE and ends with the
+            // closing </html> trailer.  Before the fix the file was truncated at the poison
+            // step's provenance, so </body></html> were absent.
+            Assert.Contains("<!DOCTYPE html>", html, StringComparison.Ordinal);
+            Assert.Contains("</body>", html, StringComparison.Ordinal);
+            Assert.EndsWith("</html>", html.TrimEnd(), StringComparison.Ordinal);
+
+            // Content after the poison step still made it to disk.
+            Assert.Contains("host-scenario", html, StringComparison.Ordinal);
+            Assert.Contains("after-bad", html, StringComparison.Ordinal);
+            Assert.Contains("cleanvar", html, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
 }
