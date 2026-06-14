@@ -320,6 +320,18 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 
 The output is a terminal report with colour-coded verdicts.
 
+### Documentation roadmap
+
+**New to vouchfx?** Here is a recommended reading order:
+
+1. **[Getting Started](docs/getting-started.md)** — Your first test in 60 minutes.
+2. **[Recipes](docs/recipes.md)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
+3. **[Common Patterns](docs/common-patterns.md)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows.
+4. **[Troubleshooting](docs/troubleshooting.md)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
+5. **[Language Reference](docs/language-reference.md)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
+6. **[Technical Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+7. **[YAML DSL Specification](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The complete `.e2e.yaml` grammar and JSON Schema.
+
 ### Report formats
 
 By default, `vouchfx run` outputs a terminal report only. You can optionally write a self-contained HTML report, a JUnit XML results file, and/or the raw JSON Lines event stream:
@@ -381,6 +393,9 @@ CLAUDE.md                             operating rules and hard invariants for th
   taxonomy, provider architecture, reporting, secrets).
 - [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)
   — the `.e2e.yaml` grammar, JSON Schema, and the VSCode/LSP extension design.
+- [`docs/language-reference.md`](docs/language-reference.md) — the per-step-type field reference
+  (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
+  frozen by a golden gate, so it can never drift from what the compiler accepts.
 - [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — scope, the seven workstreams, phasing,
   and what is in the MVP versus later.
 - [`plan/README.md`](plan/README.md) — the execution plan that decomposes the MVP into milestones,

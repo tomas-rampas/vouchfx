@@ -232,7 +232,7 @@ Now that you have a passing test, here's where to go:
 
 ### Recipes & cookbook
 
-*Coming in Sprint 10.* The `docs/recipes.md` file collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events.
+The `docs/recipes.md` file collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events. Also see `docs/common-patterns.md` for authoring patterns and `docs/troubleshooting.md` for failure modes and fixes.
 
 ### Full DSL specification
 
