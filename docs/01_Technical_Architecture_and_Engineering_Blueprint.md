@@ -925,6 +925,19 @@ The four verdicts are defined authoritatively in Section 12.1 — Pass, Fail, En
 
 Separating defect from environment failure is the most important contribution the reporting layer makes here, and it is the contribution most existing testing tools fail at. A failure that says “your Kafka container did not start” is fundamentally different from “your code is broken,” and a report that conflates the two destroys trust in the tool within days. Inconclusive deserves the same care: a step skipped because an earlier capture was unmet is not a defect in the system under test, and rendering it as a failure would falsely accuse a downstream component of misbehaviour. The conservative behaviour — four verdicts, four colours, four counters — is what keeps each case legible. In the cloud-backed Team and Enterprise tiers, these classifications also drive notification routing into the customer's existing alerting channels; in the local Indie tier they are purely presentational.
 
+## 14.2a Terminal renderer accessibility (S10-G-03a, WCAG 1.4.1)
+
+The terminal renderer output faces a special accessibility requirement: verdicts must never be distinguished by colour alone. The implementation carries each verdict as a distinct **text token** (`PASS`, `FAIL`, `ENV_ERROR`, `INCONCLUSIVE`) unconditionally in both plain and decorated output — a WCAG 1.4.1 guarantee that survives colour-blindness, screen readers, and terminal limitations. The mapping is:
+
+| Verdict | Text token | ASCII glyph (decorated) | ANSI colour (decorated) |
+|---|---|---|---|
+| **Pass** | `PASS` | `[+]` | Green (SGR 32) |
+| **Fail** | `FAIL` | `[x]` | Red (SGR 31) |
+| **Environment error** | `ENV_ERROR` | `[!]` | Yellow (SGR 33) |
+| **Inconclusive** | `INCONCLUSIVE` | `[?]` | Blue (SGR 34) |
+
+Decorations (glyph + colour) are enabled **only** when the following conditions all hold: the output is an interactive terminal (`Console.IsOutputRedirected` is false), the `NO_COLOR` environment variable is unset, and the `--no-decorations` CLI flag is not passed. Piped, redirected, CI, and test output therefore defaults to plain text (text tokens only, no colour or glyphs). The CLI's decoration logic resides in the runner layer — the renderer itself is a pure function that obeys the `decorate` boolean parameter — so the rendering remains deterministic and unit-testable. The glyph is a shape cue independent of colour; even a colour-blind user with decorations enabled sees a distinct shape + token per verdict. The colour is a redundant, sighted-only convenience layered on top of the always-present text token, ensuring that no information is conveyed through colour alone.
+
 ## 14.3 The five-layer report architecture
 
 Reports are best thought of as five concentric layers, each layer an aggregation or derivation of the one inside it. Designing them as concentric rather than as five separate artifacts is what keeps the system coherent: the same data that drives a developer's terminal also feeds the team lead's dashboard, and the live execution feed is not a separate code path but the inner layers streamed as they are produced.
@@ -974,7 +987,7 @@ Two design decisions in this stream are worth underlining. First, every step-att
 
 An optional third point: `step-completed` events may also carry a `observation` field — the structured provider observation (e.g. a failed assertion's expected-vs-observed diff) — which renderers use at render time to compute human-readable diffs (Section 14.10). This field is omitted when the step recorded no observation; it is purely structured data, never rendered diff text. Adding this optional field preserves backward compatibility — older renderers ignore it via `[JsonExtensionData]` — and costs the engine only the work of forwarding the observation from the runtime to the event.
 
-**Persistence to disk:** The raw event stream can be persisted to a file via the CLI's `--events <path>` option (alias `--json`), which writes the buffered stream verbatim — one JSON object per line, UTF-8 without a BOM — for consumption by downstream tooling such as the VSCode Test Explorer. This is a purely additive facility that re-emits the frozen v1 stream byte-for-byte without any record or wire-contract change; the stream itself remains a private implementation detail rendered differently by each consumer, and persisting it to disk does not alter that contract.
+**Persistence to disk:** The raw event stream can be persisted to a file via the CLI's `--events <path>` option (alias `--json`), which writes the buffered stream verbatim — one JSON object per line, UTF-8 without a BOM — for consumption by downstream tooling such as the VSCode Test Explorer. This is a purely additive facility that re-emits the frozen v1 stream byte-for-byte without any record or wire-contract change; the stream itself remains a private implementation detail rendered differently by each consumer, and persisting it to disk does not alter that contract. **Security note:** Unlike HTML and JUnit reports (which summarise step observations to their structure, never their values), the event stream persists step observations verbatim; authors using `script.csharp` steps must not embed revealed secret values in thrown exception messages, since those messages become step observations in the stream.
 
 ### 14.4.1 The v1 event-wire contract freeze and the scenarioId decision
 

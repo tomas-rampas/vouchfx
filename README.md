@@ -75,6 +75,10 @@ Four outcomes are kept distinct everywhere (taxonomy, reporting, exit codes): **
 **Environment error** (infrastructure), **Inconclusive** (timeout / unmet capture). **Only `Fail`
 breaks CI by default** — conflating an environment error with a defect destroys trust in the tool.
 
+### Accessibility
+
+Each of the four verdicts is **always** rendered with a distinct text token (`PASS`, `FAIL`, `ENV_ERROR`, `INCONCLUSIVE`) — a WCAG 1.4.1 guarantee that verdicts are never distinguished by colour alone. When the output is an interactive terminal *and* the `NO_COLOR` environment variable is unset *and* `--no-decorations` is not passed, each verdict also receives an optional ASCII shape glyph and ANSI colour: Pass `[+]` green, Fail `[x]` red, Environment-error `[!]` yellow, Inconclusive `[?]` blue. The glyph is a shape cue independent of colour (for colour-blind readers); the colour is a redundant, sighted-only convenience. Piped, redirected, CI, and test output is plain text by default. Pass `--no-decorations` or set `NO_COLOR=1` to force plain text on any terminal.
+
 ## Building and testing
 
 **Prerequisites:** the **.NET 8 SDK** (pinned in `global.json`; install
@@ -141,6 +145,9 @@ vouchfx run ./tests --junit ./results.xml
 # Write the raw JSON Lines event stream to disk for machine-readable consumption
 vouchfx run ./tests --events ./events.jsonl
 
+# Render the terminal report as plain text (no colour / shape glyph) — WCAG 1.4.1 compliant
+vouchfx run ./tests --no-decorations
+
 # Run with both reports and taxonomy-aware CI gating (fail on environment errors or inconclusive results)
 vouchfx run ./tests --html ./report.html --junit ./results.xml --fail-on-env-error --fail-on-inconclusive
 
@@ -182,7 +189,7 @@ By default, `vouchfx run` outputs a terminal report only. You can optionally wri
 
 - **`--html <path>`** — writes a self-contained HTML report (polling timeline, captured-variable provenance, failed-step diffs, and the reproducibility envelope) with no secret values embedded. The HTML report is rendered from the same event stream as the terminal output, so the two never disagree.
 - **`--junit <path>`** — writes a JUnit XML results file for CI integration. The four verdicts map to distinct JUnit primitives (Fail → `<failure>`, Environment-error → `<error>`, Inconclusive → `<skipped>`), so CI systems can distinguish infrastructure breakage from product defects.
-- **`--events <path>`** or **`--json`** — writes the raw buffered JSON Lines event stream to a file (one JSON object per line, UTF-8 without a BOM). This re-emits the same frozen v1 event stream that the terminal, HTML, and JUnit reports are rendered from, for consumption by downstream tooling such as the VSCode Test Explorer. Not wired into `--watch` mode.
+- **`--events <path>`** or **`--json`** — writes the raw buffered JSON Lines event stream to a file (one JSON object per line, UTF-8 without a BOM). This re-emits the same frozen v1 event stream that the terminal, HTML, and JUnit reports are rendered from, for consumption by downstream tooling such as the VSCode Test Explorer. **Security note:** Unlike HTML/JUnit reports (which summarise step observations to the shape of the data, never its values), `--events` persists the raw stream verbatim including step observations; authors must ensure that a `script.csharp` step does not reveal secret values in thrown exception messages, since those messages become observations in the stream. Not wired into `--watch` mode.
 
 All three flags accept `--parallel` and sequential runs; none works with `--watch` (which re-renders on each iteration rather than buffering one suite-wide stream). Parent directories are created as needed; existing files are overwritten.
 

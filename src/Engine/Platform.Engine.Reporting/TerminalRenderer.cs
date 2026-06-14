@@ -67,7 +67,7 @@ public sealed class TerminalRenderer
     /// <see langword="null"/>.
     /// </exception>
     public static void Render(IEnumerable<string> jsonLines, TextWriter output)
-        => Render(jsonLines, output, diffLookup: null);
+        => Render(jsonLines, output, decorate: false, diffLookup: null);
 
     /// <summary>
     /// Renders the supplied JSON Lines event stream to <paramref name="output"/>,
@@ -120,6 +120,58 @@ public sealed class TerminalRenderer
         IEnumerable<string> jsonLines,
         TextWriter output,
         Func<string, JsonElement, string?>? diffLookup)
+        => Render(jsonLines, output, decorate: false, diffLookup);
+
+    /// <summary>
+    /// Renders the supplied JSON Lines event stream to <paramref name="output"/>, optionally
+    /// adding accessibility <em>decorations</em> (a per-verdict shape glyph + ANSI colour) to
+    /// each step-verdict line (S10-G-03a).
+    /// </summary>
+    /// <param name="jsonLines">
+    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and malformed
+    /// lines are skipped silently.  The sequence is enumerated exactly once.
+    /// </param>
+    /// <param name="output">The <see cref="TextWriter"/> that receives the rendered text.</param>
+    /// <param name="decorate">
+    /// When <see langword="false"/> (the default and the value used by every other overload),
+    /// the output is plain text — byte-identical to the pre-S10-G-03a renderer — so redirected /
+    /// piped / CI / test output is unchanged and screen-reader friendly.  When
+    /// <see langword="true"/>, each <c>step-completed</c> line is prefixed with a per-verdict
+    /// ASCII shape glyph (Pass <c>[+]</c>, Fail <c>[x]</c>, Environment-error <c>[!]</c>,
+    /// Inconclusive <c>[?]</c>) and its verdict token is wrapped in an ANSI colour that is reset
+    /// afterwards (green Pass, red Fail, yellow Environment-error, blue Inconclusive).
+    /// </param>
+    /// <param name="diffLookup">
+    /// The optional render-time expected-vs-observed diff lookup (see the three-argument
+    /// overload); behaves identically here.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Accessibility (WCAG 1.4.1).</strong>  The verdict's distinct TEXT token
+    /// (<c>PASS</c> / <c>FAIL</c> / <c>ENV_ERROR</c> / <c>INCONCLUSIVE</c>) is rendered
+    /// <em>unconditionally</em> in both modes — it is the colour-free, screen-reader cue and the
+    /// guarantee that the four §12.1 verdicts are never distinguished by colour alone.  The
+    /// glyph is a SHAPE cue independent of colour, so even a colour-blind user with decorations
+    /// on sees a distinct glyph + token per verdict; the colour is a redundant, sighted-only
+    /// convenience layered on top.
+    /// </para>
+    /// <para>
+    /// The renderer is deliberately a pure function of its inputs: it does NOT inspect the
+    /// environment (no <c>NO_COLOR</c> / <c>Console.IsOutputRedirected</c> probing) — the caller
+    /// (the CLI) decides <paramref name="decorate"/> and the renderer simply obeys it, which
+    /// keeps the renderer deterministic and unit-testable.  Decorations change ONLY presentation;
+    /// no data shown changes, and the §17 secret-safety discipline is untouched.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="jsonLines"/> or <paramref name="output"/> is
+    /// <see langword="null"/>.
+    /// </exception>
+    public static void Render(
+        IEnumerable<string> jsonLines,
+        TextWriter output,
+        bool decorate,
+        Func<string, JsonElement, string?>? diffLookup = null)
     {
         ArgumentNullException.ThrowIfNull(jsonLines);
         ArgumentNullException.ThrowIfNull(output);
@@ -172,7 +224,7 @@ public sealed class TerminalRenderer
                     }
                 }
 
-                RenderEnvelope(envelope, output, stepKinds, diffLookup);
+                RenderEnvelope(envelope, output, stepKinds, decorate, diffLookup);
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
@@ -197,6 +249,7 @@ public sealed class TerminalRenderer
         EventEnvelope envelope,
         TextWriter output,
         IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
+        bool decorate,
         Func<string, JsonElement, string?>? diffLookup)
     {
         switch (envelope.Type)
@@ -231,12 +284,22 @@ public sealed class TerminalRenderer
                     var durationSuffix = durationMs.HasValue
                         ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", durationMs.Value)
                         : string.Empty;
+
+                    // Accessibility (S10-G-03a, WCAG 1.4.1): the verdict TEXT token is rendered
+                    // unconditionally below; when decorations are on we ALSO prefix a per-verdict
+                    // SHAPE glyph and wrap the verdict token in its ANSI colour.  The glyph + token
+                    // distinguish the four verdicts without colour; the colour is a redundant,
+                    // sighted-only convenience.  Plain mode (decorate=false) emits neither, so the
+                    // line is byte-identical to the pre-S10-G-03a output.
+                    var glyphPrefix = decorate ? Decorations.GlyphPrefix(verdict) : string.Empty;
+                    var verdictToken = decorate ? Decorations.Colourise(verdict) : verdict;
                     output.WriteLine(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "  step '{0}': {1}{2}",
+                            "  {0}step '{1}': {2}{3}",
+                            glyphPrefix,
                             stepId,
-                            verdict,
+                            verdictToken,
                             durationSuffix));
 
                     // S07-G-01: render a provider-specific expected-vs-observed diff
@@ -755,5 +818,75 @@ public sealed class TerminalRenderer
         }
 
         return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessibility decorations (S10-G-03a, WCAG 1.4.1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Maps a §12.1 verdict wire token to its accessibility decorations: a per-verdict ASCII
+    /// SHAPE glyph and an ANSI SGR colour.  The glyph distinguishes the verdicts without colour
+    /// (so a colour-blind reader, or a terminal that drops colour, still sees a distinct shape);
+    /// the colour is a redundant, sighted-only convenience layered on top of the always-present
+    /// verdict TEXT token.
+    /// </summary>
+    /// <remarks>
+    /// Glyphs are deliberately ASCII-only (no Unicode symbols) so they survive a non-UTF-8
+    /// console, a screen reader, and a CI log scraper without mojibake.  The verdict-to-glyph
+    /// and verdict-to-colour mappings are:
+    /// <list type="bullet">
+    ///   <item><description><c>PASS</c> → <c>[+]</c>, green (SGR 32).</description></item>
+    ///   <item><description><c>FAIL</c> → <c>[x]</c>, red (SGR 31).</description></item>
+    ///   <item><description><c>ENV_ERROR</c> → <c>[!]</c>, yellow (SGR 33).</description></item>
+    ///   <item><description><c>INCONCLUSIVE</c> → <c>[?]</c>, blue (SGR 34).</description></item>
+    /// </list>
+    /// An unrecognised token (e.g. a future verdict) renders with no glyph and no colour — the
+    /// plain TEXT token still carries the meaning, so an older renderer degrades gracefully.
+    /// </remarks>
+    private static class Decorations
+    {
+        // ANSI SGR control sequences.  Esc = U+001B; "[Nm" selects graphic rendition N; "[0m"
+        // resets to default.  Reset ALWAYS follows a colour so no colour leaks onto the next
+        // line or the shell prompt.
+        private static readonly string Esc = ((char)0x1b).ToString();
+        private static readonly string Reset = Esc + "[0m";
+
+        // Verdict wire tokens (§12.1) — kept in sync with VerdictJsonConverter.
+        private const string TokenPass = "PASS";
+        private const string TokenFail = "FAIL";
+        private const string TokenEnvError = "ENV_ERROR";
+        private const string TokenInconclusive = "INCONCLUSIVE";
+
+        /// <summary>
+        /// Returns the per-verdict shape glyph followed by a single space (e.g. <c>"[+] "</c>),
+        /// or the empty string for an unrecognised verdict token.
+        /// </summary>
+        public static string GlyphPrefix(string verdict) => verdict switch
+        {
+            TokenPass => "[+] ",
+            TokenFail => "[x] ",
+            TokenEnvError => "[!] ",
+            TokenInconclusive => "[?] ",
+            _ => string.Empty,
+        };
+
+        /// <summary>
+        /// Wraps the verdict token in its ANSI colour with a trailing reset, or returns the token
+        /// unchanged for an unrecognised verdict (so the plain text is always preserved).
+        /// </summary>
+        public static string Colourise(string verdict)
+        {
+            var colour = verdict switch
+            {
+                TokenPass => Esc + "[32m",
+                TokenFail => Esc + "[31m",
+                TokenEnvError => Esc + "[33m",
+                TokenInconclusive => Esc + "[34m",
+                _ => null,
+            };
+
+            return colour is null ? verdict : colour + verdict + Reset;
+        }
     }
 }

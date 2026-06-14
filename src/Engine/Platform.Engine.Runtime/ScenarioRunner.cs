@@ -539,6 +539,14 @@ public static class ScenarioRunner
     /// passthrough of the frozen v1 stream for a downstream consumer.  <see langword="null"/> ⇒ no
     /// events artifact.
     /// </param>
+    /// <param name="decorate">
+    /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single suite-level
+    /// terminal render decorates each step-verdict line with an ANSI colour + a per-verdict shape
+    /// glyph; when <see langword="false"/> (the default) the render is plain text — byte-identical to
+    /// the pre-S10-G-03a output.  The verdict TEXT tokens (the WCAG-1.4.1 guarantee) are unconditional
+    /// and independent of this flag; only the optional colour + glyph layer is gated.  The caller
+    /// (CLI) computes it from <c>--no-decorations</c> + <c>NO_COLOR</c> + output redirection.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to all async operations.
     /// </param>
@@ -575,6 +583,7 @@ public static class ScenarioRunner
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
+        bool decorate = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -814,7 +823,7 @@ public static class ScenarioRunner
                 await disposable.DisposeAsync().ConfigureAwait(false);
             }
 
-            TerminalRenderer.Render(allBuffers, output, diffLookup);
+            TerminalRenderer.Render(allBuffers, output, decorate, diffLookup);
 
             // Optional file reports (S09-D-01, T3; S10 events): write the HTML / JUnit artifacts —
             // and the raw JSON Lines events stream — from the SAME buffer + diffLookup the terminal
