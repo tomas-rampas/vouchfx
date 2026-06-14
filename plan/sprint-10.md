@@ -28,19 +28,19 @@ and GitLab CI templates run the suite and publish artifacts; and the documentati
 - **Acceptance:**
   - Running from Test Explorer reflects per-step verdicts; a Fail decorates the correct line.
 
-#### S10-G-02 · Full verdict taxonomy across all surfaces (incl. Inconclusive)
+#### S10-G-02 · Full verdict taxonomy across all surfaces (incl. Inconclusive) ✓
 - **Owner:** PC · **Estimate:** 2d · **Depends on:** S09-D-01 · **Spec:** BP §12.1; MVP §8.4 (verdict taxonomy), §12.1 invariant
 - Ensure Pass / Fail / **Environment error** / **Inconclusive** render consistently and distinctly across
   terminal, HTML, JUnit, and editor — each with shape+text, not colour alone (accessibility).
 - **Acceptance:**
-  - All four verdicts are visually and semantically distinct on every surface; only Fail gates CI.
+  - All four verdicts are visually and semantically distinct on every surface; only Fail gates CI. ✓
 
-#### S10-G-03 · Accessibility review (WCAG 2.1 AA)
+#### S10-G-03 · Accessibility review (WCAG 2.1 AA) ✓
 - **Owner:** PC · **Estimate:** 1.5d · **Depends on:** S10-G-02 · **Spec:** MVP §9.5, §10 (accessibility risk)
 - Commission/conduct the Phase 4 accessibility review of the HTML report and extension: colour-blind-safe
   verdicts, keyboard navigation, semantic HTML, and the `--no-decorations` screen-reader terminal mode.
 - **Acceptance:**
-  - The report passes a WCAG 2.1 AA check; the `--no-decorations` mode works for screen readers.
+  - The report passes a WCAG 2.1 AA check; the `--no-decorations` mode works for screen readers. ✓
 
 #### S10-G-04 · Opt-in telemetry flow & pilot backend
 - **Owner:** PC · **Estimate:** 2d · **Depends on:** S09-G-02 · **Spec:** MVP §9.1 (telemetry row — a Phase 4 release-manifest deliverable), §9.3, §8.5.3
@@ -106,11 +106,11 @@ and GitLab CI templates run the suite and publish artifacts; and the documentati
 
 ### Workstream D — Integration
 
-#### S10-D-02 · Memory-leak gate confirmed permanent across the full surface
+#### S10-D-02 · Memory-leak gate confirmed permanent across the full surface ✓
 - **Owner:** TL · **Estimate:** 0.5d · **Depends on:** S02-D-01 · **Spec:** MVP §8.4 (memory-leak test in CI), §4.2
 - Confirm the Phase 1 leak gate runs against the full six-provider engine as a permanent regression guard.
 - **Acceptance:**
-  - The leak gate exercises all six Core providers' closure and stays green; weekly run scheduled.
+  - The leak gate exercises all six Core providers' closure and stays green; weekly run scheduled. ✓
 
 ## Exit criteria (sprint demo)
 
