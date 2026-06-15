@@ -8,10 +8,12 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress (2026-06-15):** Sprints **01–10 are delivered and merged to `main`** (PR #126/#127, #128, #131,
-> #134, #135, #136, #137, #138, #140, #151) — integrated, CI green. Milestones **M1 (Foundations proven,
-> closed S02) and M2 (Core compiler runs, closed S05) are reached**. Milestone **M3 (Full step set & SDK,
-> closes S08) is engineering-complete** — all six Core providers, v1 schema/contract/event-wire frozen,
+> **Progress (2026-06-15):** Sprints **01–09 are delivered and merged to `main`** (PR #126/#127, #128, #131,
+> #134, #135, #136, #137, #138, #140, and #145/#146/#147 (S09)) — integrated, CI green. **Sprint 10's
+> trust-surface chunk is merged** — **#148/#149/#150**; the **remainder (the Echo SDK dry-run + opt-in
+> telemetry) lands in PR #151 — this PR** — so Sprint 10 *completes on merge of this PR*. Milestones
+> **M1 (Foundations proven, closed S02) and M2 (Core compiler runs, closed S05) are reached**. Milestone
+> **M3 (Full step set & SDK, closes S08) is engineering-complete** — all six Core providers, v1 schema/contract/event-wire frozen,
 > Provider SDK published and outside-validated, runner selection/parallelism/Vault, polling timeline and
 > captured-variable rendering. M3 is **exit-gated on three human items** (steering review, contract
 > sign-off, outside-contributor social gate; see `plan/m3-phase-exit.md`). Milestone **M4 (Tooling &
