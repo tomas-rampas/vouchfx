@@ -8,14 +8,16 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress (2026-06-09):** Sprints **01–04 are merged to `main`** (PR #126/#127, #128, #131, #134) —
-> delivered and integrated, CI green. Milestone **M1 — Foundations proven is reached** (closed after
-> Sprint 02: the full Core-provider-closure leak gate and the reference provider). **Sprint 05 is
-> delivered on branch `feat/sprint-05-seed-secrets`** (PR pending) — seed, env-var secret resolution,
-> and end-to-end integration complete. Milestone **M2 — Core compiler runs is reached**: three Core
-> providers (`http.rest`, `db-assert.postgres`, `script.csharp`) compile and run end-to-end against a
-> real local topology with seeding, secret resolution, captured-variable threading, reflective registry
-> discovery, and terminal renderer. Phase 2 closes. **Sprint 06** (async providers + RETRY) is next.
+> **Progress (2026-06-15):** Sprints **01–10 are delivered and merged to `main`** (PR #126/#127, #128, #131,
+> #134, #135, #136, #137, #138, #140, #151) — integrated, CI green. Milestones **M1 (Foundations proven,
+> closed S02) and M2 (Core compiler runs, closed S05) are reached**. Milestone **M3 (Full step set & SDK,
+> closes S08) is engineering-complete** — all six Core providers, v1 schema/contract/event-wire frozen,
+> Provider SDK published and outside-validated, runner selection/parallelism/Vault, polling timeline and
+> captured-variable rendering. M3 is **exit-gated on three human items** (steering review, contract
+> sign-off, outside-contributor social gate; see `plan/m3-phase-exit.md`). Milestone **M4 (Tooling &
+> hardening, closes S11) is in progress** — VSCode extension (S09–S10), CLI/HTML/JUnit (S09–S10), CI
+> templates (S10), documentation set (S10), accessibility review (S10), reference scenario green pending
+> (S11). Phase 4 stabilisation and Phase 5 pilot are next.
 
 ```mermaid
 gantt
@@ -36,15 +38,15 @@ gantt
     M2 Core compiler runs           :milestone, done, m2, after s05, 0d
 
     section P3 Full step set
-    S06 Async providers + RETRY     :s06, after s05, 14d
-    S07 Capture breadth + runner    :s07, after s06, 14d
-    S08 Freeze + publish SDK        :s08, after s07, 14d
+    S06 Async providers + RETRY     :done, s06, after s05, 14d
+    S07 Capture breadth + runner    :done, s07, after s06, 14d
+    S08 Freeze + publish SDK        :done, s08, after s07, 14d
     M3 Full step set & SDK          :milestone, crit, m3, after s08, 0d
 
     section P4 Tooling & hardening
-    S09 Editor + report surface     :s09, after s08, 14d
-    S10 Trust + contribution path   :s10, after s09, 14d
-    S11 Stabilisation               :s11, after s10, 7d
+    S09 Editor + report surface     :done, s09, after s08, 14d
+    S10 Trust + contribution path   :done, s10, after s09, 14d
+    S11 Stabilisation               :crit, s11, after s10, 7d
     M4 Tooling & hardening          :milestone, crit, m4, after s11, 0d
 
     section P5 Pilot & release

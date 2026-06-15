@@ -20,6 +20,29 @@ pilot teams.
 
 ## Tasks
 
+### Workstream C — Tooling & CI templates
+
+#### S11-C-01 · GitLab CI template — live-pipeline validation
+- **Owner:** TX · **Estimate:** 0.5d · **Depends on:** S10-C-02 · **Spec:** MVP §8.4 (CI templates)
+- **Why this was deferred from S10-C-02:** validating the template on real GitLab infrastructure is
+  infra-gated — it needs a real GitLab runner (Docker-in-Docker) that the engine's GitHub-Actions CI cannot
+  provide. S10-C-02 completed the static validation (yamllint + JSON-schema clean) and recorded the live run
+  as an explicit follow-up in `ci/gitlab/README.md`. It belongs in the stabilisation sprint, before M4 closes
+  (the M4 exit criterion includes "CI templates published").
+- Execute the GitLab CI template (`ci/gitlab/vouchfx-run.gitlab-ci.yml`) on a real GitLab pipeline to confirm
+  the live behaviour static linting cannot: Docker-in-Docker service startup, the clone + `dotnet build`
+  install path, exit-code gating, and artefact publication.
+- **Acceptance:**
+  - The template runs green on a real GitLab pipeline (gitlab.com shared runner or an equivalent privileged
+    runner) against the reference/smoke suite.
+  - Exit-code gating is verified: an induced product Fail breaks the job; an induced Environment error does
+    not (without the opt-in flag).
+  - Both the JUnit and HTML artefacts are published by the job and downloadable from the pipeline UI.
+  - The "Validation status" section of `ci/gitlab/README.md` is updated with the live result, runner type,
+    and GitLab version/date.
+  - Any behavioural divergence from the GitHub Actions equivalent found during the live run is filed as a
+    follow-up issue.
+
 ### Workstream D — Integration & hardening
 
 #### S11-D-01 · Reference scenario green from editor and CLI
