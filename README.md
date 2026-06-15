@@ -320,6 +320,38 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 
 The output is a terminal report with colour-coded verdicts.
 
+## Telemetry
+
+vouchfx can collect **anonymous, aggregate usage telemetry** (tool/engine/.NET versions, step and scenario verdict counts, which built-in step kinds ran, and startup timings) to help prioritise the engine. **Telemetry is OFF by default — nothing is collected or sent unless you explicitly opt in.** Your test contents, captured values, secrets, URLs, image names, scenario names, and step IDs are **never** collected. This privacy guarantee is enforced by permanent CI gates that prevent sensitive fields from being added to the telemetry allowlist.
+
+**Three commands manage consent:**
+
+```bash
+# Opt in to telemetry
+vouchfx telemetry enable
+
+# Opt out (deletes install id and clears local outbox immediately)
+vouchfx telemetry disable
+
+# Check current consent state and where data is stored
+vouchfx telemetry status
+```
+
+**Per-run suppression:**
+
+```bash
+# Suppress telemetry for this run only
+vouchfx run ./tests --no-telemetry
+
+# Or set the environment variable (e.g. for CI automation)
+export VOUCHFX_NO_TELEMETRY=1
+vouchfx run ./tests
+```
+
+In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. A future hosted backend is out of scope.
+
+For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, and troubleshooting — see [`docs/telemetry.md`](docs/telemetry.md).
+
 ### Documentation roadmap
 
 **New to vouchfx?** Here is a recommended reading order:
