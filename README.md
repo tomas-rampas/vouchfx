@@ -322,7 +322,7 @@ The output is a terminal report with colour-coded verdicts.
 
 ## Telemetry
 
-vouchfx can collect **anonymous, aggregate usage telemetry** (tool/engine/.NET versions, step and scenario verdict counts, which built-in step kinds ran, and startup timings) to help prioritise the engine. **Telemetry is OFF by default — nothing is collected or sent unless you explicitly opt in.** Your test contents, captured values, secrets, URLs, image names, scenario names, and step IDs are **never** collected. This privacy guarantee is enforced by permanent CI gates that prevent sensitive fields from being added to the telemetry allowlist.
+vouchfx can collect **anonymous, aggregate usage telemetry** (tool/engine/.NET versions, step and scenario verdict counts, which built-in Core step kinds ran, and startup timings) to help prioritise the engine. **Telemetry is OFF by default — nothing is collected or sent unless you explicitly opt in.** Your test contents, captured values, secrets, URLs, image names, scenario names, and step IDs are **never** collected. Custom-provider step kinds are bucketed under a constant `"custom"` key so author-chosen provider ids never leave the machine. This privacy guarantee is enforced by permanent CI gates that prevent sensitive fields from being added to the telemetry allowlist.
 
 **Three commands manage consent:**
 

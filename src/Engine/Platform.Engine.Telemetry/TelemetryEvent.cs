@@ -46,8 +46,10 @@ namespace Platform.Engine.Telemetry;
 /// version) or a non-identifying AGGREGATE COUNT or TIMING derived from the event
 /// stream.  Counts are keyed by step <em>family</em> (the intent, e.g. <c>http</c>)
 /// and <em>family.provider</em> (the technology, e.g. <c>http.rest</c>) — both are
-/// closed taxonomy tokens that describe WHICH built-in step kinds ran, never the
-/// data those steps carried.
+/// closed Core taxonomy tokens, with any custom/non-Core provider's step bucketed under
+/// the constant <c>"custom"</c> key (so an author-chosen step kind id is never emitted).
+/// The keys describe WHICH built-in step kinds ran (and how many custom-provider steps
+/// ran), never the data those steps carried.
 /// </para>
 /// </remarks>
 public sealed record TelemetryEvent
@@ -117,8 +119,10 @@ public sealed record TelemetryEvent
 
     /// <summary>
     /// Step counts keyed by step FAMILY (the intent token, e.g. <c>"http"</c>,
-    /// <c>"db-assert"</c>), e.g. <c>{"http":3,"db-assert":1}</c>.  The keys are the
-    /// closed built-in family taxonomy, never customer data.
+    /// <c>"db-assert"</c>), e.g. <c>{"http":3,"db-assert":1}</c>.  The keys are drawn
+    /// ONLY from the frozen built-in Core family taxonomy; any custom/non-Core
+    /// provider's step is counted under the <c>"custom"</c> bucket, so an author-chosen
+    /// family id is never a key here — never customer data.
     /// </summary>
     [JsonPropertyName("stepFamilies")]
     public required IReadOnlyDictionary<string, int> StepFamilies { get; init; }
@@ -126,7 +130,9 @@ public sealed record TelemetryEvent
     /// <summary>
     /// Step counts keyed by FAMILY.PROVIDER (the technology token, e.g.
     /// <c>"http.rest"</c>, <c>"db-assert.postgres"</c>), e.g.
-    /// <c>{"http.rest":3}</c>.  The keys are the closed built-in provider taxonomy,
+    /// <c>{"http.rest":3}</c>.  The keys are drawn ONLY from the frozen built-in Core
+    /// provider taxonomy; any custom/non-Core provider's step is counted under the
+    /// <c>"custom"</c> bucket, so an author-chosen provider id is never a key here —
     /// never customer data.
     /// </summary>
     [JsonPropertyName("stepProviders")]

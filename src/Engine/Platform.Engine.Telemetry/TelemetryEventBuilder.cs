@@ -15,7 +15,10 @@
 //                            aggregates per-step verdicts there)
 //   • stepFamilies         = tally of step-started `kind` split on the FIRST '.' →
 //                            family ("http.rest" → "http")
-//   • stepProviders        = tally of step-started `kind` verbatim ("http.rest")
+//   • stepProviders        = tally of step-started `kind` ("http.rest") — a full id
+//                            outside the frozen Core taxonomy is BUCKETED as "custom" so
+//                            an author-chosen provider id never leaves the box (likewise
+//                            for stepFamilies)
 //   • startupMs            = (earliest scenario-started ts) − (run start ts)
 //   • timeToFirstTestMs    = (earliest step-completed ts) − (run start ts)
 // where "run start ts" is the earliest timestamp of ANY event in the buffer (there is
@@ -42,16 +45,61 @@ namespace Platform.Engine.Telemetry;
 /// <para>
 /// <strong>Privacy by construction:</strong> the builder derives ONLY non-identifying
 /// counts and timings, and returns ONLY the allowlisted <see cref="TelemetryEvent"/>
-/// shape.  It reads the step <c>kind</c> (a closed taxonomy token such as
-/// <c>http.rest</c>) and the per-verdict counts — never a captured value, a URL, an
-/// image name, a scenario name, or a step id's data.  Lines that fail to parse are
-/// skipped (forward-compatible with unknown event types).
+/// shape.  It reads the step <c>kind</c>, BUCKETED against the frozen Core taxonomy so
+/// only a built-in Core family/provider id (e.g. <c>http.rest</c>) is counted under its
+/// real name while any custom/non-Core provider's author-chosen <c>kind</c> is counted
+/// under the constant <c>"custom"</c> bucket (so it never leaves the machine), and the
+/// per-verdict counts — never a captured value, a URL, an image name, a scenario name,
+/// or a step id's data.  Lines that fail to parse are skipped (forward-compatible with
+/// unknown event types).
 /// </para>
 /// </remarks>
 public static class TelemetryEventBuilder
 {
     /// <summary>The current <see cref="TelemetryEvent.SchemaVersion"/> emitted by the builder.</summary>
     public const int CurrentSchemaVersion = 1;
+
+    /// <summary>
+    /// The bucket key used for any step <c>kind</c> outside the frozen Core taxonomy.
+    /// A custom/non-Core provider's family and provider ids are author-chosen strings;
+    /// counting them under this constant (instead of their real value) keeps the metric
+    /// meaningful ("how many custom-provider steps ran") while ensuring an author-chosen
+    /// id is NEVER written into the telemetry event — the one place a customer-derived
+    /// string could otherwise flow onto the wire.
+    /// </summary>
+    private const string CustomBucket = "custom";
+
+    /// <summary>
+    /// The FROZEN v1 Core step-FAMILY taxonomy — the six built-in Core families.  A
+    /// step-started <c>kind</c> whose family is in this closed set is counted under that
+    /// real family name; any other (custom/non-Core) family is bucketed as
+    /// <see cref="CustomBucket"/> so an author-chosen family id never leaves the machine.
+    /// </summary>
+    private static readonly HashSet<string> CoreFamilies = new(StringComparer.Ordinal)
+    {
+        "http",
+        "db-assert",
+        "script",
+        "mq-publish",
+        "mq-expect",
+        "webhook-listen",
+    };
+
+    /// <summary>
+    /// The FROZEN v1 Core step-PROVIDER taxonomy — the six built-in Core
+    /// <c>family.provider</c> ids.  A step-started <c>kind</c> in this closed set is
+    /// counted under that real id; any other (custom/non-Core) id is bucketed as
+    /// <see cref="CustomBucket"/> so an author-chosen provider id never leaves the machine.
+    /// </summary>
+    private static readonly HashSet<string> CoreFullIds = new(StringComparer.Ordinal)
+    {
+        "http.rest",
+        "db-assert.postgres",
+        "script.csharp",
+        "mq-publish.kafka",
+        "mq-expect.kafka",
+        "webhook-listen.http",
+    };
 
     /// <summary>
     /// Builds the <see cref="TelemetryEvent"/> for a completed run.
@@ -125,9 +173,9 @@ public static class TelemetryEventBuilder
                     break;
 
                 case EventTypes.StepStarted:
-                    // The step `kind` (e.g. "http.rest") lives on step-started.  Tally
-                    // it into family + provider maps.  Reading `kind` reads a closed
-                    // taxonomy token, never any test data.
+                    // The step `kind` (e.g. "http.rest") lives on step-started.  Tally it
+                    // into the family + provider maps, BUCKETING any non-Core kind as
+                    // "custom" so an author-chosen id is never written onto the wire.
                     AccumulateStepKind(line, stepFamilies, stepProviders);
                     break;
 
@@ -201,8 +249,16 @@ public static class TelemetryEventBuilder
     /// <summary>
     /// Reads a step-started line's <c>kind</c> and tallies it into the family
     /// (intent, before the first <c>.</c>) and provider (full <c>family.provider</c>)
-    /// maps.
+    /// maps, BUCKETING anything outside the frozen Core taxonomy.
     /// </summary>
+    /// <remarks>
+    /// Only a built-in Core family / provider id is counted under its real name (via
+    /// <see cref="CoreFamilies"/> / <see cref="CoreFullIds"/>).  A custom/non-Core
+    /// provider's <c>kind</c> is author-chosen (e.g. <c>acme-fraud-check.internal</c>),
+    /// so it is counted under the <see cref="CustomBucket"/> key — the metric still
+    /// measures "how many custom-provider steps ran" without ever writing an
+    /// author-chosen id into the event.
+    /// </remarks>
     private static void AccumulateStepKind(
         string line,
         Dictionary<string, int> stepFamilies,
@@ -224,13 +280,19 @@ public static class TelemetryEventBuilder
             return;
         }
 
-        // Provider key = the full kind verbatim ("http.rest").  Family key = the
-        // portion before the FIRST '.' ("http").  A kind with no '.' is its own family.
+        // Family = the portion before the FIRST '.' ("http.rest" -> "http"); a kind with
+        // no '.' is its own family.  Provider = the full "family.provider" id.  Each is
+        // emitted under its REAL value ONLY when it is in the frozen Core taxonomy;
+        // otherwise it is bucketed as "custom" so a customer-chosen id never reaches the
+        // wire (the one place a customer-derived string could otherwise flow out).
         var dot = kind.IndexOf('.', StringComparison.Ordinal);
         var family = dot >= 0 ? kind[..dot] : kind;
 
-        Increment(stepFamilies, family);
-        Increment(stepProviders, kind);
+        var familyKey = CoreFamilies.Contains(family) ? family : CustomBucket;
+        var providerKey = CoreFullIds.Contains(kind) ? kind : CustomBucket;
+
+        Increment(stepFamilies, familyKey);
+        Increment(stepProviders, providerKey);
     }
 
     private static void Increment(Dictionary<string, int> map, string key)

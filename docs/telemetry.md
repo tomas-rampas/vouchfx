@@ -13,8 +13,8 @@ The telemetry allowlist is small and intentionally aggregate-only. When telemetr
 - **Tool, engine, and .NET runtime versions** — to understand which versions are in use.
 - **Run counts and scenario counts** — how many runs and scenarios executed.
 - **Per-verdict step and scenario counts** — how many steps and scenarios passed, failed, hit environment errors, or were inconclusive (counts only, never which step or scenario).
-- **Step family counts** — which built-in step families (`http`, `db-assert`, `mq-publish`, etc.) ran and how many of each.
-- **Step provider counts** — which built-in providers (`http.rest`, `db-assert.postgres`, `mq-publish.kafka`, etc.) ran and how many of each.
+- **Step family counts** — only the six built-in Core families (`http`, `db-assert`, `script`, `mq-publish`, `mq-expect`, `webhook-listen`) are emitted as count keys. Any custom or non-Core provider's family is bucketed under the constant key `"custom"`, so an author-chosen family id is never written into the telemetry event.
+- **Step provider counts** — only the six built-in Core provider ids (`http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) are emitted as count keys. Any custom or non-Core provider's full id is bucketed under `"custom"`, so an author-chosen provider id never leaves the machine.
 - **Startup and time-to-first-test durations** — wall-clock milliseconds from run start to first scenario start, and to first step completion.
 - **Anonymous install identifier** — a random GUID minted only when you opt in; it identifies this installation only, never the user, machine, or any test content.
 - **Telemetry schema version** — to allow future backends to evolve the data shape.
@@ -134,7 +134,7 @@ When you run `vouchfx telemetry disable`, both files are cleaned up — the inst
 
 ### Local file format
 
-The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each line is a compact, allowlisted telemetry event recording the fields described above. The file is append-only — successive runs accumulate events until you disable telemetry or manually delete the file.
+The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each line is a compact, allowlisted telemetry event recording the fields described above. The file is **append-only** — successive opted-in runs accumulate one event per line. It is cleared only when you run `vouchfx telemetry disable`. Automatic log rotation or capping is deferred to future hosted-backend work.
 
 The file is safe for consumption by local analysis tools (for instance, you could parse the outbox and analyse your own patterns). No remote transmission happens in v1.
 

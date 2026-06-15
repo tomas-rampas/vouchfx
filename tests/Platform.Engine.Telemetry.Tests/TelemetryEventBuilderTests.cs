@@ -164,8 +164,12 @@ public sealed class TelemetryEventBuilderTests
     }
 
     [Fact]
-    public void Build_StepKindWithoutDot_TreatsKindAsItsOwnFamily()
+    public void Build_StepKindWithoutDot_TreatsKindAsItsOwnFamily_AndBucketsTheProvider()
     {
+        // "script" is a Core FAMILY (the bare-family alias) so it counts under its real
+        // family name; but "script" alone is NOT a Core FULL id (only "script.csharp"
+        // is), so the provider tally buckets it as "custom" — proving the family/provider
+        // allowlists are applied independently and only the exact frozen ids pass through.
         var lines = new List<string>
         {
             SyntheticEvents.ScenarioStarted("A", T0),
@@ -177,7 +181,50 @@ public sealed class TelemetryEventBuilderTests
         var ev = Build(lines);
 
         Assert.Equal(1, ev.StepFamilies["script"]);
-        Assert.Equal(1, ev.StepProviders["script"]);
+        Assert.False(ev.StepProviders.ContainsKey("script"));
+        Assert.Equal(1, ev.StepProviders["custom"]);
+    }
+
+    [Fact]
+    public void Build_CustomProviderKind_BucketsBothFamilyAndProviderAsCustom()
+    {
+        // A custom/non-Core provider's `kind` is an author-chosen string (here an
+        // intentionally sensitive-looking id).  Neither its family nor its full id is in
+        // the frozen Core taxonomy, so BOTH tallies must count it under "custom" — the
+        // author-chosen string is never written as a dictionary key.  A second custom
+        // kind with a DIFFERENT id must aggregate into the SAME "custom" bucket, proving
+        // the metric measures "how many custom-provider steps ran" without distinguishing
+        // (or emitting) the ids.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted(
+                "a1", "acme-fraud-check.secret-internal", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted(
+                "a2", "another-custom.provider-xyz", T0.AddMilliseconds(20)),
+
+            // A genuine Core step alongside the custom ones: it must still be counted
+            // under its REAL family/provider, untouched by the bucketing.
+            SyntheticEvents.StepStarted("a3", "http.rest", T0.AddMilliseconds(30)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 3 }, T0.AddMilliseconds(40)),
+        };
+
+        var ev = Build(lines);
+
+        // Both custom kinds aggregate into the single "custom" bucket.
+        Assert.Equal(2, ev.StepFamilies["custom"]);
+        Assert.Equal(2, ev.StepProviders["custom"]);
+
+        // The author-chosen ids are NEVER written as keys.
+        Assert.False(ev.StepFamilies.ContainsKey("acme-fraud-check"));
+        Assert.False(ev.StepFamilies.ContainsKey("another-custom"));
+        Assert.False(ev.StepProviders.ContainsKey("acme-fraud-check.secret-internal"));
+        Assert.False(ev.StepProviders.ContainsKey("another-custom.provider-xyz"));
+
+        // The genuine Core step is still counted under its real family/provider.
+        Assert.Equal(1, ev.StepFamilies["http"]);
+        Assert.Equal(1, ev.StepProviders["http.rest"]);
     }
 
     private static TelemetryEvent Build(IReadOnlyList<string> lines) =>

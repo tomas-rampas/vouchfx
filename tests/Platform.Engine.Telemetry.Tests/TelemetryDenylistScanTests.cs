@@ -178,4 +178,63 @@ public sealed class TelemetryDenylistScanTests
         Assert.Contains("http.rest", json, StringComparison.Ordinal);
         Assert.Contains("\"scenarioCount\":1", json, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void BuiltEvent_CustomProviderKind_BucketsAsCustom_AndNeverLeaksTheAuthorChosenId()
+    {
+        // The `kind` of a step-started event is the ONE field the builder copies from a
+        // MEASURED event type.  For the six Core providers it is a frozen built-in token,
+        // but a custom/non-Core provider (which the S10-F-01 Echo example proves customers
+        // can ship) has an AUTHOR-CHOSEN `kind` id.  This test seeds a measured
+        // StepStartedEvent with a deliberately sensitive-looking custom id and proves the
+        // builder buckets it as "custom" so neither the family nor the provider fragment of
+        // that author-chosen id is ever written into the serialised telemetry event.
+        var t0 = new DateTimeOffset(2026, 6, 15, 12, 0, 0, TimeSpan.Zero);
+
+        const string CustomFamily = "acme-fraud-check";
+        const string CustomProvider = "secret-internal";
+        const string CustomKind = CustomFamily + "." + CustomProvider;
+
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", t0),
+
+            // A MEASURED step-started carrying the custom, author-chosen kind — the builder
+            // reads `kind` and must bucket it rather than copy it verbatim.
+            SyntheticEvents.StepStarted("custom-step", CustomKind, t0.AddMilliseconds(10)),
+
+            // A genuine Core step alongside it: the positive control that a built-in kind
+            // still appears under its REAL family/provider, untouched by the bucketing.
+            SyntheticEvents.StepStarted("core-step", "http.rest", t0.AddMilliseconds(20)),
+            SyntheticEvents.StepCompleted("core-step", Verdict.Pass, 5, t0.AddMilliseconds(30)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 2 }, t0.AddMilliseconds(40)),
+        };
+
+        var telemetryEvent = TelemetryEventBuilder.Build(
+            lines,
+            installId: Guid.NewGuid(),
+            toolVersion: "1.0.0",
+            engineVersion: "1.0.0",
+            dotnetVersion: ".NET 8.0.7",
+            timestamp: t0.AddSeconds(1));
+
+        var json = JsonSerializer.Serialize(telemetryEvent);
+
+        // Neither fragment of the author-chosen id may appear ANYWHERE in the JSON.
+        Assert.DoesNotContain(CustomFamily, json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(CustomProvider, json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(CustomKind, json, StringComparison.OrdinalIgnoreCase);
+
+        // The custom step is instead counted under the "custom" bucket key...
+        Assert.Contains("\"custom\"", json, StringComparison.Ordinal);
+        Assert.Equal(1, telemetryEvent.StepFamilies["custom"]);
+        Assert.Equal(1, telemetryEvent.StepProviders["custom"]);
+
+        // ...and the Core step is still present under its real family/provider (so the
+        // assertions above are not vacuously passing on an empty/bucket-only event).
+        Assert.Contains("http.rest", json, StringComparison.Ordinal);
+        Assert.Equal(1, telemetryEvent.StepFamilies["http"]);
+        Assert.Equal(1, telemetryEvent.StepProviders["http.rest"]);
+    }
 }
