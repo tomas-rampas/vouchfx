@@ -254,7 +254,7 @@ To run vouchfx tests in GitHub Actions or GitLab CI/CD, see the [README](../READ
 
 ### Writing a custom provider
 
-Once you're comfortable with the built-in steps, you can write your own. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the [`examples/Example.Steps.Hello`](../examples/Example.Steps.Hello) template provider for the contract and a worked example.
+Once you're comfortable with the built-in steps, you can write your own. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the contract, and the [`examples/Example.Steps.Echo`](../examples/Example.Steps.Echo) worked example — walk through its contributor friction log and README to understand the author's journey.
 
 ## Summary
 
