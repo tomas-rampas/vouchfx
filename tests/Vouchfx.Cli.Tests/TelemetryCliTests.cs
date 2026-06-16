@@ -135,6 +135,98 @@ public sealed class TelemetryCliTests
     }
 
     [Fact]
+    public async Task Disable_FiresForgetWithInstallId_ThenLocalOptOutAlwaysRuns()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        var enabled = store.Enable();          // mints an install id + sets Enabled
+        Assert.NotNull(enabled.InstallId);
+
+        Guid? forgottenId = null;
+        var output = new StringWriter();
+
+        await TelemetryCommand.DisableAsync(
+            store,
+            id => { forgottenId = id; return Task.CompletedTask; },
+            output,
+            CancellationToken.None);
+
+        // The forget fired FIRST, with the still-present install id...
+        Assert.Equal(enabled.InstallId, forgottenId);
+        // ...and the local opt-out ran: consent is Disabled and the install id is gone.
+        var after = store.Read();
+        Assert.Equal(TelemetryConsent.Disabled, after.Consent);
+        Assert.Null(after.InstallId);
+        Assert.Contains("DISABLED", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Disable_LocalOptOutStillRuns_WhenForgetFaults()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        store.Enable();
+        var output = new StringWriter();
+
+        // The forget faults (e.g. an unexpected throw escaping the best-effort wrapper).  The
+        // local opt-out MUST still run regardless — disabling is a privacy guarantee, not
+        // best-effort — whether or not the fault surfaces afterwards (it runs in a finally).
+        await Record.ExceptionAsync(() => TelemetryCommand.DisableAsync(
+            store,
+            _ => throw new InvalidOperationException("forget blew up"),
+            output,
+            CancellationToken.None));
+
+        var after = store.Read();
+        Assert.Equal(TelemetryConsent.Disabled, after.Consent);
+        Assert.Null(after.InstallId);
+        Assert.Contains("DISABLED", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Disable_ReportsSuccessAndOptsOut_WhenAlreadyCancelled()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        store.Enable();
+        // Seed an outbox so we can prove it is cleared by the local opt-out.
+        File.WriteAllText(temp.OutboxPath, "{\"k\":1}\n");
+        var output = new StringWriter();
+
+        // The token is ALREADY cancelled at entry (e.g. a Ctrl-C before the command even
+        // begins).  `telemetry disable` is a privacy command whose local opt-out always
+        // succeeds, so it must NOT abort: there is no entry-guard throw, and the best-effort
+        // forget observes cancellation cooperatively (production swallows OperationCanceled),
+        // so DisableAsync runs to completion and the wired action returns ExitCodes.Success.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var forgetSawCancellation = false;
+        var ex = await Record.ExceptionAsync(() => TelemetryCommand.DisableAsync(
+            store,
+            _ =>
+            {
+                // Mirror the production forget wrapper: notice the cancel but stay fail-silent
+                // (it never lets an OperationCanceledException escape the disable path).
+                forgetSawCancellation = cts.IsCancellationRequested;
+                return Task.CompletedTask;
+            },
+            output,
+            cts.Token));
+
+        // No throw: DisableAsync completed, so the action's `return ExitCodes.Success` is reached.
+        Assert.Null(ex);
+        Assert.True(forgetSawCancellation);
+
+        // The local opt-out ran: consent is Disabled, the install id is gone, the outbox cleared.
+        var after = store.Read();
+        Assert.Equal(TelemetryConsent.Disabled, after.Consent);
+        Assert.Null(after.InstallId);
+        Assert.False(File.Exists(temp.OutboxPath));
+        Assert.Contains("DISABLED", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Hook_FirstRunNotice_ShownOnceWhenUndecided()
     {
         using var temp = new TempPathsCli();
@@ -188,6 +280,8 @@ public sealed class TelemetryCliTests
         public string ConsentStorePath => _inner.ConsentStorePath;
 
         public string OutboxPath => _inner.OutboxPath;
+
+        public string DrainStatePath => _inner.DrainStatePath;
 
         public void Dispose()
         {
