@@ -1,0 +1,46 @@
+# examples/ci-reference/smoke.e2e.yaml — minimal CI reference suite (S10-C-01).
+#
+# The smallest self-contained, runnable vouchfx suite: ONE containerised service
+# (traefik/whoami) and ONE http.rest step that asserts a 200 and captures a value
+# from the JSON response.  It exists to PROVE the reusable workflow
+# (.github/workflows/vouchfx-run.yml) can stand up a real topology, run a suite and
+# publish artefacts — deliberately dependency-light (one container; no database, no
+# seed, no secret) so the reference caller stays fast and never flakes on a heavy
+# managed dependency.
+#
+# Why traefik/whoami: it is a tiny, well-known HTTP image that the integration
+# suite already uses, and its GET /api endpoint returns a JSON document whose
+# `hostname` field gives us a real JSONPath capture target.
+
+metadata:
+  name: ci-reference-smoke
+  owner: vouchfx-core
+  tags: [ci-reference, smoke]
+  description: >-
+    Minimal CI reference suite — a single http.rest GET against traefik/whoami
+    asserting status 200 and capturing the hostname via JSONPath. Proves the
+    reusable vouchfx-run workflow runs a real suite green and publishes artefacts.
+
+environment:
+  services:
+    # The system under test: a single traefik/whoami container listening on port 80.
+    # `httpPort` tells the engine which container port to expose and health-gate.
+    whoami:
+      image: traefik/whoami
+      httpPort: 80
+
+steps:
+  # GET /api returns a JSON body describing the request/host; we assert the call
+  # succeeds (status 200) and capture the responding container's hostname into
+  # Vars["hostname"] via a JSONPath capture (the captured value threads forward to
+  # any later step — there is none here, so this simply proves capture works).
+  - id: whoami-responds
+    type: http.rest
+    target: whoami
+    method: GET
+    path: /api
+    verifyMode: IMMEDIATE
+    expect:
+      status: 200
+    capture:
+      hostname: "$.hostname"

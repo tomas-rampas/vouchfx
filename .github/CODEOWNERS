@@ -1,0 +1,89 @@
+# CODEOWNERS — vouchfx repository governance (S10-D-01)
+# =============================================================================
+# Purpose: require review on the surfaces where an unreviewed change does the
+# most damage — the FROZEN v1 contracts (break every downstream consumer), the
+# CI/release templates (a supply-chain surface), and the security/governance
+# files themselves. GitHub auto-requests review from the listed owner(s) on any
+# PR that touches a matching path, and — when the repo enables "Require review
+# from Code Owners" branch protection — blocks merge until they approve.
+#
+# OWNER PLACEHOLDER
+# -----------------
+# `@tomas-rampas` is the sole owner TODAY because no GitHub org/teams exist yet.
+# Once `vouchfx-org` (or equivalent) is created, SUBSTITUTE the individual for
+# the appropriate teams, e.g.:
+#     CI / release / supply-chain  -> @vouchfx-org/platform
+#     security / disclosure        -> @vouchfx-org/security
+#     frozen v1 contracts          -> @vouchfx-org/platform @vouchfx-org/security
+# Team handles must be `@org/team` and the team must have write access to the
+# repo, otherwise GitHub silently ignores the rule. GitHub can only fully
+# validate owners against the real org — patterns here are syntactically valid
+# but owner-resolution is unverifiable until the org/teams exist.
+#
+# PRECEDENCE: the LAST matching pattern wins (CODEOWNERS is last-match, unlike
+# .gitignore). The catch-all is therefore first; the high-value paths follow and
+# override it. Keep new high-value rules BELOW the catch-all.
+# =============================================================================
+
+# --- Catch-all: everything has an owner by default --------------------------
+*                                               @tomas-rampas
+
+
+# === Supply-chain surface: CI / CD / release templates ======================
+# WHY: these workflows and templates execute in privileged CI with secrets/OIDC
+# and define what downstream consumers run. A malicious or careless edit here is
+# a software-supply-chain compromise (the core point of S10-D-01). Owner review
+# is mandatory.
+/.github/workflows/                             @tomas-rampas
+/.github/actions/                               @tomas-rampas
+/ci/                                            @tomas-rampas
+
+# Central build / dependency-version / package-feed control. WHY: an unreviewed
+# edit here silently changes a dependency version, adds a package source, or alters
+# the build contract across the WHOLE solution — a classic supply-chain vector — so
+# it must not be owned at the same bar as a README (it is otherwise catch-all only).
+/Directory.Build.props                          @tomas-rampas
+/Directory.Packages.props                       @tomas-rampas
+/global.json                                    @tomas-rampas
+/nuget.config                                   @tomas-rampas
+
+# Memory-leak regression harness — the permanent Phase-1 (M1) CI gate (5,000-iteration
+# provider-closure leak test, blocking in build.yml). WHY: weakening it (fewer
+# iterations / a higher threshold) silently removes a hard-invariant safety gate.
+/tests/Platform.Engine.Compilation.MemoryHarness/ @tomas-rampas
+
+
+# === FROZEN v1 contracts — highest bar (Core-provider+ review) ==============
+# WHY: these surfaces are frozen for the v1.x engine series and enforced by
+# golden-file CI gates. A change here is, by definition, a breaking change to
+# EVERY consumer (provider authors, the JSON Schema/IDE tooling, every event-
+# stream renderer + the Healer agent). Evolution must be additive-only and
+# deliberately reviewed — never an incidental diff.
+
+# Provider SDK — the v1 interface contract (IStepProvider/IStepBinder/… and the
+# CsxFragment composition rules). Frozen by SdkContractFreezeTests.
+/src/Sdk/                                       @tomas-rampas
+
+# Language JSON Schema source — the authored `.e2e.yaml` grammar. The composed
+# schema is frozen; changing the source mutates what every author/IDE validates.
+/src/Engine/Platform.Engine.Compilation/Schema/ @tomas-rampas
+
+# Event-wire contract — top-level + nested value records of the JSON Lines event
+# stream. Frozen by EventContractFreezeTests; any rename/type change breaks every
+# renderer and the Healer.
+/src/Engine/Platform.Engine.Abstractions/Events/ @tomas-rampas
+
+# Golden files — the frozen baselines themselves (SDK contract, event contract,
+# composed schema snapshots). These ARE the freeze; never edit without intent.
+**/Golden/                                      @tomas-rampas
+**/composed-schema.v1.json                      @tomas-rampas
+
+
+# === Hard invariants + security/governance files ============================
+# WHY: CLAUDE.md encodes the non-negotiable hard invariants (memory model,
+# provider model, Aspire teardown, verdict taxonomy, secrets posture). SECURITY
+# governs vulnerability disclosure. CODEOWNERS governs review itself. All three
+# are governance surfaces that must not change without owner sign-off.
+/CLAUDE.md                                       @tomas-rampas
+/SECURITY.md                                     @tomas-rampas
+/.github/CODEOWNERS                              @tomas-rampas
