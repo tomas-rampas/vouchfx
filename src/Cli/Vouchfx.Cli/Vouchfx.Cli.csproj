@@ -42,6 +42,9 @@
          not orchestrated services that Aspire should treat as project resources. -->
     <ProjectReference Include="..\..\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Opt-in, privacy-first telemetry (S10-G-04). A plain net8.0 library; no Aspire. -->
+    <ProjectReference Include="..\..\Engine\Platform.Engine.Telemetry\Platform.Engine.Telemetry.csproj"
+                      IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj"

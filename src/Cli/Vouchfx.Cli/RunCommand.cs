@@ -67,6 +67,7 @@ internal static class RunCommand
         var junitReportOption = BuildJunitReportOption();
         var eventsOption = BuildEventsOption();
         var noDecorationsOption = BuildNoDecorationsOption();
+        var noTelemetryOption = BuildNoTelemetryOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
@@ -79,6 +80,7 @@ internal static class RunCommand
         command.Add(junitReportOption);
         command.Add(eventsOption);
         command.Add(noDecorationsOption);
+        command.Add(noTelemetryOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -94,6 +96,7 @@ internal static class RunCommand
             var junitReportPath = parseResult.GetValue(junitReportOption);
             var eventsReportPath = parseResult.GetValue(eventsOption);
             var noDecorations = parseResult.GetValue(noDecorationsOption);
+            var noTelemetry = parseResult.GetValue(noTelemetryOption);
 
             // Accessibility (S10-G-03a): decorate the terminal report (ANSI colour + per-verdict
             // shape glyph) ONLY for an interactive TTY that has not opted out.  Plain text is the
@@ -107,6 +110,12 @@ internal static class RunCommand
                 && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"))
                 && !Console.IsOutputRedirected;
 
+            // Opt-in, privacy-first telemetry (S10-G-04): the production hook over the real
+            // per-user consent store + local outbox sink.  --no-telemetry (and the
+            // VOUCHFX_NO_TELEMETRY env var, read inside the hook) opt this run out.  Everything
+            // the hook does is wrapped so it can NEVER affect the suite verdict or exit code.
+            var telemetryHook = TelemetryRunHook.CreateDefault(noTelemetry, Console.Error);
+
             return ExecuteAsync(
                 path,
                 criteria,
@@ -119,11 +128,30 @@ internal static class RunCommand
                 eventsReportPath,
                 decorate,
                 Console.Out,
+                telemetryHook,
                 cancellationToken);
         });
 
         return command;
     }
+
+    /// <summary>
+    /// The <c>--no-telemetry</c> flag (S10-G-04): opt THIS run out of telemetry, even when
+    /// telemetry is enabled.  Equivalent to setting <c>VOUCHFX_NO_TELEMETRY</c> for the run.
+    /// </summary>
+    /// <remarks>
+    /// Telemetry is OFF by default and opt-in (via <c>vouchfx telemetry enable</c>); this flag
+    /// is the per-invocation opt-out for an otherwise-enabled install.  The
+    /// <c>VOUCHFX_NO_TELEMETRY</c> environment variable is the equivalent opt-out for CI /
+    /// automation that cannot pass a flag (and doubles as the production-run exclusion).
+    /// </remarks>
+    internal static Option<bool> BuildNoTelemetryOption() => new("--no-telemetry")
+    {
+        Description =
+            "Opt this run out of anonymous usage telemetry, even if telemetry is enabled. "
+            + "Telemetry is OFF by default and opt-in (vouchfx telemetry enable); set "
+            + "VOUCHFX_NO_TELEMETRY=1 for the same effect in CI / automation.",
+    };
 
     /// <summary>The repeatable <c>--tag</c> option: keep scenarios carrying any listed tag.</summary>
     internal static Option<string[]> BuildTagOption() => new("--tag")
@@ -376,6 +404,15 @@ internal static class RunCommand
     /// </summary>
     /// <param name="path">The discovery root (already defaulted to <c>"."</c> by the parser).</param>
     /// <param name="output">The writer that receives diagnostics + the rendered report.</param>
+    /// <param name="telemetryHook">
+    /// The opt-in telemetry hook (S10-G-04), or <see langword="null"/> to disable all telemetry
+    /// for this invocation (the unit-test default).  When non-<see langword="null"/>, the hook
+    /// shows the one-time first-run notice (when consent is Undecided), captures the buffered
+    /// event stream via the runner's <c>--events</c> seam, and — when consent is Enabled and the
+    /// run is not opted out — builds the allowlisted telemetry event and appends it to the local
+    /// outbox.  EVERY hook call is wrapped so telemetry can never change the suite verdict or exit
+    /// code.
+    /// </param>
     /// <param name="cancellationToken">Propagated to the runner.</param>
     /// <param name="parallel">
     /// The <c>--parallel</c> value: when non-<see langword="null"/>, run up to this many
@@ -452,8 +489,15 @@ internal static class RunCommand
         string? eventsReportPath,
         bool decorate,
         TextWriter output,
+        TelemetryRunHook? telemetryHook,
         CancellationToken cancellationToken)
     {
+        // First-run notice (S10-G-04): when telemetry consent is Undecided and the notice has not
+        // been shown, print a one-time stderr notice (what's collected, that NOTHING is sent until
+        // the user opts in, how to opt out).  The notice collects and sends nothing.  Wrapped
+        // inside the hook so it can never break the run.
+        telemetryHook?.MaybeShowFirstRunNotice(Console.Error);
+
         // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
         // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
         // usage error (exit 2) up front — before discovering or running anything (no Docker).
@@ -564,6 +608,17 @@ internal static class RunCommand
                 .ConfigureAwait(false);
         }
 
+        // Telemetry capture path (S10-G-04): when telemetry will emit, ask the runner to write its
+        // buffered event stream (the SAME verbatim v1 stream the renderers consume) so the hook can
+        // read it back and derive the allowlisted telemetry event.  When the user passed --events,
+        // that path is reused (no extra write); otherwise a private temp file is used.  When
+        // telemetry will NOT emit, the runner's events path is the user's own (or null) — no
+        // telemetry-driven write.  Resolving this here keeps every report path identical to before
+        // for a non-telemetry run.
+        var (runnerEventsPath, isTempEventsFile) = telemetryHook is not null
+            ? telemetryHook.ResolveEventsCapturePath(eventsReportPath)
+            : (eventsReportPath, false);
+
         Verdict suiteVerdict = Verdict.Pass;
         if (parsed.Count > 0)
         {
@@ -592,7 +647,7 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
-                    eventsReportPath: eventsReportPath,
+                    eventsReportPath: runnerEventsPath,
                     decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
@@ -605,11 +660,22 @@ internal static class RunCommand
                     seedBaseDirectory: null,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
-                    eventsReportPath: eventsReportPath,
+                    eventsReportPath: runnerEventsPath,
                     decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
+        }
+
+        // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
+        // The hook re-reads runnerEventsPath, builds the allowlisted TelemetryEvent, appends it to
+        // the local outbox, and deletes the temp file when it owns it.  EmitAsync swallows every
+        // exception (it is a no-op when telemetry is not emitting, when no path was captured, or on
+        // any error), so telemetry can NEVER affect the verdict or the exit code below.
+        if (telemetryHook is not null)
+        {
+            await telemetryHook.EmitAsync(runnerEventsPath, isTempEventsFile, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         // Fold the parse-failures (Inconclusive) into the suite verdict so the exit code

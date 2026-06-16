@@ -1,0 +1,53 @@
+# .github/workflows/vouchfx-run-reference.yml — REFERENCE CALLER (S10-C-01).
+#
+# A worked example that CALLS the reusable workflow (.github/workflows/vouchfx-run.yml)
+# against this repository's own minimal reference suite (examples/ci-reference). It
+# exists to PROVE the reusable workflow actually runs a real `.e2e.yaml` suite green
+# and publishes its JUnit + HTML artefacts end-to-end — a living, executable example
+# for consumers to copy.
+#
+# Because the caller and the reusable workflow live in the SAME repository, the `uses:`
+# reference below is the LOCAL form `./.github/workflows/vouchfx-run.yml` and the
+# vouchfx source defaults to this repo at this ref — no cross-repo pin is needed here.
+# A REAL consumer in ANOTHER repository should instead pin to a full commit SHA, e.g.
+#   uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
+# (see the supply-chain notes in the reusable workflow's header).
+#
+# The runner is ubuntu-latest, which ships Docker — required for the Aspire topology
+# the smoke suite stands up (a single traefik/whoami container).
+
+name: vouchfx reference suite
+
+on:
+  # Run on pushes that touch the reference suite, the workflows, or the CLI/engine that
+  # the build-from-source install compiles — so a change that could break the reference
+  # run is caught here.
+  push:
+    branches:
+      - main
+    paths:
+      - "examples/ci-reference/**"
+      - ".github/workflows/vouchfx-run.yml"
+      - ".github/workflows/vouchfx-run-reference.yml"
+      - "src/**"
+  # Allow the same proof to be triggered by hand from the Actions tab.
+  workflow_dispatch:
+
+# Read-only: the call only reads source and uploads artefacts.
+permissions:
+  contents: read
+
+jobs:
+  reference-suite:
+    name: Reference suite (examples/ci-reference)
+    # Call the reusable workflow against this repo's own minimal reference suite.
+    uses: ./.github/workflows/vouchfx-run.yml
+    with:
+      # The minimal self-contained suite shipped in this repo.
+      scenario-path: examples/ci-reference
+      # Warm the single image the smoke suite needs before the run, so DCP's ~20s
+      # per-resource startup window is never spent on a cold pull. A real consumer
+      # should pin this to a digest (traefik/whoami@sha256:...) per the supply-chain
+      # notes in the reusable workflow; the reference uses the tag for legibility.
+      prewarm-images: |
+        traefik/whoami:latest

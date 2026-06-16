@@ -74,6 +74,7 @@ public sealed class ParallelArgParsingTests
             eventsReportPath: null,
             decorate: false,
             output: sw,
+            telemetryHook: null,
             cancellationToken: default);
 
         Assert.Equal(ExitCodes.UsageError, exitCode);

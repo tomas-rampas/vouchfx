@@ -104,6 +104,143 @@ Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a bl
 5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
 (Docker) job.
 
+## Getting started
+
+**New to vouchfx?** Start here. The [Getting Started guide](docs/getting-started.md) walks you through
+your first test in 60 minutes: checking prerequisites, building from source, authoring a minimal
+`.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
+generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
+
+### CI integration with GitHub Actions
+
+vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
+
+**Quick start.** In your repository's workflow, add:
+
+```yaml
+jobs:
+  vouchfx-e2e:
+    uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+    with:
+      scenario-path: ./tests/e2e
+      fail-on-env-error: false
+```
+
+Replace `<commit-sha>` with a full 40-character commit SHA (not a branch or tag, for supply-chain hygiene).
+
+**Workflow inputs.** The reusable workflow accepts these configuration inputs:
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search for `.e2e.yaml` scenarios. Searched recursively. |
+| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or — when binary packaging lands in Sprint 11 — to pin a released version. |
+| `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
+| `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
+| `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
+| `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Syntax: one image per line (e.g., `traefik/whoami:latest`). |
+| `runs-on` | string | `ubuntu-latest` | The GitHub Actions runner label to use. Must provide Docker; `ubuntu-latest` does. |
+
+**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The workflow checks out `vouchfx-repo` at the requested `vouchfx-ref`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same workflow contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+
+**Exit-code gating semantics.** The workflow respects the verdict taxonomy (§12.1 of the Architecture Blueprint) to distinguish infrastructure breakage from product defects:
+
+- **Exit 0 (success)** — By default, a passing suite or one with only EnvironmentError / Inconclusive verdicts.
+- **Exit 1 (Fail)** — One or more scenarios failed. **Always breaks CI** — this is the default gating.
+- **Exit 3 (EnvironmentError)** — Infrastructure breakage (unhealthy container, image-pull failure, seed failure). Breaks CI only when `fail-on-env-error: true`.
+- **Exit 4 (Inconclusive)** — Engine could not decide (timeout, partition, unmet capture). Breaks CI only when `fail-on-inconclusive: true`.
+
+The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`, page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
+
+**Artefacts.** The workflow always runs the suite and **always publishes the reports** (via `if: always()`) even when the run fails, so artefacts are available precisely when a suite does not pass. Reports are stored under the job's `vouchfx-reports` artefact name and include:
+
+- **`results.xml`** — JUnit XML results for CI ingestion; the four verdicts map to distinct JUnit primitives (Fail → `<failure>`, EnvironmentError → `<error>`, Inconclusive → `<skipped>`).
+- **`report.html`** — A self-contained HTML report with polling timelines, captured-variable provenance, failed-step diffs, and the reproducibility envelope, with no secret values embedded.
+
+**Supply-chain hygiene.** For production use, follow these pinning recommendations:
+
+1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
+   ```yaml
+   uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+   ```
+   A branch/tag ref lets the workflow definition change underneath you; a SHA is immutable.
+
+2. **Pin `vouchfx-ref` to a commit SHA or release tag**, never a branch:
+   ```yaml
+   vouchfx-ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+   ```
+
+3. **Pin each `prewarm-images` entry to an immutable image digest**, not a floating tag:
+   ```yaml
+   prewarm-images: |
+     traefik/whoami@sha256:abc123...
+     postgres@sha256:def456...
+   ```
+   A digest guarantees you pull the exact image you reviewed; `:latest` can change.
+
+**Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
+
+### CI integration with GitLab CI
+
+vouchfx ships an **`include`-able GitLab CI/CD template** (`ci/gitlab/vouchfx-run.gitlab-ci.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts with native GitLab test-report rendering. It is the **GitLab equivalent of the reusable GitHub Actions workflow**, with identical inputs (as CI/CD variables), build-from-source install, exit-code gating, and artefact-upload behaviour.
+
+**Quick start.** In your repository's `.gitlab-ci.yml`, add:
+
+```yaml
+include:
+  - project: vouchfx-org/vouchfx
+    ref: <40-char-commit-sha>
+    file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
+
+vouchfx-run:
+  variables:
+    VOUCHFX_SCENARIO_PATH: ./tests/e2e
+    VOUCHFX_FAIL_ON_ENV_ERROR: "false"
+```
+
+Replace `<40-char-commit-sha>` with a full 40-character commit SHA (not a branch or tag, for supply-chain hygiene).
+
+**Configuration variables.** The template accepts these configuration variables (the GitLab analogue of GitHub workflow inputs):
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `VOUCHFX_SCENARIO_PATH` | string | `.` | Directory (relative to the project root) to search recursively for `.e2e.yaml` scenarios. |
+| `VOUCHFX_REPO_URL` | string | `$CI_REPOSITORY_URL` | Git URL of the vouchfx repository to build from source. Defaults to the calling project; override to track a fork. |
+| `VOUCHFX_REF` | string | `$CI_COMMIT_SHA` | Git ref (commit SHA, tag, or branch) of `VOUCHFX_REPO_URL` to build. Recommended: a full commit SHA for supply-chain repeatability. |
+| `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:8.0` | .NET 8 SDK container image the job runs in. vouchfx targets .NET 8 LTS. |
+| `VOUCHFX_FAIL_ON_ENV_ERROR` | string | `"false"` | When truthy, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
+| `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Pin each entry to an immutable image digest. |
+
+**Docker-in-Docker and the privileged-runner requirement.** vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern with a `docker:dind` service. **Important caveat:** dind requires a **privileged runner**. The `docker:dind` service only starts on a GitLab Runner configured with `privileged = true` (Docker executor) or an equivalently-privileged Kubernetes executor; gitlab.com's shared SaaS Linux runners provide this. A self-managed runner must be explicitly configured for it.
+
+**Alternative for a non-privileged runner.** If your runner cannot run privileged dind, use a **socket-bind runner**: mount the host daemon socket into the build (`volumes = ["/var/run/docker.sock:/var/run/docker.sock", …]` in the runner config), then drop the `services:` block and `dind`/TLS variables and set `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not needing privileged mode — choose per your security posture.
+
+**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The template clones `VOUCHFX_REPO_URL` at the requested `VOUCHFX_REF`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same template contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+
+**Exit-code gating semantics and artefacts.** The template respects the verdict taxonomy (§12.1 of the Architecture Blueprint) and always publishes reports (via `when: always`) even when the run fails — artefacts are available precisely when a suite does not pass:
+
+- **Exit 0 (success)** — By default, a passing suite or one with only EnvironmentError / Inconclusive verdicts.
+- **Exit 1 (Fail)** — One or more scenarios failed. **Always breaks CI** — this is the default gating.
+- **Exit 3 (EnvironmentError)** — Infrastructure breakage. Breaks CI only when `VOUCHFX_FAIL_ON_ENV_ERROR` is truthy.
+- **Exit 4 (Inconclusive)** — Engine could not decide. Breaks CI only when `VOUCHFX_FAIL_ON_INCONCLUSIVE` is truthy.
+
+Reports are stored under the job's default artefact path and include:
+
+- **`results.xml`** — JUnit XML results for CI ingestion; surfaced natively in GitLab's pipeline and merge-request test-report UI.
+- **`report.html`** — A self-contained HTML report with polling timelines, captured-variable provenance, failed-step diffs, and the reproducibility envelope, with no secret values embedded.
+
+**Supply-chain hygiene.** For production use, follow these pinning recommendations:
+
+1. **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch or tag.
+2. **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
+3. **Pin each `VOUCHFX_PREWARM_IMAGES` entry to an immutable image digest** (`name@sha256:…`), not a floating tag.
+4. **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`) rather than the floating tag.
+
+**Verification status (important).** The GitLab template is **static-validated only** (yamllint + GitLab CI JSON schema + behavioural-equivalence cross-check against the GitHub workflow), but has **not been run on a live GitLab instance** — a live pipeline / `ci/lint` run is an infrastructure-gated follow-up. The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed containers are reachable under sibling Docker-in-Docker** (the template sets `TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw Testcontainers) — that dind-to-DCP networking is the primary unknown.
+
+See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](ci/gitlab/vouchfx-run.gitlab-ci.yml) and [`ci/gitlab/README.md`](ci/gitlab/README.md) for the complete reference and implementation details.
+
 ## Running tests with the CLI
 
 Once built, the `vouchfx` command discovers and runs tests. Place `.e2e.yaml` files anywhere in your project and run:
@@ -183,6 +320,50 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 
 The output is a terminal report with colour-coded verdicts.
 
+## Telemetry
+
+vouchfx can collect **anonymous, aggregate usage telemetry** (tool/engine/.NET versions, step and scenario verdict counts, which built-in Core step kinds ran, and startup timings) to help prioritise the engine. **Telemetry is OFF by default — nothing is collected or sent unless you explicitly opt in.** Your test contents, captured values, secrets, URLs, image names, scenario names, and step IDs are **never** collected. Custom-provider step kinds are bucketed under a constant `"custom"` key so author-chosen provider ids never leave the machine. This privacy guarantee is enforced by permanent CI gates that prevent sensitive fields from being added to the telemetry allowlist.
+
+**Three commands manage consent:**
+
+```bash
+# Opt in to telemetry
+vouchfx telemetry enable
+
+# Opt out (deletes install id and clears local outbox immediately)
+vouchfx telemetry disable
+
+# Check current consent state and where data is stored
+vouchfx telemetry status
+```
+
+**Per-run suppression:**
+
+```bash
+# Suppress telemetry for this run only
+vouchfx run ./tests --no-telemetry
+
+# Or set the environment variable (e.g. for CI automation)
+export VOUCHFX_NO_TELEMETRY=1
+vouchfx run ./tests
+```
+
+In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. A future hosted backend is out of scope.
+
+For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, and troubleshooting — see [`docs/telemetry.md`](docs/telemetry.md).
+
+### Documentation roadmap
+
+**New to vouchfx?** Here is a recommended reading order:
+
+1. **[Getting Started](docs/getting-started.md)** — Your first test in 60 minutes.
+2. **[Recipes](docs/recipes.md)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
+3. **[Common Patterns](docs/common-patterns.md)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows.
+4. **[Troubleshooting](docs/troubleshooting.md)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
+5. **[Language Reference](docs/language-reference.md)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
+6. **[Technical Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+7. **[YAML DSL Specification](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The complete `.e2e.yaml` grammar and JSON Schema.
+
 ### Report formats
 
 By default, `vouchfx run` outputs a terminal report only. You can optionally write a self-contained HTML report, a JUnit XML results file, and/or the raw JSON Lines event stream:
@@ -244,6 +425,9 @@ CLAUDE.md                             operating rules and hard invariants for th
   taxonomy, provider architecture, reporting, secrets).
 - [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)
   — the `.e2e.yaml` grammar, JSON Schema, and the VSCode/LSP extension design.
+- [`docs/language-reference.md`](docs/language-reference.md) — the per-step-type field reference
+  (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
+  frozen by a golden gate, so it can never drift from what the compiler accepts.
 - [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — scope, the seven workstreams, phasing,
   and what is in the MVP versus later.
 - [`plan/README.md`](plan/README.md) — the execution plan that decomposes the MVP into milestones,
@@ -265,9 +449,15 @@ engine internals.
 
 ## Contributing
 
-**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract from the `Platform.Sdk` NuGet package, composition rules, and the Verified-tier rubric. The [`examples/Example.Steps.Hello`](examples/Example.Steps.Hello) provider is a copyable template demonstrating all four mandatory interfaces on a minimal, dependency-free step.
+**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract from the `Platform.Sdk` NuGet package, composition rules, and the Verified-tier rubric. The [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template.
 
 **Contributing to the platform engine?** The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and orchestration first). Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
+
+## Security
+
+For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
+
+Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) is in place and activates when binary packaging ships in a future sprint.
 
 ## Licence
 

@@ -1,0 +1,23 @@
+# yamllint configuration for the vouchfx GitLab CI template.
+#
+# Run from this directory with:  yamllint -c .yamllint.yml vouchfx-run.gitlab-ci.yml
+#
+# Rationale for the deviations from yamllint's defaults:
+#   • line-length 120 — the template is heavily commented (the comments ARE the
+#     documentation, mirroring the GitHub workflow's prose header); 120 keeps the
+#     comment lines readable without forcing artificial wraps. GitLab itself imposes
+#     no line-length limit.
+#   • document-start disabled — GitLab CI YAML files conventionally omit the leading
+#     `---` (none of this repo's GitHub workflows use it either); requiring it would be
+#     inconsistent with the surrounding house style.
+#   • comments-indentation disabled — the boxed "── … ──" section banners in the header
+#     are deliberately aligned for readability rather than to the next mapping key.
+extends: default
+
+rules:
+  line-length:
+    max: 120
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable

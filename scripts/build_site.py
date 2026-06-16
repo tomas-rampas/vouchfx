@@ -34,6 +34,13 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/01_Technical_Architecture_and_Engineering_Blueprint.md", "Design docs", "01 · Architecture Blueprint"),
     ("docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md", "Design docs", "02 · YAML DSL Specification"),
     ("docs/03_MVP_Project_Plan.md", "Design docs", "03 · MVP Project Plan"),
+    ("docs/getting-started.md", "User guides", "Getting started (60-minute path)"),
+    ("docs/recipes.md", "User guides", "Recipes"),
+    ("docs/common-patterns.md", "User guides", "Common patterns"),
+    ("docs/troubleshooting.md", "User guides", "Troubleshooting"),
+    ("docs/telemetry.md", "User guides", "Telemetry & privacy"),
+    ("docs/language-reference.md", "User guides", "Language reference (generated)"),
+    ("docs/accessibility.md", "User guides", "Accessibility"),
     ("plan/README.md", "Delivery plan", "Delivery Plan (overview)"),
     ("plan/roadmap.md", "Delivery plan", "Roadmap (Gantt)"),
     ("plan/sprint-01.md", "Delivery plan", "Sprint 01 — Foundations"),
@@ -49,6 +56,7 @@ DOCS: list[tuple[str, str, str]] = [
     ("plan/sprint-10.md", "Delivery plan", "Sprint 10 — Contribution path"),
     ("plan/sprint-11.md", "Delivery plan", "Sprint 11 — Stabilisation (M4)"),
     ("plan/sprint-12.md", "Delivery plan", "Sprint 12 — Pilot & release (M5)"),
+    ("plan/post-v1-backlog.md", "Delivery plan", "Post-v1 / v2 backlog"),
     ("README.md", "Project", "Project README"),
     ("CLAUDE.md", "Project", "Engineering guide (CLAUDE.md)"),
 ]
@@ -249,6 +257,41 @@ PORTAL = """<!DOCTYPE html>
       <a class="doc-card" href="docs/03_MVP_Project_Plan.html">
         <span class="doc-card__k">03</span><h3>MVP Project Plan</h3>
         <p>Scope, the seven workstreams, phasing, and what is in the MVP versus later.</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="portal__group">
+    <h2>User guides</h2>
+    <p>Author, run and debug your first suites — and understand the language, telemetry and accessibility surface.</p>
+    <div class="doc-cards">
+      <a class="doc-card" href="docs/getting-started.html">
+        <span class="doc-card__k">START</span><h3>Getting started</h3>
+        <p>A 60-minute path from a ready environment to your first PASS: build vouchfx, author a minimal <code>.e2e.yaml</code>, run it, and read the verdict.</p>
+      </a>
+      <a class="doc-card" href="docs/recipes.html">
+        <span class="doc-card__k">RECIPES</span><h3>Recipes</h3>
+        <p>Task-oriented, runnable patterns — SQL seeding, WireMock test doubles, environment secrets, capture and substitution, RETRY polling, and more.</p>
+      </a>
+      <a class="doc-card" href="docs/common-patterns.html">
+        <span class="doc-card__k">PATTERNS</span><h3>Common patterns</h3>
+        <p>The structural and compositional shapes most test files share: the four top-level sections, test selection, services vs. dependencies, and step composition.</p>
+      </a>
+      <a class="doc-card" href="docs/troubleshooting.html">
+        <span class="doc-card__k">FIXES</span><h3>Troubleshooting</h3>
+        <p>Real failure modes and how to fix them — Docker reachability, health-gate timeouts, discovery-path gotchas, and reading each verdict class.</p>
+      </a>
+      <a class="doc-card" href="docs/telemetry.html">
+        <span class="doc-card__k">PRIVACY</span><h3>Telemetry &amp; privacy</h3>
+        <p>The privacy-first, opt-in telemetry design: what is collected, how to enable or disable it, where data goes, and the guarantees that protect you.</p>
+      </a>
+      <a class="doc-card" href="docs/language-reference.html">
+        <span class="doc-card__k">REFERENCE</span><h3>Language reference</h3>
+        <p>Every field, generated straight from the composed <code>v1</code> JSON Schema the compiler validates against — so it can never drift from what vouchfx accepts.</p>
+      </a>
+      <a class="doc-card" href="docs/accessibility.html">
+        <span class="doc-card__k">A11Y</span><h3>Accessibility</h3>
+        <p>The WCAG 2.1 AA conformance record for the terminal and HTML report renderers — the audit, findings, and remediation.</p>
       </a>
     </div>
   </section>

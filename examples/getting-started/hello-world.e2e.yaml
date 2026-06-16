@@ -1,0 +1,58 @@
+# examples/getting-started/hello-world.e2e.yaml — the first vouchfx test (S10-E-01).
+#
+# This is the minimal, pedagogical example: a single containerised service
+# (traefik/whoami) and one http.rest step that makes a GET request, asserts
+# the response is healthy (status 200), and captures a field from the JSON
+# response into a variable. It is guaranteed to pass and demonstrates:
+#   • metadata: human-facing description for reporting
+#   • environment.services: the system under test (a container)
+#   • steps: ordered actions and assertions
+#   • http.rest: an HTTP request step type
+#   • capture: threading state forward via JSONPath
+
+metadata:
+  name: getting-started-hello-world
+  owner: vouchfx-newcomers
+  tags: [getting-started, hello-world]
+  description: >-
+    The first vouchfx test — a single http.rest GET against traefik/whoami.
+    Asserts the response is HTTP 200 and captures the container hostname
+    via JSONPath for demonstration; any later step could use the captured
+    value via {hostname} placeholder substitution.
+
+# The infrastructure the test depends on:
+environment:
+  services:
+    # The system under test: traefik/whoami is a tiny container that responds
+    # to HTTP requests with JSON describing itself. httpPort tells vouchfx
+    # which container port to expose and health-gate before the test runs.
+    whoami:
+      image: traefik/whoami
+      httpPort: 80
+
+# No variables section: this example uses no pre-loaded constants.
+# (variables: { name: value } is optional and useful for test data.)
+
+# The ordered test steps:
+steps:
+  # Step 1: Make an HTTP GET request to the whoami service and verify success.
+  #   • id: a unique identifier (used in reporting and for step-to-step references)
+  #   • type: http.rest (make an HTTP request)
+  #   • target: whoami (the service name from environment.services)
+  #   • method: GET (HTTP verb)
+  #   • path: /api (the endpoint; service listens on http://whoami:80)
+  #   • expect.status: 200 (assertion: the response must be HTTP 200)
+  #   • capture: JSONPath expressions that extract values from the response body
+  #     (a later step could reference the captured value as {hostname})
+  - id: whoami-GET-api
+    type: http.rest
+    target: whoami
+    method: GET
+    path: /api
+    expect:
+      status: 200
+    capture:
+      # JSONPath "$.hostname" extracts the hostname field from the JSON response.
+      # The captured value is stored in Vars["hostname"] and available to later
+      # steps as the placeholder {hostname}.
+      hostname: "$.hostname"

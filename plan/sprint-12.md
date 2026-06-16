@@ -21,6 +21,46 @@ and governance artifacts are published; and the go/no-go assessment is written f
 
 ## Tasks
 
+### Workstream G — Result reporting & diagnostics
+
+#### S12-G-01 · Hosted telemetry pilot backend + outbox transport
+- **Owner:** PC · **Estimate:** 2.5d · **Depends on:** S10-G-04 · **Spec:** MVP §9.1 (telemetry row),
+  §8.5.3 (success-criteria instrumentation), §9.3
+- **Why this was deferred from S10-G-04 (Phase 4):** the hosted backend is *infrastructure* — a deployed
+  ingestion endpoint, a retention store, authentication, and a deletion job — not engine code. It cannot
+  live in the engine repository, and it has no consumer until the pilot cohort runs in M5. Building it in
+  Phase 4 would have been premature infrastructure with no measurement window. The engine substance (opt-in
+  client, consent gate, allowlist-only event, the `ITelemetrySink` seam, and the `LocalFileTelemetrySink`
+  local outbox) shipped in S10-G-04 precisely so the backend is a drop-in transport at the moment it is
+  first needed — S12-E-05's pilot measurement.
+- Build and deploy the opt-in telemetry pilot backend so the cohort's consent-gated metrics reach a central
+  store and feed the S12-E-05 measurement dashboard. Three deliverables: (1) an authenticated HTTPS
+  **ingestion endpoint** that accepts the JSON Lines event batches the local client already produces and
+  stores them under a 90-day retention policy; (2) an **install-id deletion path** that removes all records
+  for a given install id within 30 days of a `telemetry disable` signal reaching the backend (honouring the
+  privacy commitment in the S10-G-04 first-run notice); (3) a **network transport** (`IHostedTelemetrySink`
+  or equivalent) the engine loads when consent is active, which drains the local outbox by POSTing batches
+  and clearing only acknowledged records — the `LocalFileTelemetrySink` path must remain fully functional
+  when the transport is absent or the endpoint is unreachable (fail-silent, bounded back-off, no retry storm).
+- **Acceptance:**
+  - The ingestion endpoint accepts authenticated JSON Lines batches and stores them; unauthenticated or
+    malformed requests are rejected with a 4xx.
+  - Stored records are demonstrably purged after 90 days (retention policy documented and verified against a
+    synthetic aged record).
+  - A `telemetry disable` / install-id deletion request removes all backend records for that install id
+    within 30 days; the deletion path is tested with a real record round-trip.
+  - The transport drains the local outbox on successful delivery; the outbox is preserved intact when the
+    endpoint is unreachable; repeated failure uses bounded back-off (no retry storm).
+  - Nothing outside the S10-G-04 allowlist (run/scenario/verdict/step-family/provider counts, startup time,
+    time-to-first-test, anonymous install id, versions) reaches the backend — verified point-by-point against
+    the forbidden-fields list.
+  - The `LocalFileTelemetrySink` path still functions when the transport is not configured (no regression to
+    the S10-G-04 unit-test suite).
+  - The local outbox is bounded: when the transport is absent or persistently unreachable, the outbox file is
+    capped at a defined maximum size/age with a documented oldest-first eviction policy (configurable; default
+    stated in the implementation notes).
+  - S12-E-05 can point its dashboard at the backend store and show live pilot data within the measurement window.
+
 ### Workstream E — Pilot & feedback
 
 #### S12-E-01 · Publish launch governance artifacts
@@ -56,7 +96,7 @@ and governance artifacts are published; and the go/no-go assessment is written f
   - Three runnable porting examples published; the manual path is concrete, not daunting.
 
 #### S12-E-05 · Instrument & measure the success criteria
-- **Owner:** PD · **Estimate:** 1.5d · **Depends on:** S10-G-04 · **Spec:** MVP §4.2, §8.5.3, §8.5.4
+- **Owner:** PD · **Estimate:** 1.5d · **Depends on:** S10-G-04, S12-G-01 · **Spec:** MVP §4.2, §8.5.3, §8.5.4
 - Collect time-to-first-test, flakiness, adoption, behavioural demand signal, and community-pathway
   viability by telemetry, retrospective, and observation; reconcile against the §4.2 targets.
 - **Acceptance:**
@@ -99,9 +139,12 @@ and governance artifacts are published; and the go/no-go assessment is written f
 - **Acceptance:**
   - The repo accepts external PRs; templates, rubric, and fixture are in place; triage budget scheduled.
 
-> **Telemetry note:** the opt-in telemetry flow and pilot backend are built in **Phase 4** (task
-> `S10-G-04`) so they ship inside the v1.0 build the cohort runs. This sprint *uses* that telemetry to
-> measure (`S12-E-05`); it does not implement it.
+> **Telemetry note:** the opt-in telemetry **client** (first-run notice, consent gate, allowlist metric set,
+> `LocalFileTelemetrySink` local outbox) shipped in **Phase 4** (task `S10-G-04`) and is present in the v1.0
+> build the cohort runs. The hosted **pilot backend** (ingestion endpoint, 90-day retention, install-id
+> deletion) and the **network transport** that drains the local outbox to it were deferred from S10-G-04 as
+> infrastructure with no consumer before the pilot, and are built this sprint (`S12-G-01`) as a prerequisite
+> for `S12-E-05`. This sprint both completes the telemetry infrastructure and uses it to measure the cohort.
 
 ## Exit criteria — Milestone M5 (MVP §8.5.4)
 

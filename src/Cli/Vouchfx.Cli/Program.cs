@@ -19,6 +19,10 @@ var rootCommand = new RootCommand(
 
 rootCommand.Add(RunCommand.Build());
 
+// Opt-in, privacy-first telemetry consent surface (S10-G-04):
+//   vouchfx telemetry enable|disable|status
+rootCommand.Add(TelemetryCommand.Build());
+
 // TODO(S08+): additional top-level subcommands (validate, list, …) attach here.
 
 // Ctrl-C teardown budget (S08-T10, S1): System.CommandLine's DEFAULT ProcessTerminationTimeout

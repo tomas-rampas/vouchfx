@@ -14,7 +14,7 @@ vouchfx is built on a **compile-time, source-level plugin model** — there is n
 <PackageReference Include="Platform.Sdk" Version="1.0.0" />
 ```
 
-**Use the worked example as a template.** The repository contains [`examples/Example.Steps.Hello`](examples/Example.Steps.Hello) — a complete, minimal, non-Docker provider that emits a message and asserts it equals a constant. It is **explicitly designed as a copyable template**. Copy this project's structure and adapt it to your step type; the example is comprehensive enough that it will teach you the contract and specific enough that you will not learn useless patterns.
+**Use the worked example as a template.** The repository contains [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete worked example that walks you through implementing a provider end-to-end, with a friction log and authoring journey documented in its README. [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template: a non-Docker provider that emits a message and asserts it equals a constant, explicitly designed as a copyable skeleton. Start with Echo to see the full journey; copy Hello if you want to build from an ultra-minimal scaffold.
 
 ### The Step Type Model
 
@@ -242,7 +242,7 @@ Authors whose provider does not yet meet the Verified rubric remain in Community
 
 Refer to:
 
-- **The worked example:** [`examples/Example.Steps.Hello`](examples/Example.Steps.Hello) — a complete, minimal, copyable provider.
+- **The worked example:** [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete, fully-documented provider with its authoring journey; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal copyable template.
 - **The architecture blueprint:** [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](docs/01_Technical_Architecture_and_Engineering_Blueprint.md) — section 13 covers provider architecture in detail, section 13.3.1 the CsxFragment composition rules, section 5.6 the reserved-namespace hygiene rule.
 - **The MVP plan:** [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — section 9.6 covers the Verified-tier rubric and governance model.
 - **This repository's rules:** [`CLAUDE.md`](CLAUDE.md) — the hard invariants every contributor must honour, including the provider contract and memory-model rules.
