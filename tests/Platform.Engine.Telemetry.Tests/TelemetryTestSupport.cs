@@ -6,6 +6,8 @@
 //   • SyntheticEvents: builds buffered v1 JSON Lines event streams (the SAME shape the
 //     runner emits) so the builder/aggregation tests need no run and no container.
 
+using System.Net;
+using System.Net.Http;
 using System.Text.Json.Serialization;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
@@ -33,6 +35,8 @@ internal sealed class TempPaths : ITelemetryPaths, IDisposable
     public string ConsentStorePath => _inner.ConsentStorePath;
 
     public string OutboxPath => _inner.OutboxPath;
+
+    public string DrainStatePath => _inner.DrainStatePath;
 
     public void Dispose()
     {
@@ -64,6 +68,136 @@ internal sealed class RecordingSink : ITelemetrySink
     public Task SendAsync(TelemetryEvent telemetryEvent, CancellationToken cancellationToken = default)
     {
         Sent.Add(telemetryEvent);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// A captured outgoing HTTP request (method, URI, headers, body) recorded by
+/// <see cref="FakeHttpHandler"/> so a test can assert the over-the-wire shape.
+/// </summary>
+internal sealed record CapturedRequest(
+    HttpMethod Method,
+    Uri? RequestUri,
+    string? Authorization,
+    string? IdempotencyKey,
+    string? ContentType,
+    string Body);
+
+/// <summary>
+/// A mock <see cref="HttpMessageHandler"/> that records every request and replies with a
+/// scripted sequence of status codes (the last is reused once exhausted).  No real
+/// network is touched.
+/// </summary>
+internal sealed class FakeHttpHandler : HttpMessageHandler
+{
+    private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responders = new();
+    private Func<HttpRequestMessage, HttpResponseMessage> _last =
+        _ => new HttpResponseMessage(HttpStatusCode.OK);
+
+    public List<CapturedRequest> Requests { get; } = new();
+
+    /// <summary>Queues a fixed status code for the next request(s).</summary>
+    public FakeHttpHandler RespondWith(params HttpStatusCode[] statuses)
+    {
+        foreach (var status in statuses)
+        {
+            var captured = status;
+            Func<HttpRequestMessage, HttpResponseMessage> responder =
+                _ => new HttpResponseMessage(captured);
+            _responders.Enqueue(responder);
+            _last = responder;
+        }
+
+        return this;
+    }
+
+    /// <summary>Queues a responder that throws to simulate a transport fault.</summary>
+    public FakeHttpHandler RespondWithThrow(Exception toThrow)
+    {
+        Func<HttpRequestMessage, HttpResponseMessage> responder = _ => throw toThrow;
+        _responders.Enqueue(responder);
+        _last = responder;
+        return this;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content is null
+            ? string.Empty
+            : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        string? idempotency = null;
+        if (request.Headers.TryGetValues(HttpOutboxClient.IdempotencyKeyHeader, out var values))
+        {
+            idempotency = string.Join(",", values);
+        }
+
+        Requests.Add(new CapturedRequest(
+            request.Method,
+            request.RequestUri,
+            request.Headers.Authorization?.ToString(),
+            idempotency,
+            request.Content?.Headers.ContentType?.MediaType,
+            body));
+
+        var responder = _responders.Count > 0 ? _responders.Dequeue() : _last;
+        return responder(request);
+    }
+}
+
+/// <summary>
+/// An in-memory <see cref="IOutboxHttpClient"/> that records each posted batch and the
+/// forget calls, and replies per a scripted sequence of <see cref="DrainAck"/> values
+/// (the last is reused once exhausted).  Lets the drain tests assert batching/ordering
+/// without any HTTP.
+/// </summary>
+internal sealed class RecordingOutboxHttpClient : IOutboxHttpClient
+{
+    private readonly Queue<DrainAck> _acks = new();
+    private DrainAck _lastAck = new(Delivered: true, AcceptedCount: 0);
+
+    public List<IReadOnlyList<string>> PostedBatches { get; } = new();
+
+    public List<string> IdempotencyKeys { get; } = new();
+
+    public List<Guid> Forgotten { get; } = new();
+
+    public Func<IReadOnlyList<string>, string, DrainAck>? OnPost { get; set; }
+
+    public RecordingOutboxHttpClient QueueAck(params bool[] delivered)
+    {
+        foreach (var d in delivered)
+        {
+            var ack = new DrainAck(d, d ? 1 : 0);
+            _acks.Enqueue(ack);
+            _lastAck = ack;
+        }
+
+        return this;
+    }
+
+    public Task<DrainAck> PostBatchAsync(
+        IReadOnlyList<string> ndjsonLines,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        PostedBatches.Add(ndjsonLines.ToList());
+        IdempotencyKeys.Add(idempotencyKey);
+
+        if (OnPost is { } onPost)
+        {
+            return Task.FromResult(onPost(ndjsonLines, idempotencyKey));
+        }
+
+        var ack = _acks.Count > 0 ? _acks.Dequeue() : _lastAck;
+        return Task.FromResult(ack);
+    }
+
+    public Task ForgetAsync(Guid installId, CancellationToken cancellationToken)
+    {
+        Forgotten.Add(installId);
         return Task.CompletedTask;
     }
 }
