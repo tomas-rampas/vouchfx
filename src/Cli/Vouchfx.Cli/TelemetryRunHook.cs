@@ -26,6 +26,7 @@
 // the frozen YAML metadata schema (blocked by the v1 schema freeze, SchemaFreezeTests).
 // In v1, suppression is global consent + the --no-telemetry flag + VOUCHFX_NO_TELEMETRY.
 
+using System.Net.Http;
 using System.Reflection;
 using Platform.Engine.Telemetry;
 
@@ -74,8 +75,11 @@ internal sealed class TelemetryRunHook
     }
 
     /// <summary>
-    /// Creates the production hook: a <see cref="LocalFileTelemetrySink"/> over the
-    /// real per-user <see cref="DefaultTelemetryPaths"/>.
+    /// Creates the production hook over the real per-user <see cref="DefaultTelemetryPaths"/>.
+    /// The transport is a <see cref="LocalFileTelemetrySink"/> by default; when the HTTP
+    /// transport is configured (<see cref="TelemetryTransportOptions.IsConfigured"/>) it is
+    /// wrapped in a <see cref="DrainingTelemetrySink"/> that drains the outbox best-effort
+    /// over HTTP and enforces the outbox cap (S12-G-01).
     /// </summary>
     /// <param name="noTelemetryFlag">The <c>--no-telemetry</c> run flag.</param>
     /// <param name="diagnostics">The diagnostics writer (e.g. <c>Console.Error</c>).</param>
@@ -83,13 +87,35 @@ internal sealed class TelemetryRunHook
     public static TelemetryRunHook CreateDefault(bool noTelemetryFlag, TextWriter diagnostics)
     {
         var paths = new DefaultTelemetryPaths();
+        var local = new LocalFileTelemetrySink(paths);
+
+        // The single transport wiring seam (S12-G-01): an UNCONFIGURED endpoint keeps the
+        // bare local sink (zero behaviour change — criterion 6); a CONFIGURED endpoint wraps
+        // it so the outbox is drained over HTTP and capped.  When configured but the endpoint
+        // is unreachable, the draining sink is fully fail-silent and falls back to local-only
+        // behaviour, so wrapping is always safe.
+        var options = TelemetryTransportOptions.FromEnvironment();
+        ITelemetrySink sink = options.IsConfigured
+            ? new DrainingTelemetrySink(
+                local,
+                new HttpOutboxClient(SharedHttpClient, options.Endpoint!, options.Token!),
+                paths,
+                OutboxCap.FromOptions(options))
+            : local;
+
         return new TelemetryRunHook(
             new TelemetryConsentStore(paths),
             paths,
-            new LocalFileTelemetrySink(paths),
+            sink,
             noTelemetryFlag,
             diagnostics);
     }
+
+    // A single shared HttpClient for the process: HttpClient is designed to be reused, and
+    // the draining sink runs once per `vouchfx run` so one instance is ample.  The bearer
+    // token is NEVER set as a default header here — HttpOutboxClient attaches it per request,
+    // header-only, so it is never logged or echoed (§17).
+    private static readonly HttpClient SharedHttpClient = new();
 
     /// <summary>
     /// Whether this run is permitted to emit telemetry: consent is

@@ -348,9 +348,9 @@ export VOUCHFX_NO_TELEMETRY=1
 vouchfx run ./tests
 ```
 
-In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. A future hosted backend is out of scope.
+In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. Optionally, you can drain the outbox to a backend via `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` (opt-in, HTTPS recommended, fail-silent, same allowlist); see [`docs/telemetry.md`](docs/telemetry.md) for details.
 
-For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, and troubleshooting — see [`docs/telemetry.md`](docs/telemetry.md).
+For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, backend configuration, and troubleshooting — see [`docs/telemetry.md`](docs/telemetry.md).
 
 ### Documentation roadmap
 

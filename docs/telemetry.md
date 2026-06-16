@@ -115,7 +115,9 @@ The environment variable doubles as the **production-run exclusion** — CI/auto
 
 ## Where data is stored (v1)
 
-In v1, telemetry events are **persisted locally only** — they are appended to a JSON Lines file on your machine and never sent to any remote endpoint. This local outbox stands in for a future hosted pilot backend (out of scope in this release).
+In v1, telemetry events are **persisted locally only** by default — they are appended to a JSON Lines file on your machine. A future hosted pilot backend is out of scope in this release.
+
+However, you can optionally configure vouchfx to drain the local outbox to a backend telemetry endpoint (Phase A of #152). See [Sending telemetry to a backend (opt-in transport)](#sending-telemetry-to-a-backend-opt-in-transport) below.
 
 ### Storage location
 
@@ -217,6 +219,69 @@ If you disable telemetry while a `vouchfx run` is in progress, the current run m
 ### "Does `--no-telemetry` appear in my shell history?"
 
 Yes, like any other CLI flag. If you want to avoid recording the flag itself, use the environment variable instead: `export VOUCHFX_NO_TELEMETRY=1` in your `.bashrc` or equivalent, or set it inline per-run.
+
+## Sending telemetry to a backend (opt-in transport)
+
+vouchfx can optionally drain telemetry events from the local outbox to a remote HTTP endpoint. This feature is **OFF by default** — no network calls occur unless you explicitly configure both an endpoint and an authentication token. The transport is **best-effort and fail-silent** — a network outage, slow endpoint, or misconfiguration never affects your test runs.
+
+### Transport configuration
+
+Configure the HTTP transport by setting two environment variables:
+
+- **`VOUCHFX_TELEMETRY_ENDPOINT`** — the absolute base URL of your telemetry ingest endpoint (required). Must be `http://` or `https://` (relative URLs and other schemes are rejected silently, keeping the transport inert). An example: `https://telemetry.example.com` or `https://telemetry.example.com/api` (an operator's base path is preserved when resolving relative resource paths). **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
+
+- **`VOUCHFX_TELEMETRY_TOKEN`** — a bearer token for authentication (required). Carried only on the HTTP `Authorization: Bearer` header and never logged, printed, or echoed in diagnostics or error messages (§17 secret handling).
+
+The transport is **inert until BOTH variables are set** and the endpoint is a valid absolute HTTP/HTTPS URI. A missing, empty, relative, or malformed endpoint leaves telemetry in local-outbox-only mode — no network call is ever attempted.
+
+### How it works
+
+After each test run, if telemetry is enabled and the HTTP transport is configured:
+
+1. Events in the local outbox are appended first (unchanged — this guarantees the local outbox always receives every event).
+2. The client then attempts to drain the outbox by POSTing batches to `{endpoint}/v1/telemetry` with `Authorization: Bearer <token>` and `Content-Type: application/x-ndjson`. Batches are limited to 500 lines and ~1 MB per POST to keep requests bounded.
+3. Only batches that receive a 2xx HTTP response are removed from the outbox. A non-2xx response, network error, or timeout leaves the batch and all subsequent batches intact for the next run.
+4. **All faults are silent** — a network outage, timeout, or endpoint misconfiguration never affects the test run or its verdict.
+
+### Outbox retention and draining
+
+The local outbox is capped to prevent unbounded growth, particularly in long-running or high-frequency environments. You can override the defaults with three optional environment variables:
+
+- **`VOUCHFX_TELEMETRY_OUTBOX_MAX_BYTES`** — maximum outbox size in bytes (default: 5 MB). Oldest events are dropped first when this ceiling is exceeded.
+
+- **`VOUCHFX_TELEMETRY_OUTBOX_MAX_AGE_DAYS`** — discard events older than this many days (default: 30 days).
+
+- **`VOUCHFX_TELEMETRY_OUTBOX_MAX_LINES`** — maximum outbox line count (default: 10,000 lines). Oldest events are dropped first.
+
+All three caps are enforced independently and use oldest-first eviction. Even when the HTTP transport is unconfigured, the local outbox is still capped so it never grows unbounded.
+
+### Cross-run back-off
+
+If the remote endpoint is unreachable or returns an error, the client applies exponential back-off with jitter across runs. The back-off state is persisted to disk, so a hard-down endpoint does not trigger a drain attempt on every run — the back-off window grows geometrically instead. A healthy endpoint resets the back-off immediately.
+
+### Drain budget
+
+Each run has an overall drain budget of approximately **15 seconds**. If the endpoint is slow, the drain stops cleanly once the budget elapses, persists progress (undelivered batches carry to the next run), and does not advance the back-off (some batches DID deliver successfully). This prevents a slow endpoint from adding tens of seconds of post-run latency.
+
+### Data sent
+
+The payload remains the same allowlist (see [What is collected](#what-is-collected) above). The transport **never re-serialises telemetry events** — it sends the raw JSON Lines bytes that the local sink wrote, byte-for-byte, so the transport physically cannot widen what is sent beyond the privacy allowlist.
+
+### Disabling telemetry with a backend configured
+
+When you run `vouchfx telemetry disable`, the CLI:
+
+1. Deletes your local install identifier.
+2. Clears the local outbox.
+3. **Best-effort**: sends a POST to `{endpoint}/v1/telemetry/forget` with your install ID (best-effort and fail-silent), asking the backend to disassociate any records with that ID.
+
+If the backend is unreachable, the forget request is silently skipped — the local data is deleted regardless, and no further events will be sent from this installation.
+
+### Backend availability
+
+This is the **client transport** (Phase A of #152). When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at your own compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
+
+However, the **official hosted vouchfx backend (Phase B, #152)** is not yet available. There is no default or built-in endpoint, so **until you configure both variables, telemetry remains local-only**. When you are ready to send telemetry to a backend, follow the endpoint provider's documentation to obtain the endpoint URL and authentication token, then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
 
 ## Questions and feedback
 

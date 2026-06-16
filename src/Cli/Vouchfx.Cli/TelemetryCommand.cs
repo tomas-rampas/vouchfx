@@ -9,6 +9,7 @@
 // dir (via DefaultTelemetryPaths) — so they are simple, fast, and safe to run anywhere.
 
 using System.CommandLine;
+using System.Net.Http;
 using Platform.Engine.Telemetry;
 
 namespace Vouchfx.Cli;
@@ -79,17 +80,126 @@ internal static class TelemetryCommand
             "Opt OUT of usage telemetry. Deletes the install id and clears the local outbox "
             + "immediately.");
 
-        disable.SetAction((_, _) =>
+        disable.SetAction(async (_, cancellationToken) =>
         {
-            var store = new TelemetryConsentStore(new DefaultTelemetryPaths());
-            store.Disable();
-            Console.Out.WriteLine(
-                "Telemetry DISABLED. The install id has been deleted and the local outbox "
-                + "cleared. Nothing will be collected or sent.");
-            return Task.FromResult(ExitCodes.Success);
+            var paths = new DefaultTelemetryPaths();
+            var store = new TelemetryConsentStore(paths);
+
+            await DisableAsync(
+                store,
+                installId => TryForgetAsync(paths, installId, cancellationToken),
+                Console.Out,
+                cancellationToken).ConfigureAwait(false);
+
+            return ExitCodes.Success;
         });
 
         return disable;
+    }
+
+    /// <summary>
+    /// Runs the <c>telemetry disable</c> orchestration: read the install id, fire the
+    /// best-effort backend <paramref name="forget"/> FIRST (so it can still read the id),
+    /// then ALWAYS perform the local opt-out via <see cref="TelemetryConsentStore.Disable"/>.
+    /// </summary>
+    /// <param name="store">The consent store whose install id + outbox are cleared.</param>
+    /// <param name="forget">
+    /// The best-effort network forget for an install id (the production wiring posts to the
+    /// backend; a test injects a fake).  It runs BEFORE the local delete clears the id.
+    /// </param>
+    /// <param name="output">The writer the confirmation line is written to.</param>
+    /// <param name="cancellationToken">Cooperative cancellation (e.g. Ctrl-C).</param>
+    /// <remarks>
+    /// The local opt-out runs in a <c>finally</c>, so it ALWAYS happens — even when the
+    /// advisory forget is cancelled, throws, or hangs.  Disabling is a privacy guarantee: a
+    /// cancellation mid-forget must never leave telemetry enabled.  The forget itself is
+    /// fail-silent (it swallows its own faults), so in practice the finally is reached
+    /// cleanly; running the opt-out there is belt-and-braces against any unexpected throw.
+    /// </remarks>
+    internal static async Task DisableAsync(
+        TelemetryConsentStore store,
+        Func<Guid?, Task> forget,
+        TextWriter output,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(forget);
+        ArgumentNullException.ThrowIfNull(output);
+
+        try
+        {
+            // BEFORE the local delete, fire the best-effort "forget" so the backend can erase
+            // any data linked to this install (S12-G-01, criterion 3 — the client half).  It
+            // runs FIRST so it can still read the install id (the local delete in the finally
+            // clears it).  We do NOT guard the entry with ThrowIfCancellationRequested(): an
+            // already-cancelled token must not abort `telemetry disable`, whose local opt-out
+            // always succeeds.  The forget itself observes cancellation cooperatively (and the
+            // production wrapper swallows OperationCanceledException), so a Ctrl-C interrupts
+            // only the advisory network wait — never the local opt-out in the finally.
+            var installId = store.Read().InstallId;
+            await forget(installId).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The LOCAL opt-out is the whole point of `telemetry disable` and a privacy
+            // guarantee — it must ALWAYS run, even if the best-effort forget above was
+            // cancelled (Ctrl-C), threw, or hung.  Running it in a finally means a
+            // cancellation during the network forget can never leave telemetry enabled.
+            store.Disable();
+            output.WriteLine(
+                "Telemetry DISABLED. The install id has been deleted and the local outbox "
+                + "cleared. Nothing will be collected or sent.");
+        }
+    }
+
+    // Fires a best-effort backend "forget" for the install id when the HTTP transport is
+    // configured.  Fully fail-silent: any fault (offline endpoint, timeout, bad config) is
+    // swallowed so the local opt-out (store.Disable) always proceeds.  No-op when telemetry
+    // is unconfigured or no install id exists.  The token is carried header-only by
+    // HttpOutboxClient and is never logged here.
+    private static async Task TryForgetAsync(
+        DefaultTelemetryPaths paths,
+        Guid? installId,
+        CancellationToken cancellationToken)
+    {
+        _ = paths; // reserved for future per-path config; the transport reads the environment.
+
+        if (installId is not { } id)
+        {
+            return;
+        }
+
+        var options = TelemetryTransportOptions.FromEnvironment();
+        if (!options.IsConfigured)
+        {
+            return;
+        }
+
+        // The forget orchestration (best-effort, fail-silent) lives in the engine's
+        // OutboxForget so it is unit-tested directly; the CLI only owns the HttpClient
+        // lifetime.  A swallowed fault returns false here and a one-line, redaction-safe
+        // note is emitted (the exception TYPE name only — never the token/endpoint/id).
+        //
+        // CANCELLATION: unlike the engine drain (where a caller-requested cancel propagates),
+        // this disable path swallows OperationCanceledException too.  Disabling is a privacy
+        // command whose whole purpose is the LOCAL opt-out; a Ctrl-C during the advisory
+        // network forget must NOT abort that opt-out.  The caller runs store.Disable() in a
+        // finally regardless, and swallowing here lets `telemetry disable` still report
+        // success cleanly instead of surfacing the cancel after the opt-out already happened.
+        try
+        {
+            using var httpClient = new HttpClient();
+            var client = new HttpOutboxClient(httpClient, options.Endpoint!, options.Token!);
+            await OutboxForget.TryForgetAsync(client, id, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException
+                or InvalidOperationException
+                or OperationCanceledException
+                or System.Net.Sockets.SocketException)
+        {
+            Console.Error.WriteLine($"telemetry: forget skipped ({ex.GetType().Name}).");
+        }
     }
 
     /// <summary>Builds <c>telemetry status</c>.</summary>

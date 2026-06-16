@@ -31,6 +31,21 @@ public interface ITelemetryPaths
     /// (<c>{baseDir}/vouchfx/telemetry-outbox.jsonl</c>).
     /// </summary>
     string OutboxPath { get; }
+
+    /// <summary>
+    /// The absolute path to the cross-run drain back-off state file
+    /// (<c>{baseDir}/vouchfx/telemetry-drain.json</c>), persisting
+    /// <c>nextAttemptUtc</c> + <c>consecutiveFailures</c> so a failed HTTP drain backs
+    /// off across separate <c>vouchfx run</c> invocations rather than retrying every run
+    /// (S12-G-01).
+    /// </summary>
+    /// <remarks>
+    /// Additive to the v1 seam: like the consent store and outbox, this path is injected
+    /// so tests write to a temp directory and never touch the real per-user config.  A
+    /// missing or corrupt state file reads back as the permissive default (attempt
+    /// allowed) — drain bookkeeping must never be able to break the run.
+    /// </remarks>
+    string DrainStatePath { get; }
 }
 
 /// <summary>
@@ -49,6 +64,7 @@ public sealed class DefaultTelemetryPaths : ITelemetryPaths
     private const string VouchfxFolder = "vouchfx";
     private const string ConsentFileName = "telemetry.json";
     private const string OutboxFileName = "telemetry-outbox.jsonl";
+    private const string DrainStateFileName = "telemetry-drain.json";
 
     private readonly string _vouchfxDir;
 
@@ -83,4 +99,7 @@ public sealed class DefaultTelemetryPaths : ITelemetryPaths
 
     /// <inheritdoc />
     public string OutboxPath => Path.Combine(_vouchfxDir, OutboxFileName);
+
+    /// <inheritdoc />
+    public string DrainStatePath => Path.Combine(_vouchfxDir, DrainStateFileName);
 }
