@@ -42,6 +42,13 @@ and governance artifacts are published; and the go/no-go assessment is written f
   or equivalent) the engine loads when consent is active, which drains the local outbox by POSTing batches
   and clearing only acknowledged records — the `LocalFileTelemetrySink` path must remain fully functional
   when the transport is absent or the endpoint is unreachable (fail-silent, bounded back-off, no retry storm).
+- **Status — Phase A delivered (PR #155, 2026-06-16):** the engine-side HTTP transport + outbox cap shipped —
+  `DrainingTelemetrySink` (append-first local + best-effort drain), `HttpOutboxClient`, `OutboxStore` (size/age/line
+  cap + atomic locked rewrite), `OutboxDrainState` (cross-run back-off), env-gated config
+  (`VOUCHFX_TELEMETRY_ENDPOINT`/`_TOKEN`), and the client `forget` on disable. Inert until configured.
+  **Satisfies acceptance criteria 4, 5, 6, 7 and the client halves of 1 & 3.** **Phase B remaining:** the deployed
+  backend (separate repo + Azure + Postgres; decisions recorded on #152) delivers criteria 2 & 8 and the server
+  halves of 1 & 3.
 - **Acceptance:**
   - The ingestion endpoint accepts authenticated JSON Lines batches and stores them; unauthenticated or
     malformed requests are rejected with a 4xx.
