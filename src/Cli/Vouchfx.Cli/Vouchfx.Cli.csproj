@@ -21,6 +21,42 @@
     <IsAspireHost>true</IsAspireHost>
   </PropertyGroup>
 
+  <!-- dotnet tool packaging (S11-D-03).
+       PackAsTool=true causes `dotnet pack` to produce a tool nupkg runnable via
+       `dotnet tool install -g vouchfx`. The tool is framework-dependent (net8.0);
+       DCP binaries are NOT bundled — they are resolved at runtime from the NuGet
+       package cache via the dcpclipath AssemblyMetadata that the Aspire.AppHost.Sdk
+       bakes in at build time. On the build machine this works out of the box (the
+       NuGet cache path matches what was embedded). For cross-machine distribution
+       the user must have the matching Aspire workload or NuGet packages installed so
+       the DCP binaries are present; the embedded paths resolve into the standard
+       per-user NuGet cache (~/.nuget/packages/aspire.hosting.orchestration.<RID>/).
+       See docs/decisions/S11-D-03-dotnet-tool-packaging.md for the full analysis. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>vouchfx</ToolCommandName>
+    <!-- The Aspire.AppHost.Sdk sets IsPublishable=false (aspire/issues/147) to suppress
+         `dotnet publish` on AppHost projects. PackAsTool however depends on the Publish
+         step to collect DLLs into tools/net8.0/any/. We explicitly re-enable IsPublishable
+         here so that `dotnet pack` runs the publish pipeline and the tool nupkg contains
+         all dependency DLLs — not just the DotnetToolSettings.xml skeleton. -->
+    <IsPublishable>true</IsPublishable>
+    <PackageId>vouchfx</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>vouchfx — compile and run declarative .e2e.yaml integration tests end-to-end against distributed .NET systems. Compiles YAML→C# (Roslyn), orchestrates the required container topology via .NET Aspire + Testcontainers, and executes steps covering REST, PostgreSQL, Kafka, webhooks, and custom scripting.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;integration-testing;aspire;dotnet;testing</PackageTags>
+    <!-- Deterministic, reproducible packaging. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
   <!-- Expose the internal testable seams (ScenarioDiscovery, ExitCodes, RunCommand
        helpers) to the no-docker CLI test project. -->
   <ItemGroup>
