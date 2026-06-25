@@ -111,6 +111,14 @@ your first test in 60 minutes: checking prerequisites, building from source, aut
 `.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
 generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
 
+### Example scenarios
+
+The repository includes worked scenarios demonstrating core features:
+
+- **[`examples/reference/reference.e2e.yaml`](examples/reference/reference.e2e.yaml)** — **The canonical four-technology reference scenario.** One business transaction spanning all engine capabilities: REST call (`http.rest` + `capture`), database mutation (`script.csharp` + `db-assert.postgres` over a seeded table), Kafka publish-and-consume (`mq-publish.kafka` + `mq-expect.kafka` with `verifyMode: RETRY`), and outbound webhook simulation (`script.csharp` → `webhook-listen.http` with RETRY). It also threads a `${secret:env/…}` bearer token and demonstrates cross-step placeholder substitution. See [`examples/reference/README.md`](examples/reference/README.md) for a walkthrough.
+- **[`examples/ci-reference/smoke.e2e.yaml`](examples/ci-reference/smoke.e2e.yaml)** — A minimal happy-path scenario used in CI integration tests.
+- **[`examples/getting-started/hello-world.e2e.yaml`](examples/getting-started/hello-world.e2e.yaml)** — A first-time introductory scenario from the Getting Started guide.
+
 ### CI integration with GitHub Actions
 
 vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
