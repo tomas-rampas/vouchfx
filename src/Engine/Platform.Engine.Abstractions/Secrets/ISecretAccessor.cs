@@ -54,6 +54,23 @@ public sealed class SecretAccessor : ISecretAccessor
     private readonly ISecretSourceCatalog _catalog;
 
     /// <summary>
+    /// The per-scenario, Default-ALC record of every value this accessor has revealed
+    /// (§17, S11-B-01).  Populated on each successful <see cref="Resolve"/> and consumed by
+    /// the runner as a DEFENCE-IN-DEPTH scrub net for free-form provider observation text
+    /// before it enters the event stream.  Type-based <see cref="SecretString"/> redaction
+    /// remains the primary mechanism; this is a backstop for the one surface the engine
+    /// cannot type-check (a provider-built observation / exception message).
+    /// </summary>
+    /// <remarks>
+    /// Lives on the accessor (Default ALC), which the runner holds: recording from inside
+    /// the collectible script's <c>accessor.Resolve(...)</c> call runs this Default-ALC
+    /// method body and adds a plain <see cref="string"/> to a Default-ALC set — no static,
+    /// no handle bridging the boundary, so nothing roots the collectible
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (§5).
+    /// </remarks>
+    public ResolvedSecretLedger ResolvedSecrets { get; } = new();
+
+    /// <summary>
     /// Initialises a new accessor over <paramref name="catalog"/>.
     /// </summary>
     /// <param name="catalog">The run's source catalog; must not be <see langword="null"/>.</param>
@@ -103,7 +120,18 @@ public sealed class SecretAccessor : ISecretAccessor
                 $"'{parsed.Source}'; configured sources are: {FormatSources(_catalog.Sources)}.");
         }
 
-        return resolver.Resolve(parsed.Path);
+        var resolved = resolver.Resolve(parsed.Path);
+
+        // Defence-in-depth (§17, S11-B-01): record the revealed value so the runner can
+        // scrub it from any free-form provider observation text before that text enters the
+        // event stream.  Reveal() here is the SAME single, greppable escape hatch the
+        // injection sinks use; the value is read once, handed to the Default-ALC ledger, and
+        // not otherwise retained by this method.  This is a BACKSTOP, not the primary
+        // redaction path — every structured surface is already redacted by the SecretString
+        // carrier itself.
+        ResolvedSecrets.Record(resolved.Reveal());
+
+        return resolved;
     }
 
     private static string FormatSources(IReadOnlyCollection<string> sources)

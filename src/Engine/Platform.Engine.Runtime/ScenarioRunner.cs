@@ -1392,8 +1392,14 @@ public static class ScenarioRunner
                     ? $"CSX compilation failed: {sce.Message}"
                     : $"{ex.GetType().Name}: {ex.Message}";
 
+                // §17 defence-in-depth (S11-B-01): a secret value resolved during execution
+                // can land verbatim in an exception MESSAGE (e.g. the script.csharp body throws
+                // with an interpolated Reveal()).  This diagnostic is written to the HUMAN output
+                // stream (the developer terminal / CI log) — an exfiltration surface every bit as
+                // real as the event stream — so scrub it through the SAME ledger the observation
+                // path uses before it leaves the engine.  Type-based redaction stays primary.
                 await output.WriteLineAsync(
-                    $"Compile/run error (Inconclusive): {diagnosis}")
+                    $"Compile/run error (Inconclusive): {ScrubDiagnostic(secretAccessor, diagnosis)}")
                     .ConfigureAwait(false);
 
                 return Verdict.Inconclusive;
@@ -1487,7 +1493,7 @@ public static class ScenarioRunner
                 // Vars[VarKeys.Attempts(safeId)]; emit one step-attempt event per
                 // record so the polling timeline is renderable offline (§14).  An
                 // IMMEDIATE step writes no attempts list, so this is a no-op for it.
-                buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars));
+                buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars, secretAccessor));
 
                 buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
                 {
@@ -1502,7 +1508,12 @@ public static class ScenarioRunner
                     // event so a renderer can compute an expected-vs-observed diff at render
                     // time (the stream stays pure structured data — no rendered text here).
                     // An unparseable observation degrades to omission rather than crashing.
-                    Observation = ParseObservation(outcome?.Observation),
+                    // S11-B-01 (§17): the observation is free-form provider text (the
+                    // script.csharp `__ex.Message` path most acutely) — the one event-stream
+                    // surface the engine cannot type-check — so it is scrubbed through the
+                    // accessor's resolved-secret ledger as a defence-in-depth net BEFORE it is
+                    // parsed into the stream.  Type-based SecretString redaction stays primary.
+                    Observation = BuildStepObservation(secretAccessor, outcome?.Observation),
                 }));
 
                 counts[(int)stepVerdict]++;
@@ -1723,7 +1734,8 @@ public static class ScenarioRunner
         string runId,
         DateTimeOffset timestamp,
         string stepId,
-        IReadOnlyDictionary<string, object?> vars)
+        IReadOnlyDictionary<string, object?> vars,
+        ISecretAccessor? secretAccessor = null)
     {
         var safeId = CsxFragment.SanitiseId(stepId);
 
@@ -1744,7 +1756,13 @@ public static class ScenarioRunner
                 Attempt = a.Attempt,
                 TMs = a.TMs,
                 Outcome = a.Verdict,
-                Observation = ParseObservation(a.Observation),
+                // S11-B-01 (§17): each attempt's observation is free-form provider text, so it
+                // is scrubbed through the same resolved-secret ledger as the step-completed
+                // observation before it enters the stream — defence in depth, type-based
+                // redaction still primary.  A null accessor (the no-docker RETRY-event tests)
+                // skips the scrub, which is safe because those tests never resolve a secret.
+                Observation = BuildStepObservation(
+                    secretAccessor ?? NullSecretAccessor.Instance, a.Observation),
             }));
         }
 
@@ -1780,6 +1798,85 @@ public static class ScenarioRunner
             return null;
         }
     }
+
+    /// <summary>
+    /// Builds the structured <see cref="StepCompletedEvent.Observation"/> from a provider's
+    /// raw observation text, applying the §17 defence-in-depth scrub net (S11-B-01) BEFORE
+    /// parsing: any verbatim occurrence of a value the run's <paramref name="accessor"/>
+    /// revealed is replaced with the redaction marker.
+    /// </summary>
+    /// <param name="accessor">
+    /// The Default-ALC secret accessor for this scenario.  When it is a
+    /// <see cref="SecretAccessor"/>, its <see cref="SecretAccessor.ResolvedSecrets"/> ledger
+    /// supplies the values to scrub; any other <see cref="ISecretAccessor"/> (e.g. the Null
+    /// accessor) resolves nothing, so there is nothing to scrub and the text is parsed as-is.
+    /// </param>
+    /// <param name="rawObservation">
+    /// The provider's raw observation string — for <c>script.csharp</c> this can be a thrown
+    /// exception's message spliced verbatim (<c>__obs = __ex.Message;</c>), the one
+    /// event-stream surface the engine cannot type-check.  May be <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// The parsed, scrubbed observation as a <see cref="JsonElement"/>, or
+    /// <see langword="null"/> when the input is null/empty or does not parse as JSON
+    /// (an unparseable observation degrades to omission rather than crashing).
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why a scrub here, not deeper.</strong>  Every STRUCTURED event surface
+    /// (verdicts, captured-var provenance, substitution refs, the reproducibility envelope)
+    /// is already redacted by construction — it carries only the <see cref="SecretString"/>
+    /// carrier or non-sensitive metadata.  The observation is the lone exception: it is
+    /// free-form text a provider builds, so it cannot be type-checked.  The scrub is a
+    /// targeted net over THAT text only; type-based redaction remains the primary mechanism.
+    /// </para>
+    /// <para>
+    /// <strong>What it deliberately does NOT do.</strong>  It does not chase TRANSFORMS of a
+    /// revealed value (base64, an HMAC signature, a substring): those arise only from a
+    /// deliberate <see cref="SecretString.Reveal"/> followed by author code reshaping the
+    /// bytes — the documented, auditable escape hatch (§17) and the author's responsibility.
+    /// The net catches the realistic accident (a revealed value appearing verbatim in an
+    /// exception message), not every theoretical encoding.
+    /// </para>
+    /// </remarks>
+    internal static JsonElement? BuildStepObservation(ISecretAccessor accessor, string? rawObservation)
+        => ParseObservation(ScrubDiagnostic(accessor, rawObservation));
+
+    /// <summary>
+    /// Applies the §17 defence-in-depth scrub net (S11-B-01) to a free-form diagnostic /
+    /// observation <paramref name="text"/>: every verbatim occurrence of a value the run's
+    /// <paramref name="accessor"/> revealed is replaced with the redaction marker.  This is
+    /// the SINGLE scrub call shared by both the step-observation path
+    /// (<see cref="BuildStepObservation"/>) and the scenario-level diagnostic writes to the
+    /// human <c>output</c> stream (the CSX-compile / unexpected-exception catch sites in
+    /// <see cref="RunScenarioCoreAsync"/>), so a secret that surfaces in an exception message
+    /// cannot reach the developer's terminal / CI log any more than it can reach the event
+    /// stream.
+    /// </summary>
+    /// <param name="accessor">
+    /// The Default-ALC secret accessor for this scenario.  When it is a
+    /// <see cref="SecretAccessor"/>, its <see cref="SecretAccessor.ResolvedSecrets"/> ledger
+    /// supplies the values to scrub; any other <see cref="ISecretAccessor"/> (e.g. the Null
+    /// accessor) resolves nothing, so there is nothing to scrub and the text is returned
+    /// unchanged.
+    /// </param>
+    /// <param name="text">The free-form text to scrub.  May be <see langword="null"/>.</param>
+    /// <returns>
+    /// The scrubbed text, or the original reference unchanged when no recorded value occurs in
+    /// it (the scrub is a targeted net, never a blanket rewrite).  <see langword="null"/> in,
+    /// <see langword="null"/> out.
+    /// </returns>
+    /// <remarks>
+    /// Type-based <see cref="SecretString"/> redaction remains the PRIMARY mechanism; this is
+    /// the backstop for the one free-form surface the engine cannot type-check.  It does not
+    /// chase TRANSFORMS of a revealed value (base64, an HMAC, a substring) — those arise only
+    /// from a deliberate <see cref="SecretString.Reveal"/> followed by author code reshaping
+    /// the bytes, the documented escape hatch and the author's responsibility (§17).
+    /// </remarks>
+    internal static string? ScrubDiagnostic(ISecretAccessor accessor, string? text)
+        => accessor is SecretAccessor concrete
+            ? concrete.ResolvedSecrets.Scrub(text)
+            : text;
 
     /// <summary>
     /// Runs the central secret-reference validation pass over every substitutable

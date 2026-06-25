@@ -1213,6 +1213,16 @@ An important architectural point: secrets are **not** interpolated into the gene
 
 The `Vars.Secrets.Resolve` call is intercepted by the reporting layer's redaction filter: if the resolved string appears in any subsequent observation, captured variable, log line, or assertion message produced by the step, it is replaced with `${secret:vault/orders-api/key}` in the report. This guarantees redaction at the renderer level rather than relying on the provider to remember to redact — a discipline that, in practice, providers will sometimes forget.
 
+### 17.1.2 Defence-in-depth scrubbing of provider observations
+
+Type-based `SecretString` redaction is the primary mechanism: every structured surface (event fields, captured-variable thread, terminal/HTML/JUnit renderers) is redacted by construction because it only handles the `SecretString` carrier or non-sensitive metadata. The one surface the engine cannot type-check is free-form provider observation text — a provider builds observations by hand, so the engine cannot guarantee they contain only safe data. The `script.csharp` path is the most acutely at risk: when an author catches an exception and assigns `__ex.Message` to the observation, that message is spliced verbatim, potentially carrying a secret value that the exception handler did not redact.
+
+A per-scenario `ResolvedSecretLedger` (owned by the `SecretAccessor`) records every value successfully revealed by `Resolve`, and the runner applies this ledger as a defence-in-depth scrub at the reporting boundary: before a step's observation text enters the JSON Lines event stream, every verbatim occurrence of a recorded secret value is replaced with `${secret:…}`. This catches the realistic accident — a secret appearing unredacted in an exception message — without chasing theoretical transforms that are explicitly out of scope.
+
+Importantly, the ledger **deliberately does not** recognise transforms of a revealed value: base64 encodings, HMAC signatures, substrings of a secret. Once an author invokes `Reveal()` and reshapes the bytes, the engine has no value to recognise, and the ledger cannot match it. Authors who deliberately `Reveal()` a secret and then transform it (for example, to compute an HMAC that proves possession) remain responsible for ensuring that transformation, log message, or stack trace does not leak the input. This is the documented, auditable escape hatch (the single call to `Reveal()` in a provider's source) and a developer responsibility, not an engine guarantee.
+
+The memory model is clean: the ledger holds plain `System.String` values in the Default ALC (owned by the `SecretAccessor`, which the runner holds), so recording from inside the collectible script's `accessor.Resolve(…)` call runs a Default-ALC method body that adds to a Default-ALC set. No static handles bridge the collectible-ALC boundary, and the ledger is collected when the per-scenario accessor is released.
+
 ## 17.2 Pluggable secret sources
 
 The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future tiers.
