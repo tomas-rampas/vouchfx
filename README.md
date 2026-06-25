@@ -465,7 +465,28 @@ engine internals.
 
 For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
 
-Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) is in place and activates when binary packaging ships in a future sprint.
+Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) produces every release.
+
+### Verifying a release
+
+Every release artefact carries **keyless cosign signature** and **SLSA build-provenance attestation**, alongside a **CycloneDX software bill of materials**. Verification requires the `gh` and `cosign` CLIs:
+
+**SLSA provenance (GitHub attestation):**
+```bash
+gh attestation verify vouchfx.1.2.3.nupkg --repo tomas-rampas/vouchfx
+```
+
+**Keyless cosign signature:**
+```bash
+cosign verify-blob vouchfx.1.2.3.nupkg \
+  --bundle vouchfx.1.2.3.nupkg.cosign.bundle \
+  --certificate-identity-regexp '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Replace the filename with whichever artefact you are verifying (e.g. `vouchfx-1.2.3-linux-x64.tar.gz`, `vouchfx-1.2.3-win-x64.msi`). For complete verification procedures, including optional GPG signatures and SBOM inspection, see [`RELEASING.md`](RELEASING.md).
+
+**Distribution note:** vouchfx is distributed as the `dotnet` global tool (nupkg, primary), plus multi-file self-contained per-OS executables (`.tar.gz`, `.msi`, `.deb`, `.pkg`). Single-file self-contained builds are not produced — the Roslyn compiler discovers provider assemblies via `Assembly.Location`, which returns an empty string in single-file mode, breaking provider loading.
 
 ## Licence
 

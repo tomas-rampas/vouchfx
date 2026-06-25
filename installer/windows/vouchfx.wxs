@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v4 installer for vouchfx (Windows, win-x64 self-contained publish)
+
+  Requires: WiX Toolset v4  (dotnet tool install -g wix)
+
+  This WXS defines the installer structure: Package, Feature, PATH environment
+  variable, and registry proof-of-install.  It references an AppFiles
+  ComponentGroup that is generated at build time from the publish directory.
+
+  CI build command (see .github/workflows/release.yml, build-msi job):
+
+    1. Generate AppFiles WXS from the publish directory:
+         installer\windows\Invoke-Harvest.ps1 -SourceDir publish\win-x64
+    2. Build the MSI combining both WXS files:
+         wix build installer\windows\vouchfx.wxs installer\windows\AppFiles.wxs
+           -d Version=M.N.P
+           -o artifacts\installer\vouchfx-VERSION-win-x64.msi
+
+  Local build (after dotnet publish):
+
+    cd <repo-root>
+    dotnet publish src/Cli/Vouchfx.Cli -c Release -r win-x64 -o publish\win-x64
+    pwsh installer\windows\Invoke-Harvest.ps1 -SourceDir publish\win-x64
+    wix build installer\windows\vouchfx.wxs installer\windows\AppFiles.wxs
+      -d Version=1.0.0
+      -o vouchfx-1.0.0-win-x64.msi
+
+  What is installed:
+    %ProgramFiles%\vouchfx\vouchfx.exe  (the CLI binary)
+    %ProgramFiles%\vouchfx\...          (all other self-contained publish files)
+
+  PATH:
+    %ProgramFiles%\vouchfx is appended to the system PATH on install,
+    removed on uninstall (Permanent="no", System="yes").
+
+  DCP prerequisite:
+    The installed vouchfx.exe requires aspire.hosting.orchestration.win-x64
+    v13.4.2 in the user NuGet cache (~\.nuget\packages\).  This is present on
+    any machine that has built or restored an Aspire project.
+
+  GUIDs (never change these):
+    UpgradeCode  {7C9D4A2B-E3F5-4B6A-8D1C-9E2F3A4B5C6D}  product family GUID
+    EnvPath      {D5E6F7A8-B9C0-4D1E-8F2A-3B4C5D6E7F8A}  PATH component GUID
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!--
+    Package is the WiX v4 root element (replaces v3 Product + Package split).
+    Version is injected via -d Version=M.N.P on the wix build command line.
+    MSI version must be W.X.Y[.Z] with no pre-release suffix.
+    UpgradeCode is the stable product family identifier. Never change it.
+  -->
+  <Package
+    Name="vouchfx"
+    Version="$(var.Version)"
+    Manufacturer="vouchfx contributors"
+    UpgradeCode="{7C9D4A2B-E3F5-4B6A-8D1C-9E2F3A4B5C6D}"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <!--
+      Replace any previous version before installing the new one.
+      DowngradeErrorMessage is shown when installing an older version over
+      a newer one that is already present.
+    -->
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed. Uninstall it first, then run this installer." />
+
+    <!-- Embed the CAB inside the MSI for a single distributable file. -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!--
+      Install to %ProgramFiles%\vouchfx\ on 64-bit Windows.
+      StandardDirectory Id="ProgramFiles64Folder" always resolves to the
+      64-bit Program Files folder, regardless of the installer's own bitness.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="vouchfx">
+
+        <!--
+          PATH: appends the install dir to the system PATH.
+          A registry key provides the KeyPath so Windows Installer can track
+          and remove this component cleanly on uninstall.
+          Permanent="no" removes the entry when the product is uninstalled.
+          System="yes" modifies the machine-wide PATH (requires elevation).
+        -->
+        <Component Id="EnvPath" Guid="{D5E6F7A8-B9C0-4D1E-8F2A-3B4C5D6E7F8A}">
+          <RegistryValue
+            Root="HKLM"
+            Key="SOFTWARE\vouchfx"
+            Name="Installed"
+            Value="1"
+            Type="integer"
+            KeyPath="yes" />
+          <Environment
+            Id="EnvPathVar"
+            Name="PATH"
+            Value="[INSTALLDIR]"
+            Action="set"
+            Part="last"
+            Permanent="no"
+            System="yes" />
+        </Component>
+
+      </Directory>
+    </StandardDirectory>
+
+    <!--
+      Feature: a single top-level feature installs everything.
+      AppFiles is defined in the CI-generated AppFiles.wxs (produced by
+      installer\windows\Invoke-Harvest.ps1 from the publish directory).
+    -->
+    <Feature Id="ProductFeature" Title="vouchfx" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="EnvPath" />
+    </Feature>
+
+  </Package>
+</Wix>

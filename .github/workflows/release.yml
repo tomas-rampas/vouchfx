@@ -1,78 +1,81 @@
-# .github/workflows/release.yml — vouchfx signed-release SKELETON (S10-D-01)
+# .github/workflows/release.yml — vouchfx signed-release pipeline
 # =============================================================================
-# STATUS: SKELETON. NON-DESTRUCTIVE. NOT YET PRODUCING REAL ARTIFACTS.
+# S11-D-02: Release manifest — signing (cosign keyless), SBOM (CycloneDX),
+#           SLSA build provenance (actions/attest-build-provenance)
+# S11-D-03: Self-contained per-OS executables + installer skeletons (pipeline)
 #
-# vouchfx is NOT packaged yet — the real release artifacts (a signed release
-# manifest + the engine/CLI packages) are an S11 deliverable. This workflow
-# stands up the *signing pipeline* now so the only residue is "wire the real
-# build output here when S11 packaging lands" — there is NO key to provision.
+# Triggers
+# --------
+#   release: [published]   A GitHub Release is published in the UI.
+#   push: tags: v*         A version tag (e.g. v1.2.3) is pushed directly.
+# NEVER fires on push to a branch or pull_request.
 #
-# It deliberately:
-#   • triggers ONLY on a published GitHub Release or a `v*` tag push — so it can
-#     NEVER fire on an ordinary push or pull request to a branch;
-#   • builds a clearly-marked PLACEHOLDER artifact (a manifest describing the
-#     intended release contents) where the real `dotnet pack`/publish output will
-#     go once S11 produces it;
-#   • signs/attests that artifact KEYLESSLY (see "Keyless model" below);
-#   • is annotated at every activation point with `# ACTIVATES (S11):` so the
-#     real wiring is a search-and-replace, not a redesign.
+# Keyless signing model — no long-lived private key stored as a secret
+# --------------------------------------------------------------------
+#   1. SLSA provenance (actions/attest-build-provenance@v2)
+#      GitHub OIDC token → signed attestation stored with the repo.
+#      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
 #
-# -----------------------------------------------------------------------------
-# KEYLESS SIGNING MODEL (no pre-provisioned secret key)
-# -----------------------------------------------------------------------------
-# We use Sigstore "keyless" signing driven by the workflow's GitHub OIDC
-# identity — there is NO long-lived private key stored as a repo/org secret.
+#   2. cosign keyless (sigstore/cosign-installer@v3)
+#      GitHub OIDC token → Fulcio short-lived cert → Rekor transparency log.
+#      Verify:  cosign verify-blob <file> \
+#                 --bundle <file>.cosign.bundle \
+#                 --certificate-identity-regexp \
+#                   '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+#                 --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
-#   1. GitHub issues this job a short-lived **OIDC token** (requires the
-#      `id-token: write` permission below). That token asserts the workflow
-#      identity, e.g. `https://github.com/tomas-rampas/vouchfx/.github/workflows/
-#      release.yml@refs/tags/v1.2.3`.
-#   2. Sigstore **Fulcio** exchanges that OIDC token for a SHORT-LIVED (~10 min)
-#      X.509 signing certificate bound to that identity. The private key exists
-#      only in-memory for the lifetime of the job and is then discarded —
-#      nothing to store, rotate, or leak.
-#   3. The signature + certificate are recorded in the **Rekor** public
-#      transparency log, giving tamper-evident, publicly auditable provenance.
+# Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
+# -------------------------------------------------------------------------
+#   Authenticode (Windows)  CODESIGN_PFX_BASE64 + CODESIGN_PFX_PASSWORD
+#   GPG signing (nupkg)     GPG_SIGNING_KEY + GPG_PASSPHRASE
+#   Apple notarisation      APPLE_ID + APPLE_TEAM_ID + APPLE_APP_SPECIFIC_PASSWORD
+#   NuGet publish           NUGET_API_KEY
 #
-# Two complementary, free, keyless mechanisms are wired below:
+# DCP portability caveat — read before expecting self-contained exes to work
+# --------------------------------------------------------------------------
+# The vouchfx CLI carries Aspire.AppHost.Sdk 13.4.2, which embeds the DCP
+# binary path (dcpclipath AssemblyMetadata) at build time from the runner's
+# NuGet cache.  The embedded path is ABSOLUTE and machine-specific.
 #
-#   • `actions/attest-build-provenance` — generates a signed **SLSA build
-#     provenance** attestation for each artifact, stored with the repo. Requires
-#     `attestations: write` + `id-token: write`. Consumers verify with:
-#         gh attestation verify <artifact> --repo tomas-rampas/vouchfx
+# - nupkg (primary distribution): works on machines whose ~/.nuget/packages/
+#   already contains aspire.hosting.orchestration.<rid>/13.4.2 — any developer
+#   who has previously built/restored an Aspire project.
 #
-#   • **cosign keyless** (`cosign sign-blob --yes`) — produces a detached
-#     `.sig` + `.pem` (certificate) + `.bundle` for the artifact, anchored in
-#     Rekor. Consumers verify with:
-#         cosign verify-blob <artifact> \
-#           --bundle <artifact>.cosign.bundle \
-#           --certificate-identity-regexp \
-#             '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
-#           --certificate-oidc-issuer https://token.actions.githubusercontent.com
+# - Self-contained exes (secondary): include the .NET runtime but NOT the DCP
+#   binary.  The embedded DCP path resolves only when the user's NuGet cache
+#   is at the standard path and contains the matching Aspire package.
 #
-# Both anchor trust in OIDC identity + the public transparency log — NOT in a
-# secret we have to manage. That is the whole point of "keyless".
+# - PublishSingleFile is NEVER set: Assembly.Location returns an empty string
+#   for embedded assemblies; Platform.Engine.Compilation uses it to discover
+#   provider DLLs for Roslyn (hard engine invariant, CLAUDE.md).
+#
+# See docs/decisions/S11-D-03-dotnet-tool-packaging.md for the full analysis.
 # =============================================================================
 
-name: Release (signed, keyless — SKELETON)
+name: Release (signed, provenance)
 
-# --- Triggers ----------------------------------------------------------------
-# ONLY on a published Release or a version tag. Deliberately NO `push:` to a
-# branch and NO `pull_request:` — so this can never fire on ordinary CI.
 on:
   release:
     types: [published]
   push:
     tags:
       - "v*"
+  # workflow_dispatch lets maintainers smoke-test the build/publish/harvest
+  # jobs without cutting a real tag.  Release upload and NuGet push are
+  # ALWAYS skipped on dispatch runs (see "Smoke-test" comments throughout).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver string to build, e.g. 0.0.0-test (no release upload)"
+        required: true
+        default: "0.0.0-test"
+        type: string
 
-# Least privilege at the workflow level. Jobs do NOT inherit anything beyond
-# this; `id-token`/`attestations` are the minimum for keyless attestation.
+# Minimum workflow-level permissions; each job declares its own overrides.
 permissions:
   contents: read
 
-# Never run two releases for the same ref concurrently; never cancel a release
-# mid-flight (cancelling a signing job could orphan a partial attestation).
+# One release per ref; never cancel a signing job mid-flight.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -80,119 +83,797 @@ concurrency:
 env:
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
-  # Single source of truth for where the release artifact(s) live. S11 wires the
-  # real `dotnet pack`/publish output into this directory.
-  ARTIFACT_DIR: "release-artifacts"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
 
 jobs:
-  build-and-sign:
-    name: Build, attest & sign release artifacts (keyless)
-    runs-on: ubuntu-latest
 
-    # Minimum permissions for keyless signing/attestation:
-    #   id-token: write     -> mint the OIDC token Fulcio/cosign exchange for a
-    #                          short-lived signing certificate
-    #   attestations: write -> let actions/attest-build-provenance store the
-    #                          SLSA provenance attestation against the repo
-    #   contents: read      -> check out the source (NOT write — this skeleton
-    #                          never mutates the repo or the release)
+  # ===========================================================================
+  # build-dotnet
+  # Produces: nupkg (primary distribution), per-RID self-contained archives,
+  # CycloneDX JSON SBOM, and separate publish dirs for installer jobs.
+  # ===========================================================================
+  build-dotnet:
+    name: Build .NET artifacts (nupkg, per-RID publish, SBOM)
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      attestations: write
       contents: read
 
-    steps:
-      - name: Checkout (read-only)
-        uses: actions/checkout@v6
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag:     ${{ steps.version.outputs.tag }}
 
-      # ---------------------------------------------------------------------
-      # (a) BUILD THE RELEASE ARTIFACT
-      #
-      # ACTIVATES (S11): replace this placeholder step with the real release
-      # build, e.g.:
-      #     - uses: actions/setup-dotnet@v5
-      #       with: { dotnet-version: "8.0.x" }
-      #     - run: dotnet pack vouchfx.sln -c Release -o "$ARTIFACT_DIR"
-      #     # and/or `dotnet publish` the CLI, and emit the S11 release manifest.
-      #
-      # Until then we emit a NON-DESTRUCTIVE placeholder manifest describing the
-      # intended release so the rest of the pipeline (attest + sign) is exercised
-      # end-to-end against a real file, with zero risk of publishing anything.
-      # ---------------------------------------------------------------------
-      - name: Build release artifact (PLACEHOLDER — wire real output in S11)
-        id: build
+    steps:
+      - name: Checkout (full history for version embedding)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      - name: Build (Release, 0-warning gate)
+        run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # Extract semver from the triggering ref.
+      # release event:         github.event.release.tag_name → "v1.2.3"
+      # push-tag event:        GITHUB_REF_NAME               → "v1.2.3"
+      # workflow_dispatch:     inputs.version                → "0.0.0-test"
+      - name: Determine release version
+        id: version
         run: |
           set -euo pipefail
-          mkdir -p "$ARTIFACT_DIR"
-          manifest="$ARTIFACT_DIR/vouchfx-release-manifest.json"
-          # Placeholder content. The REAL artifacts (engine/CLI packages + the
-          # S11 release manifest) replace this. Kept deterministic & harmless.
-          cat > "$manifest" <<EOF
-          {
-            "schema": "vouchfx.release-manifest/placeholder",
-            "status": "SKELETON — not a real release artifact",
-            "note": "ACTIVATES when S11 packaging produces artifacts; wire real build output into \$ARTIFACT_DIR.",
-            "repository": "${GITHUB_REPOSITORY}",
-            "ref": "${GITHUB_REF}",
-            "sha": "${GITHUB_SHA}",
-            "run_id": "${GITHUB_RUN_ID}"
-          }
-          EOF
-          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
-          echo "Built placeholder artifact:"
-          ls -l "$ARTIFACT_DIR"
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="v${{ inputs.version }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          version="${tag#v}"   # strip leading "v" for dotnet -p:Version
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing: tag=$tag  version=$version (event: $GITHUB_EVENT_NAME)"
 
-      # ---------------------------------------------------------------------
-      # (b1) ATTEST — keyless SLSA build provenance via GitHub OIDC.
-      # No key: uses the job's OIDC identity + Sigstore Fulcio/Rekor.
-      # Verify later with: gh attestation verify <file> --repo $GITHUB_REPOSITORY
-      #
-      # ACTIVATES (S11): point `subject-path` at the real artifacts (a glob such
-      # as "${{ env.ARTIFACT_DIR }}/*.nupkg" once packages exist).
-      # ---------------------------------------------------------------------
-      - name: Attest build provenance (keyless, SLSA)
-        uses: actions/attest-build-provenance@v3
+      # Pack the dotnet global tool nupkg (primary distribution).
+      # PackAsTool=true and IsPublishable=true are set in the csproj.
+      - name: Pack nupkg (global tool — primary distribution)
+        run: |
+          dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -o artifacts/nuget
+
+      # Self-contained multi-file publish for each RID.
+      # PublishSingleFile is NOT used (Assembly.Location → IL3000 build errors).
+      # Each publish embeds the CI runner's NuGet cache path for DCP.
+      # The build-msi job re-publishes win-x64 on Windows for a usable DCP path.
+      - name: Publish self-contained (linux-x64)
+        run: |
+          dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release -r linux-x64 --self-contained \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -o artifacts/publish/linux-x64
+
+      - name: Publish self-contained (win-x64)
+        run: |
+          dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release -r win-x64 --self-contained \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -o artifacts/publish/win-x64
+        # DCP path baked in here is a Linux path; users on Windows should
+        # install the MSI (build-msi, windows-latest) which re-publishes natively.
+
+      - name: Publish self-contained (osx-x64)
+        run: |
+          dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release -r osx-x64 --self-contained \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -o artifacts/publish/osx-x64
+
+      - name: Publish self-contained (osx-arm64)
+        run: |
+          dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release -r osx-arm64 --self-contained \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -o artifacts/publish/osx-arm64
+
+      # Archive each publish directory into a distributable tarball.
+      - name: Archive publish outputs (tar.gz per RID)
+        run: |
+          set -euo pipefail
+          v="${{ steps.version.outputs.version }}"
+          mkdir -p artifacts/archives
+          for rid in linux-x64 win-x64 osx-x64 osx-arm64; do
+            tar -czf "artifacts/archives/vouchfx-${v}-${rid}.tar.gz" \
+              -C artifacts/publish "${rid}/"
+            echo "Archived: vouchfx-${v}-${rid}.tar.gz"
+          done
+
+      # CycloneDX SBOM — install, run, uninstall (no residual global tool).
+      - name: Generate SBOM (CycloneDX JSON, spec 1.7)
+        run: |
+          set -euo pipefail
+          dotnet tool install --global CycloneDX
+          dotnet-CycloneDX vouchfx.sln \
+            -o artifacts/sbom \
+            --filename "vouchfx-${{ steps.version.outputs.version }}.bom.json"
+          dotnet tool uninstall --global CycloneDX
+          ls -lh artifacts/sbom/
+
+      - name: Upload nupkg
+        uses: actions/upload-artifact@v4
         with:
-          subject-path: ${{ steps.build.outputs.manifest }}
+          name: nuget-package
+          path: artifacts/nuget/*.nupkg
+          if-no-files-found: error
+          retention-days: 30
 
-      # ---------------------------------------------------------------------
-      # (b2) SIGN — cosign keyless `sign-blob`. Installs cosign, then signs the
-      # artifact using the workflow's OIDC identity (no key files). Emits a
-      # self-contained `.cosign.bundle` (signature + cert + Rekor proof).
-      # `--yes` accepts the keyless prompt non-interactively.
-      #
-      # ACTIVATES (S11): loop over the real artifact set instead of the single
-      # placeholder manifest.
-      # ---------------------------------------------------------------------
+      - name: Upload publish archives (all RIDs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-archives
+          path: artifacts/archives/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      # Separate per-OS publish dirs so installer jobs can grab just their RID.
+      # NOTE: win-x64 dir is NOT uploaded here — build-msi re-publishes win-x64
+      # natively on windows-latest so the embedded DCP path is a Windows absolute
+      # path rather than the Linux runner's NuGet cache path.
+      - name: Upload linux-x64 publish dir (for .deb)
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-linux-x64-dir
+          path: artifacts/publish/linux-x64/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload osx-arm64 publish dir (for .pkg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-osx-arm64-dir
+          path: artifacts/publish/osx-arm64/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: artifacts/sbom/*.bom.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===========================================================================
+  # build-vsix
+  # Packages the VSCode extension using vsce.
+  # ===========================================================================
+  build-vsix:
+    name: Build VSCode extension (.vsix)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: tools/vscode-vouchfx
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js (LTS 22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: tools/vscode-vouchfx/package-lock.json
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Package extension (vsce package)
+        run: npm run package
+
+      - name: Upload .vsix
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: tools/vscode-vouchfx/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===========================================================================
+  # sign-and-attest
+  # Applies SLSA build provenance + cosign keyless signing to every artifact,
+  # and optionally GPG-signs the nupkg.
+  # ===========================================================================
+  sign-and-attest:
+    name: Attest (SLSA provenance) and sign (cosign keyless, GPG)
+    runs-on: ubuntu-latest
+    needs: [build-dotnet, build-vsix, build-msi, build-deb, build-pkg]
+
+    permissions:
+      id-token: write      # mint GitHub OIDC token for Fulcio + cosign
+      attestations: write  # store SLSA provenance attestation via GitHub API
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      HAS_GPG: ${{ secrets.GPG_SIGNING_KEY != '' }}
+
+    steps:
+      - name: Download nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: artifacts/nuget/
+
+      - name: Download publish archives
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-archives
+          path: artifacts/
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: artifacts/sbom/
+
+      - name: Download .vsix
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: artifacts/vsix/
+
+      - name: Download MSI installer (for attestation)
+        uses: actions/download-artifact@v4
+        with:
+          name: msi-installer
+          path: artifacts/installers/
+
+      - name: Download .deb package (for attestation)
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts/installers/
+
+      - name: Download .pkg installer (for attestation)
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg-installer
+          path: artifacts/installers/
+
+      # SLSA provenance attestations — one per artifact group.
+      # Verification: gh attestation verify <file> --repo tomas-rampas/vouchfx
+      - name: Attest nupkg (SLSA build provenance)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/nuget/*.nupkg
+
+      - name: Attest publish archives (SLSA build provenance)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/vouchfx-*.tar.gz
+
+      - name: Attest SBOM (SLSA build provenance)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/sbom/*.bom.json
+
+      - name: Attest .vsix (SLSA build provenance)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/vsix/*.vsix
+
+      - name: Attest installers (SLSA build provenance)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/installers/*
+
+      # cosign keyless signing — produces a self-contained .cosign.bundle
+      # (signature + Fulcio cert chain + Rekor inclusion proof) per artifact.
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign artifact (cosign keyless)
+      - name: Sign artifacts (cosign keyless)
         env:
-          # cosign reads the experimental keyless flow off the ambient OIDC
-          # token; COSIGN_EXPERIMENTAL is honoured by older cosign and harmless
-          # on current versions.
           COSIGN_EXPERIMENTAL: "1"
         run: |
           set -euo pipefail
-          artifact="${{ steps.build.outputs.manifest }}"
-          echo "Keyless-signing: $artifact"
-          cosign sign-blob --yes \
-            --bundle "${artifact}.cosign.bundle" \
-            "$artifact"
-          echo "Wrote bundle: ${artifact}.cosign.bundle"
+          v="$VERSION"
+          for f in \
+            artifacts/nuget/*.nupkg \
+            "artifacts/vouchfx-${v}-linux-x64.tar.gz" \
+            "artifacts/vouchfx-${v}-win-x64.tar.gz" \
+            "artifacts/vouchfx-${v}-osx-x64.tar.gz" \
+            "artifacts/vouchfx-${v}-osx-arm64.tar.gz" \
+            "artifacts/sbom/vouchfx-${v}.bom.json" \
+            artifacts/vsix/*.vsix \
+            artifacts/installers/*.msi \
+            artifacts/installers/*.deb \
+            artifacts/installers/*.pkg ; do
+            if [[ -f "$f" ]]; then
+              echo "Signing: $f"
+              cosign sign-blob --yes \
+                --bundle "${f}.cosign.bundle" \
+                "$f"
+              echo "  -> ${f}.cosign.bundle"
+            fi
+          done
 
-      # ---------------------------------------------------------------------
-      # (c) PUBLISH the signed artifact + its verification material as a
-      # workflow artifact. NON-DESTRUCTIVE: this uploads to the workflow run
-      # only — it does NOT push to a registry, attach to the Release, or
-      # publish to NuGet. S11 decides the real distribution channel.
-      # ---------------------------------------------------------------------
-      - name: Upload signed artifact + verification material
-        uses: actions/upload-artifact@v7
+      # GPG signing for the nupkg — SECRET-GATED.
+      # Required secrets: GPG_SIGNING_KEY (base64-encoded armoured private key)
+      #                   GPG_PASSPHRASE
+      - name: Sign nupkg (GPG) — secret-gated
+        if: ${{ env.HAS_GPG == 'true' }}
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          echo "$GPG_SIGNING_KEY" | base64 -d | gpg --batch --import
+          for nupkg in artifacts/nuget/*.nupkg; do
+            echo "GPG-signing: $nupkg"
+            echo "$GPG_PASSPHRASE" | gpg --batch --yes --passphrase-fd 0 \
+              --armor --detach-sign "$nupkg"
+            echo "  -> ${nupkg}.asc"
+          done
+
+      - name: Upload cosign bundles + GPG signatures
+        uses: actions/upload-artifact@v4
         with:
-          name: vouchfx-release-signed-skeleton
+          name: signing-material
           path: |
-            ${{ env.ARTIFACT_DIR }}/**
+            artifacts/**/*.cosign.bundle
+            artifacts/**/*.asc
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ===========================================================================
+  # build-msi (windows-latest)
+  # Re-publishes win-x64 on Windows so the DCP path baked in by
+  # Aspire.AppHost.Sdk is a Windows NuGet cache path (C:\Users\...), making
+  # the installed binary usable for Windows users who have Aspire packages.
+  # Builds a WiX v4 MSI installer.  Optionally signs with Authenticode.
+  #
+  # Secret-gated Authenticode:
+  #   CODESIGN_PFX_BASE64   — base64-encoded PKCS#12 (.pfx) certificate
+  #   CODESIGN_PFX_PASSWORD — password for the certificate
+  # ===========================================================================
+  build-msi:
+    name: Build Windows MSI installer (WiX v4, win-x64)
+    runs-on: windows-latest
+    needs: build-dotnet
+
+    permissions:
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      HAS_CODESIGN: ${{ secrets.CODESIGN_PFX_BASE64 != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Re-publish win-x64 natively so the DCP path in AssemblyMetadata is a
+      # Windows absolute path (C:\Users\runneradmin\AppData\Local\...) matching
+      # the standard Windows NuGet package cache used by Aspire on Windows.
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      - name: Publish win-x64 self-contained (Windows — native DCP path)
+        run: |
+          dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained `
+            "-p:Version=$env:VERSION" `
+            -o publish\win-x64
+
+      # Sign vouchfx.exe before it is packaged into the MSI — SECRET-GATED.
+      # signtool.exe is available on windows-latest runners.
+      - name: Sign vouchfx.exe (Authenticode) — secret-gated
+        if: ${{ env.HAS_CODESIGN == 'true' }}
+        env:
+          CODESIGN_PFX_BASE64:   ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+        run: |
+          # Resolve signtool.exe explicitly — it is not reliably on PATH on
+          # github-hosted windows-latest runners even though the Windows SDK is
+          # present.  Pick the highest-versioned x64 build.
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Name -eq 'x64' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { Write-Error "signtool.exe not found in Windows Kits\10\bin"; exit 1 }
+          Write-Host "Using: $signtool"
+          $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
+          & $signtool sign `
+            /f  $pfxPath `
+            /p  $env:CODESIGN_PFX_PASSWORD `
+            /tr http://timestamp.digicert.com `
+            /td sha256 /fd sha256 `
+            /d  "vouchfx" `
+            /du "https://github.com/tomas-rampas/vouchfx" `
+            publish\win-x64\vouchfx.exe
+          Remove-Item $pfxPath -Force
+
+      # Install WiX v4 dotnet tool if not already available.
+      # In dev environments, wix is typically installed globally.
+      - name: Ensure WiX v4 tool is available
+        run: |
+          # Pin the minor version so the WXS schema namespace stays stable.
+          # Advance deliberately when upgrading from WiX 4.0.x.
+          if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
+            dotnet tool install --global wix --version 4.0.*
+          }
+          wix --version
+
+      # WiX v4.0.x does not support the Files/glob harvesting element.
+      # Invoke-Harvest.ps1 enumerates all files in the publish directory and
+      # generates a WXS Fragment (AppFiles.wxs) with one Component per file.
+      # The generated file is combined with vouchfx.wxs in the wix build step.
+      - name: Harvest publish directory into WXS fragment
+        run: |
+          pwsh installer\windows\Invoke-Harvest.ps1 `
+            -SourceDir publish\win-x64 `
+            -OutputFile installer\windows\AppFiles.wxs
+
+      # Build the MSI from the skeleton + harvested fragment.
+      # -d Version= injects the version; MSI requires W.X.Y (no pre-release suffix).
+      - name: Build MSI (wix build)
+        run: |
+          $msiVersion = $env:VERSION -replace '-.*$', ''
+          New-Item -ItemType Directory -Force artifacts\installer | Out-Null
+          wix build installer\windows\vouchfx.wxs installer\windows\AppFiles.wxs `
+            "-d" "Version=$msiVersion" `
+            -arch x64 `
+            -o "artifacts\installer\vouchfx-$env:VERSION-win-x64.msi"
+          Write-Host "Built MSI: vouchfx-$env:VERSION-win-x64.msi"
+
+      # Sign the MSI after it is built — SECRET-GATED.
+      - name: Sign MSI (Authenticode) — secret-gated
+        if: ${{ env.HAS_CODESIGN == 'true' }}
+        env:
+          CODESIGN_PFX_BASE64:   ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Name -eq 'x64' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { Write-Error "signtool.exe not found in Windows Kits\10\bin"; exit 1 }
+          Write-Host "Using: $signtool"
+          $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
+          & $signtool sign `
+            /f  $pfxPath `
+            /p  $env:CODESIGN_PFX_PASSWORD `
+            /tr http://timestamp.digicert.com `
+            /td sha256 /fd sha256 `
+            /d  "vouchfx" `
+            /du "https://github.com/tomas-rampas/vouchfx" `
+            "artifacts\installer\vouchfx-$env:VERSION-win-x64.msi"
+          Remove-Item $pfxPath -Force
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-installer
+          path: artifacts/installer/*.msi
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+  # ===========================================================================
+  # build-deb (ubuntu-latest)
+  # Builds a Debian .deb package from the linux-x64 publish output.
+  # Optional GPG signing: GPG_SIGNING_KEY + GPG_PASSPHRASE.
+  # ===========================================================================
+  build-deb:
+    name: Build Debian package (.deb, linux-x64)
+    runs-on: ubuntu-latest
+    needs: build-dotnet
+    permissions:
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      HAS_GPG: ${{ secrets.GPG_SIGNING_KEY != '' }}
+
+    steps:
+      - name: Download linux-x64 publish dir
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-linux-x64-dir
+          path: publish/linux-x64/
+
+      - name: Build .deb package
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          pkgroot="deb-build/vouchfx_${v}_amd64"
+
+          mkdir -p "$pkgroot/DEBIAN"
+          mkdir -p "$pkgroot/usr/lib/vouchfx"
+          mkdir -p "$pkgroot/usr/local/bin"
+
+          # All published files land under /usr/lib/vouchfx/
+          cp -r publish/linux-x64/. "$pkgroot/usr/lib/vouchfx/"
+          chmod +x "$pkgroot/usr/lib/vouchfx/vouchfx"
+
+          # Symlink the binary into $PATH.
+          ln -sf /usr/lib/vouchfx/vouchfx "$pkgroot/usr/local/bin/vouchfx"
+
+          installed_kb=$(du -sk "$pkgroot/usr" | awk '{print $1}')
+
+          # Strip pre-release suffix: dpkg version must be M.N.P[-epoch].
+          deb_version="${v%%-*}"
+
+          cat > "$pkgroot/DEBIAN/control" <<EOF
+          Package: vouchfx
+          Version: ${deb_version}
+          Architecture: amd64
+          Maintainer: vouchfx contributors <https://github.com/tomas-rampas/vouchfx>
+          Installed-Size: ${installed_kb}
+          Depends: libc6 (>= 2.17)
+          Section: devel
+          Priority: optional
+          Homepage: https://github.com/tomas-rampas/vouchfx
+          Description: vouchfx e2e integration test runner
+           Compiles declarative .e2e.yaml integration tests into C# (Roslyn),
+           orchestrates the required container topology via .NET Aspire +
+           Testcontainers, and executes steps covering REST, PostgreSQL, Kafka,
+           webhooks, and custom scripting.
+           .
+           Prerequisite: aspire.hosting.orchestration.linux-x64 v13.4.2 must be
+           present in ~/.nuget/packages/ to start container topologies.
+          EOF
+
+          find "$pkgroot" -type d -exec chmod 755 {} +
+          find "$pkgroot" -type f -exec chmod 644 {} +
+          chmod 755 "$pkgroot/usr/lib/vouchfx/vouchfx"
+
+          mkdir -p artifacts/installer
+          dpkg-deb --build "$pkgroot" \
+            "artifacts/installer/vouchfx-${v}-linux-x64.deb"
+          ls -lh "artifacts/installer/vouchfx-${v}-linux-x64.deb"
+
+      - name: Sign .deb (GPG detached signature) — secret-gated
+        if: ${{ env.HAS_GPG == 'true' }}
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          echo "$GPG_SIGNING_KEY" | base64 -d | gpg --batch --import
+          deb="artifacts/installer/vouchfx-${VERSION}-linux-x64.deb"
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --passphrase-fd 0 \
+            --armor --detach-sign "$deb"
+          echo "Signed: ${deb}.asc"
+
+      - name: Upload .deb package
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts/installer/*.deb*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===========================================================================
+  # build-pkg (macos-latest)
+  # Builds macOS .pkg from the osx-arm64 publish output.
+  # Apple notarisation: APPLE_ID + APPLE_TEAM_ID + APPLE_APP_SPECIFIC_PASSWORD.
+  # ===========================================================================
+  build-pkg:
+    name: Build macOS package installer (.pkg, osx-arm64)
+    runs-on: macos-latest
+    needs: build-dotnet
+    permissions:
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      HAS_APPLE: ${{ secrets.APPLE_ID != '' }}
+
+    steps:
+      - name: Download osx-arm64 publish dir
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-osx-arm64-dir
+          path: publish/osx-arm64/
+
+      - name: Build .pkg (osx-arm64)
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          pkgroot="pkg-build/vouchfx-arm64"
+          mkdir -p "$pkgroot/usr/lib/vouchfx"
+          mkdir -p "$pkgroot/usr/local/bin"
+
+          cp -r publish/osx-arm64/. "$pkgroot/usr/lib/vouchfx/"
+          chmod +x "$pkgroot/usr/lib/vouchfx/vouchfx"
+          ln -sf /usr/lib/vouchfx/vouchfx "$pkgroot/usr/local/bin/vouchfx"
+
+          mkdir -p artifacts/installer
+          pkgbuild \
+            --root "$pkgroot" \
+            --identifier com.vouchfx.cli \
+            --version "$v" \
+            --install-location / \
+            "artifacts/installer/vouchfx-${v}-osx-arm64.pkg"
+          echo "Built: artifacts/installer/vouchfx-${v}-osx-arm64.pkg"
+
+      # Apple notarisation — SECRET-GATED.
+      # Required secrets: APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD
+      # Apple's servers scan the pkg and return a ticket; xcrun stapler attaches
+      # it so Gatekeeper trusts the installer without an internet connection.
+      - name: Notarise .pkg (Apple Notary Service) — secret-gated
+        if: ${{ env.HAS_APPLE == 'true' }}
+        env:
+          APPLE_ID:                    ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          pkg="artifacts/installer/vouchfx-${VERSION}-osx-arm64.pkg"
+          echo "Submitting for notarisation: $pkg"
+          xcrun notarytool submit "$pkg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait \
+            --timeout 600
+          echo "Stapling ticket..."
+          xcrun stapler staple "$pkg"
+          echo "Notarisation complete."
+
+      - name: Upload .pkg installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-installer
+          path: artifacts/installer/*.pkg
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===========================================================================
+  # publish-release
+  # Assembles all artifacts and attaches them to the GitHub Release.
+  # Publishes the nupkg to NuGet.org (secret-gated: NUGET_API_KEY).
+  # ===========================================================================
+  publish-release:
+    name: Publish artifacts to GitHub Release and NuGet
+    runs-on: ubuntu-latest
+    needs: [build-dotnet, sign-and-attest]
+
+    permissions:
+      contents: write   # attach files to the GitHub Release
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      TAG:     ${{ needs.build-dotnet.outputs.tag }}
+      HAS_NUGET: ${{ secrets.NUGET_API_KEY != '' }}
+
+    steps:
+      - name: Download nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: release-upload/
+
+      - name: Download publish archives
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-archives
+          path: release-upload/
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: release-upload/
+
+      - name: Download .vsix
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: release-upload/
+
+      - name: Download signing material (cosign bundles, GPG signatures)
+        uses: actions/download-artifact@v4
+        with:
+          name: signing-material
+          path: release-upload/
+
+      - name: Download MSI installer
+        uses: actions/download-artifact@v4
+        with:
+          name: msi-installer
+          path: release-upload/
+
+      - name: Download .deb package
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: release-upload/
+
+      - name: Download .pkg installer
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg-installer
+          path: release-upload/
+
+      - name: List release artifacts
+        run: |
+          echo "Artifacts to attach to release $TAG:"
+          find release-upload/ -type f | sort
+
+      # Smoke-test runs (workflow_dispatch) stop here — all steps below interact
+      # with GitHub Releases or NuGet.org and must not fire on test runs.
+      - name: List release artifacts (smoke-test final step)
+        run: |
+          echo "Artifacts that would be uploaded to release $TAG:"
+          find release-upload/ -type f | sort
+
+      # Create the release if triggered by a tag push (the release might not
+      # exist yet).  For release: published, the release already exists and
+      # --notes-from-tag is a graceful no-op.
+      # Skipped on workflow_dispatch smoke-test runs.
+      - name: Create release if triggered by tag push
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" \
+            --title "vouchfx $TAG" \
+            --generate-notes \
+            --draft \
+            2>/dev/null || echo "Release $TAG already exists — skipping create"
+
+      # Attach all artifacts to the release.  --clobber replaces any file
+      # already uploaded (safe for re-runs or partial re-runs).
+      # Skipped on workflow_dispatch smoke-test runs.
+      - name: Upload artifacts to GitHub Release
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find release-upload/ -type f -print0)
+          echo "Uploading ${#files[@]} files to release $TAG..."
+          gh release upload "$TAG" "${files[@]}" --clobber
+          echo "Done."
+
+      # Publish the nupkg to NuGet.org — SECRET-GATED.
+      # Install: dotnet tool install -g vouchfx
+      # Package: https://www.nuget.org/packages/vouchfx/
+      # Also skipped on workflow_dispatch smoke-test runs.
+      - name: Publish nupkg to NuGet.org — secret-gated
+        if: ${{ env.HAS_NUGET == 'true' && github.event_name != 'workflow_dispatch' }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          for nupkg in release-upload/*.nupkg; do
+            echo "Pushing: $nupkg"
+            dotnet nuget push "$nupkg" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
