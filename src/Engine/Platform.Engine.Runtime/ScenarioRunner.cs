@@ -42,7 +42,9 @@ using Platform.Engine.Orchestration;
 using Platform.Engine.Orchestration.HostResources;
 using Platform.Engine.Reporting;
 using Platform.Engine.Runtime.Secrets;
+using Platform.Engine.Runtime.Serialisation;
 using Platform.Sdk;
+using YamlDotNet.RepresentationModel;
 
 namespace Platform.Engine.Runtime;
 
@@ -1606,14 +1608,37 @@ public static class ScenarioRunner
     }
 
     /// <summary>
+    /// <see cref="JsonSerializerOptions"/> used by <see cref="SerialiseEnvironment"/>.
+    /// Allocated once (static initialiser) to avoid repeated reflection overhead.
+    /// Registers <see cref="YamlNodeJsonConverter"/> so that a
+    /// <see cref="DependencySpec.Extra"/> field (type <see cref="YamlMappingNode"/>)
+    /// is serialised to a deterministic JSON object rather than throwing
+    /// <see cref="InvalidOperationException"/> (S11-B-02).
+    /// </summary>
+    private static readonly JsonSerializerOptions s_envSerialiserOptions =
+        new() { Converters = { new YamlNodeJsonConverter() } };
+
+    /// <summary>
     /// Serialises an <see cref="EnvironmentSpec"/> to a stable JSON string for
     /// equality comparison across suite scenarios (shared-environment validation).
     /// Returns an empty string for a <see langword="null"/> environment.
     /// </summary>
+    /// <remarks>
+    /// Uses <see cref="s_envSerialiserOptions"/> which registers
+    /// <see cref="YamlNodeJsonConverter"/> — required because
+    /// <see cref="DependencySpec.Extra"/> is a <see cref="YamlMappingNode"/> that
+    /// <see cref="JsonSerializer"/> cannot handle without a custom converter (S11-B-02).
+    /// Mapping keys within each <see cref="DependencySpec.Extra"/> block are emitted in
+    /// ordinal sort order, so two Extra mappings that contain the same pairs in different
+    /// declaration order produce identical JSON.  Top-level <c>Services</c> and
+    /// <c>Dependencies</c> collections are serialised by STJ in enumeration order and
+    /// retain their YAML declaration order (which is stable: it comes from the same parsed
+    /// YAML).
+    /// </remarks>
     private static string SerialiseEnvironment(EnvironmentSpec? env) =>
         env is null
             ? string.Empty
-            : System.Text.Json.JsonSerializer.Serialize(env);
+            : JsonSerializer.Serialize(env, s_envSerialiserOptions);
 
     // ── Render-time diff lookup (S07-G-01) ──────────────────────────────────────
 
