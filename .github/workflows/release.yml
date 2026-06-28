@@ -141,6 +141,14 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
           version="${tag#v}"   # strip leading "v" for dotnet -p:Version
+          # Fail-closed: reject anything that is not a clean semver before it
+          # reaches $GITHUB_OUTPUT and gets spliced into downstream run: shells.
+          # Pattern: MAJOR.MINOR.PATCH with an optional pre-release/build suffix
+          # composed of alphanumerics, hyphens, and dots (e.g. 1.2.3-rc.1).
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Refusing to release: version '$version' is not a valid semver"
+            exit 1
+          fi
           echo "tag=$tag"         >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing: tag=$tag  version=$version (event: $GITHUB_EVENT_NAME)"
@@ -148,10 +156,12 @@ jobs:
       # Pack the dotnet global tool nupkg (primary distribution).
       # PackAsTool=true and IsPublishable=true are set in the csproj.
       - name: Pack nupkg (global tool — primary distribution)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release \
-            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:Version="$VERSION" \
             -o artifacts/nuget
 
       # Self-contained multi-file publish for each RID.
@@ -159,40 +169,50 @@ jobs:
       # Each publish embeds the CI runner's NuGet cache path for DCP.
       # The build-msi job re-publishes win-x64 on Windows for a usable DCP path.
       - name: Publish self-contained (linux-x64)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r linux-x64 --self-contained \
-            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:Version="$VERSION" \
             -o artifacts/publish/linux-x64
 
       - name: Publish self-contained (win-x64)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r win-x64 --self-contained \
-            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:Version="$VERSION" \
             -o artifacts/publish/win-x64
         # DCP path baked in here is a Linux path; users on Windows should
         # install the MSI (build-msi, windows-latest) which re-publishes natively.
 
       - name: Publish self-contained (osx-x64)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r osx-x64 --self-contained \
-            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:Version="$VERSION" \
             -o artifacts/publish/osx-x64
 
       - name: Publish self-contained (osx-arm64)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r osx-arm64 --self-contained \
-            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:Version="$VERSION" \
             -o artifacts/publish/osx-arm64
 
       # Archive each publish directory into a distributable tarball.
       - name: Archive publish outputs (tar.gz per RID)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          v="${{ steps.version.outputs.version }}"
+          v="$VERSION"
           mkdir -p artifacts/archives
           for rid in linux-x64 win-x64 osx-x64 osx-arm64; do
             tar -czf "artifacts/archives/vouchfx-${v}-${rid}.tar.gz" \
@@ -202,12 +222,14 @@ jobs:
 
       # CycloneDX SBOM — install, run, uninstall (no residual global tool).
       - name: Generate SBOM (CycloneDX JSON, spec 1.7)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           dotnet tool install --global CycloneDX
           dotnet-CycloneDX vouchfx.sln \
             -o artifacts/sbom \
-            --filename "vouchfx-${{ steps.version.outputs.version }}.bom.json"
+            --filename "vouchfx-${VERSION}.bom.json"
           dotnet tool uninstall --global CycloneDX
           ls -lh artifacts/sbom/
 
