@@ -88,15 +88,31 @@ public sealed class EnvironmentErrorClassificationTests
         // not from the live DCP message (varies across engine/daemon versions).
         Assert.Equal(ExpectedRegistryHost, ex.Info.RegistryHost);
 
-        // Assert 2 — the produced event has Verdict.EnvironmentError, never Fail.
+        // Assert 2 — an unreachable registry DNS failure is an ImagePull error.
+        // The kind is derived from (imageRef non-null + network signal keywords)
+        // and is therefore deterministic regardless of the exact live daemon message.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, ex.Info.Kind);
+
+        // Assert 3 — For a connectivity failure (DNS NXDOMAIN for ".invalid" per RFC 6761)
+        // the classifier expects AuthStatus null because no auth was attempted.  However,
+        // the exact live DCP/daemon message text can vary across engine and Docker versions,
+        // so we tolerate "anonymous" as well (some daemon versions surface a generic pull
+        // failure before the connectivity signal is seen by the classifier).
+        Assert.True(
+            ex.Info.AuthStatus is null or "anonymous",
+            $"unexpected AuthStatus: {ex.Info.AuthStatus}");
+        // Note: Kind == ImagePull is still asserted (Assert 2 above) because imageRef is
+        // non-null, establishing the pull context regardless of the daemon message wording.
+
+        // Assert 4 — the produced event has Verdict.EnvironmentError, never Fail.
         var evt = EnvironmentErrorEvents.Create(ex.Info, "run", FixedTs);
         Assert.Equal(Verdict.EnvironmentError, evt.Verdict);
         Assert.NotEqual(Verdict.Fail, evt.Verdict);
 
-        // Assert 3 — event type discriminator.
+        // Assert 5 — event type discriminator.
         Assert.Equal(EventTypes.EnvironmentError, evt.Type);
 
-        // Assert 4 — the line serialises correctly and round-trips with ENV_ERROR verdict.
+        // Assert 6 — the line serialises correctly and round-trips with ENV_ERROR verdict.
         var line = EnvironmentErrorEvents.ToLine(ex.Info, "run", FixedTs);
         var envelope = EventStreamJson.FromLine(line);
         Assert.Equal("environment-error", envelope.Type);

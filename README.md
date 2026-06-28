@@ -23,13 +23,13 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Milestone M3 — full step set & SDK — is engineering-complete and in phase-exit review** (see [exit criteria](plan/m3-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
+> **Milestone M4 — Tooling & hardening — is engineering-complete, phase-exit pending** (see [exit criteria](plan/m4-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
 > with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
 > `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow).
-> Still to come: community provider tiers (Verified and Community governance) — see
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated. Remaining phase-exit items are human-gated: the steering review, the GitLab live-pipeline run (#153), and certificate provisioning.
+> Still to come: community provider tiers (Verified and Community governance) and the v1.0 release in Sprint 12 — see
 > the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
 > shipped as a `dotnet` global tool plus a VSCode extension.
 
@@ -111,6 +111,14 @@ your first test in 60 minutes: checking prerequisites, building from source, aut
 `.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
 generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
 
+### Example scenarios
+
+The repository includes worked scenarios demonstrating core features:
+
+- **[`examples/reference/reference.e2e.yaml`](examples/reference/reference.e2e.yaml)** — **The canonical four-technology reference scenario.** One business transaction spanning all engine capabilities: REST call (`http.rest` + `capture`), database mutation (`script.csharp` + `db-assert.postgres` over a seeded table), Kafka publish-and-consume (`mq-publish.kafka` + `mq-expect.kafka` with `verifyMode: RETRY`), and outbound webhook simulation (`script.csharp` → `webhook-listen.http` with RETRY). It also threads a `${secret:env/…}` bearer token and demonstrates cross-step placeholder substitution. See [`examples/reference/README.md`](examples/reference/README.md) for a walkthrough.
+- **[`examples/ci-reference/smoke.e2e.yaml`](examples/ci-reference/smoke.e2e.yaml)** — A minimal happy-path scenario used in CI integration tests.
+- **[`examples/getting-started/hello-world.e2e.yaml`](examples/getting-started/hello-world.e2e.yaml)** — A first-time introductory scenario from the Getting Started guide.
+
 ### CI integration with GitHub Actions
 
 vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
@@ -141,7 +149,7 @@ Replace `<commit-sha>` with a full 40-character commit SHA (not a branch or tag,
 | `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Syntax: one image per line (e.g., `traefik/whoami:latest`). |
 | `runs-on` | string | `ubuntu-latest` | The GitHub Actions runner label to use. Must provide Docker; `ubuntu-latest` does. |
 
-**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The workflow checks out `vouchfx-repo` at the requested `vouchfx-ref`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same workflow contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+**Installation.** The vouchfx CLI is packaged as a `dotnet global tool` (`ToolCommandName: vouchfx`). The workflow installs it via `dotnet tool install` from a NuGet feed (once released to nuget.org or a private feed). For development or pre-release builds, the workflow can alternatively build from source by checking out `vouchfx-repo` at the requested `vouchfx-ref` and running `dotnet build -c Release`. The tool depends on the Aspire orchestration packages being present in the per-user NuGet cache; any developer or CI environment that has built an Aspire app or resolved the engine's dependencies has them. For machines with only the OS (no .NET SDK), use the self-contained per-OS executable (forthcoming).
 
 **Exit-code gating semantics.** The workflow respects the verdict taxonomy (§12.1 of the Architecture Blueprint) to distinguish infrastructure breakage from product defects:
 
@@ -216,7 +224,7 @@ Replace `<40-char-commit-sha>` with a full 40-character commit SHA (not a branch
 
 **Alternative for a non-privileged runner.** If your runner cannot run privileged dind, use a **socket-bind runner**: mount the host daemon socket into the build (`volumes = ["/var/run/docker.sock:/var/run/docker.sock", …]` in the runner config), then drop the `services:` block and `dind`/TLS variables and set `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not needing privileged mode — choose per your security posture.
 
-**Build-from-source installation.** vouchfx is currently installed by **building from source** (it is an Aspire-host executable, not yet a published `dotnet tool`). The template clones `VOUCHFX_REPO_URL` at the requested `VOUCHFX_REF`, runs `dotnet build -c Release`, and invokes the CLI. When real binary packaging lands in Sprint 11, this same template contract will support consuming a published release without any caller changes — the installation step is the only thing that will change.
+**Installation.** The vouchfx CLI is packaged as a `dotnet global tool` (`ToolCommandName: vouchfx`). The template installs it via `dotnet tool install` from a NuGet feed (once released to nuget.org or a private feed). For development or pre-release builds, the template can alternatively build from source by cloning `VOUCHFX_REPO_URL` at the requested `VOUCHFX_REF` and running `dotnet build -c Release`. The tool depends on the Aspire orchestration packages being present in the per-user NuGet cache; any CI environment with an Aspire/Testcontainers dependency graph has them. For machines with only the OS (no .NET SDK), use the self-contained per-OS executable (forthcoming).
 
 **Exit-code gating semantics and artefacts.** The template respects the verdict taxonomy (§12.1 of the Architecture Blueprint) and always publishes reports (via `when: always`) even when the run fails — artefacts are available precisely when a suite does not pass:
 
@@ -370,7 +378,7 @@ By default, `vouchfx run` outputs a terminal report only. You can optionally wri
 
 - **`--html <path>`** — writes a self-contained HTML report (polling timeline, captured-variable provenance, failed-step diffs, and the reproducibility envelope) with no secret values embedded. The HTML report is rendered from the same event stream as the terminal output, so the two never disagree.
 - **`--junit <path>`** — writes a JUnit XML results file for CI integration. The four verdicts map to distinct JUnit primitives (Fail → `<failure>`, Environment-error → `<error>`, Inconclusive → `<skipped>`), so CI systems can distinguish infrastructure breakage from product defects.
-- **`--events <path>`** or **`--json`** — writes the raw buffered JSON Lines event stream to a file (one JSON object per line, UTF-8 without a BOM). This re-emits the same frozen v1 event stream that the terminal, HTML, and JUnit reports are rendered from, for consumption by downstream tooling such as the VSCode Test Explorer. **Security note:** Unlike HTML/JUnit reports (which summarise step observations to the shape of the data, never its values), `--events` persists the raw stream verbatim including step observations; authors must ensure that a `script.csharp` step does not reveal secret values in thrown exception messages, since those messages become observations in the stream. Not wired into `--watch` mode.
+- **`--events <path>`** or **`--json`** — writes the raw buffered JSON Lines event stream to a file (one JSON object per line, UTF-8 without a BOM). This re-emits the same frozen v1 event stream that the terminal, HTML, and JUnit reports are rendered from, for consumption by downstream tooling such as the VSCode Test Explorer. **Security note:** The engine applies a defence-in-depth scrub to step observations before they enter the stream, redacting any verbatim occurrence of a secret value revealed during execution (e.g., from a thrown exception message in a `script.csharp` step). Authors remain responsible for values they deliberately invoke `Reveal()` on and then transform (encode, sign, or substring) — those reshapes are not in scope for redaction. Not wired into `--watch` mode.
 
 All three flags accept `--parallel` and sequential runs; none works with `--watch` (which re-renders on each iteration rather than buffering one suite-wide stream). Parent directories are created as needed; existing files are overwritten.
 
@@ -457,7 +465,28 @@ engine internals.
 
 For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
 
-Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) is in place and activates when binary packaging ships in a future sprint.
+Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) produces every release.
+
+### Verifying a release
+
+Every release artefact carries **keyless cosign signature** and **SLSA build-provenance attestation**, alongside a **CycloneDX software bill of materials**. Verification requires the `gh` and `cosign` CLIs:
+
+**SLSA provenance (GitHub attestation):**
+```bash
+gh attestation verify vouchfx.1.2.3.nupkg --repo tomas-rampas/vouchfx
+```
+
+**Keyless cosign signature:**
+```bash
+cosign verify-blob vouchfx.1.2.3.nupkg \
+  --bundle vouchfx.1.2.3.nupkg.cosign.bundle \
+  --certificate-identity-regexp '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Replace the filename with whichever artefact you are verifying (e.g. `vouchfx-1.2.3-linux-x64.tar.gz`, `vouchfx-1.2.3-win-x64.msi`). For complete verification procedures, including optional GPG signatures and SBOM inspection, see [`RELEASING.md`](RELEASING.md).
+
+**Distribution note:** vouchfx is distributed as the `dotnet` global tool (nupkg, primary), plus multi-file self-contained per-OS executables (`.tar.gz`, `.msi`, `.deb`, `.pkg`). Single-file self-contained builds are not produced — the Roslyn compiler discovers provider assemblies via `Assembly.Location`, which returns an empty string in single-file mode, breaking provider loading.
 
 ## Licence
 

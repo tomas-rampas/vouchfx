@@ -108,10 +108,21 @@ public sealed record EnvironmentErrorEvent
     public string? RegistryHost { get; init; }
 
     /// <summary>
-    /// A short token describing the authentication outcome during an
-    /// image-pull attempt: <c>"unauthenticated"</c>,
-    /// <c>"access-denied"</c>, or <c>"anonymous"</c>.  Omitted from the
-    /// wire when <see langword="null"/>.
+    /// A short token describing the authentication/connectivity outcome
+    /// during an image-pull attempt.  Possible values:
+    /// <list type="bullet">
+    ///   <item><c>"unauthenticated"</c> — the registry returned 401 or rejected credentials.</item>
+    ///   <item><c>"access-denied"</c> — the registry returned 403 / forbidden.</item>
+    ///   <item><c>"rate-limited"</c> — the registry rejected the pull due to rate limiting
+    ///     (<c>toomanyrequests</c> / 429); the canonical Docker Hub cold-runner failure.</item>
+    ///   <item><c>"anonymous"</c> — the pull was attempted without credentials and failed
+    ///     for a non-auth reason (image not found, manifest missing, etc.).</item>
+    ///   <item><see langword="null"/> — the registry host was unreachable (DNS failure,
+    ///     connection refused, network timeout); no auth was attempted.  Also
+    ///     <see langword="null"/> for non-ImagePull kinds (HealthGate / Discovery /
+    ///     Provision).</item>
+    /// </list>
+    /// Omitted from the wire when <see langword="null"/>.
     /// </summary>
     [JsonPropertyName("authStatus")]
     public string? AuthStatus { get; init; }

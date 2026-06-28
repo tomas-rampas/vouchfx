@@ -1,0 +1,171 @@
+# examples/reference/reference.e2e.yaml — THE reference four-technology scenario (S11-D-01).
+#
+# This is the canonical reference scenario for vouchfx. It composes ALL FOUR step
+# families — REST + DB + Kafka + webhook — in one coherent "business transaction"
+# narrative, and exercises every engine feature: seed, secret, RETRY, capture, and
+# cross-step placeholder substitution.
+#
+# Narrative: A service (whoami) is called via HTTP; the responding hostname is captured
+# and inserted into a seeded postgres orders table; an event is published to Kafka and
+# consumed via RETRY; and the SUT is simulated to call back over an outbound webhook
+# captured by webhook-listen.http.
+#
+# WEBHOOK NOTE: the realistic production flow is that a containerised SUT calls back
+# to the host-owned listener over host.docker.internal. No generic off-the-shelf SUT
+# image reliably echoes an arbitrary callback URL, so the outbound-webhook step is
+# SIMULATED by a script.csharp step that reads the listener's URL from Vars["cb"]
+# (staged by the runner before step 1) and POSTs to it directly. This still proves
+# the full listener + capture + RETRY + assertion path end-to-end through a REAL
+# topology. See Sprint07CapstoneTests.cs for the detailed rationale.
+#
+# Run (non-docker compile proof):
+#   dotnet test --filter "FullyQualifiedName~Sprint11ReferenceCompile"
+#
+# Run (full docker capstone):
+#   dotnet test --filter "requires=docker&FullyQualifiedName~Sprint11Reference"
+#
+# Run via CLI:
+#   vouchfx run examples/reference/reference.e2e.yaml --events out.jsonl --junit out.xml --html out.html
+
+metadata:
+  name: reference-four-tech
+  owner: vouchfx-core
+  tags: [s11-reference, rest, db, kafka, webhook]
+  description: >-
+    THE reference scenario: one business transaction across REST + DB + Kafka + webhook,
+    with seed + secret + RETRY + capture. Proves all four step families compose in a
+    single vouchfx suite.
+
+variables:
+  expectedStatus: PENDING
+  orderId: ord-REF-1
+
+environment:
+  services:
+    # The system under test: traefik/whoami — a tiny HTTP service whose GET /api
+    # response includes the container hostname (our JSONPath capture target).
+    whoami:
+      image: traefik/whoami
+      httpPort: 80
+
+  dependencies:
+    # Postgres: the orders table is seeded below; the script.csharp step inserts a
+    # row keyed by the captured hostname; db-assert.postgres asserts both rows.
+    refdb:
+      type: postgres
+
+    # Kafka: plain JSON payload (no Avro/schema registry needed for the reference scenario).
+    events:
+      type: kafka
+
+  seed:
+    # Apply fixtures/seed.sql to 'refdb' AFTER the topology is healthy and BEFORE step 1.
+    refdb:
+      sql: ["fixtures/seed.sql"]
+
+steps:
+  # ── Step 1: REST + capture + secret header ────────────────────────────────────────────
+  # GET /api from whoami. The Authorization header carries a secret resolved at
+  # execution time (never baked into the compiled delegate — §17). The responding
+  # container's hostname is captured via JSONPath into Vars["hostname"].
+  - id: rest-get-whoami
+    type: http.rest
+    target: whoami
+    method: GET
+    path: /api
+    headers:
+      Authorization: "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}"
+    expect:
+      status: 200
+    capture:
+      hostname: "$.hostname"
+
+  # ── Step 2: DB mutation (script.csharp INSERT + db-assert.postgres) ───────────────────
+  # Insert a row keyed by the captured hostname into the seeded orders table.
+  # The {hostname} placeholder substitutes the value captured in step 1.
+  - id: db-insert-row
+    type: script.csharp
+    code: |
+      var connStr = (string)Vars["conn::refdb"];
+      var hostVal = (string)Vars["hostname"];
+      var conn = new Npgsql.NpgsqlConnection(connStr);
+      await conn.OpenAsync();
+      try {
+        var cmd = conn.CreateCommand();
+        try {
+          cmd.CommandText =
+            "INSERT INTO orders (hostname, status) VALUES (@h, @s);";
+          cmd.Parameters.AddWithValue("h", hostVal);
+          cmd.Parameters.AddWithValue("s", "PENDING");
+          var rows = await cmd.ExecuteNonQueryAsync();
+          if (rows != 1)
+            throw new System.Exception("Expected INSERT to affect 1 row, got " + rows + ".");
+        } finally { cmd.Dispose(); }
+      } finally { await conn.DisposeAsync(); }
+
+  # Assert the script-inserted row is present (filtered by the captured hostname).
+  # The WHERE clause isolates the INSERT-ed row from the seed sentinel, so rowCount:1
+  # proves the INSERT landed and {hostname} substitution threaded correctly.
+  - id: db-assert-rows
+    type: db-assert.postgres
+    target: refdb
+    query: >-
+      SELECT hostname, status FROM orders WHERE hostname = @h
+    parameters:
+      h: "{hostname}"
+    verifyMode: IMMEDIATE
+    expect:
+      rowCount: 1
+      row:
+        status: "{expectedStatus}"
+
+  # ── Step 3: Kafka publish + RETRY expect (plain JSON path) ───────────────────────────
+  # Publish a plain JSON Order event to the 'orders.created' topic, then RETRY-consume
+  # until the published record is decoded and matched via JSONPath on $.id.
+  # Plain JSON is used (not Avro) to keep the topology simple: no schema registry
+  # container needed, and the consumer can parse the payload directly as JSON.
+  - id: kafka-publish-order
+    type: mq-publish.kafka
+    target: events
+    topic: orders.created
+    payload: '{"id":"{orderId}","hostname":"{hostname}"}'
+    verifyMode: IMMEDIATE
+
+  - id: kafka-expect-order
+    type: mq-expect.kafka
+    target: events
+    topic: orders.created
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      json:
+        "$.id": "{orderId}"
+
+  # ── Step 4: Outbound webhook (script.csharp simulation + webhook-listen.http RETRY) ───
+  # The script.csharp step reads the host listener's callback URL from Vars["cb"]
+  # (staged by the runner before step 1 — the plain-key form of the listener URL)
+  # and POSTs to <cb>callbacks/<orderId> — simulating the SUT's outbound callback.
+  # The webhook-listen.http RETRY step captures the inbound POST and asserts its path.
+  - id: webhook-trigger
+    type: script.csharp
+    code: |
+      var cb = (string)Vars["cb"];
+      var orderId = (string)Vars["orderId"];
+      var client = new System.Net.Http.HttpClient();
+      try {
+        var body = new System.Net.Http.StringContent(
+          "{\"orderId\":\"" + orderId + "\"}",
+          System.Text.Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync(cb + "callbacks/" + orderId, body);
+        if ((int)resp.StatusCode >= 400)
+          throw new System.Exception("Webhook POST failed: " + (int)resp.StatusCode);
+      } finally { client.Dispose(); }
+
+  - id: webhook-await
+    type: webhook-listen.http
+    listener: cb
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      method: POST
+      path: "/callbacks/{orderId}"

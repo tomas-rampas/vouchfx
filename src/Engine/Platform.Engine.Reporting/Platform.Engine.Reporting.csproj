@@ -14,6 +14,10 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Platform.Engine.Runtime" />
     <InternalsVisibleTo Include="Platform.Engine.Reporting.Tests" />
+    <!-- The runtime secret-redaction penetration suite (S11-B-01) drives the REAL
+         FileReportWriter so its end-to-end events-artifact test asserts over the actual
+         bytes on disk and cannot silently desync if the writer changes. -->
+    <InternalsVisibleTo Include="Platform.Engine.Runtime.Tests" />
   </ItemGroup>
 
 </Project>

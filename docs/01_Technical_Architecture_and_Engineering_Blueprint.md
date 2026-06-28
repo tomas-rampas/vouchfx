@@ -170,7 +170,7 @@ Three controls on top of the image reference are exposed to authors. An `imageRe
 
 > **Image-pull failures are environment errors, not test failures**
 >
-> When the runtime cannot pull an image — registry unreachable, authentication failed, image not found — the orchestrator classifies the resulting failure as an environment error per the verdict taxonomy in Section 12.1. The report names the registry hostname and the authentication status alongside the underlying runtime error, so an engineer can act on it without spelunking. This is one of the highest-frequency causes of pilot frustration in any Docker-based testing tool, and naming it explicitly is cheap insurance.
+> When the runtime cannot pull an image — registry unreachable, authentication failed, image not found — the orchestrator classifies the resulting failure as an environment error per the verdict taxonomy in Section 12.1. The report names the registry hostname and the authentication status alongside the underlying runtime error, so an engineer can act on it without spelunking. The authentication status distinguishes five cases: `"unauthenticated"` (401 / rejected credentials), `"access-denied"` (403 / forbidden), `"rate-limited"` (429 / Docker Hub cold-runner failure), `"anonymous"` (pull without credentials, non-auth failure), and `null` (registry unreachable via DNS or network, no authentication attempted). This granularity — especially the distinction between `"rate-limited"` and `"anonymous"` — lets engineers fix the right failure without trial and error. Image-pull failures are one of the highest-frequency causes of pilot frustration in any Docker-based testing tool, and naming them explicitly is cheap insurance.
 
 ## 4.2 Performance: build the topology once per scenario or once per suite
 
@@ -515,7 +515,7 @@ Every step and every scenario in the platform terminates with exactly one of fou
 |---|---|---|
 | **Pass** | All assertions satisfied within their verification windows. | Execution layer. |
 | **Fail** | An assertion was evaluated and did not hold — a genuine defect in the system under test. | Execution layer. |
-| **Environment error** | The step could not be evaluated because surrounding infrastructure failed: a container never became healthy, a dependency could not be provisioned, a broker rejected the connection, a tunnel collapsed, a seed fixture failed to apply. | Orchestration / fabric layers. |
+| **Environment error** | The step could not be evaluated because surrounding infrastructure failed: a container image could not be pulled (registry unreachable, authentication failure, rate-limited, or image not found), a container never became healthy, a dependency could not be provisioned, a broker rejected the connection, a tunnel collapsed, or a seed fixture failed to apply. Image-pull failures are further classified by authentication outcome: `"unauthenticated"` (401), `"access-denied"` (403), `"rate-limited"` (429), `"anonymous"` (non-auth failure), or `null` (registry unreachable). | Orchestration / fabric layers. |
 | **Inconclusive** | Evaluation began but no verdict could be reached. Three sub-cases share this label: (a) a timeout fired on a step waiting for an external system that never responded; (b) a network partition outlasted the engine's grace window; (c) a step was skipped because an earlier step's capture was unmet and the inputs for evaluating this step therefore did not exist. | Execution layer (a, c) and resilience layer (b). |
 
 Only Fail should break a CI build by default. Environment errors and inconclusive results should be surfaced distinctly so that a team can fix infrastructure or repair an upstream step without distrusting their assertions. The reporting layer renders each verdict with a distinct colour and counts them separately; the precise visual treatment is specified in Section 14.
@@ -993,7 +993,21 @@ An optional third point: `step-completed` events may also carry a `observation` 
 
 **Persistence to disk:** The raw event stream can be persisted to a file via the CLI's `--events <path>` option (alias `--json`), which writes the buffered stream verbatim — one JSON object per line, UTF-8 without a BOM — for consumption by downstream tooling such as the VSCode Test Explorer. This is a purely additive facility that re-emits the frozen v1 stream byte-for-byte without any record or wire-contract change; the stream itself remains a private implementation detail rendered differently by each consumer, and persisting it to disk does not alter that contract. **Security note:** Unlike HTML and JUnit reports (which summarise step observations to their structure, never their values), the event stream persists step observations verbatim; authors using `script.csharp` steps must not embed revealed secret values in thrown exception messages, since those messages become step observations in the stream.
 
-### 14.4.1 The v1 event-wire contract freeze and the scenarioId decision
+### 14.4.1 Environment-error events and image-pull diagnostics
+
+The event stream includes an `environment-error` event type, emitted when orchestration infrastructure fails and prevents a scenario from running. The event carries an `errorKind` (e.g. `ImagePull`, `HealthGate`, `Discovery`, `Provision`) and an optional `authStatus` field that further refines image-pull failures. The `authStatus` field distinguishes five outcomes:
+
+| authStatus value | Meaning |
+|---|---|
+| `"unauthenticated"` | The registry rejected credentials with HTTP 401 or equivalent. |
+| `"access-denied"` | The registry rejected access with HTTP 403 or equivalent. |
+| `"rate-limited"` | The registry rejected the pull due to rate limiting (HTTP 429 or `toomanyrequests` message); the canonical Docker Hub cold-runner failure (MVP §10 named risk). |
+| `"anonymous"` | The pull was attempted without credentials and failed for a non-authentication reason (image not found, manifest missing, etc.). |
+| `null` | The registry host was unreachable via DNS or network (connection refused, no route to host, timeout, etc.); no authentication was attempted. Also `null` for non-ImagePull kinds (HealthGate, Discovery, Provision). Omitted from the wire when `null`. |
+
+The `authStatus` field is omitted from the JSON-Lines wire when `null`. This granular classification lets developers distinguish between credentials that need rotation (`"unauthenticated"`, `"access-denied"`), infrastructure that needs scaling (`"rate-limited"`), and connectivity problems (`null`) — avoiding trial-and-error fixes.
+
+### 14.4.2 The v1 event-wire contract freeze and the scenarioId decision
 
 The event-record surface — the top-level event records and all nested value records (`EventEnvelope`, `ScenarioStartedEvent`, `StepStartedEvent`, `StepAttemptEvent`, `StepCompletedEvent`, `ScenarioCompletedEvent`, `ReproducibilityEnvelopeEvent`, `VerdictCounts`, `CapturedVar`, `SubstitutionRef`, `SecretReferenceDigest`, `FixtureDigest`) — is **frozen at v1 for the v1.x engine series**, enforced by a golden-file CI gate (`EventContractFreezeTests`) that asserts every property name, CLR type, and `[JsonPropertyName]` wire key is byte-for-byte identical to the committed golden. Any change to the JSON-Lines wire contract breaks every consumer (terminal renderer, HTML report, JUnit XML, dashboard, Healer agent), so this freeze is non-negotiable.
 
@@ -1212,6 +1226,16 @@ An important architectural point: secrets are **not** interpolated into the gene
 ```
 
 The `Vars.Secrets.Resolve` call is intercepted by the reporting layer's redaction filter: if the resolved string appears in any subsequent observation, captured variable, log line, or assertion message produced by the step, it is replaced with `${secret:vault/orders-api/key}` in the report. This guarantees redaction at the renderer level rather than relying on the provider to remember to redact — a discipline that, in practice, providers will sometimes forget.
+
+### 17.1.2 Defence-in-depth scrubbing of provider observations
+
+Type-based `SecretString` redaction is the primary mechanism: every structured surface (event fields, captured-variable thread, terminal/HTML/JUnit renderers) is redacted by construction because it only handles the `SecretString` carrier or non-sensitive metadata. The one surface the engine cannot type-check is free-form provider observation text — a provider builds observations by hand, so the engine cannot guarantee they contain only safe data. The `script.csharp` path is the most acutely at risk: when an author catches an exception and assigns `__ex.Message` to the observation, that message is spliced verbatim, potentially carrying a secret value that the exception handler did not redact.
+
+A per-scenario `ResolvedSecretLedger` (owned by the `SecretAccessor`) records every value successfully revealed by `Resolve`, and the runner applies this ledger as a defence-in-depth scrub at the reporting boundary: before a step's observation text enters the JSON Lines event stream, every occurrence of a recorded secret value is replaced with `***REDACTED***` in both its raw form and its JSON-escaped form. This catches the realistic accident — a secret appearing unredacted in an exception message — without chasing theoretical transforms that are explicitly out of scope.
+
+Importantly, the ledger **deliberately does not** recognise transforms of a revealed value: base64 encodings, HMAC signatures, substrings of a secret. Once an author invokes `Reveal()` and reshapes the bytes, the engine has no value to recognise, and the ledger cannot match it. Authors who deliberately `Reveal()` a secret and then transform it (for example, to compute an HMAC that proves possession) remain responsible for ensuring that transformation, log message, or stack trace does not leak the input. This is the documented, auditable escape hatch (the single call to `Reveal()` in a provider's source) and a developer responsibility, not an engine guarantee.
+
+The memory model is clean: the ledger holds plain `System.String` values in the Default ALC (owned by the `SecretAccessor`, which the runner holds), so recording from inside the collectible script's `accessor.Resolve(…)` call runs a Default-ALC method body that adds to a Default-ALC set. No static handles bridge the collectible-ALC boundary, and the ledger is collected when the per-scenario accessor is released.
 
 ## 17.2 Pluggable secret sources
 

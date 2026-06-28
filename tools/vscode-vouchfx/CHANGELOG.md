@@ -29,3 +29,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   schema (existence, parseability, `x-vouchfx-schema-version: v1`), plus
   structural and real-tokenisation (`vscode-textmate` + `vscode-oniguruma`)
   tests proving the C# injection grammar's block-scalar boundary.
+- **S11-D-01 reference fixture** (`src/test/fixtures/reference-four-tech.e2e.yaml`):
+  a faithful mirror of the canonical four-technology reference scenario
+  (`examples/reference/reference.e2e.yaml`) used by the editor-surface tests.
+  Ten `node:test` assertions in `src/test/referenceFourTech.test.ts` verify that
+  `parseE2eOutline` discovers all seven id-bearing steps as TestItems in document
+  order with non-overlapping line ranges (covering `code: |`, `verifyMode: RETRY`,
+  and `capture:` paths), and that `mapVerdict('PASS')` correctly maps a Pass event
+  for the reference scenario to the `passed` editor state.

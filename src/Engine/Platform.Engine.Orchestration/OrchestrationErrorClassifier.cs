@@ -170,6 +170,25 @@ public static class OrchestrationErrorClassifier
     /// is already known).  This prevents messages such as
     /// <c>"database authentication failed during health probe"</c> from being
     /// misclassified as <see cref="OrchestrationErrorKind.ImagePull"/>.
+    ///
+    /// Rate-limit keywords (<c>toomanyrequests</c> / <c>pull rate limit</c>) are tested
+    /// <em>before</em> the generic-anonymous-pull branch so that the Docker Hub cold-runner
+    /// failure (§10 named risk) is surfaced with authStatus <c>"rate-limited"</c> rather than
+    /// the less-specific <c>"anonymous"</c>.  The bare token <c>rate limit</c> is also
+    /// matched, but only when an image-pull context is already established (to avoid
+    /// false-positives on non-pull messages that happen to contain the phrase).
+    /// Note: the engine matches on the string tokens above — <c>HTTP 429</c> is the
+    /// conceptual HTTP cause, but the bare substring <c>"429"</c> is NOT matched
+    /// (a 3-digit number is too broad and can collide with sizes, ports, or IDs).
+    ///
+    /// Registry-connectivity keywords (<c>no such host</c> / <c>connection refused</c> /
+    /// <c>no route to host</c> / <c>network is unreachable</c> / <c>name resolution</c> /
+    /// <c>i/o timeout</c> / <c>server misbehaving</c>) are tested <em>after</em> the
+    /// auth branches but <em>before</em> the Discovery branch, and only when an
+    /// image-pull context is present.  Without that context (e.g. a DB host lookup
+    /// failure) the message falls through to Discovery / Provision as expected.
+    /// When matched, <c>AuthStatus</c> is <see langword="null"/> — no auth was
+    /// attempted; the registry host itself was unreachable.
     /// </remarks>
     private static (OrchestrationErrorKind Kind, string? AuthStatus) ClassifyMessage(
         string message, string? imageRef)
@@ -195,10 +214,48 @@ public static class OrchestrationErrorClassifier
             return (OrchestrationErrorKind.ImagePull, "access-denied");
         }
 
+        // Rate-limit signals — placed before the generic-anonymous-pull branch so
+        // Docker Hub cold-runner rate-limiting is reported as "rate-limited", not
+        // "anonymous".
+        //
+        // "toomanyrequests" and "pull rate limit" are inherently pull-specific tokens
+        // and are matched unconditionally.  The bare "rate limit" phrase is broader and
+        // is only matched when a pull context is already established (hasPullContext),
+        // preventing false-positives on non-pull messages such as API throttling errors.
+        //
+        // Note: the engine does NOT match on the bare substring "429" — that 3-digit
+        // number is too loose and can collide with sizes, ports, or IDs.  These tokens
+        // cover how a registry's HTTP 429 response surfaces in Docker/DCP messages.
+        if (ContainsAny(message, "toomanyrequests", "pull rate limit") ||
+            (hasPullContext && ContainsAny(message, "rate limit")))
+        {
+            return (OrchestrationErrorKind.ImagePull, "rate-limited");
+        }
+
+        // Registry-connectivity / DNS signals — placed BEFORE the generic-pull branch so
+        // that a message containing both a pull token and a connectivity failure signal
+        // (e.g. "failed to pull image: connection refused to registry host") is
+        // classified as a connectivity failure (AuthStatus=null) rather than a generic
+        // anonymous pull.
+        //
+        // Only classified as ImagePull when a pull context is established (imageRef non-null
+        // OR a pull/image token already appeared in the message).  This ensures that e.g.
+        // "lookup mydb.internal: no such host" (a service-discovery DNS failure with no
+        // imageRef and no pull token) still falls through to Discovery / Provision.
+        //
+        // AuthStatus is null because no auth was attempted — the registry host itself
+        // was unreachable.
+        if (hasPullContext && ContainsAny(message,
+            "no such host", "name resolution", "connection refused",
+            "no route to host", "network is unreachable",
+            "i/o timeout", "server misbehaving"))
+        {
+            return (OrchestrationErrorKind.ImagePull, null);
+        }
+
         // Generic pull / image-not-found signals (already imply an image-pull context).
         if (ContainsAny(message,
-            "pull", "manifest", "not found", "no such image",
-            "pull access", "toomanyrequests"))
+            "pull", "manifest", "not found", "no such image", "pull access"))
         {
             return (OrchestrationErrorKind.ImagePull, "anonymous");
         }
