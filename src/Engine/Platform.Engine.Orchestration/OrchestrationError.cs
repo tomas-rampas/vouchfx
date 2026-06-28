@@ -69,9 +69,15 @@ public enum OrchestrationErrorKind
 /// when no image reference is applicable to the failure.
 /// </param>
 /// <param name="AuthStatus">
-/// A short token describing the authentication outcome during an image-pull
-/// attempt: <c>"unauthenticated"</c>, <c>"access-denied"</c>, or
-/// <c>"anonymous"</c>.  <see langword="null"/> when not applicable.
+/// A short token describing the authentication/connectivity outcome during an
+/// image-pull attempt.  Possible values: <c>"unauthenticated"</c> (HTTP 401 or
+/// equivalent), <c>"access-denied"</c> (HTTP 403 or equivalent),
+/// <c>"rate-limited"</c> (matched on <c>toomanyrequests</c>, <c>pull rate limit</c>,
+/// or <c>rate limit</c> with pull context — the way a registry's HTTP 429 response
+/// surfaces in Docker/DCP messages; the bare substring <c>"429"</c> is NOT matched),
+/// <c>"anonymous"</c> (pull attempted without credentials, non-auth failure).
+/// <see langword="null"/> when the registry host was unreachable (DNS / network),
+/// or when not applicable (non-ImagePull kinds).
 /// </param>
 /// <param name="Detail">
 /// A trimmed, single-line summary of the underlying exception message, capped

@@ -121,4 +121,38 @@ public sealed class SecretAccessorTests
 
         Assert.Contains("no secret sources are configured", ex.Message, StringComparison.Ordinal);
     }
+
+    // ── S11-B-01: the accessor records every revealed value in its scrub ledger ───
+
+    /// <summary>
+    /// A successful <see cref="SecretAccessor.Resolve"/> records the revealed value in the
+    /// accessor's <see cref="SecretAccessor.ResolvedSecrets"/> ledger (§17 defence-in-depth),
+    /// so the runner can later scrub it from free-form provider observation text.
+    /// </summary>
+    [Fact]
+    public void Resolve_RecordsRevealedValue_InLedger()
+    {
+        var accessor = BuildAccessor(new FakeResolver("env", "ledger-recorded-value"));
+
+        _ = accessor.Resolve("${secret:env/API_TOKEN}");
+
+        Assert.Equal(1, accessor.ResolvedSecrets.Count);
+        var scrubbed = accessor.ResolvedSecrets.Scrub("x=ledger-recorded-value;");
+        Assert.DoesNotContain("ledger-recorded-value", scrubbed, StringComparison.Ordinal);
+        Assert.Contains(SecretString.RedactedMarker, scrubbed, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A FAILED resolution records nothing — there is no revealed value, so the ledger
+    /// stays empty and unrelated text is never rewritten.
+    /// </summary>
+    [Fact]
+    public void Resolve_Failure_RecordsNothing()
+    {
+        var accessor = BuildAccessor(new FakeResolver("env", "x"));
+
+        Assert.Throws<SecretResolutionException>(() => accessor.Resolve("${secret:vault/x}"));
+
+        Assert.Equal(0, accessor.ResolvedSecrets.Count);
+    }
 }

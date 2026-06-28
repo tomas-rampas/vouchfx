@@ -1,0 +1,118 @@
+# S11-D-01 reference fixture — mirrors examples/reference/reference.e2e.yaml.
+#
+# Canonical four-technology scenario: REST + DB + Kafka + webhook, exercising
+# seed, secret, RETRY, capture, and cross-step placeholder substitution.
+# Provider-specific detail (connection strings, image versions, seed SQL) is
+# trimmed where the outline parser does not need it; all seven id-bearing steps,
+# their type:, at least one code: | block, at least one verifyMode: RETRY step,
+# and at least one capture: block are preserved so every outline / Test-Explorer
+# path is exercised.
+metadata:
+  name: reference-four-tech
+  owner: vouchfx-core
+  tags: [s11-reference, rest, db, kafka, webhook]
+
+variables:
+  expectedStatus: PENDING
+  orderId: ord-REF-1
+
+environment:
+  services:
+    whoami:
+      image: traefik/whoami
+      httpPort: 80
+  dependencies:
+    refdb:
+      type: postgres
+    events:
+      type: kafka
+  seed:
+    refdb:
+      sql: ["fixtures/seed.sql"]
+
+steps:
+  - id: rest-get-whoami
+    type: http.rest
+    target: whoami
+    method: GET
+    path: /api
+    headers:
+      Authorization: "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}"
+    expect:
+      status: 200
+    capture:
+      hostname: "$.hostname"
+
+  - id: db-insert-row
+    type: script.csharp
+    code: |
+      var connStr = (string)Vars["conn::refdb"];
+      var hostVal = (string)Vars["hostname"];
+      var conn = new Npgsql.NpgsqlConnection(connStr);
+      await conn.OpenAsync();
+      try {
+        var cmd = conn.CreateCommand();
+        try {
+          cmd.CommandText =
+            "INSERT INTO orders (hostname, status) VALUES (@h, @s);";
+          cmd.Parameters.AddWithValue("h", hostVal);
+          cmd.Parameters.AddWithValue("s", "PENDING");
+          var rows = await cmd.ExecuteNonQueryAsync();
+          if (rows != 1)
+            throw new System.Exception("Expected INSERT to affect 1 row.");
+        } finally { cmd.Dispose(); }
+      } finally { await conn.DisposeAsync(); }
+
+  - id: db-assert-rows
+    type: db-assert.postgres
+    target: refdb
+    query: >-
+      SELECT hostname, status FROM orders WHERE hostname = @h
+    parameters:
+      h: "{hostname}"
+    verifyMode: IMMEDIATE
+    expect:
+      rowCount: 1
+      row:
+        status: "{expectedStatus}"
+
+  - id: kafka-publish-order
+    type: mq-publish.kafka
+    target: events
+    topic: orders.created
+    payload: '{"id":"{orderId}","hostname":"{hostname}"}'
+    verifyMode: IMMEDIATE
+
+  - id: kafka-expect-order
+    type: mq-expect.kafka
+    target: events
+    topic: orders.created
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      json:
+        "$.id": "{orderId}"
+
+  - id: webhook-trigger
+    type: script.csharp
+    code: |
+      var cb = (string)Vars["cb"];
+      var orderId = (string)Vars["orderId"];
+      var client = new System.Net.Http.HttpClient();
+      try {
+        var body = new System.Net.Http.StringContent(
+          "{\"orderId\":\"" + orderId + "\"}",
+          System.Text.Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync(cb + "callbacks/" + orderId, body);
+        if ((int)resp.StatusCode >= 400)
+          throw new System.Exception("Webhook POST failed: " + (int)resp.StatusCode);
+      } finally { client.Dispose(); }
+
+  - id: webhook-await
+    type: webhook-listen.http
+    listener: cb
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      method: POST
+      path: "/callbacks/{orderId}"

@@ -172,9 +172,9 @@ public sealed class OrchestrationErrorClassifierTests
     }
 
     [Fact]
-    public void Classify_RateLimited_ReturnsImagePullAnonymous()
+    public void Classify_RateLimited_ReturnsImagePullRateLimited()
     {
-        // Arrange
+        // Arrange — "toomanyrequests" is the canonical Docker Hub rate-limit signal.
         var ex = new InvalidOperationException(
             "toomanyrequests: You have reached your pull rate limit.");
 
@@ -184,10 +184,164 @@ public sealed class OrchestrationErrorClassifierTests
             imageRef: "traefik/whoami:latest",
             resourceName: "web");
 
-        // Assert
+        // Assert — rate-limited is a distinct authStatus, not "anonymous".
         Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
         Assert.Equal("docker.io", info.RegistryHost);
-        Assert.Equal("anonymous", info.AuthStatus);
+        Assert.Equal("rate-limited", info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_RateLimited_PullRateLimitPhraseWithHttpCode_ReturnsImagePullRateLimited()
+    {
+        // Arrange — message from a Docker client that surfaces the registry's HTTP 429
+        // response as "pull rate limit reached".  This test exercises the "pull rate limit"
+        // token, NOT a bare "429" substring (the engine does not match on "429").
+        var ex = new InvalidOperationException(
+            "Error response from daemon: pull rate limit reached: 429 Too Many Requests");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "library/ubuntu:22.04",
+            resourceName: "svc");
+
+        // Assert — "pull rate limit" is the matched token that drives this classification.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("docker.io", info.RegistryHost);
+        Assert.Equal("rate-limited", info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_RateLimited_PullRateLimitPhrase_ReturnsImagePullRateLimited()
+    {
+        // Arrange — "pull rate limit" as emitted by some registry clients.
+        var ex = new InvalidOperationException(
+            "you have reached your pull rate limit. upgrade your account.");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "nginx:latest",
+            resourceName: "proxy");
+
+        // Assert
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("rate-limited", info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_BareRateLimit_WithoutPullContext_DoesNotClassifyAsRateLimited()
+    {
+        // Arrange — a non-pull message that merely contains the phrase "rate limit"
+        // (e.g. an API-gateway throttling response that bubbles up during a health probe).
+        // No imageRef, and no pull/manifest/image/registry token in the message.
+        // The bare "rate limit" token must NOT trigger the rate-limit branch when
+        // no pull context is present.
+        var ex = new InvalidOperationException(
+            "gateway returned 429: rate limit exceeded for downstream api");
+
+        // Act — no imageRef; message has no pull/manifest/registry/image token.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "web");
+
+        // Assert — must NOT be classified as ImagePull / rate-limited.
+        Assert.NotEqual(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.NotEqual("rate-limited", info.AuthStatus);
+    }
+
+    // -----------------------------------------------------------------------
+    // Classify — ImagePull (registry connectivity / DNS / network errors)
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("dial tcp: lookup nonexistent.invalid on 127.0.0.11:53: no such host")]
+    [InlineData("Get \"https://nonexistent.invalid/v2/\": dial tcp: lookup nonexistent.invalid: no such host")]
+    [InlineData("temporary failure in name resolution")]
+    [InlineData("name resolution failed for nonexistent.invalid")]
+    public void Classify_RegistryDnsFailure_WithImageRef_ReturnsImagePullNullAuth(string message)
+    {
+        // Arrange — DNS failure messages from Docker/DCP when the registry host is unreachable.
+        var ex = new InvalidOperationException(message);
+
+        // Act — imageRef is non-null, providing the image-pull context.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "nonexistent.invalid/vouchfx-does-not-exist:latest",
+            resourceName: "web");
+
+        // Assert — registry unreachable = ImagePull, but AuthStatus is null
+        // (no auth was attempted; this is a connectivity failure, not an
+        // anonymous/rejected pull).
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("nonexistent.invalid", info.RegistryHost);
+        Assert.Null(info.AuthStatus);
+    }
+
+    [Theory]
+    [InlineData("connection refused")]
+    [InlineData("no route to host")]
+    [InlineData("network is unreachable")]
+    [InlineData("i/o timeout while connecting to registry")]
+    [InlineData("server misbehaving")]
+    public void Classify_RegistryNetworkFailure_WithImageRef_ReturnsImagePullNullAuth(string message)
+    {
+        // Arrange — network/connectivity error messages when pulling from a registry.
+        var ex = new InvalidOperationException(message);
+
+        // Act — imageRef is non-null, providing the image-pull context.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "registry.example.com/app:1.0",
+            resourceName: "api");
+
+        // Assert — connectivity failure → ImagePull, AuthStatus null.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("registry.example.com", info.RegistryHost);
+        Assert.Null(info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_RegistryDnsFailure_WithoutImageRef_ReturnsDiscovery()
+    {
+        // Arrange — a DNS-like failure message but NO imageRef (not a pull context).
+        // "no such host" in a service-discovery failure (e.g. resolving a db host)
+        // must NOT be classified as ImagePull.
+        var ex = new InvalidOperationException(
+            "dial tcp: lookup mydb.internal on 127.0.0.11:53: no such host");
+
+        // Act — no imageRef; message contains no pull/manifest/image token.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "appdb");
+
+        // Assert — without image-pull context this stays as Discovery (the "lookup"
+        // substring doesn't appear here, but "no such host" has no pull keywords
+        // so it falls through to Provision — either is acceptable; it must not be
+        // ImagePull).
+        Assert.NotEqual(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Null(info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_RegistryConnectivityFailure_MessageAlsoContainsImage_ReturnsImagePullNullAuth()
+    {
+        // Arrange — message contains "image" token (providing pull context) AND a
+        // connectivity failure signal; no imageRef passed.
+        var ex = new InvalidOperationException(
+            "failed to pull image: connection refused to registry host");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "web");
+
+        // Assert — pull context from "image" token + connectivity signal → ImagePull, null auth.
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Null(info.AuthStatus);
     }
 
     // -----------------------------------------------------------------------
