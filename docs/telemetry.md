@@ -279,9 +279,9 @@ If the backend is unreachable, the forget request is silently skipped — the lo
 
 ### Backend availability
 
-This is the **client transport** (Phase A of #152). When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at your own compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
+This is the **client transport** (Phase A of #152). When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at a compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
 
-However, the **official hosted vouchfx backend (Phase B, #152)** is not yet available. There is no default or built-in endpoint, so **until you configure both variables, telemetry remains local-only**. When you are ready to send telemetry to a backend, follow the endpoint provider's documentation to obtain the endpoint URL and authentication token, then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
+The **official vouchfx telemetry backend (Phase B, #152)** is now implemented as an open, self-hostable service in the [vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) repository. It implements the frozen `/v1/telemetry` and `/v1/telemetry/forget` contract, with PostgreSQL storage, 90-day retention, and install-id deletion support. Operators can self-host the backend from the open-source codebase; the officially hosted pilot instance is pending deployment. **Until you configure both environment variables, telemetry remains local-only.** When you are ready to send telemetry to a backend — whether self-hosted or the official endpoint — follow the backend provider's documentation to obtain the endpoint URL and authentication token, then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
 
 ## Questions and feedback
 
