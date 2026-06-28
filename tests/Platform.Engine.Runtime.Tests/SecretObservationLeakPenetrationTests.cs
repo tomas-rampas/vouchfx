@@ -28,6 +28,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Events;
@@ -337,6 +338,124 @@ public sealed class SecretObservationLeakPenetrationTests
             // The artifact was actually populated and is non-trivial.
             Assert.Contains("do-script", artifactBytes, StringComparison.Ordinal);
             // And the scrub marker survived to disk (scrubbed, not dropped).
+            Assert.Contains(SecretString.RedactedMarker, artifactBytes, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+            if (File.Exists(eventsPath))
+            {
+                File.Delete(eventsPath);
+            }
+        }
+    }
+
+    // ── 6b. JSON-ESCAPED-FORM leak: a secret containing '+'/non-ASCII survives a ─────
+    //        RAW-only scrub because the event-stream serialiser escapes it to \uXXXX.
+
+    // A realistic secret whose bytes force the event-stream's default JavaScriptEncoder to
+    // escape: it contains '+' (escaped to + — common in base64 tokens) AND non-ASCII
+    // characters (Ω U+03A9, â U+00E2 — escaped to Ω / â).  When such a value is
+    // embedded in a provider observation that was itself JSON-encoded, the value appears in
+    // the raw observation text ONLY in its escaped form, so a raw-only ledger scrub misses
+    // it and the secret reaches the on-disk --events artifact in recoverable escaped form.
+    private const string PlusNonAsciiSecret = "s3cr+t-Ω-â-pentest-9q2x7";
+
+    /// <summary>
+    /// (a) GENUINE-LEAK-FIXED.  A secret value containing <c>+</c> and non-ASCII characters,
+    /// embedded in a JSON-shaped observation, must be scrubbed in the JSON-ESCAPED form too —
+    /// not merely the raw form.  The observation is built with <see cref="JsonSerializer"/>
+    /// (the same default <see cref="JavaScriptEncoder"/> the event stream uses), so the value
+    /// appears in the raw observation text only as <c>\uXXXX</c> escapes; a raw-only scrub
+    /// would miss it and the value would re-emerge, JSON-decodable, in the emitted line.  This
+    /// drives the SAME <see cref="ScenarioRunner.BuildStepObservation"/> → event-stream path as
+    /// the other cases and asserts the secret is absent in BOTH its raw and escaped forms.
+    /// </summary>
+    [Fact]
+    public void PlusAndNonAsciiSecret_EscapedFormInObservation_IsScrubbedFromStream()
+    {
+        var (accessor, revealed, cleanup) = AccessorWithResolvedSecret(PlusNonAsciiSecret);
+        try
+        {
+            // The escaped form the event stream would serialise the value as (e.g.
+            // s3cr+t-Ω-â-…).  This is precisely the substring that survives a
+            // raw-only scrub, so it is the assertion that is RED before the fix.
+            var escaped = JavaScriptEncoder.Default.Encode(revealed);
+            Assert.NotEqual(revealed, escaped); // sanity: this value genuinely re-encodes.
+
+            var observation = JsonSerializer.Serialize(new { error = $"bad token {revealed}" });
+            // The raw observation text embeds the value ONLY in escaped form.
+            Assert.Contains(escaped, observation, StringComparison.Ordinal);
+            Assert.DoesNotContain(revealed, observation, StringComparison.Ordinal);
+
+            var line = EmitStepCompletedLine(accessor, "call-api", observation);
+
+            // Neither the raw value nor its JSON-escaped form may survive into the stream.
+            Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
+            Assert.DoesNotContain(escaped, line, StringComparison.Ordinal);
+            // Scrubbed, not dropped — the marker is present in its place.
+            Assert.Contains(SecretString.RedactedMarker, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// (a) GENUINE-LEAK-FIXED, END-TO-END.  The same <c>+</c>/non-ASCII secret, driven through
+    /// the full scenario buffer and the REAL <see cref="FileReportWriter.WriteFileReports"/> to
+    /// a temp <c>--events</c> file (the exact exfiltration path the VSCode Test Explorer and the
+    /// Healer agent consume), must not appear in the ACTUAL FILE BYTES in EITHER its raw form OR
+    /// its JSON-escaped <c>\uXXXX</c> form.  Before the escaped-form scrub this artifact carried
+    /// the value in recoverable escaped form even though the raw form was never on disk.
+    /// </summary>
+    [Fact]
+    public void RawEventsArtifact_PlusAndNonAsciiSecret_NoEscapedFormOnDisk_EndToEnd()
+    {
+        var (accessor, revealed, cleanup) = AccessorWithResolvedSecret(PlusNonAsciiSecret);
+        var escaped = JavaScriptEncoder.Default.Encode(revealed);
+        var eventsPath = Path.Combine(
+            Path.GetTempPath(),
+            "vouchfx-pentest-events-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        try
+        {
+            var observation = JsonSerializer.Serialize(new { error = $"throwing with {revealed}" });
+            var buffer = new List<string>
+            {
+                EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = Run,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    ScenarioId = "pentest",
+                }),
+                EmitStepCompletedLine(accessor, "do-script", observation),
+                EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = Run,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    ScenarioId = "pentest",
+                    Verdict = Verdict.Fail,
+                    Counts = new VerdictCounts { Fail = 1 },
+                }),
+            };
+
+            FileReportWriter.WriteFileReports(
+                buffer,
+                diffLookup: null,
+                htmlPath: null,
+                junitPath: null,
+                diagnostics: null,
+                eventsPath: eventsPath);
+
+            var artifactBytes = File.ReadAllText(eventsPath);
+
+            // Raw form never lands (the serialiser always escapes it) — but assert it anyway.
+            Assert.DoesNotContain(revealed, artifactBytes, StringComparison.Ordinal);
+            // The escaped form is the recoverable leak; it must be absent (RED before the fix).
+            Assert.DoesNotContain(escaped, artifactBytes, StringComparison.Ordinal);
+            // The artifact is real and the scrub marker survived to disk (scrubbed, not dropped).
+            Assert.Contains("do-script", artifactBytes, StringComparison.Ordinal);
             Assert.Contains(SecretString.RedactedMarker, artifactBytes, StringComparison.Ordinal);
         }
         finally

@@ -88,7 +88,7 @@ Fulcio certificate + Rekor inclusion proof).  Verification requires the
 cosign verify-blob vouchfx.1.2.3.nupkg \
   --bundle vouchfx.1.2.3.nupkg.cosign.bundle \
   --certificate-identity-regexp \
-    '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+    '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

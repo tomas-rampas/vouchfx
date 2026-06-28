@@ -480,7 +480,7 @@ gh attestation verify vouchfx.1.2.3.nupkg --repo tomas-rampas/vouchfx
 ```bash
 cosign verify-blob vouchfx.1.2.3.nupkg \
   --bundle vouchfx.1.2.3.nupkg.cosign.bundle \
-  --certificate-identity-regexp '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+  --certificate-identity-regexp '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

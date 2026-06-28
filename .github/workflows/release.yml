@@ -21,7 +21,7 @@
 #      Verify:  cosign verify-blob <file> \
 #                 --bundle <file>.cosign.bundle \
 #                 --certificate-identity-regexp \
-#                   '^https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@.*' \
+#                   '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
 #                 --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
@@ -125,12 +125,18 @@ jobs:
       # workflow_dispatch:     inputs.version                → "0.0.0-test"
       - name: Determine release version
         id: version
+        # SECURITY: attacker-influenceable context values (tag name, dispatch
+        # input) are passed through the env: map and referenced only as quoted
+        # shell variables — never interpolated directly inside run: via ${{ }}.
+        env:
+          EV_TAG:   ${{ github.event.release.tag_name }}
+          EV_INPUT: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            tag="${{ github.event.release.tag_name }}"
+            tag="$EV_TAG"
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            tag="v${{ inputs.version }}"
+            tag="v$EV_INPUT"
           else
             tag="${GITHUB_REF_NAME}"
           fi
@@ -381,10 +387,17 @@ jobs:
 
       # cosign keyless signing — produces a self-contained .cosign.bundle
       # (signature + Fulcio cert chain + Rekor inclusion proof) per artifact.
+      # Pinned to a full commit SHA for supply-chain integrity.
+      # workflow_dispatch smoke-test runs are excluded: signing a throwaway
+      # 0.0.0-test artifact mints a real, permanent Rekor transparency-log
+      # entry — noisy and misleading.  All other steps in this job are
+      # unaffected by this gate.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        if: github.event_name != 'workflow_dispatch'
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       - name: Sign artifacts (cosign keyless)
+        if: github.event_name != 'workflow_dispatch'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |

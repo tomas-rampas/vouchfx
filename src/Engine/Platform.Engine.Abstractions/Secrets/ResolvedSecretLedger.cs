@@ -37,6 +37,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Encodings.Web;
 
 namespace Platform.Engine.Abstractions.Secrets;
 
@@ -49,12 +50,15 @@ namespace Platform.Engine.Abstractions.Secrets;
 /// <remarks>
 /// <para>
 /// The ledger records a value the moment it is resolved (see
-/// <see cref="SecretAccessor"/>), and <see cref="Scrub(string)"/> replaces every verbatim
-/// occurrence of a recorded value with <see cref="SecretString.RedactedMarker"/>.  It
-/// deliberately does <strong>not</strong> attempt to recognise transforms of a revealed
-/// value (encodings, signatures, substrings) — those arise only from a deliberate
+/// <see cref="SecretAccessor"/>), and <see cref="Scrub(string)"/> replaces every occurrence
+/// of a recorded value — in BOTH its raw form AND the JSON-escaped form the event stream
+/// serialiser would emit it as — with <see cref="SecretString.RedactedMarker"/>.  It
+/// deliberately does <strong>not</strong> attempt to recognise OTHER transforms of a revealed
+/// value (base64, signatures, substrings) — those arise only from a deliberate
 /// <see cref="SecretString.Reveal"/> followed by author code reshaping the bytes, which is
-/// the documented escape hatch and the author's responsibility (§17).
+/// the documented escape hatch and the author's responsibility (§17).  The JSON-escaped form
+/// is the one exception, and not a transform the author chose: it is the engine's OWN
+/// serialiser re-encoding the value, so the engine must scrub it.
 /// </para>
 /// <para>
 /// Empty and whitespace-only values are never recorded: scrubbing them would rewrite
@@ -96,10 +100,11 @@ public sealed class ResolvedSecretLedger
     }
 
     /// <summary>
-    /// Returns <paramref name="text"/> with every verbatim occurrence of a recorded
-    /// secret value replaced by <see cref="SecretString.RedactedMarker"/>.  When nothing
-    /// has been recorded, or no recorded value occurs in the text, the input is returned
-    /// unchanged (the scrub is a targeted net, never a blanket rewrite).
+    /// Returns <paramref name="text"/> with every occurrence of a recorded secret value
+    /// replaced by <see cref="SecretString.RedactedMarker"/> — scrubbing BOTH the raw value
+    /// AND its JSON-escaped form (the form the event-stream serialiser would write it as).
+    /// When nothing has been recorded, or no recorded form occurs in the text, the input is
+    /// returned unchanged (the scrub is a targeted net, never a blanket rewrite).
     /// </summary>
     /// <param name="text">The free-form text to scrub (e.g. a provider observation).</param>
     /// <returns>
@@ -107,10 +112,30 @@ public sealed class ResolvedSecretLedger
     /// <see langword="null"/> in, <see langword="null"/> out.
     /// </returns>
     /// <remarks>
-    /// Longer recorded values are scrubbed first so that a value which is a substring of
-    /// another (rare, but possible across multiple secrets) cannot leave a residual
-    /// fragment of the longer value behind.  Replacement is ordinal and case-sensitive —
-    /// a secret value is matched exactly as it was revealed.
+    /// <para>
+    /// <strong>Why two forms.</strong>  This scrub runs on a provider's raw observation text
+    /// BEFORE that text is parsed and re-emitted into the schema-versioned JSON Lines event
+    /// stream.  The event-stream serialiser
+    /// (<c>Platform.Engine.Abstractions.Events.EventStreamJson</c>) uses
+    /// <c>System.Text.Json</c>'s default <see cref="JavaScriptEncoder"/>, which escapes
+    /// <c>&quot;</c>, <c>\</c>, <c>&lt;</c>, <c>&gt;</c>, <c>&amp;</c>, <c>'</c>, <c>+</c> and
+    /// every non-ASCII character to <c>\uXXXX</c>.  When a provider's observation already
+    /// embeds a revealed value in that JSON-escaped form (e.g. a base64 token containing
+    /// <c>+</c> appears as <c>+</c>, or a non-ASCII secret appears as <c>\uXXXX</c>),
+    /// matching only the RAW value would miss it, and the secret would survive into the
+    /// on-disk <c>--events</c> artifact in recoverable escaped form (a consumer JSON-decodes
+    /// it back to cleartext).  Each recorded value is therefore scrubbed in both its raw form
+    /// and its <see cref="JavaScriptEncoder.Default"/>-encoded form (the SAME encoder the
+    /// stream uses).  The encoded form is added only when it differs from the raw form —
+    /// an ASCII value with no special characters encodes to itself.
+    /// </para>
+    /// <para>
+    /// All forms (raw + encoded, de-duplicated) are scrubbed longest-first so that a shorter
+    /// form which is a substring of a longer one — now guaranteed whenever one value yields a
+    /// short raw form and a longer escaped form — cannot pre-empt the longer replacement and
+    /// strand a fragment of it.  Replacement is ordinal and case-sensitive; the encoder emits
+    /// upper-case hex (<c>+</c>), matching what the serialiser writes.
+    /// </para>
     /// </remarks>
     public string? Scrub(string? text)
     {
@@ -131,16 +156,39 @@ public sealed class ResolvedSecretLedger
             _values.CopyTo(snapshot);
         }
 
-        // Replace longest-first: a shorter recorded value that is a substring of a longer
-        // one must not pre-empt the longer replacement and strand a fragment of it.
-        Array.Sort(snapshot, static (a, b) => b.Length.CompareTo(a.Length));
+        // Outside the lock: build the full set of forms to scrub.  For each recorded value
+        // scrub the raw form AND the JSON-escaped form the event-stream serialiser would emit
+        // (the default JavaScriptEncoder escapes '+'/non-ASCII), so a value already present in
+        // escaped form in the observation text cannot survive into the --events artifact.  A
+        // HashSet de-duplicates (the same encoded form can arise from distinct values, or
+        // equal another value's raw form).
+        var forms = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in snapshot)
+        {
+            forms.Add(value);
+
+            // Same encoder the event stream serialises with — add only when it differs (an
+            // ASCII value with no special characters encodes to itself).
+            var encoded = JavaScriptEncoder.Default.Encode(value);
+            if (!string.Equals(encoded, value, StringComparison.Ordinal))
+            {
+                forms.Add(encoded);
+            }
+        }
+
+        var ordered = new string[forms.Count];
+        forms.CopyTo(ordered);
+
+        // Replace longest-first: a shorter form that is a substring of a longer one must not
+        // pre-empt the longer replacement and strand a fragment of it.
+        Array.Sort(ordered, static (a, b) => b.Length.CompareTo(a.Length));
 
         var result = text;
-        foreach (var value in snapshot)
+        foreach (var form in ordered)
         {
             // Ordinal, case-sensitive, all occurrences — string.Replace replaces every
             // occurrence in one pass over the current result.
-            result = result.Replace(value, SecretString.RedactedMarker, StringComparison.Ordinal);
+            result = result.Replace(form, SecretString.RedactedMarker, StringComparison.Ordinal);
         }
 
         return result;
