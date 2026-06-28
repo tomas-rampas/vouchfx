@@ -150,6 +150,8 @@ Expected: taxonomy-aware exit codes verified (0 = Pass/EnvironmentError/Inconclu
 - **Environment stability:** YamlNode serialisation converter eliminates crash-on-dependencies-extra, fixing a pre-existing pilot-blocker on Avro Kafka scenarios.
 - **One event stream, multiple renderers:** terminal (WCAG-accessible) / HTML (WCAG 2.1 AA self-contained) / JUnit (CI-native) all consume the same schema-versioned JSON Lines stream.
 
+**Review-gate resolution:** Final pre-merge review (code-review-gatekeeper and peer-review-critic, commits `61f991c` and `07dc52c`) identified and resolved two security hardening gaps additively. (a) JSON-escape scrub bypass in `ResolvedSecretLedger` — secrets now redacted in both raw and `JavaScriptEncoder.Default`-escaped forms, penetration-tested; (b) release-pipeline injection defence — `release.yml` template expressions env-indirected with fail-closed semver validation, cosign verify-identity regex metacharacters escaped, cosign-installer pinned to commit SHA.
+
 ---
 
 ## 4. Open Gate Items

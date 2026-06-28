@@ -8,18 +8,19 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress (2026-06-15):** Sprints **01–09 are delivered and merged to `main`** (PR #126/#127, #128, #131,
-> #134, #135, #136, #137, #138, #140, and #145/#146/#147 (S09)) — integrated, CI green. **Sprint 10's
-> trust-surface chunk is merged** — **#148/#149/#150**; the **remainder (the Echo SDK dry-run + opt-in
-> telemetry) lands in PR #151 — this PR** — so Sprint 10 *completes on merge of this PR*. Milestones
-> **M1 (Foundations proven, closed S02) and M2 (Core compiler runs, closed S05) are reached**. Milestone
-> **M3 (Full step set & SDK, closes S08) is engineering-complete** — all six Core providers, v1 schema/contract/event-wire frozen,
-> Provider SDK published and outside-validated, runner selection/parallelism/Vault, polling timeline and
-> captured-variable rendering. M3 is **exit-gated on three human items** (steering review, contract
-> sign-off, outside-contributor social gate; see `plan/m3-phase-exit.md`). Milestone **M4 (Tooling &
-> hardening, closes S11) is in progress** — VSCode extension (S09–S10), CLI/HTML/JUnit (S09–S10), CI
-> templates (S10), documentation set (S10), accessibility review (S10), reference scenario green pending
-> (S11). Phase 4 stabilisation and Phase 5 pilot are next.
+> **Progress (2026-06-28):** Sprints **01–10 are delivered and merged to `main`** (PR #126/#127, #128, #131,
+> #134, #135, #136, #137, #138, #140, #145/#146/#147, #148/#149/#150, #151 (chunk-2), #155 (Phase A)).
+> **Sprint 11 (M4 stabilisation) is delivered and merged.** Milestones **M1 (closed S02) and M2 (closed S05)
+> are reached**. **M3 (Full step set & SDK, closes S08) is engineering-complete** — all six Core providers,
+> v1 schema/contract/event-wire frozen, Provider SDK published and outside-validated, runner selection/parallelism/Vault,
+> polling timeline and captured-variable rendering. M3 is **exit-gated on three human items** (steering review,
+> contract sign-off, outside-contributor social gate; see `plan/m3-phase-exit.md`). **M4 (Tooling & hardening,
+> closes S11) is engineering-complete and exit-gated:** VSCode feature-complete; CLI/HTML/JUnit/--events from
+> v1 event stream; CI templates (GitHub Actions live, GitLab validated; #153 deferred); four-technology reference
+> scenario green from editor and CLI; memory-leak gate continuously verified; secret-redaction penetration-tested
+> with raw+JSON-escaped scrubbing; environment-error classification robust; signed release (SBOM, SLSA, keyless cosign,
+> OS-installers) ready and certificate-gated. **Three human-gated items remain for M4** (steering review, GitLab live
+> run #153, certificate provisioning; see `plan/m4-phase-exit.md`). Phase 5 (Pilot & v1.0, Sprint 12 / M5) is next.
 
 ```mermaid
 gantt
