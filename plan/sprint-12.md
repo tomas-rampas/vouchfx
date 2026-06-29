@@ -149,6 +149,7 @@ and governance artifacts are published; and the go/no-go assessment is written f
   gate. Ringfence the PC triage budget (one half-day/week, MVP §5.4).
 - **Acceptance:**
   - The repo accepts external PRs; templates, rubric, and fixture are in place; triage budget scheduled.
+- **Status — DELIVERED/OPEN:** the [`vouchfx-providers` repository](https://github.com/tomas-rampas/vouchfx-providers) is live (Apache-2.0), hosting the community provider index (`registry/`) and the Verified-tier submission gate (`verified/`). Conformance CI validates new providers against the engine-pinned SDK; templates, rubric checklist, issue auto-close, DCO check, and CODEOWNERS are configured. Starter provider template available. PC triage budget (0.5 d/week) scheduled. Satisfies acceptance criteria.
 
 > **Telemetry note:** the opt-in telemetry **client** (first-run notice, consent gate, allowlist metric set,
 > `LocalFileTelemetrySink` local outbox) shipped in **Phase 4** (task `S10-G-04`) and is present in the v1.0
