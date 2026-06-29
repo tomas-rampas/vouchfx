@@ -46,9 +46,13 @@ and governance artifacts are published; and the go/no-go assessment is written f
   `DrainingTelemetrySink` (append-first local + best-effort drain), `HttpOutboxClient`, `OutboxStore` (size/age/line
   cap + atomic locked rewrite), `OutboxDrainState` (cross-run back-off), env-gated config
   (`VOUCHFX_TELEMETRY_ENDPOINT`/`_TOKEN`), and the client `forget` on disable. Inert until configured.
-  **Satisfies acceptance criteria 4, 5, 6, 7 and the client halves of 1 & 3.** **Phase B remaining:** the deployed
-  backend (separate repo + Azure + Postgres; decisions recorded on #152) delivers criteria 2 & 8 and the server
-  halves of 1 & 3.
+  **Satisfies acceptance criteria 4, 5, 6, 7 and the client halves of 1 & 3.** **Phase B implemented (separate repo,
+  build-complete and deploy-ready):** the self-hostable backend (vouchfx-telemetry-backend repository) is engineering-complete,
+  tested, and documented. It is an ASP.NET Core 8 minimal-API ingest service implementing the frozen `/v1/telemetry` + `/v1/telemetry/forget`
+  wire contract; PostgreSQL schema partitioned by day with two-layer dedup (batch Idempotency-Key + row natural key); 90-day
+  retention + ≤30-day install-id forget via daily in-service job; Bearer auth; and allowlist-only persistence. Operators may
+  self-host it; the officially hosted pilot instance is pending Azure provisioning and deployment as a prerequisite for
+  S12-E-05's measurement window. **Satisfies acceptance criteria 2 & 8 and the server halves of 1 & 3 pending deployment.**
 - **Acceptance:**
   - The ingestion endpoint accepts authenticated JSON Lines batches and stores them; unauthenticated or
     malformed requests are rejected with a 4xx.
@@ -145,6 +149,7 @@ and governance artifacts are published; and the go/no-go assessment is written f
   gate. Ringfence the PC triage budget (one half-day/week, MVP §5.4).
 - **Acceptance:**
   - The repo accepts external PRs; templates, rubric, and fixture are in place; triage budget scheduled.
+- **Status — DELIVERED/OPEN:** the [`vouchfx-providers` repository](https://github.com/tomas-rampas/vouchfx-providers) is live (Apache-2.0), hosting the community provider index (`registry/`) and the Verified-tier submission gate (`verified/`). Conformance CI validates new providers against the engine-pinned SDK; templates, rubric checklist, issue auto-close, DCO check, and CODEOWNERS are configured. Starter provider template available. PC triage budget (0.5 d/week) scheduled. Satisfies acceptance criteria.
 
 > **Telemetry note:** the opt-in telemetry **client** (first-run notice, consent gate, allowlist metric set,
 > `LocalFileTelemetrySink` local outbox) shipped in **Phase 4** (task `S10-G-04`) and is present in the v1.0

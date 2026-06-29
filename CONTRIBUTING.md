@@ -220,7 +220,7 @@ Core providers are bundled with the engine, versioned together, and fully suppor
 - The provider declares a `MinEngineVersion` compatible with the engine's current major version.
 - At least one platform-team maintainer has read the emitted CSX for the provider's representative steps and confirmed it follows the CsxFragment composition contract in the architecture blueprint's section 13.3.1.
 
-Verified providers live in a separate repository (`verified-providers` or similar, future) with stricter review and are listed on the project website. They are **not** bundled with the engine but are discoverable and installable via NuGet, with automatic registry updates.
+Verified providers are hosted in the [`vouchfx-providers` repository](https://github.com/tomas-rampas/vouchfx-providers) with stricter review and are listed on the project website. They are **not** bundled with the engine but are discoverable and installable via NuGet, with automatic registry updates.
 
 **Community** — all other providers, with no platform-team endorsement:
 - They may be shipped by anyone, versioned independently, and installed via NuGet.
@@ -235,8 +235,8 @@ Authors whose provider does not yet meet the Verified rubric remain in Community
 2. **Write tests** following the fixture pattern; ensure they pass locally.
 3. **Document** the provider with a README that covers use cases, known limitations, and any configuration.
 4. **Publish** your provider as a NuGet package under Apache-2.0.
-5. **Announce** — open an issue on the vouchfx repository describing the provider; the maintainers will add it to the community provider index and test compatibility.
-6. **(Optional) Seek Verified tier** — if your provider meets the rubric, submit a pull request to the verified-providers repository with your integration tests and security sign-off. The maintainers will review and promote it to Verified.
+5. **Announce** — open an issue on the [`vouchfx-providers` repository](https://github.com/tomas-rampas/vouchfx-providers) describing the provider; the maintainers will add it to the community provider index and test compatibility.
+6. **(Optional) Seek Verified tier** — if your provider meets the rubric, submit a pull request to the [`vouchfx-providers` repository](https://github.com/tomas-rampas/vouchfx-providers) with your integration tests and security sign-off. The maintainers will review and promote it to Verified.
 
 ### Questions?
 
