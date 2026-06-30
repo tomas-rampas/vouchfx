@@ -304,7 +304,7 @@ public sealed class DbAssertPostgresProvider
         "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\\\"connection string not found for key '\" + connKey + \"'\\\"}\" );\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"connection string not found for key '\" + connKey + \"'\") + \"}\" );\n" +
         "            return;\n" +
         "        }\n" +
         "        // H1 security fix (blast-radius containment): resolve the query template INSIDE\n" +
@@ -326,9 +326,10 @@ public sealed class DbAssertPostgresProvider
         "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
-        "        var conn = new Npgsql.NpgsqlConnection(connStr);\n" +
+        "        Npgsql.NpgsqlConnection? conn = null;\n" +
         "        try\n" +
         "        {\n" +
+        "            conn = new Npgsql.NpgsqlConnection(connStr);\n" +
         "            await conn.OpenAsync().ConfigureAwait(false);\n" +
         "            var cmd = conn.CreateCommand();\n" +
         "            try\n" +
@@ -423,7 +424,7 @@ public sealed class DbAssertPostgresProvider
         "        finally\n" +
         "        {\n" +
         "            sw.Stop();\n" +
-        "            conn.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
+        "            conn?.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
         "        }\n" +
         "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +

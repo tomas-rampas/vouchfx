@@ -1,31 +1,31 @@
-// Tests for S04-F-02: DbAssertPostgresProvider — CSX emitter + resource contributor.
+// Tests for DbAssertSqlServerProvider — CSX emitter + resource contributor.
 //
 // All tests in this file are non-docker.  They exercise:
 //   1. Emit: StatementBlock begins and ends with a brace.
 //   2. Emit: no 'using var' in the emitted fragment.
-//   3. Emit: helper class is named 'DbAssertPostgres_Helpers' (§13.3.1 prefix rule).
+//   3. Emit: helper class is named 'DbAssertSqlServer_Helpers' (§13.3.1 prefix rule).
 //   4. Emit: step id with hyphens is sanitised to underscores in the StatementBlock.
 //   5. Emit: SQL query and parameter values are JSON-escaped (injection safety).
-//   6. Emit: RequiredUsings contains the Npgsql namespace.
-//   7. Resources: yields a postgres ResourceRequirement whose Name equals model.Target.
-//   8. CompileReferenceAssemblies: contains the Npgsql assembly.
+//   6. Emit: RequiredUsings contains the Microsoft.Data.SqlClient namespace.
+//   7. Resources: yields a sqlserver ResourceRequirement whose Name equals model.Target.
+//   8. CompileReferenceAssemblies: contains the Microsoft.Data.SqlClient assembly.
 //   9. Full compile-and-run (no docker): EnvironmentError when conn key is absent.
 //  10. Full compile-and-run (no docker): EnvironmentError when conn string is malformed.
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
-using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Xunit;
 
-namespace Platform.Steps.DbAssert.Postgres.Tests;
+namespace Platform.Steps.DbAssert.SqlServer.Tests;
 
 /// <summary>
-/// Non-docker unit and integration tests for <see cref="DbAssertPostgresProvider"/>
+/// Non-docker unit and integration tests for <see cref="DbAssertSqlServerProvider"/>
 /// covering the emitter (<see cref="IStepCompiler{TModel}"/>),
 /// resource contributor (<see cref="IResourceContributor{TModel}"/>), and
 /// compile-reference contributor (<see cref="ICompileReferenceContributor"/>).
 /// </summary>
-public sealed class DbAssertPostgresEmitTests
+public sealed class DbAssertSqlServerEmitTests
 {
     // ── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ public sealed class DbAssertPostgresEmitTests
 
     // ── Shared provider instance ──────────────────────────────────────────────────
 
-    private readonly DbAssertPostgresProvider _provider = new();
+    private readonly DbAssertSqlServerProvider _provider = new();
 
     // ── 1. StatementBlock braces ─────────────────────────────────────────────────
 
@@ -99,13 +99,13 @@ public sealed class DbAssertPostgresEmitTests
 
     /// <summary>
     /// <see cref="CsxFragment.RequiredHelpers"/> must contain an entry whose class name
-    /// begins with <c>DbAssertPostgres_</c> (§13.3.1 provider-prefix rule).
+    /// begins with <c>DbAssertSqlServer_</c> (§13.3.1 provider-prefix rule).
     /// Since S04-B-03 the fragment also contains <c>Substitute_Helpers</c>; the test
     /// therefore asserts the provider-prefixed class is present rather than requiring
     /// exactly one helper.
     /// </summary>
     [Fact]
-    public void Emit_RequiredHelpers_ContainsDbAssertPostgresPrefixedClass()
+    public void Emit_RequiredHelpers_ContainsDbAssertSqlServerPrefixedClass()
     {
         var model = MakeModel("db", "SELECT 1", null, rowCount: 1);
         var ctx = new StubCompileContext("s");
@@ -113,7 +113,7 @@ public sealed class DbAssertPostgresEmitTests
         var fragment = _provider.Emit(model, ctx);
 
         Assert.Contains(fragment.RequiredHelpers, h =>
-            h.Contains("DbAssertPostgres_Helpers", StringComparison.Ordinal));
+            h.Contains("DbAssertSqlServer_Helpers", StringComparison.Ordinal));
     }
 
     // ── 4. Step-id sanitisation ──────────────────────────────────────────────────
@@ -169,32 +169,33 @@ public sealed class DbAssertPostgresEmitTests
         // The block must compile cleanly — verified by test 9 (compile round-trip).
     }
 
-    // ── 6. RequiredUsings contains Npgsql namespace ──────────────────────────────
+    // ── 6. RequiredUsings contains Microsoft.Data.SqlClient namespace ──────────────
 
     /// <summary>
-    /// <see cref="CsxFragment.RequiredUsings"/> must include the <c>Npgsql</c>
-    /// namespace, which the emitted helper class requires (§13.3.1 bare namespace rule).
+    /// <see cref="CsxFragment.RequiredUsings"/> must include the
+    /// <c>Microsoft.Data.SqlClient</c> namespace, which the emitted helper class
+    /// requires (§13.3.1 bare namespace rule).
     /// </summary>
     [Fact]
-    public void Emit_RequiredUsings_ContainsNpgsqlNamespace()
+    public void Emit_RequiredUsings_ContainsSqlClientNamespace()
     {
         var model = MakeModel("db", "SELECT 1", null, rowCount: 1);
         var ctx = new StubCompileContext("u");
 
         var fragment = _provider.Emit(model, ctx);
 
-        Assert.Contains("Npgsql", fragment.RequiredUsings, StringComparer.Ordinal);
+        Assert.Contains("Microsoft.Data.SqlClient", fragment.RequiredUsings, StringComparer.Ordinal);
     }
 
-    // ── 7. IResourceContributor yields postgres ResourceRequirement ───────────────
+    // ── 7. IResourceContributor yields sqlserver ResourceRequirement ──────────────
 
     /// <summary>
     /// <see cref="IResourceContributor{TModel}.Resources"/> must yield exactly one
-    /// <see cref="ResourceRequirement"/> with <c>Family="postgres"</c> and
-    /// <c>Name</c> equal to <see cref="DbAssertPostgresModel.Target"/>.
+    /// <see cref="ResourceRequirement"/> with <c>Family="sqlserver"</c> and
+    /// <c>Name</c> equal to <see cref="DbAssertSqlServerModel.Target"/>.
     /// </summary>
     [Fact]
-    public void Resources_YieldsPostgresRequirementWithMatchingName()
+    public void Resources_YieldsSqlServerRequirementWithMatchingName()
     {
         var model = MakeModel("orders-db", "SELECT 1", null, rowCount: 1);
 
@@ -202,26 +203,26 @@ public sealed class DbAssertPostgresEmitTests
 
         Assert.Single(requirements);
         var req = requirements[0];
-        Assert.Equal("postgres", req.Family, StringComparer.Ordinal);
+        Assert.Equal("sqlserver", req.Family, StringComparer.Ordinal);
         Assert.Equal("orders-db", req.Name, StringComparer.Ordinal);
     }
 
-    // ── 8. ICompileReferenceContributor returns Npgsql assembly ─────────────────
+    // ── 8. ICompileReferenceContributor returns SqlClient assembly ───────────────
 
     /// <summary>
     /// <see cref="ICompileReferenceContributor.CompileReferenceAssemblies"/> must
-    /// contain the <c>Npgsql</c> assembly so the Roslyn compiler can resolve the
-    /// <c>NpgsqlConnection</c> type in the emitted helper.
+    /// contain the <c>Microsoft.Data.SqlClient</c> assembly so the Roslyn compiler
+    /// can resolve the <c>SqlConnection</c> type in the emitted helper.
     /// </summary>
     [Fact]
-    public void CompileReferenceAssemblies_ContainsNpgsqlAssembly()
+    public void CompileReferenceAssemblies_ContainsSqlClientAssembly()
     {
         var contributor = (ICompileReferenceContributor)_provider;
 
         var assemblies = contributor.CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
-            a.GetName().Name?.Equals("Npgsql", StringComparison.OrdinalIgnoreCase) == true);
+            a.GetName().Name?.Contains("SqlClient", StringComparison.OrdinalIgnoreCase) == true);
     }
 
     // ── 9. Compile round-trip: EnvironmentError when conn key absent ──────────────
@@ -230,7 +231,7 @@ public sealed class DbAssertPostgresEmitTests
     /// When the connection key is absent from <c>Vars</c>, the emitted helper must
     /// write <see cref="Verdict.EnvironmentError"/> to the outcome key rather than
     /// throwing an unhandled exception.  This test also verifies that the emitted
-    /// CSX compiles without errors with the Npgsql reference assembly.
+    /// CSX compiles without errors with the Microsoft.Data.SqlClient reference assembly.
     /// </summary>
     [Fact]
     public async Task Emit_CompileAndRun_AbsentConnKey_ReturnsEnvironmentError()
@@ -245,12 +246,12 @@ public sealed class DbAssertPostgresEmitTests
         var helpers = string.Join("\n", fragment.RequiredHelpers);
         var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
 
-        // The emitted helper references Npgsql and System.Text.Json — supply both as
-        // compile-time metadata references.  Neither is ever loaded into the
+        // The emitted helper references Microsoft.Data.SqlClient and System.Text.Json — supply
+        // both as compile-time metadata references.  Neither is ever loaded into the
         // collectible ALC (§5 memory-model invariant).
         var additionalRefs = new[]
         {
-            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
@@ -276,15 +277,14 @@ public sealed class DbAssertPostgresEmitTests
         Assert.NotNull(outcome.Observation);
     }
 
-    // ── 10. Compile round-trip: EnvironmentError when conn string is malformed ───────
+    // ── 10. Compile round-trip: EnvironmentError when conn string is malformed ────
 
     /// <summary>
     /// When the connection key is present but the connection string is malformed
-    /// (causing <c>NpgsqlConnection</c>'s constructor or <c>OpenAsync</c> to throw),
-    /// the emitted helper must catch the exception and write
-    /// <see cref="Verdict.EnvironmentError"/> rather than propagating the throw.
-    /// With the connection constructor moved inside the <c>try</c> block (niggle-b fix),
-    /// constructor failures are also caught.
+    /// (causing <c>OpenAsync</c> to throw), the emitted helper must catch the
+    /// exception and write <see cref="Verdict.EnvironmentError"/> rather than
+    /// propagating the throw.  With the connection constructor moved inside the
+    /// <c>try</c> block (niggle-b fix), constructor failures are also caught.
     /// </summary>
     [Fact]
     public async Task Emit_CompileAndRun_MalformedConnStr_ReturnsEnvironmentError()
@@ -300,7 +300,7 @@ public sealed class DbAssertPostgresEmitTests
 
         var additionalRefs = new[]
         {
-            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
@@ -308,7 +308,7 @@ public sealed class DbAssertPostgresEmitTests
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            // Non-null but wholly invalid connection string — constructor or OpenAsync must throw.
+            // Non-null but wholly invalid connection string — OpenAsync must throw.
             [VarKeys.Connection("my-dep")] = "@@@malformed@@@",
         };
         var globals = new ScriptGlobalVariables(vars);
@@ -332,9 +332,9 @@ public sealed class DbAssertPostgresEmitTests
     // ── Private helpers ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds a <see cref="DbAssertPostgresModel"/> for use in emit tests.
+    /// Builds a <see cref="DbAssertSqlServerModel"/> for use in emit tests.
     /// </summary>
-    private static DbAssertPostgresModel MakeModel(
+    private static DbAssertSqlServerModel MakeModel(
         string target,
         string query,
         (string Name, string Value)[]? parameters,
@@ -350,10 +350,10 @@ public sealed class DbAssertPostgresEmitTests
             paramMap = d;
         }
 
-        return new DbAssertPostgresModel(
+        return new DbAssertSqlServerModel(
             Target: target,
             Query: query,
             Parameters: paramMap,
-            Expect: new PostgresExpectation(RowCount: rowCount, Row: row));
+            Expect: new SqlServerExpectation(RowCount: rowCount, Row: row));
     }
 }
