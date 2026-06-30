@@ -26,9 +26,10 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (6):
+Registered step types (7):
 
 - [`db-assert.postgres`](#db-assertpostgres)
+- [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
 - [`mq-expect.kafka`](#mq-expectkafka)
 - [`mq-publish.kafka`](#mq-publishkafka)
@@ -46,6 +47,24 @@ Set `type: db-assert.postgres` to use this step.
 | `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
 | `query` | `string` | The SQL query to execute. May be a multi-line literal. |
 | `target` | `string` | Logical name of the postgres dependency to query, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
+
+### `db-assert.sqlserver`
+
+Set `type: db-assert.sqlserver` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
+| `query` | `string` | The SQL query to execute. May be a multi-line literal. |
+| `target` | `string` | Logical name of the sqlserver dependency to query, as declared under environment.dependencies. |
 
 **Optional fields**
 

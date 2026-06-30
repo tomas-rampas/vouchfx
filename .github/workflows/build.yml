@@ -239,6 +239,7 @@ jobs:
         run: |
           for image in \
             postgres:18.3 \
+            mcr.microsoft.com/mssql/server:2022-latest \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             traefik/whoami:latest \

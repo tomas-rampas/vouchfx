@@ -201,6 +201,62 @@
           "if": {
             "properties": {
               "type": {
+                "const": "db-assert.sqlserver"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the sqlserver dependency to query, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string"
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query.",
+                    "type": "integer"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "http.rest"
               }
             },

@@ -2,7 +2,7 @@
 //
 // The composed v1 JSON Schema — the root-language schema plus the
 // JsonSchemaFragment of every Core provider — is FROZEN.  This golden-snapshot
-// test recomposes that schema from the full six-Core-provider registry and
+// test recomposes that schema from the full Core-provider registry and
 // asserts it is byte-for-byte identical to the committed golden artifact
 // (Golden/composed-schema.v1.json).
 //
@@ -16,16 +16,23 @@
 //     composed JSON is byte-stable regardless of reflection/registration order.
 //     ComposeSchemaJson emits canonical, indented JSON for snapshotting.
 //
-// This test builds the registry from the same six Core provider assemblies the
-// CLI ships (see Vouchfx.Cli.ProviderRegistryFactory) — the test project
-// references all six provider projects so a renamed/removed provider is a
-// compile error here, not a silent schema gap.
+// This test builds the registry from the same Core provider assemblies the CLI
+// ships (see Vouchfx.Cli.ProviderRegistryFactory) — the test project references
+// all provider projects so a renamed/removed provider is a compile error here,
+// not a silent schema gap.
+//
+// REGENERATION (when a provider's schema legitimately changes — additive only):
+//   VOUCHFX_REGEN_SCHEMA=1 dotnet test tests/Platform.Engine.Compilation.Tests \
+//     --filter "FullyQualifiedName~SchemaFreezeTests"
+//   This rewrites Golden/composed-schema.v1.json from the freshly-composed schema.
+//   Review the diff (must be additive only), then commit.
 using System;
 using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
@@ -41,7 +48,15 @@ namespace Platform.Engine.Compilation.Tests;
 public sealed class SchemaFreezeTests
 {
     /// <summary>
-    /// The six Core provider assemblies that compose the v1 schema, anchored by
+    /// Set <c>VOUCHFX_REGEN_SCHEMA=1</c> to make the gate REWRITE the committed golden
+    /// <c>Golden/composed-schema.v1.json</c> from the freshly-composed schema instead of
+    /// asserting against it.  This is the supported regeneration path when a provider's
+    /// schema legitimately changes (additive only for v1).
+    /// </summary>
+    private const string RegenEnvVar = "VOUCHFX_REGEN_SCHEMA";
+
+    /// <summary>
+    /// The Core provider assemblies that compose the v1 schema, anchored by
     /// one concrete provider type per assembly (mirrors
     /// <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>).  Listing
     /// them by anchor type makes a renamed/removed provider a compile error.
@@ -50,6 +65,7 @@ public sealed class SchemaFreezeTests
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -67,6 +83,20 @@ public sealed class SchemaFreezeTests
         var registry = StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
 
         var actual = SchemaComposer.ComposeSchemaJson(registry);
+
+        // Regeneration mode: rewrite the committed golden from the freshly-composed
+        // schema and pass.  Used by a developer after a legitimate (additive) schema
+        // change.  Mirror of LanguageReferenceGoldenTests.IsRegenRequested pattern.
+        if (IsRegenRequested())
+        {
+            var repoRoot = FindRepoRoot();
+            var goldenPath = Path.Combine(
+                repoRoot, "tests", "Platform.Engine.Compilation.Tests",
+                "Golden", "composed-schema.v1.json");
+            File.WriteAllText(goldenPath, actual);
+            return;
+        }
+
         var golden = ReadGolden();
 
         // Normalise line endings AND any trailing final newline on both sides so a
@@ -80,7 +110,8 @@ public sealed class SchemaFreezeTests
             string.Equals(actualNormalised, goldenNormalised, StringComparison.Ordinal),
             "The composed v1 JSON Schema has DRIFTED. v1 is FROZEN — if this change "
             + "is intentional and additive/non-breaking, regenerate "
-            + "Golden/composed-schema.v1.json and get it reviewed; otherwise revert."
+            + "Golden/composed-schema.v1.json with VOUCHFX_REGEN_SCHEMA=1 and get it "
+            + "reviewed; otherwise revert."
             + Environment.NewLine
             + FirstDifference(goldenNormalised, actualNormalised));
     }
@@ -110,6 +141,38 @@ public sealed class SchemaFreezeTests
     // contract compares schema CONTENT, immune to line-ending style and to an
     // editor's insert_final_newline rewrite of the golden file.
     private static string Normalise(string s) => s.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
+
+    private static bool IsRegenRequested()
+    {
+        var value = Environment.GetEnvironmentVariable(RegenEnvVar);
+        return !string.IsNullOrEmpty(value)
+            && (value == "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Walks up from the test assembly's base directory until it finds the
+    /// directory containing <c>vouchfx.sln</c> — the repo root.
+    /// Mirrors <c>LanguageReferenceGoldenTests.FindRepoRoot</c>.
+    /// </summary>
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException(
+            "Could not locate the repository root (no ancestor of "
+            + $"'{AppContext.BaseDirectory}' contains 'vouchfx.sln').  This gate must locate "
+            + "the source-tree golden to rewrite it.");
+    }
 
     /// <summary>
     /// Reads the committed golden artifact from the test assembly's output

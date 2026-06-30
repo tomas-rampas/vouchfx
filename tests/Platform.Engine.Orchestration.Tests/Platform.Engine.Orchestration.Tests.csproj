@@ -30,6 +30,8 @@
     </PackageReference>
     <!-- Npgsql: required by S01-A-03 connection-string acceptance test (live SELECT 1). -->
     <PackageReference Include="Npgsql" />
+    <!-- Microsoft.Data.SqlClient: required by DbAssertSqlServerDockerTests (compile-ref). -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,6 +44,9 @@
                       IsAspireProjectResource="false" />
     <!-- script.csharp provider: used by RespawnResetProofTests (S04-A-01). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.sqlserver provider: used by DbAssertSqlServerDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj"
                       IsAspireProjectResource="false" />
     <!-- Sprint 4 capstone: http.rest provider + ScenarioRunner (Runtime). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"

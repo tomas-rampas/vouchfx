@@ -41,6 +41,10 @@
   </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
     <PackageVersion Include="Npgsql" Version="8.0.7" />
+    <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the
+         exact required minimum to avoid NU1109/NU1605 downgrade errors under
+         CentralPackageTransitivePinningEnabled. -->
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.1" />
     <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
     <PackageVersion Include="MongoDB.Driver" Version="3.8.1" />
     <PackageVersion Include="StackExchange.Redis" Version="2.13.1" />

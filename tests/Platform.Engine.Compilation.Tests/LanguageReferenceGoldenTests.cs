@@ -25,6 +25,7 @@ using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
@@ -62,6 +63,7 @@ public sealed class LanguageReferenceGoldenTests
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -110,19 +112,20 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
-    /// The generated reference must cover all six Core providers, the common step
-    /// fields, and a Required/Optional breakdown — a structural guard so a future
-    /// generator change that silently drops a section is caught even if the golden
-    /// were regenerated in the same commit.
+    /// The generated reference must cover all Core providers (including
+    /// <c>db-assert.sqlserver</c>), the common step fields, and a Required/Optional
+    /// breakdown — a structural guard so a future generator change that silently drops
+    /// a section is caught even if the golden were regenerated in the same commit.
     /// </summary>
     [Fact]
-    public void GeneratedReference_CoversAllSixCoreProvidersAndCommonFields()
+    public void GeneratedReference_CoversAllCoreProvidersAndCommonFields()
     {
         var generated = GenerateReference();
 
-        // All six Core step types.
+        // All Core step types (original six plus db-assert.sqlserver).
         Assert.Contains("### `http.rest`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.postgres`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.sqlserver`", generated, StringComparison.Ordinal);
         Assert.Contains("### `script.csharp`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-publish.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.kafka`", generated, StringComparison.Ordinal);

@@ -27,6 +27,7 @@ using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
@@ -45,7 +46,13 @@ namespace Platform.Engine.Compilation.Tests;
 public sealed class VsCodeShippedSchemaSyncTests
 {
     /// <summary>
-    /// The six Core provider assemblies that compose the v1 schema, anchored by
+    /// Set <c>VOUCHFX_REGEN_SCHEMA=1</c> to make the gate REWRITE the shipped VSCode
+    /// schema from the freshly-composed schema instead of asserting against it.
+    /// </summary>
+    private const string RegenEnvVar = "VOUCHFX_REGEN_SCHEMA";
+
+    /// <summary>
+    /// The Core provider assemblies that compose the v1 schema, anchored by
     /// one concrete provider type per assembly (mirrors
     /// <c>SchemaFreezeTests.CoreProviderAssemblies</c> and
     /// <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>).  Listing
@@ -55,6 +62,7 @@ public sealed class VsCodeShippedSchemaSyncTests
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -73,6 +81,18 @@ public sealed class VsCodeShippedSchemaSyncTests
         var registry = StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
 
         var expected = SchemaComposer.ComposeSchemaJson(registry);
+
+        // Regeneration mode: rewrite the shipped VSCode schema from the freshly-composed
+        // schema and pass.  Used by a developer after a legitimate (additive) schema change.
+        if (IsRegenRequested())
+        {
+            var repoRoot = FindRepoRoot();
+            var vscPath = Path.Combine(
+                repoRoot, "tools", "vscode-vouchfx", "src", "schema", "composed-schema.v1.json");
+            File.WriteAllText(vscPath, expected);
+            return;
+        }
+
         var shipped = ReadShippedVsCodeSchema();
 
         // Normalise line endings AND any trailing final newline on both sides so a
@@ -85,10 +105,8 @@ public sealed class VsCodeShippedSchemaSyncTests
         Assert.True(
             string.Equals(expectedNormalised, shippedNormalised, StringComparison.Ordinal),
             "The shipped VSCode schema has DRIFTED from SchemaComposer.ComposeSchemaJson. "
-            + "The editor must never diverge from the compiler (DSL §9): regenerate "
-            + "tools/vscode-vouchfx/src/schema/composed-schema.v1.json from the composer "
-            + "(e.g. by copying the frozen golden, Golden/composed-schema.v1.json) and "
-            + "re-review."
+            + "The editor must never diverge from the compiler (DSL §9): regenerate with "
+            + $"VOUCHFX_REGEN_SCHEMA=1 and re-review."
             + Environment.NewLine
             + FirstDifference(expectedNormalised, shippedNormalised));
     }
@@ -113,6 +131,13 @@ public sealed class VsCodeShippedSchemaSyncTests
     // contract compares schema CONTENT, immune to line-ending style and to an
     // editor's insert_final_newline rewrite of the shipped file.
     private static string Normalise(string s) => s.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
+
+    private static bool IsRegenRequested()
+    {
+        var value = Environment.GetEnvironmentVariable(RegenEnvVar);
+        return !string.IsNullOrEmpty(value)
+            && (value == "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Reads the schema the VSCode extension ships, from the SOURCE tree (not the
