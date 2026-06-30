@@ -585,7 +585,7 @@ public sealed class EnvironmentMapperTests
             Services: null,
             Dependencies: new Dictionary<string, DependencySpec>
             {
-                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+                ["store"] = new DependencySpec(Type: "cassandra", Version: null, Extra: null),
             },
             Seed: null,
             ImageRegistry: null,
@@ -593,7 +593,268 @@ public sealed class EnvironmentMapperTests
 
         // Act + Assert
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
-        Assert.Contains("redis", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cassandra", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_SqlServerDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A sqlserver dependency produces both a server resource and a database resource
+    /// (named &lt;name&gt;db), with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_SqlServerDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["db"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "db" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "db"));
+
+        // Assert — database resource named "dbdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "dbdb"));
+
+        // Assert — gate is on the database resource (§4 invariant)
+        Assert.Contains("dbdb", mapped.HealthGateResourceNames);
+        Assert.Contains("db", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_MySqlDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mysql dependency produces both a server resource and a database resource,
+    /// with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_MySqlDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mdb"] = new DependencySpec(Type: "mysql", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "mdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "mdb"));
+
+        // Assert — database resource named "mdbdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "mdbdb"));
+
+        // Assert — gate is on the database resource
+        Assert.Contains("mdbdb", mapped.HealthGateResourceNames);
+        Assert.Contains("mdb", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_MongoDbDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mongodb dependency produces both a server resource and a database resource,
+    /// with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_MongoDbDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "orders" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "orders"));
+
+        // Assert — database resource named "ordersdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "ordersdb"));
+
+        // Assert — gate is on the database resource
+        Assert.Contains("ordersdb", mapped.HealthGateResourceNames);
+        Assert.Contains("orders", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_RedisDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A redis dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_RedisDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "cache" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "cache"));
+
+        // Assert — gate is on the server (no separate database resource)
+        Assert.Contains("cache", mapped.HealthGateResourceNames);
+        Assert.Contains("cache", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_ElasticsearchDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// An elasticsearch dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_ElasticsearchDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["search"] = new DependencySpec(Type: "elasticsearch", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "search" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "search"));
+
+        // Assert — gate is on the server
+        Assert.Contains("search", mapped.HealthGateResourceNames);
+        Assert.Contains("search", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_RabbitMqDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A rabbitmq dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_RabbitMqDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "rabbitmq", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "bus" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "bus"));
+
+        // Assert — gate is on the server
+        Assert.Contains("bus", mapped.HealthGateResourceNames);
+        Assert.Contains("bus", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_NatsDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A nats dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_NatsDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "nats", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "events" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "events"));
+
+        // Assert — gate is on the server
+        Assert.Contains("events", mapped.HealthGateResourceNames);
+        Assert.Contains("events", mapped.DependencyNames);
     }
 
     // -----------------------------------------------------------------------

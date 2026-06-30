@@ -12,6 +12,13 @@
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.SqlServer" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.Elasticsearch" Version="13.3.0" />
+    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.2" />
   </ItemGroup>
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.6.6" />
@@ -32,8 +39,8 @@
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
     <PackageVersion Include="Npgsql" Version="8.0.7" />
     <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
-    <PackageVersion Include="MongoDB.Driver" Version="3.6.0" />
-    <PackageVersion Include="StackExchange.Redis" Version="2.8.58" />
+    <PackageVersion Include="MongoDB.Driver" Version="3.8.1" />
+    <PackageVersion Include="StackExchange.Redis" Version="2.13.1" />
   </ItemGroup>
   <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
