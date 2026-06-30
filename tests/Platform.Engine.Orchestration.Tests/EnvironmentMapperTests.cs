@@ -630,6 +630,11 @@ public sealed class EnvironmentMapperTests
         // Assert — database resource named "dbdb" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "dbdb"));
 
+        // Assert — the retained database resource implements IResourceWithConnectionString (the
+        // contract that ResolveServices reads the connection string from).
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "dbdb"));
+
         // Assert — gate is on the database resource (§4 invariant)
         Assert.Contains("dbdb", mapped.HealthGateResourceNames);
         Assert.Contains("db", mapped.DependencyNames);
@@ -668,6 +673,10 @@ public sealed class EnvironmentMapperTests
 
         // Assert — database resource named "mdbdb" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "mdbdb"));
+
+        // Assert — the retained database resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "mdbdb"));
 
         // Assert — gate is on the database resource
         Assert.Contains("mdbdb", mapped.HealthGateResourceNames);
@@ -708,6 +717,10 @@ public sealed class EnvironmentMapperTests
         // Assert — database resource named "ordersdb" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "ordersdb"));
 
+        // Assert — the retained database resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "ordersdb"));
+
         // Assert — gate is on the database resource
         Assert.Contains("ordersdb", mapped.HealthGateResourceNames);
         Assert.Contains("orders", mapped.DependencyNames);
@@ -743,6 +756,10 @@ public sealed class EnvironmentMapperTests
 
         // Assert — server resource named "cache" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "cache"));
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "cache"));
 
         // Assert — gate is on the server (no separate database resource)
         Assert.Contains("cache", mapped.HealthGateResourceNames);
@@ -780,6 +797,10 @@ public sealed class EnvironmentMapperTests
         // Assert — server resource named "search" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "search"));
 
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "search"));
+
         // Assert — gate is on the server
         Assert.Contains("search", mapped.HealthGateResourceNames);
         Assert.Contains("search", mapped.DependencyNames);
@@ -816,6 +837,10 @@ public sealed class EnvironmentMapperTests
         // Assert — server resource named "bus" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "bus"));
 
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "bus"));
+
         // Assert — gate is on the server
         Assert.Contains("bus", mapped.HealthGateResourceNames);
         Assert.Contains("bus", mapped.DependencyNames);
@@ -851,6 +876,10 @@ public sealed class EnvironmentMapperTests
 
         // Assert — server resource named "events" exists
         Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "events"));
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "events"));
 
         // Assert — gate is on the server
         Assert.Contains("events", mapped.HealthGateResourceNames);

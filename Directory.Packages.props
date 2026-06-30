@@ -16,6 +16,9 @@
     <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.2" />
+    <!-- Pinned to 13.3.0 — no 13.4.2 build is published on NuGet for this integration.
+         Same major (13), API-identical surface (AddElasticsearch / WithImageTag); bump to
+         13.4.x when a matching build is published. -->
     <PackageVersion Include="Aspire.Hosting.Elasticsearch" Version="13.3.0" />
     <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.2" />
     <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.2" />

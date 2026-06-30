@@ -340,8 +340,7 @@ public static class EnvironmentMapper
             {
                 throw new ArgumentException(
                     $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
-                    "Supported types: postgres, kafka, sqlserver, mysql, mongodb, redis, " +
-                    "elasticsearch, rabbitmq, nats.",
+                    $"Supported types: {string.Join(", ", s_dependencyRegistry.Keys)}.",
                     nameof(env));
             }
         }
