@@ -258,7 +258,8 @@ jobs:
             traefik/whoami:latest \
             hashicorp/vault:latest \
             axllent/mailpit:v1.21 \
-            rabbitmq:4-management ; do
+            rabbitmq:4-management \
+            elasticsearch:8.17.3 ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
             echo "::endgroup::"
