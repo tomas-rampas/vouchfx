@@ -6,7 +6,7 @@ metadata:
 
 environment:
   services:
-    - id: orders-api
+    orders-api:
       image: "ghcr.io/example/orders-api:latest"
   dependencies:
     ordersdb:
