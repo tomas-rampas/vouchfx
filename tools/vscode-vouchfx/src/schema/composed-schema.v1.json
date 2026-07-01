@@ -375,6 +375,66 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mail-expect.smtp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "The expectation block: how many messages must match the criteria.",
+                "type": "object",
+                "required": [
+                  "match"
+                ],
+                "properties": {
+                  "count": {
+                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists.",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "match": {
+                    "description": "Criteria a message must satisfy.  At least one criterion must be declared.",
+                    "type": "object",
+                    "properties": {
+                      "to": {
+                        "description": "Expected recipient address (case-insensitive equality).",
+                        "type": "string"
+                      },
+                      "subject-contains": {
+                        "description": "Substring the message subject must contain (ordinal).",
+                        "type": "string"
+                      },
+                      "body-contains": {
+                        "description": "Substring the plain-text body must contain (ordinal).  Fetching the body requires a second Mailpit API call per candidate message.",
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-expect.kafka"
               }
             },

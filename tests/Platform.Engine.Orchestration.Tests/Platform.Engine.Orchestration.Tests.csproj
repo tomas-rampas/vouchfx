@@ -58,6 +58,9 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj"
                       IsAspireProjectResource="false" />
+    <!-- mail-expect.smtp provider: used by MailExpectSmtpDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup>

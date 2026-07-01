@@ -1,10 +1,10 @@
-// S10-D-02 — Memory-leak gate provably covers all EIGHT Core providers' closure.
+// S10-D-02 — Memory-leak gate provably covers all NINE Core providers' closure.
 //
 // The permanent M1 memory-leak gate (ClosureMemoryProbeTests + the 5,000-iteration
 // harness in CI) exercises the transitive client closure of every Core provider inside
 // a collectible AssemblyLoadContext, so a singleton pinner that anchors a reference
 // across the collectible boundary is caught.  But that gate's value depends on the
-// closure probe ACTUALLY touching each provider's canonical client: a 9th Core provider
+// closure probe ACTUALLY touching each provider's canonical client: a 10th Core provider
 // could be added (say, a `cache.redis` family) whose client never gets exercised, and
 // the leak gate would stay green while silently NOT covering it.
 //
@@ -13,9 +13,9 @@
 // canonical client / closure marker its leak coverage depends on, and then asserts:
 //
 //   1. The enumerated eight-provider table EQUALS the real Core-provider set — built by
-//      reflecting the SAME eight anchor assemblies SchemaFreezeTests /
+//      reflecting the SAME nine anchor assemblies SchemaFreezeTests /
 //      VsCodeShippedSchemaSyncTests / the CLI's ProviderRegistryFactory use, frozen
-//      through StepKindRegistry.BuildAndFreeze.  So if a 9th Core provider is added (or
+//      through StepKindRegistry.BuildAndFreeze.  So if a 10th Core provider is added (or
 //      one is renamed/removed) without updating this table, THIS test fails — it can't
 //      go stale against the real registry.
 //
@@ -38,6 +38,7 @@ using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
+using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.Script.Csharp;
@@ -47,7 +48,7 @@ using Xunit;
 namespace Platform.Engine.Compilation.Tests;
 
 /// <summary>
-/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to the EIGHT
+/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to the NINE
 /// Core providers, cross-checked against the real frozen registry so it cannot go stale.
 /// </summary>
 public sealed class ClosureProbeCoverageGuardTests
@@ -130,6 +131,13 @@ public sealed class ClosureProbeCoverageGuardTests
     ///     connection-pool and SDAM background-thread static state) and disposes it in
     ///     <c>finally</c>.  MongoDB.Driver 3.x: <c>IMongoClient</c> extends <c>IDisposable</c>.
     ///   </description></item>
+    ///   <item><description>
+    ///     <c>mail-expect.smtp</c> → <c>System.Net.Http.HttpClient</c> (BCL): the provider
+    ///     queries the Mailpit HTTP API via <c>HttpClient</c>.  Its closure is subsumed by
+    ///     the <c>http.rest</c> probe — both use only the BCL <c>HttpClient</c>/
+    ///     <c>SocketsHttpHandler</c> pool, which the probe already exercises.  The shared
+    ///     probe marker (<c>new System.Net.Http.HttpClient()</c>) satisfies both rows.
+    ///   </description></item>
     /// </list>
     /// </remarks>
     private static readonly IReadOnlyList<CoreProviderCoverage> EnumeratedCoverage = new[]
@@ -166,10 +174,14 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "db-assert.mongodb",
             CanonicalClient: "MongoDB.Driver.MongoClient (MongoDB client / connection pool)",
             ProbeMarker: "MongoDB.Driver.MongoClient(\"mongodb://localhost:27017\")"),
+        new CoreProviderCoverage(
+            StepKind: "mail-expect.smtp",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by http.rest probe; mail-expect.smtp queries the Mailpit HTTP API via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
     };
 
     /// <summary>
-    /// The eight Core provider assemblies, anchored by one concrete provider type each —
+    /// The nine Core provider assemblies, anchored by one concrete provider type each —
     /// mirrors <see cref="SchemaFreezeTests"/>, <see cref="VsCodeShippedSchemaSyncTests"/>,
     /// and <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>.  Listing them
     /// by anchor type makes a renamed/removed provider a COMPILE error here, and building the
@@ -186,6 +198,7 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
     };
 
     // -------------------------------------------------------------------------
@@ -197,7 +210,7 @@ public sealed class ClosureProbeCoverageGuardTests
     /// The set of step kinds in <see cref="EnumeratedCoverage"/> must be exactly the set
     /// of <c>&lt;family&gt;.&lt;provider&gt;</c> keys the real frozen registry reports for
     /// the eight Core provider assemblies.  This cross-check is what stops the table going
-    /// stale: a 9th Core provider (or a rename) changes the registry's key set and this
+    /// stale: a 10th Core provider (or a rename) changes the registry's key set and this
     /// equality breaks until the table is deliberately updated.
     /// </summary>
     [Fact]
@@ -213,8 +226,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Eight Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb).
-        Assert.Equal(8, actualKinds.Count);
+        // Nine Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp).
+        Assert.Equal(9, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -241,8 +254,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (eight distinct rows).
-        Assert.Equal(8, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (nine distinct rows).
+        Assert.Equal(9, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

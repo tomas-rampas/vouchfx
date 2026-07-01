@@ -65,6 +65,27 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
+    // Step-type resolution — bare mail-expect alias (single provider)
+    // =========================================================================
+
+    [Fact]
+    public void Build_BareMailExpect_SingleProvider_ResolvesAlias()
+    {
+        // Arrange — registry only has mail-expect.smtp; bare "mail-expect" should resolve to it.
+        var registry = RegistryWith(new StubProvider("mail-expect", "smtp"));
+        var doc = DocWithStep(StepSpecWith(id: "check-mail", type: "mail-expect"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("mail-expect", node.Kind.Family);
+        Assert.Equal("smtp", node.Kind.Provider);
+        Assert.Equal("mail-expect.smtp", node.CanonicalType);
+    }
+
+    // =========================================================================
     // Step-type resolution — ambiguous bare family
     // =========================================================================
 

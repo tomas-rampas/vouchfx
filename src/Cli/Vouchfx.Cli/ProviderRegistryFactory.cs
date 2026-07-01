@@ -12,6 +12,7 @@ using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
+using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.Script.Csharp;
@@ -38,7 +39,7 @@ internal static class ProviderRegistryFactory
     /// One anchor type per Core provider assembly.  The Core providers wired into the
     /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>db-assert.sqlserver</c>,
     /// <c>db-assert.mongodb</c>, <c>script.csharp</c>, <c>mq-publish.kafka</c>,
-    /// <c>mq-expect.kafka</c> and <c>webhook-listen.http</c>.
+    /// <c>mq-expect.kafka</c>, <c>webhook-listen.http</c> and <c>mail-expect.smtp</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
@@ -50,6 +51,7 @@ internal static class ProviderRegistryFactory
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
     };
 
     /// <summary>

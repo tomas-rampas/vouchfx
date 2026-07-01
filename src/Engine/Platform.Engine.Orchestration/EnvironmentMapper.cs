@@ -13,7 +13,7 @@
 //   • DisableDashboard = true path is enforced by HeadlessTopology; EnvironmentMapper is topology-agnostic.
 //
 // Provider registration table (s_dependencyRegistry):
-//   Nine dependency types are supported.  Each entry supplies:
+//   Ten dependency types are supported.  Each entry supplies:
 //   • Build — called inside the configure delegate; mutates the Aspire builder, populates
 //     serviceEndpoints for sidecar containers (kafka schema-registry), and returns
 //     (Retained, MostSpecific) IResourceBuilder<IResource> pairs:
@@ -100,7 +100,7 @@ public sealed record MappedTopology(
 /// </para>
 /// <para>
 /// <b>Dependency mapping</b> (each logical name → <see cref="DependencySpec"/>):
-/// Nine types are supported via the internal registration table.  Database-backed types
+/// Ten types are supported via the internal registration table.  Database-backed types
 /// (postgres, sqlserver, mysql, mongodb) gate on the <em>database</em> resource; server-only
 /// types (redis, elasticsearch, rabbitmq, nats, kafka) gate on the server itself.
 /// </para>
@@ -270,6 +270,35 @@ public static class EnvironmentMapper
                         gates.Add(name + "-sr");
                     return gates;
                 }),
+
+            // ---- mailpit: SMTP capture container with HTTP API + SMTP port ----
+            // Exposes:
+            //   • HTTP port 8025 (REST API + UI) — staged via serviceEndpoints[name]
+            //     → conn::<name> (dependency key; VarKeys.Connection).
+            //   • SMTP port 1025 — staged via serviceEndpoints[name+"-smtp"]
+            //     → svc::<name>-smtp (not in DependencyNames).
+            // Health gate: container's /api/v1/info endpoint via HTTP health check.
+
+            ["mailpit"] = new DependencyRegistration(
+                Build: (builder, name, spec, serviceEndpoints) =>
+                {
+                    var tag = string.IsNullOrEmpty(spec.Version) ? "latest" : spec.Version;
+                    var containerBuilder = builder
+                        .AddContainer(name, "axllent/mailpit", tag)
+                        .WithHttpEndpoint(targetPort: 8025, name: "http")
+                        .WithEndpoint(targetPort: 1025, name: "smtp")
+                        .WithHttpHealthCheck(path: "/api/v1/info", endpointName: "http");
+
+                    // Stage HTTP API URL as conn::<name> (picked up by mail-expect.smtp
+                    // provider via VarKeys.Connection(model.Target)).
+                    serviceEndpoints[name] = containerBuilder.GetEndpoint("http");
+                    // Stage SMTP URL as svc::<name>-smtp for docker tests and SUT config.
+                    serviceEndpoints[name + "-smtp"] = containerBuilder.GetEndpoint("smtp");
+
+                    var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
+                    return (retained, retained);
+                },
+                HealthGateNames: (name, _) => new[] { name }),
         };
 
     // -----------------------------------------------------------------------

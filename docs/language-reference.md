@@ -26,12 +26,13 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (8):
+Registered step types (9):
 
 - [`db-assert.mongodb`](#db-assertmongodb)
 - [`db-assert.postgres`](#db-assertpostgres)
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
+- [`mail-expect.smtp`](#mail-expectsmtp)
 - [`mq-expect.kafka`](#mq-expectkafka)
 - [`mq-publish.kafka`](#mq-publishkafka)
 - [`script.csharp`](#scriptcsharp)
@@ -105,6 +106,17 @@ Set `type: http.rest` to use this step.
 | `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. |
 | `expect` | `object` | Optional assertion block applied to the HTTP response. |
 | `headers` | `object` | Optional map of request header names to values. |
+
+### `mail-expect.smtp`
+
+Set `type: mail-expect.smtp` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | The expectation block: how many messages must match the criteria. |
+| `target` | `string` | Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries. |
 
 ### `mq-expect.kafka`
 
