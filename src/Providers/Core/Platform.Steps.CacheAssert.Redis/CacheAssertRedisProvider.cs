@@ -473,15 +473,22 @@ public sealed class CacheAssertRedisProvider
             // Redacts credential material from an exception message (§17 — no secrets in
             // observations).  Redis connection strings carry password=/user= tokens (comma-
             // separated).  Removes: (1) the full connection string if it appears literally;
-            // (2) password=/user= key-value pairs up to the next comma / semicolon / whitespace.
+            // (2) password=/pwd= key-value pairs (whitespace-tolerant values) up to the next
+            // comma or semicolon delimiter; (3) user= key-value pairs likewise, preserving
+            // the correct key label.
             internal static string RedactCredentials(string connStr, string message)
             {
                 if (!string.IsNullOrEmpty(connStr))
                     message = message.Replace(connStr, "***", System.StringComparison.Ordinal);
                 message = System.Text.RegularExpressions.Regex.Replace(
                     message,
-                    "(?:password|user)\\s*=\\s*[^,;\\s]+",
+                    "(?:password|pwd)\\s*=\\s*[^,;]+",
                     "password=***",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                message = System.Text.RegularExpressions.Regex.Replace(
+                    message,
+                    "user\\s*=\\s*[^,;]+",
+                    "user=***",
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 return message;
             }

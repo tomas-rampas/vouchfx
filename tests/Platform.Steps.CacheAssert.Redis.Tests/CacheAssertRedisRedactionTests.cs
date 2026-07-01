@@ -135,4 +135,111 @@ public sealed class CacheAssertRedisRedactionTests
         var result = Assert.IsType<string>(vars["__redact_result__"]);
         Assert.DoesNotContain("sup3rsecret", result, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// A <c>password=</c> value that CONTAINS A SPACE is scrubbed in full; the regex
+    /// value-class is whitespace-tolerant (<c>[^,;]+</c>) and stops only at a comma or
+    /// semicolon delimiter, not at the first space inside the secret.
+    /// </summary>
+    [Fact]
+    public async Task RedactCredentials_PasswordWithSpaces_IsFullyScrubbed()
+    {
+        const string connStr = "not-the-message";
+        const string craftedMessage = "auth error: password=sup3r secret pw was rejected";
+
+        var provider = new CacheAssertRedisProvider();
+        var model = new CacheAssertRedisModel(
+            Target: "cache",
+            Key: "k",
+            Operation: RedisOp.Get,
+            Field: null,
+            Expect: new RedisExpectation(Value: "v", Exists: null, Length: null));
+        var fragment = provider.Emit(model, new StubCompileContext("redact-space"));
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = CacheAssertRedis_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            csx,
+            additionalReferencePaths: new[]
+            {
+                typeof(StackExchange.Redis.ConnectionMultiplexer).Assembly.Location,
+                typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+                typeof(System.Globalization.CultureInfo).Assembly.Location,
+                typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            });
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        // The FULL secret — including the embedded space — must be absent from the output.
+        Assert.DoesNotContain("sup3r secret pw", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("sup3r", result, StringComparison.Ordinal);
+        Assert.Contains("password=***", result, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A <c>user=</c> token is rewritten as <c>user=***</c>, not <c>password=***</c>:
+    /// the two scrub patterns are targeted separately so the correct key label is preserved.
+    /// </summary>
+    [Fact]
+    public async Task RedactCredentials_UserToken_RedactsWithCorrectLabel()
+    {
+        const string connStr = "not-the-message";
+        const string craftedMessage = "auth error: user=alice was rejected";
+
+        var provider = new CacheAssertRedisProvider();
+        var model = new CacheAssertRedisModel(
+            Target: "cache",
+            Key: "k",
+            Operation: RedisOp.Get,
+            Field: null,
+            Expect: new RedisExpectation(Value: "v", Exists: null, Length: null));
+        var fragment = provider.Emit(model, new StubCompileContext("redact-user"));
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = CacheAssertRedis_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            csx,
+            additionalReferencePaths: new[]
+            {
+                typeof(StackExchange.Redis.ConnectionMultiplexer).Assembly.Location,
+                typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+                typeof(System.Globalization.CultureInfo).Assembly.Location,
+                typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            });
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        Assert.DoesNotContain("alice", result, StringComparison.Ordinal);
+        // Must emit "user=***" — not "password=***" — so the key label is preserved.
+        Assert.Contains("user=***", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("password=***", result, StringComparison.Ordinal);
+    }
 }

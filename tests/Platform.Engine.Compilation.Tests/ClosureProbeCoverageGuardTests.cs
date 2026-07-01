@@ -1,26 +1,26 @@
-// S10-D-02 — Memory-leak gate provably covers all TEN Core providers' closure.
+// S10-D-02 — Memory-leak gate provably covers every Core provider's closure.
 //
 // The permanent M1 memory-leak gate (ClosureMemoryProbeTests + the 5,000-iteration
 // harness in CI) exercises the transitive client closure of every Core provider inside
 // a collectible AssemblyLoadContext, so a singleton pinner that anchors a reference
 // across the collectible boundary is caught.  But that gate's value depends on the
-// closure probe ACTUALLY touching each provider's canonical client: an 11th Core provider
-// could be added (say, a `cache.redis` family) whose client never gets exercised, and
+// closure probe ACTUALLY touching each provider's canonical client: a new Core provider
+// could be added whose client never gets exercised, and
 // the leak gate would stay green while silently NOT covering it.
 //
 // This guard makes that failure impossible to introduce silently.  It pins, as the
-// source of truth, an explicit table mapping each of the nine Core providers to the
+// source of truth, an explicit table mapping each Core provider to the
 // canonical client / closure marker its leak coverage depends on, and then asserts:
 //
-//   1. The enumerated nine-provider table EQUALS the real Core-provider set — built by
-//      reflecting the SAME ten anchor assemblies SchemaFreezeTests /
+//   1. The enumerated Core-provider table EQUALS the real Core-provider set — built by
+//      reflecting the SAME anchor assemblies SchemaFreezeTests /
 //      VsCodeShippedSchemaSyncTests / the CLI's ProviderRegistryFactory use, frozen
-//      through StepKindRegistry.BuildAndFreeze.  So if an 11th Core provider is added (or
+//      through StepKindRegistry.BuildAndFreeze.  So if a new Core provider is added (or
 //      one is renamed/removed) without updating this table, THIS test fails — it can't
 //      go stale against the real registry.
 //
 //   2. ClosureProbeScript.Source actually CONTAINS each provider's closure marker.  So
-//      adding the 10th provider to the table (to satisfy #1) without also extending
+//      adding a new provider to the table (to satisfy #1) without also extending
 //      ClosureProbeScript to exercise its client makes THIS test fail too.
 //
 // The net effect: adding a Core provider is a deliberate three-place edit — the new
@@ -50,8 +50,8 @@ using Xunit;
 namespace Platform.Engine.Compilation.Tests;
 
 /// <summary>
-/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to the TEN
-/// Core providers, cross-checked against the real frozen registry so it cannot go stale.
+/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to every Core
+/// provider, cross-checked against the real frozen registry so it cannot go stale.
 /// </summary>
 public sealed class ClosureProbeCoverageGuardTests
 {
@@ -191,7 +191,7 @@ public sealed class ClosureProbeCoverageGuardTests
     };
 
     /// <summary>
-    /// The ten Core provider assemblies, anchored by one concrete provider type each —
+    /// All Core provider assemblies, anchored by one concrete provider type each —
     /// mirrors <see cref="SchemaFreezeTests"/>, <see cref="VsCodeShippedSchemaSyncTests"/>,
     /// and <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>.  Listing them
     /// by anchor type makes a renamed/removed provider a COMPILE error here, and building the
@@ -221,8 +221,8 @@ public sealed class ClosureProbeCoverageGuardTests
     /// <summary>
     /// The set of step kinds in <see cref="EnumeratedCoverage"/> must be exactly the set
     /// of <c>&lt;family&gt;.&lt;provider&gt;</c> keys the real frozen registry reports for
-    /// the eight Core provider assemblies.  This cross-check is what stops the table going
-    /// stale: a 10th Core provider (or a rename) changes the registry's key set and this
+    /// all Core provider assemblies.  This cross-check is what stops the table going
+    /// stale: a new Core provider (or a rename) changes the registry's key set and this
     /// equality breaks until the table is deliberately updated.
     /// </summary>
     [Fact]
@@ -280,7 +280,7 @@ public sealed class ClosureProbeCoverageGuardTests
     /// present verbatim in <see cref="ClosureProbeScript.Source"/>.  If a row is added to
     /// the table (to satisfy guard #1 when a provider is added) without extending the probe
     /// CSX to touch that client, this fails — closing the loop so the leak gate genuinely
-    /// covers all six providers' closure.
+    /// covers every Core provider's closure.
     /// </summary>
     [Theory]
     [MemberData(nameof(CoverageRows))]
