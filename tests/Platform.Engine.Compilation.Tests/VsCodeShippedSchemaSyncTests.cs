@@ -34,7 +34,9 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -75,6 +77,8 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
     };
 
     /// <summary>

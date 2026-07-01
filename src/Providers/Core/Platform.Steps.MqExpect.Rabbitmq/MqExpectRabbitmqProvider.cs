@@ -303,11 +303,10 @@ public sealed class MqExpectRabbitmqProvider
         "                    pendingTags.Add(result.DeliveryTag);\n" +
         "                }\n" +
         "            }\n" +
-        "            // Requeue every inspected-but-unmatched message on all normal exit paths\n" +
-        "            // (matched / cap reached / queue drained). Exception paths rely on the\n" +
-        "            // broker's channel-close automatic requeue — no nack needed in catch.\n" +
-        "            foreach (var pendingTag in pendingTags)\n" +
-        "                await channel.BasicNackAsync(pendingTag, multiple: false, requeue: true, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "            // Verdict is computed BEFORE the requeue loop so that a transient broker\n" +
+        "            // error during bulk nack (e.g. channel drop) cannot downgrade a genuine\n" +
+        "            // Pass to EnvironmentError. The matched message is already acked at this\n" +
+        "            // point; only the requeue of non-matching messages is at risk.\n" +
         "            if (matched)\n" +
         "            {\n" +
         "                verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
@@ -321,6 +320,13 @@ public sealed class MqExpectRabbitmqProvider
         "                verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
         "                observation = \"{\\\"matched\\\":false,\\\"scanned\\\":\" +\n" +
         "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "            }\n" +
+        "            // Best-effort requeue of inspected-but-unmatched messages.  Swallow any\n" +
+        "            // nack error: the broker auto-requeues unacked messages on channel close\n" +
+        "            // (happens immediately in the finally block), so silence here is safe.\n" +
+        "            foreach (var pendingTag in pendingTags)\n" +
+        "            {\n" +
+        "                try { await channel.BasicNackAsync(pendingTag, multiple: false, requeue: true, System.Threading.CancellationToken.None).ConfigureAwait(false); } catch { }\n" +
         "            }\n" +
         "        }\n" +
         "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
