@@ -154,6 +154,9 @@ public sealed class AstBuilderTests
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
         Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Both providers must be named in the error so the author knows ALL candidates.
+        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -168,6 +171,9 @@ public sealed class AstBuilderTests
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
         Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Both providers must be named in the error so the author knows ALL candidates.
+        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================

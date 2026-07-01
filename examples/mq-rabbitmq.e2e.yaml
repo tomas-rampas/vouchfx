@@ -47,6 +47,9 @@ steps:
       Direct publish step: sends an order-created event to the default exchange
       routed to the 'orders' queue.  Use this pattern when your test needs to
       seed a specific message rather than relying on the SUT to produce it.
+      NOTE: A Pass verdict confirms hand-off to the broker client only; delivery
+      is NOT confirmed (publisher confirms are a post-v1 feature).  Verify
+      delivery with a following mq-expect.rabbitmq step (see assert-order-event).
     target: rmq
     routingKey: orders
     payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'

@@ -10,7 +10,11 @@
 //   6.  Full compile-and-run (no docker): EnvironmentError when conn key is absent.
 //   7.  Full compile-and-run (no docker): EnvironmentError when the broker is unreachable.
 //   8.  Full compile-and-run (no docker): AMQP credentials are redacted from the observation.
+//   9.  Emit: RequiredHelpers includes Substitute_Helpers and Secret_Helpers sources (§17 parity).
+//  10.  Full compile-and-run (no docker): missing ${secret:env/…} in payloadContains →
+//       EnvironmentError, observation is REFERENCE-ONLY (secretError + source + path, §17).
 using Platform.Engine.Abstractions;
+using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
 using Platform.Steps.MqExpect.Rabbitmq;
@@ -181,6 +185,106 @@ public sealed class MqExpectRabbitmqEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.DoesNotContain("t0ps3cr3t", outcome.Observation, StringComparison.Ordinal);
         Assert.DoesNotContain("admin:t0ps3cr3t", outcome.Observation, StringComparison.Ordinal);
+    }
+
+    // ── 9. RequiredHelpers includes Substitute_Helpers and Secret_Helpers ─────────
+
+    /// <summary>
+    /// <see cref="CsxFragment.RequiredHelpers"/> must include the <c>Substitute_Helpers</c>
+    /// and <c>Secret_Helpers</c> sources so the emitted CSX can resolve
+    /// <c>{placeholder}</c> tokens and <c>${secret:source/path}</c> references at
+    /// runtime (§17 parity with Kafka providers).
+    /// </summary>
+    [Fact]
+    public void Emit_RequiredHelpers_IncludesSubstituteAndSecretSources()
+    {
+        var model = GetModel();
+        var ctx = new StubCompileContext("h-check");
+
+        var fragment = _provider.Emit(model, ctx);
+
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("Substitute_Helpers", StringComparison.Ordinal));
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("Secret_Helpers", StringComparison.Ordinal));
+    }
+
+    // ── 10. Compile round-trip: EnvironmentError via SECRET resolution (no docker) ─
+
+    /// <summary>
+    /// When the <c>payloadContains</c> match criterion carries a <c>${secret:env/…}</c>
+    /// reference whose environment variable is unset, the emitted helper must write
+    /// <see cref="Verdict.EnvironmentError"/> via secret resolution — NOT via a broker
+    /// connection.  A connection string is staged in <c>Vars</c> so the helper passes
+    /// the connection check and proceeds to secret resolution before any broker contact.
+    /// The observation is REFERENCE-ONLY (§17): it carries the <c>secretError</c> marker
+    /// plus the <c>env</c> source and the variable-name path, and never the
+    /// (non-existent) secret value.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_MissingSecretInPayloadContains_ReturnsEnvironmentError_ReferenceOnly()
+    {
+        // Unique env name so the variable is guaranteed absent.
+        var envName = "VOUCHFX_MQEXP_RMQ_MISSING_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(envName, null);
+        try
+        {
+            const string stepId = "expect-secret-step";
+            const string target = "rmq";
+
+            // payloadContains carries a missing secret reference.
+            var model = new MqExpectRabbitmqModel(
+                target,
+                "orders",
+                new RabbitmqMatch($"${{secret:env/{envName}}}", null, null));
+
+            var fragment = _provider.Emit(model, new StubCompileContext(stepId));
+            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+            var helpers = string.Join("\n", fragment.RequiredHelpers);
+            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
+
+            // Stage a connection value so the helper proceeds past the connection check
+            // and INTO secret resolution; no real broker is needed — resolution throws
+            // SecretResolutionException before any IConnection is built.
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Connection(target)] = "amqp://guest:guest@localhost:57904/",
+            };
+
+            // Real env-backed accessor — envName is unset, so resolution genuinely fails.
+            var accessor = new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }));
+            var globals = new ScriptGlobalVariables(
+                vars,
+                new Dictionary<string, object>(StringComparer.Ordinal),
+                accessor);
+
+            // Must NOT throw — exception is contained inside the step's guarded region.
+            await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+            var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+            Assert.True(vars.ContainsKey(outcomeKey),
+                $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+                $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+            var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+            Assert.NotNull(outcome.Observation);
+
+            // REFERENCE-ONLY contract (§17): observation names the error marker, the
+            // source, and the path — NEVER a secret value.
+            Assert.Contains("secretError", outcome.Observation!, StringComparison.Ordinal);
+            Assert.Contains("env", outcome.Observation!, StringComparison.Ordinal);
+            Assert.Contains(envName, outcome.Observation!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

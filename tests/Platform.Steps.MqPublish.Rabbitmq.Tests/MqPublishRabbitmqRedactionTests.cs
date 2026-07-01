@@ -46,13 +46,14 @@ public sealed class MqPublishRabbitmqRedactionTests
 
     /// <summary>
     /// <c>RedactAmqpUri</c> must strip the userinfo segment from an AMQP URI that
-    /// appears verbatim in the crafted message.
+    /// appears verbatim in the crafted message (step (a) — literal URI replacement).
     /// </summary>
     [Fact]
     public async Task RedactAmqpUri_WithCraftedMessageContainingSecret_SecretIsStripped()
     {
         // A message that DOES contain AMQP credentials, simulating a future driver
         // version or wrapper that echoes the full URI in an exception message.
+        const string amqpUri = "amqp://admin:s3cr3t@rmq-host:5672/";
         const string craftedMessage =
             "Connection failed for endpoint amqp://admin:s3cr3t@rmq-host:5672/ after 3 attempts";
 
@@ -64,6 +65,7 @@ public sealed class MqPublishRabbitmqRedactionTests
         var helpers = string.Join("\n", fragment.RequiredHelpers);
         const string scriptBody =
             "Vars[\"__redact_result__\"] = MqPublishRabbitmq_Helpers.RedactAmqpUri(" +
+            "Vars[\"__amqp_uri__\"] as string ?? string.Empty, " +
             "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
         var csx = $"{usings}\n{helpers}\n{scriptBody}";
 
@@ -73,6 +75,7 @@ public sealed class MqPublishRabbitmqRedactionTests
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
+            ["__amqp_uri__"] = amqpUri,
             ["__crafted_msg__"] = craftedMessage,
         };
         var globals = new ScriptGlobalVariables(vars);
@@ -85,15 +88,20 @@ public sealed class MqPublishRabbitmqRedactionTests
 
         Assert.DoesNotContain("s3cr3t", result, StringComparison.Ordinal);
         Assert.DoesNotContain("admin:s3cr3t", result, StringComparison.Ordinal);
-        Assert.Contains("***@", result, StringComparison.Ordinal);
+        // Step (a) replaces the literal URI with *** — no amqp://***@ pattern in result.
+        Assert.Contains("***", result, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Userinfo-only segment (no trailing path) is also redacted.
+    /// A password containing '@' is FULLY redacted — step (a) replaces the literal URI,
+    /// so the partial-redaction bug (old regex stopped at the first '@') cannot occur.
     /// </summary>
     [Fact]
     public async Task RedactAmqpUri_UserinfoBareHost_IsStripped()
     {
+        // amqpUri with '@' inside the password — old regex only redacted 'alice:p@',
+        // leaving 'ssw0rd' visible.  The new 3-step approach fully redacts via step (a).
+        const string amqpUri = "amqp://alice:p@ssw0rd@broker.example.com";
         const string craftedMessage =
             "broker refused connection: amqp://alice:p@ssw0rd@broker.example.com";
 
@@ -105,6 +113,7 @@ public sealed class MqPublishRabbitmqRedactionTests
         var helpers = string.Join("\n", fragment.RequiredHelpers);
         const string scriptBody =
             "Vars[\"__redact_result__\"] = MqPublishRabbitmq_Helpers.RedactAmqpUri(" +
+            "Vars[\"__amqp_uri__\"] as string ?? string.Empty, " +
             "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
         var csx = $"{usings}\n{helpers}\n{scriptBody}";
 
@@ -114,6 +123,7 @@ public sealed class MqPublishRabbitmqRedactionTests
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
+            ["__amqp_uri__"] = amqpUri,
             ["__crafted_msg__"] = craftedMessage,
         };
         var globals = new ScriptGlobalVariables(vars);
@@ -121,9 +131,12 @@ public sealed class MqPublishRabbitmqRedactionTests
         await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
 
         var result = Assert.IsType<string>(vars["__redact_result__"]);
+        // Full password must be absent (not just the portion before the '@').
         Assert.DoesNotContain("p@ssw0rd", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("ssw0rd", result, StringComparison.Ordinal);
         Assert.DoesNotContain("alice:", result, StringComparison.Ordinal);
-        Assert.Contains("***@", result, StringComparison.Ordinal);
+        // Step (a) replaces the literal URI; no amqp://***@ pattern expected.
+        Assert.Contains("***", result, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -132,6 +145,7 @@ public sealed class MqPublishRabbitmqRedactionTests
     [Fact]
     public async Task RedactAmqpUri_MessageWithoutUri_ReturnedUnchanged()
     {
+        const string amqpUri = "amqp://guest:guest@localhost:5672/";
         const string craftedMessage = "connection timed out after 5000ms";
 
         var provider = new MqPublishRabbitmqProvider();
@@ -142,6 +156,7 @@ public sealed class MqPublishRabbitmqRedactionTests
         var helpers = string.Join("\n", fragment.RequiredHelpers);
         const string scriptBody =
             "Vars[\"__redact_result__\"] = MqPublishRabbitmq_Helpers.RedactAmqpUri(" +
+            "Vars[\"__amqp_uri__\"] as string ?? string.Empty, " +
             "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
         var csx = $"{usings}\n{helpers}\n{scriptBody}";
 
@@ -151,6 +166,7 @@ public sealed class MqPublishRabbitmqRedactionTests
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
+            ["__amqp_uri__"] = amqpUri,
             ["__crafted_msg__"] = craftedMessage,
         };
         var globals = new ScriptGlobalVariables(vars);

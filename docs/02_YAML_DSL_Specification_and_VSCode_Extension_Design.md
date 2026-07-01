@@ -240,7 +240,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The Core provider is `mq-publish.kafka`, which ships with full schema-registry and Avro support. Bare-family alias: `type: mq-publish` resolves to `mq-publish.kafka` (the single provider in this family).
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-publish` is an ambiguous-family error.
 
 ### 5.2.1 mq-publish.kafka: plain payload
 
@@ -313,7 +313,7 @@ The `mq-publish.kafka` provider auto-registers the supplied inline schema under 
 
 ## 5.3 The mq-expect family
 
-An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The Core provider is `mq-expect.kafka`; bare-family alias: `type: mq-expect` resolves to `mq-expect.kafka` (the single provider in this family).
+An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-expect` is an ambiguous-family error.
 
 ### 5.3.1 mq-expect.kafka: plain payload
 
@@ -492,13 +492,15 @@ The community catalogue at platform launch is summarised in the table below. The
 |---|---|---|---|
 | http | http.rest | http.soap, http.graphql | http.signalr, http.long-polling |
 | rpc | — | rpc.grpc | rpc.thrift, rpc.json-rpc |
-| mq-publish | mq-publish.kafka | — | — |
-| mq-expect | mq-expect.kafka | — | — |
-| db-assert | db-assert.postgres | — | — |
+| mq-publish | mq-publish.kafka, mq-publish.rabbitmq | — | — |
+| mq-expect | mq-expect.kafka, mq-expect.rabbitmq | — | — |
+| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | — | — |
+| cache-assert | cache-assert.redis | — | — |
+| mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
 | script | script.csharp | — | — |
 
-*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine.*
+*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. Note: A bare family name (e.g., `type: mq-publish`) is accepted as an alias ONLY when the family has exactly one registered provider. Families with two or more providers require the explicit dotted form (e.g., `type: mq-publish.kafka`).*
 
 ### 5.7.1 How adding a provider feels to a contributor
 
@@ -510,7 +512,9 @@ Two patterns make the choice explicit and reviewable. First, the provider is nam
 
 > **Bare-family aliases**
 >
-> Families with a single registered provider accept a bare family name as a convenient alias. For example, `type: http` is equivalent to `type: http.rest`, `type: mq-publish` to `type: mq-publish.kafka`, `type: mq-expect` to `type: mq-expect.kafka`, and `type: script` to `type: script.csharp`. The canonical dotted form is always valid and is preferred in new test files. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> A bare family name (e.g., `type: http`, `type: script`) is accepted as a convenient alias **only when that family has exactly one registered provider**. When a family has two or more providers, the bare form is rejected as ambiguous, and the author must use the explicit dotted form.
+>
+> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), `mail-expect` (→ mail-expect.smtp), and `cache-assert` (→ cache-assert.redis). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq), and `mq-expect` (kafka, rabbitmq). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
 
 # 6. Variable Capture and Substitution
 

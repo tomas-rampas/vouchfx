@@ -137,6 +137,16 @@ public static class SingletonReset
         // The per-cycle Dispose() is sufficient; the pool is constant overhead.
         log.Add("MySqlConnector: real MySqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
 
+        // ── RabbitMQ.Client connection (mq-publish.rabbitmq / mq-expect.rabbitmq) ─
+        // The closure probe builds a REAL IConnection + IChannel pair on a bounded
+        // cadence and calls DisposeAsync() on each inside the probe's own finally on
+        // every cycle it builds them.  RabbitMQ.Client 7.x has NO global connection
+        // pool or process-wide singleton: each CreateConnectionAsync() constructs an
+        // independent TCP connection; DisposeAsync() closes the socket and joins the
+        // I/O threads.  There is nothing to reset at the harness level — the
+        // per-cycle DisposeAsync() is both necessary and sufficient.
+        log.Add("RabbitMQ.Client: per-cycle connection attempt is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
+
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is
         // referenced by the harness or the probe script, and no TracerProvider is

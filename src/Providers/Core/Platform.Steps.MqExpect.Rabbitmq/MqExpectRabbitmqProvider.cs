@@ -340,7 +340,7 @@ public sealed class MqExpectRabbitmqProvider
         "        {\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
-        "                System.Text.Json.JsonSerializer.Serialize(RedactAmqpUri(ex.Message)) + \"}\";\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(RedactAmqpUri(amqpUri ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
         "        finally\n" +
         "        {\n" +
@@ -422,13 +422,49 @@ public sealed class MqExpectRabbitmqProvider
         "        return true;\n" +
         "    }\n" +
         "\n" +
-        "    internal static string RedactAmqpUri(string message)\n" +
+        "    /// <summary>\n" +
+        "    /// Strips AMQP credentials from an error message before it reaches the\n" +
+        "    /// observation / event stream (§17).  Three-layer approach:\n" +
+        "    ///   (a) Literal full-URI replacement (catches URIs echoed verbatim).\n" +
+        "    ///   (b) Parsed-userinfo replacement (catches SetUri-style messages that\n" +
+        "    ///       echo only the userinfo, e.g. 'Bad user info in AMQP URI: user:pass').\n" +
+        "    ///       Also replaces just the password portion, handling passwords that\n" +
+        "    ///       contain colons (user:p:ass → 'p:ass' is extracted and replaced).\n" +
+        "    ///   (c) Regex fallback with greedy [^/\\s]* that matches past interior '@'\n" +
+        "    ///       characters to the LAST '@' before the host, so a password\n" +
+        "    ///       containing '@' (user:p@ss) is fully redacted.\n" +
+        "    /// </summary>\n" +
+        "    internal static string RedactAmqpUri(string amqpUri, string message)\n" +
         "    {\n" +
-        "        return System.Text.RegularExpressions.Regex.Replace(\n" +
-        "            message ?? string.Empty,\n" +
-        "            \"amqps?://[^@]+@\",\n" +
+        "        var redacted = message ?? string.Empty;\n" +
+        "        // (a) Literal full URI replacement.\n" +
+        "        if (!string.IsNullOrEmpty(amqpUri))\n" +
+        "            redacted = redacted.Replace(amqpUri, \"***\", System.StringComparison.Ordinal);\n" +
+        "        // (b) Parsed userinfo replacement.\n" +
+        "        try\n" +
+        "        {\n" +
+        "            var __uri = new System.Uri(amqpUri);\n" +
+        "            var __userInfo = __uri.UserInfo;\n" +
+        "            if (!string.IsNullOrEmpty(__userInfo))\n" +
+        "            {\n" +
+        "                redacted = redacted.Replace(__userInfo, \"***\", System.StringComparison.Ordinal);\n" +
+        "                var __colonIdx = __userInfo.IndexOf(':');\n" +
+        "                if (__colonIdx >= 0)\n" +
+        "                {\n" +
+        "                    var __password = __userInfo.Substring(__colonIdx + 1);\n" +
+        "                    if (!string.IsNullOrEmpty(__password))\n" +
+        "                        redacted = redacted.Replace(__password, \"***\", System.StringComparison.Ordinal);\n" +
+        "                }\n" +
+        "            }\n" +
+        "        }\n" +
+        "        catch { }\n" +
+        "        // (c) Regex fallback — greedy [^/\\s]* matches past interior '@' to the LAST one.\n" +
+        "        redacted = System.Text.RegularExpressions.Regex.Replace(\n" +
+        "            redacted,\n" +
+        "            \"amqps?://[^/\\\\s]*@\",\n" +
         "            \"amqp://***@\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
+        "        return redacted;\n" +
         "    }\n" +
         "}",
     };

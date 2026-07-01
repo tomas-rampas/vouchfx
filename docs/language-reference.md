@@ -211,6 +211,8 @@ Set `type: mq-publish.kafka` to use this step.
 
 ### `mq-publish.rabbitmq`
 
+A Pass verdict confirms hand-off to the broker client; delivery is NOT confirmed (publisher confirms are a post-v1 feature). Verify delivery with a following mq-expect.rabbitmq step.
+
 Set `type: mq-publish.rabbitmq` to use this step.
 
 **Required fields**
