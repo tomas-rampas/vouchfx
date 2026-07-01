@@ -203,7 +203,6 @@ public sealed class DbAssertMongodbDockerTests
         var connStr = suite.DiscoveredServices[DepName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
-        _output.WriteLine($"MongoDB conn string: {connStr}");
 
         await SeedAsync(connStr!);
         _output.WriteLine("Seed: orders collection populated with {orderId:1, status:\"SHIPPED\"}.");

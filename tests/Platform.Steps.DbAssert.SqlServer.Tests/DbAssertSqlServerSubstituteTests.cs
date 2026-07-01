@@ -452,6 +452,7 @@ public sealed class DbAssertSqlServerSubstituteTests
             typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
         var compiled = Platform.Engine.Compilation.RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 

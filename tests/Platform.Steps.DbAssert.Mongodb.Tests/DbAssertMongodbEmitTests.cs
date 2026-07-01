@@ -11,6 +11,10 @@
 //   8. CompileReferenceAssemblies: contains the MongoDB.Driver assembly.
 //   9. Full compile-and-run (no docker): EnvironmentError when conn key is absent.
 //  10. Full compile-and-run (no docker): EnvironmentError when conn string is malformed.
+//  11. Full compile-and-run (no docker): credential absent from observation on credentialed failure.
+//  12. Direct: RedactCredentials strips secret from a crafted message containing the secret.
+//  13. Direct: RedactCredentials handles mongodb+srv:// URIs.
+//  14. Full compile-and-run (no docker): runtime denylist catches {placeholder} resolving to $where.
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -335,6 +339,256 @@ public sealed class DbAssertMongodbEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
         Assert.NotNull(outcome.Observation);
+    }
+
+    // ── 11. Compile round-trip: credential absent from observation on failure ──────
+
+    /// <summary>
+    /// When the connection string contains credentials and the connection attempt fails,
+    /// the observation must NOT expose the password (§17 — no secrets in observations).
+    /// <c>RedactCredentials</c> inside <c>DbAssertMongodb_Helpers</c> sanitises the
+    /// full connection string and the MongoDB userinfo (user:pwd@) segment.
+    /// The URI includes <c>serverSelectionTimeoutMS=500</c> to ensure the test
+    /// completes in under a second rather than waiting for the 30s default timeout.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
+    {
+        const string stepId = "mongo-cred-leak-check";
+        const string connStr =
+            "mongodb://user:sup3rsecret@bad-host:1/db" +
+            "?serverSelectionTimeoutMS=500&connectTimeoutMS=500&socketTimeoutMS=500";
+        var model = MakeModel("dep", "orders", "{}", count: 1L);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(MongoDB.Driver.MongoClient).Assembly.Location,
+            typeof(MongoDB.Bson.BsonDocument).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection("dep")] = connStr,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+        Assert.DoesNotContain("sup3rsecret", outcome.Observation, StringComparison.Ordinal);
+    }
+
+    // ── 12. Direct test of RedactCredentials with a crafted dangerous message ────
+
+    /// <summary>
+    /// Directly tests the emitted <c>DbAssertMongodb_Helpers.RedactCredentials</c> method
+    /// by invoking it — via a compiled test CSX body — with a crafted message that
+    /// intentionally contains the password.  This verifies that the redaction logic
+    /// actually strips the secret rather than relying on the driver never emitting
+    /// credentials in its error message (which is driver-version-dependent).
+    /// Both the literal connection-string replacement path and the URI-pattern
+    /// (<c>mongodb://user:pwd@</c>) path are exercised.
+    /// </summary>
+    [Fact]
+    public async Task Emit_RedactCredentials_WithCraftedMessageContainingSecret_SecretIsStripped()
+    {
+        const string stepId = "mongo-redact-direct";
+        const string connStr = "mongodb://user:sup3rsecret@bad-host:1/db";
+        // Craft a message that DOES contain the secret, simulating a hypothetical driver
+        // that leaks credentials in its error output.  Without RedactCredentials this
+        // would expose the password; after redaction it must not.
+        const string craftedMessage =
+            "connection failed to mongodb://user:sup3rsecret@bad-host:1/db (timed out)";
+
+        var model = MakeModel("dep", "orders", "{}", count: 1L);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+
+        // CSX body: read connStr + message from Vars (avoids string-literal escaping hazards),
+        // call the internal RedactCredentials method directly, write result back to Vars.
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = DbAssertMongodb_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var additionalRefs = new[]
+        {
+            typeof(MongoDB.Driver.MongoClient).Assembly.Location,
+            typeof(MongoDB.Bson.BsonDocument).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        Assert.True(vars.ContainsKey("__redact_result__"),
+            "Expected '__redact_result__' in Vars after calling RedactCredentials.");
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        Assert.DoesNotContain("sup3rsecret", result, StringComparison.Ordinal);
+        Assert.Contains("***", result, StringComparison.Ordinal);
+    }
+
+    // ── 13. Direct test: RedactCredentials handles mongodb+srv:// URIs ────────────
+
+    /// <summary>
+    /// Verifies that <c>RedactCredentials</c> redacts Atlas SRV URIs
+    /// (<c>mongodb+srv://user:pwd@cluster</c>) as well as standard URIs.
+    /// This tests the Minor-1 fix: the regex must match both <c>mongodb://</c>
+    /// and <c>mongodb+srv://</c> userinfo segments.
+    /// </summary>
+    [Fact]
+    public async Task Emit_RedactCredentials_SrvUri_SecretIsStripped()
+    {
+        const string stepId = "mongo-redact-srv";
+        const string connStr = "mongodb+srv://user:sup3rsecret@cluster.mongodb.net/db";
+        const string craftedMessage =
+            "TLS handshake failed to mongodb+srv://user:sup3rsecret@cluster.mongodb.net/db";
+
+        var model = MakeModel("dep", "orders", "{}", count: 1L);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_srv_result__\"] = DbAssertMongodb_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var additionalRefs = new[]
+        {
+            typeof(MongoDB.Driver.MongoClient).Assembly.Location,
+            typeof(MongoDB.Bson.BsonDocument).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        Assert.True(vars.ContainsKey("__redact_srv_result__"),
+            "Expected '__redact_srv_result__' in Vars.");
+        var result = Assert.IsType<string>(vars["__redact_srv_result__"]);
+        Assert.DoesNotContain("sup3rsecret", result, StringComparison.Ordinal);
+        Assert.Contains("***", result, StringComparison.Ordinal);
+    }
+
+    // ── 14. Runtime denylist: placeholder resolving to $where → Fail ─────────────
+
+    /// <summary>
+    /// When a placeholder in key position resolves to a denied operator at runtime
+    /// (e.g. <c>Vars["op"] = "$where"</c>), the runtime denylist re-check inside
+    /// <c>ContainsDeniedOperatorRuntime</c> must catch it after <c>ResolveFilter</c>
+    /// but BEFORE any network call, producing <see cref="Verdict.Fail"/> (not
+    /// <see cref="Verdict.EnvironmentError"/>).
+    ///
+    /// The connection string deliberately points at a non-existent host
+    /// (<c>bad-host:1</c>).  The test completes without a network timeout because:
+    /// <list type="bullet">
+    ///   <item><c>new MongoClient()</c>, <c>GetDatabase()</c>, and <c>GetCollection()</c>
+    ///         are lazy — no connection is established until the first I/O call.</item>
+    ///   <item>The runtime denylist fires on the parsed <see cref="MongoDB.Bson.BsonDocument"/>
+    ///         (an in-process operation) and returns before <c>CountDocumentsAsync</c>
+    ///         (the first network call).</item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_RuntimeDenylistTriggeredByPlaceholder_ReturnsFail()
+    {
+        const string stepId = "mongo-runtime-deny";
+        // Filter template: the key position contains a {placeholder}.
+        // At runtime, Vars["op"] = "$where" makes ResolveFilter produce {"$where": 1},
+        // which the runtime re-check must detect before CountDocumentsAsync is called.
+        var model = MakeModel("dep", "orders", "{\"{op}\": 1}", count: 1L);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(MongoDB.Driver.MongoClient).Assembly.Location,
+            typeof(MongoDB.Bson.BsonDocument).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            // Present so the helper proceeds past the "absent conn key" guard.
+            // The host is unreachable; the denylist fires before CountDocumentsAsync.
+            [VarKeys.Connection("dep")] =
+                "mongodb://bad-host:1/db" +
+                "?serverSelectionTimeoutMS=500&connectTimeoutMS=500&socketTimeoutMS=500",
+            // This value resolves {op} → $where after ResolveFilter.
+            ["op"] = "$where",
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+        // Must be Fail, not EnvironmentError — an injection attempt is a test defect, not infra.
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+
+        // The observation must report the denylist message, confirming the runtime guard fired.
+        Assert.Contains("after placeholder substitution", outcome.Observation, StringComparison.Ordinal);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@
 //     is a C# 11 $$"""…""" block; 'using var' is illegal.
 using System.Globalization;
 using System.Text.Json;
+using MongoDB.Bson;
 using Platform.Engine.Abstractions;
 using Platform.Sdk;
 using YamlDotNet.RepresentationModel;
@@ -166,6 +167,29 @@ public sealed class DbAssertMongodbProvider
         if (string.IsNullOrWhiteSpace(model.Filter))
             errors.Add("db-assert.mongodb: 'filter' must not be empty.");
 
+        // (c2) filter must not use server-side JavaScript operators.
+        // Try-parse as BsonDocument; if it contains {placeholder} tokens the parse
+        // will fail — skip this check in that case (ExecuteAsync validates at runtime).
+        if (!string.IsNullOrWhiteSpace(model.Filter))
+        {
+            try
+            {
+                var filterDoc = BsonDocument.Parse(model.Filter);
+                if (ContainsDeniedOperator(filterDoc, out var foundKey))
+                {
+                    errors.Add(
+                        $"db-assert.mongodb: Filter uses server-side JavaScript operator " +
+                        $"'{foundKey}' which is not permitted; use structural query operators instead.");
+                }
+            }
+            catch (Exception)
+            {
+                // Filter contains {placeholder} tokens or other non-parseable content
+                // (BsonDocument.Parse throws FormatException or other Exception types).
+                // The operator check is enforced at runtime inside ExecuteAsync.
+            }
+        }
+
         // (d) expect must declare at least one assertion.
         if (model.Expect.Count is null
             && (model.Expect.Document is null || model.Expect.Document.Count == 0))
@@ -248,6 +272,9 @@ public sealed class DbAssertMongodbProvider
     {
         "static class DbAssertMongodb_Helpers\n" +
         "{\n" +
+        "    private static readonly System.Text.RegularExpressions.Regex _placeholderRegex =\n" +
+        "        new System.Text.RegularExpressions.Regex(\"{([A-Za-z_][A-Za-z0-9_]*)}\");\n" +
+        "\n" +
         "    /// <summary>\n" +
         "    /// Resolves {placeholder} tokens in a JSON filter template.\n" +
         "    /// Each resolved value is JSON-escaped before splicing to prevent\n" +
@@ -259,13 +286,12 @@ public sealed class DbAssertMongodbProvider
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        string filterTemplate)\n" +
         "    {\n" +
-        "        var regex = new System.Text.RegularExpressions.Regex(\"{([A-Za-z_][A-Za-z0-9_]*)}\" );\n" +
-        "        return regex.Replace(filterTemplate, m =>\n" +
+        "        return _placeholderRegex.Replace(filterTemplate, m =>\n" +
         "        {\n" +
         "            var name = m.Groups[1].Value;\n" +
         "            if (!vars.TryGetValue(name, out var val) || val is null)\n" +
         "                return m.Value;\n" +
-        "            var strVal = val is string sv ? sv : val.ToString() ?? string.Empty;\n" +
+        "            var strVal = val is string sv ? sv : System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;\n" +
         "            // JSON-escape the value (Serialize produces \"...\"); strip the outer quotes.\n" +
         "            // This prevents a value like {\"$gt\":\"\"} from injecting a BSON operator.\n" +
         "            var serialised = System.Text.Json.JsonSerializer.Serialize(strVal);\n" +
@@ -319,7 +345,7 @@ public sealed class DbAssertMongodbProvider
         "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"filter resolution error: \" + ex.Message) + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, \"filter resolution error: \" + ex.Message)) + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        MongoDB.Driver.MongoClient? client = null;\n" +
@@ -340,19 +366,38 @@ public sealed class DbAssertMongodbProvider
         "            catch (System.Exception ex)\n" +
         "            {\n" +
         "                verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
-        "                observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"filter parse error: \" + ex.Message) + \"}\";\n" +
+        "                observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, \"filter parse error: \" + ex.Message)) + \"}\";\n" +
         "                sw.Stop();\n" +
         "                client?.Dispose();\n" +
         "                client = null;\n" +
         "                vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(verdict, sw.ElapsedMilliseconds, observation);\n" +
         "                return;\n" +
         "            }\n" +
+        "            // Runtime guard: denied operators introduced by placeholder substitution → Fail (§11).\n" +
+        "            // A filter template can produce an illegal operator after substitution (e.g. a\n" +
+        "            // variable value containing '$where').  Catch it here before sending to MongoDB.\n" +
+        "            string __deniedOp;\n" +
+        "            if (ContainsDeniedOperatorRuntime(filterDoc, out __deniedOp))\n" +
+        "            {\n" +
+        "                verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"filter uses denied operator '\" + __deniedOp + \"' after placeholder substitution\") + \"}\";\n" +
+        "                sw.Stop();\n" +
+        "                client?.Dispose();\n" +
+        "                client = null;\n" +
+        "                vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "                return;\n" +
+        "            }\n" +
+        "            // Two-query approach: CountDocumentsAsync returns the exact count with no document cap,\n" +
+        "            // then Limit(1) fetches the first document only when field expectations are declared.\n" +
+        "            // Using Limit(1000).ToListAsync() would silently cap actualCount at 1000 (B1 blocker).\n" +
         "            var actualCount = await coll.CountDocumentsAsync(filterDoc).ConfigureAwait(false);\n" +
+        "            MongoDB.Bson.BsonDocument? firstDoc = expectFields.Length > 0\n" +
+        "                ? await coll.Find(filterDoc).Limit(1).FirstOrDefaultAsync(default(System.Threading.CancellationToken)).ConfigureAwait(false)\n" +
+        "                : null;\n" +
         "            string? failObservation = null;\n" +
         "            // Evaluate document-field expectations against the first matched document.\n" +
         "            if (expectFields.Length > 0)\n" +
         "            {\n" +
-        "                var firstDoc = await coll.Find(filterDoc).Limit(1).FirstOrDefaultAsync().ConfigureAwait(false);\n" +
         "                if (firstDoc is not null)\n" +
         "                {\n" +
         "                    for (int i = 0; i < expectFields.Length && failObservation is null; i++)\n" +
@@ -382,7 +427,7 @@ public sealed class DbAssertMongodbProvider
         "                        }\n" +
         "                    }\n" +
         "                }\n" +
-        "                else if (actualCount == 0 && expectFields.Length > 0)\n" +
+        "                else\n" +
         "                {\n" +
         "                    // No document matched at all; report the first field expectation as a mismatch.\n" +
         "                    failObservation =\n" +
@@ -415,13 +460,13 @@ public sealed class DbAssertMongodbProvider
         "        {\n" +
         "            // MongoDB-specific exception: network failure, auth error, etc. = EnvironmentError (§12.1).\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
-        "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
         "            // Any other connection or protocol failure = EnvironmentError (§12.1).\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
-        "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
         "        finally\n" +
         "        {\n" +
@@ -430,6 +475,87 @@ public sealed class DbAssertMongodbProvider
         "        }\n" +
         "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Redacts credential material from an exception message (§17 — no secrets in observations).\n" +
+        "    /// Removes: (1) the full connection string if it appears literally;\n" +
+        "    ///          (2) MongoDB userinfo (user:pwd@ segment in mongodb:// URI);\n" +
+        "    ///          (3) ADO-style Password=/Pwd= key-value pairs.\n" +
+        "    /// </summary>\n" +
+        "    internal static string RedactCredentials(string connStr, string message)\n" +
+        "    {\n" +
+        "        if (!string.IsNullOrEmpty(connStr))\n" +
+        "            message = message.Replace(connStr, \"***\", System.StringComparison.Ordinal);\n" +
+        "        // MongoDB URI: redact userinfo (mongodb://user:pwd@host → mongodb://***@host).\n" +
+        "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
+        "            message,\n" +
+        "            \"mongodb(?:\\\\+srv)?://[^@/]+@\",\n" +
+        "            \"mongodb://***@\",\n" +
+        "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
+        "        // ADO-style: redact Password= / Pwd= values.\n" +
+        "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
+        "            message,\n" +
+        "            \"(?:Password|Pwd)\\\\s*=\\\\s*[^;]+\",\n" +
+        "            \"Password=***\",\n" +
+        "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
+        "        return message;\n" +
+        "    }\n" +
+        "\n" +
+        "    // NOTE: Compile-time copy lives in ContainsDeniedOperator() below — keep both in sync.\n" +
+        "    /// <summary>\n" +
+        "    /// Recursively walks a BsonDocument and returns true if any key at any nesting level\n" +
+        "    /// is a server-side JavaScript operator ($where, $function, $accumulator).\n" +
+        "    /// Called at runtime after placeholder substitution, complementing the compile-time\n" +
+        "    /// Validate-phase check (which catches static operators but cannot check resolved values).\n" +
+        "    /// </summary>\n" +
+        "    private static bool ContainsDeniedOperatorRuntime(MongoDB.Bson.BsonDocument doc, out string foundKey)\n" +
+        "    {\n" +
+        "        foreach (var element in doc.Elements)\n" +
+        "        {\n" +
+        "            if (string.Equals(element.Name, \"$where\", System.StringComparison.Ordinal)\n" +
+        "                || string.Equals(element.Name, \"$function\", System.StringComparison.Ordinal)\n" +
+        "                || string.Equals(element.Name, \"$accumulator\", System.StringComparison.Ordinal))\n" +
+        "            {\n" +
+        "                foundKey = element.Name;\n" +
+        "                return true;\n" +
+        "            }\n" +
+        "            if (element.Value.IsBsonDocument\n" +
+        "                && ContainsDeniedOperatorRuntime(element.Value.AsBsonDocument, out foundKey))\n" +
+        "            {\n" +
+        "                return true;\n" +
+        "            }\n" +
+        "            if (element.Value.IsBsonArray\n" +
+        "                && ContainsDeniedOperatorArrayRuntime(element.Value.AsBsonArray, out foundKey))\n" +
+        "            {\n" +
+        "                return true;\n" +
+        "            }\n" +
+        "        }\n" +
+        "        foundKey = string.Empty;\n" +
+        "        return false;\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Recursively walks a BsonArray, delegating document elements to\n" +
+        "    /// ContainsDeniedOperatorRuntime and nested arrays back to this method.\n" +
+        "    /// </summary>\n" +
+        "    private static bool ContainsDeniedOperatorArrayRuntime(MongoDB.Bson.BsonArray array, out string foundKey)\n" +
+        "    {\n" +
+        "        foreach (var item in array)\n" +
+        "        {\n" +
+        "            if (item.IsBsonDocument\n" +
+        "                && ContainsDeniedOperatorRuntime(item.AsBsonDocument, out foundKey))\n" +
+        "            {\n" +
+        "                return true;\n" +
+        "            }\n" +
+        "            if (item.IsBsonArray\n" +
+        "                && ContainsDeniedOperatorArrayRuntime(item.AsBsonArray, out foundKey))\n" +
+        "            {\n" +
+        "                return true;\n" +
+        "            }\n" +
+        "        }\n" +
+        "        foundKey = string.Empty;\n" +
+        "        return false;\n" +
         "    }\n" +
         "}",
     };
@@ -727,5 +853,66 @@ public sealed class DbAssertMongodbProvider
             && node is YamlScalarNode scalar
             ? scalar.Value ?? string.Empty
             : string.Empty;
+    }
+
+    // NOTE: Runtime copy lives inside the emitted helper string above — keep both in sync.
+    /// <summary>
+    /// Recursively walks a <see cref="BsonDocument"/> and returns <see langword="true"/>
+    /// if any key at any nesting level is <c>$where</c>, <c>$function</c>, or
+    /// <c>$accumulator</c> (server-side JavaScript operators that bypass the BSON
+    /// injection guard).  <c>$expr</c> is intentionally NOT blocked.
+    /// </summary>
+    private static bool ContainsDeniedOperator(BsonDocument doc, out string foundKey)
+    {
+        foreach (var element in doc.Elements)
+        {
+            if (string.Equals(element.Name, "$where", StringComparison.Ordinal)
+                || string.Equals(element.Name, "$function", StringComparison.Ordinal)
+                || string.Equals(element.Name, "$accumulator", StringComparison.Ordinal))
+            {
+                foundKey = element.Name;
+                return true;
+            }
+
+            if (element.Value.IsBsonDocument
+                && ContainsDeniedOperator(element.Value.AsBsonDocument, out foundKey))
+            {
+                return true;
+            }
+
+            if (element.Value.IsBsonArray
+                && ContainsDeniedOperatorArray(element.Value.AsBsonArray, out foundKey))
+            {
+                return true;
+            }
+        }
+
+        foundKey = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Recursively walks a <see cref="BsonArray"/>, delegating document elements to
+    /// <see cref="ContainsDeniedOperator"/> and nested arrays back to this method.
+    /// </summary>
+    private static bool ContainsDeniedOperatorArray(BsonArray array, out string foundKey)
+    {
+        foreach (var item in array)
+        {
+            if (item.IsBsonDocument
+                && ContainsDeniedOperator(item.AsBsonDocument, out foundKey))
+            {
+                return true;
+            }
+
+            if (item.IsBsonArray
+                && ContainsDeniedOperatorArray(item.AsBsonArray, out foundKey))
+            {
+                return true;
+            }
+        }
+
+        foundKey = string.Empty;
+        return false;
     }
 }

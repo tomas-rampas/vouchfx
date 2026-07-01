@@ -456,7 +456,250 @@ public sealed class DbAssertMongodbProviderTests
             e.Contains("Dot-notation", StringComparison.Ordinal));
     }
 
-    // ── 14. Emit: StatementBlock braces ───────────────────────────────────────
+    // ── 14–18. Validate: filter operator denylist ($where / $function / $accumulator) ───
+
+    /// <summary>
+    /// A filter containing <c>$where</c> at the top level must be rejected by
+    /// Validate (server-side JS injection risk, §11).  The error message must
+    /// identify the offending operator.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarWhere_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$where\": \"this.age > 18\"}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$where", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A filter containing <c>$function</c> at the top level must be rejected
+    /// (server-side JS injection vector — §11 / FIX 2).
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarFunction_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$function\": {}}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$function", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A filter containing <c>$accumulator</c> at the top level must be rejected
+    /// (server-side JS injection vector — §11 / FIX 2).
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarAccumulator_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$accumulator\": {}}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$accumulator", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A plain filter with no denied operators must pass the operator-denylist
+    /// check.  This is a non-regression test — the denylist must not reject
+    /// ordinary field-equality filters.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithPlainFieldEquality_IsValid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"status\": \"active\"}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <summary>
+    /// A filter using <c>$expr</c> must <b>not</b> be rejected — $expr is a
+    /// safe aggregation-expression operator that does not execute JS code (§11).
+    /// Only <c>$where</c>, <c>$function</c>, and <c>$accumulator</c> are denied.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarExpr_IsValid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$expr\": {\"$gt\": [\"$quantity\", 100]}}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    // ── 15–17. Validate: ContainsDeniedOperator nested-recursion cases ───────────
+
+    /// <summary>
+    /// A filter containing <c>$where</c> nested inside a <c>$or</c> array must be
+    /// rejected.  <c>ContainsDeniedOperator</c> must recurse into array elements, not
+    /// only into nested documents at the top level.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarWhereNestedInOrArray_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        // $or is a safe logical operator; but its array element uses $where (JS injection).
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$or\":[{\"$where\":\"this.age > 18\"}]}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$where", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A filter containing <c>$function</c> nested inside <c>$expr</c> must be
+    /// rejected.  <c>ContainsDeniedOperator</c> must recurse into nested BsonDocuments.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarFunctionNestedInExpr_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        // $expr is allowed, but its argument uses $function (server-side JS).
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$expr\":{\"$function\":{}}}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$function", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A filter using <c>$expr</c> with a safe aggregation operator (<c>$gt</c>)
+    /// must NOT be rejected — <c>$gt</c> is not in the denied list and no JS code runs.
+    /// Ensures the recursion does not over-reject safe nested structures.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarExprAndSafeGtOperator_IsValid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        // $expr with $gt — safe aggregation expression; no JS execution.
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$expr\":{\"$gt\":[\"$amount\",0]}}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <summary>
+    /// A filter with <c>$where</c> nested inside an array-of-arrays
+    /// (<c>[[{"$where":"..."}]]</c>) must be rejected.
+    /// <c>ContainsDeniedOperatorArray</c> must recurse through nested BsonArrays, not
+    /// only through array elements that are directly BsonDocuments.
+    /// </summary>
+    [Fact]
+    public void Validate_FilterWithDollarWhereInNestedArrayOfArrays_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["mymongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        // Doubly-nested array: $or value is [[{ "$where": "…" }]]
+        var model = new DbAssertMongodbModel(
+            Target: "mymongo",
+            Collection: "orders",
+            Filter: "{\"$or\":[[{\"$where\":\"this.age > 18\"}]]}",
+            Expect: new MongoExpectation(Count: 1, Document: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("$where", StringComparison.Ordinal));
+    }
+
+    // ── 19. Emit: StatementBlock braces ───────────────────────────────────────
 
     /// <summary>
     /// The emitted StatementBlock must begin with '{' and end with '}'.

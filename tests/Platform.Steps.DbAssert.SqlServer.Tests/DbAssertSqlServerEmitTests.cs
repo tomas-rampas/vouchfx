@@ -254,6 +254,7 @@ public sealed class DbAssertSqlServerEmitTests
             typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
@@ -303,6 +304,7 @@ public sealed class DbAssertSqlServerEmitTests
             typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
@@ -327,6 +329,117 @@ public sealed class DbAssertSqlServerEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
         Assert.NotNull(outcome.Observation);
+    }
+
+    // ── 11. Compile round-trip: credential absent from observation on failure ──────
+
+    /// <summary>
+    /// When the connection string contains credentials and the connection attempt fails,
+    /// the observation must NOT expose the password (§17 — no secrets in observations).
+    /// <c>RedactCredentials</c> inside <c>DbAssertSqlServer_Helpers</c> sanitises
+    /// both the full connection string and ADO-style <c>Password=</c> segments.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
+    {
+        const string stepId = "sqlserver-cred-leak-check";
+        const string connStr = "Server=bad-host;Database=db;User Id=user;Password=sup3rsecret;Connect Timeout=1;";
+        var model = MakeModel("dep", "SELECT 1", null, rowCount: 1);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection("dep")] = connStr,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+        Assert.DoesNotContain("sup3rsecret", outcome.Observation, StringComparison.Ordinal);
+    }
+
+    // ── 12. Direct test of RedactCredentials with a crafted dangerous message ────
+
+    /// <summary>
+    /// Directly tests the emitted <c>DbAssertSqlServer_Helpers.RedactCredentials</c> method
+    /// by invoking it — via a compiled test CSX body — with a crafted message that
+    /// intentionally contains the password.  This verifies that the redaction logic
+    /// actually strips the secret rather than relying on the SqlClient driver never emitting
+    /// credentials in its error message (which is driver-version-dependent).
+    /// Both the literal connection-string replacement path and the ADO <c>Password=</c>
+    /// key-value pattern are exercised.
+    /// </summary>
+    [Fact]
+    public async Task Emit_RedactCredentials_WithCraftedMessageContainingSecret_SecretIsStripped()
+    {
+        const string stepId = "sqlserver-redact-direct";
+        const string connStr = "Server=bad-host;Database=db;User Id=user;Password=sup3rsecret;";
+        // Craft a message that DOES contain the password, simulating a hypothetical driver
+        // that leaks credentials in its error output.
+        const string craftedMessage =
+            "login failed for user 'user'. Connection: " +
+            "Server=bad-host;Database=db;User Id=user;Password=sup3rsecret;";
+
+        var model = MakeModel("dep", "SELECT 1", null, rowCount: 1);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = DbAssertSqlServer_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        Assert.True(vars.ContainsKey("__redact_result__"),
+            "Expected '__redact_result__' in Vars after calling RedactCredentials.");
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        Assert.DoesNotContain("sup3rsecret", result, StringComparison.Ordinal);
+        Assert.Contains("***", result, StringComparison.Ordinal);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────

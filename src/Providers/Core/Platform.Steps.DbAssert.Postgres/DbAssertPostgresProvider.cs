@@ -323,7 +323,7 @@ public sealed class DbAssertPostgresProvider
         "            vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "                Platform.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        Npgsql.NpgsqlConnection? conn = null;\n" +
@@ -412,14 +412,14 @@ public sealed class DbAssertPostgresProvider
         "            // Npgsql-specific exception: network failure, auth error, etc. = EnvironmentError (§12.1).\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
-        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
         "            // Any other connection or protocol failure = EnvironmentError (§12.1).\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
-        "                System.Text.Json.JsonSerializer.Serialize(ex.Message) + \"}\";\n" +
+        "                System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
         "        finally\n" +
         "        {\n" +
@@ -428,6 +428,23 @@ public sealed class DbAssertPostgresProvider
         "        }\n" +
         "        vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Redacts credential material from an exception message (§17 — no secrets in observations).\n" +
+        "    /// Removes: (1) the full connection string if it appears literally;\n" +
+        "    ///          (2) ADO-style Password=/Pwd= key-value pairs.\n" +
+        "    /// </summary>\n" +
+        "    internal static string RedactCredentials(string connStr, string message)\n" +
+        "    {\n" +
+        "        if (!string.IsNullOrEmpty(connStr))\n" +
+        "            message = message.Replace(connStr, \"***\", System.StringComparison.Ordinal);\n" +
+        "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
+        "            message,\n" +
+        "            \"(?:Password|Pwd)\\\\s*=\\\\s*[^;]+\",\n" +
+        "            \"Password=***\",\n" +
+        "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
+        "        return message;\n" +
         "    }\n" +
         "}",
     };
