@@ -70,10 +70,12 @@ public static class SingletonReset
         log.Add("Confluent.Kafka: native producer/consumer handles Built+Disposed per cycle in the probe finally; native lib loads once into the Default ALC (constant overhead), no global reset needed");
 
         // ── MongoDB.Driver cluster registry ───────────────────────────────────
-        // The closure probe creates a MongoClientSettings object but never builds a
-        // MongoClient, so the driver's internal ClusterRegistry is never populated.
-        // No reset is possible or necessary.
-        log.Add("MongoDB.Driver: MongoClientSettings created; no MongoClient built, no cluster registered");
+        // Phase 1b: the closure probe builds a REAL MongoClient every 50 iterations
+        // (inside the if(iter%50==0) block) and Disposes it in finally.  MongoDB.Driver
+        // 3.x registers the cluster in a static ClusterRegistry keyed by ClusterId;
+        // Dispose removes the entry, so the registry stays bounded.  No global reset
+        // is possible or necessary — the per-instance Dispose is sufficient.
+        log.Add("MongoDB.Driver: real MongoClient Built+Disposed per 50-iter cycle; ClusterRegistry entry removed on Dispose — no global reset needed");
 
         // ── StackExchange.Redis multiplexer pool ──────────────────────────────
         // ConfigurationOptions.Parse is a pure in-memory parse; no multiplexer or
@@ -107,6 +109,18 @@ public static class SingletonReset
         // it.  Nothing accumulates across iterations, so there is nothing to reset.  This entry
         // is documentation-only (mirroring the Polly/SchemaRegistry "stateless, no reset" notes).
         log.Add("Webhooks/IWebhookCaptureAccessor: by-reference Default-ALC stub with an immutable pre-seeded snapshot, read-only from the CSX, no global state — nothing to reset");
+
+        // ── Microsoft.Data.SqlClient connection pool (Phase 1b) ──────────────
+        // The closure probe builds a REAL SqlConnection every 50 iterations and
+        // Disposes it in finally.  SqlClient's connection pool is process-wide;
+        // SqlConnection.Dispose() returns the connection to the pool (or closes it
+        // if the pool is full), so no net accumulation occurs.  No explicit
+        // SqlConnection.ClearAllPools() is called because:
+        //   (a) the pool is bounded and shared with the Default ALC (§5);
+        //   (b) calling ClearAllPools() in the probe would interfer with any other
+        //       SqlClient usage in the process.
+        // The per-cycle Dispose() is sufficient; the pool is constant overhead.
+        log.Add("Microsoft.Data.SqlClient: real SqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
 
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is

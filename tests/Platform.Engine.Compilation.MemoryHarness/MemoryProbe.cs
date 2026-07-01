@@ -360,6 +360,14 @@ public static class MemoryProbe
             typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
             typeof(Avro.Schema).Assembly.Location,
 
+            // ── Phase 1b: db-assert.sqlserver closure ──────────────────────────
+            // The db-assert.sqlserver provider uses Microsoft.Data.SqlClient.SqlConnection
+            // (via SqlCommand/SqlDataReader).  The closure probe builds a real SqlConnection
+            // to exercise SNI initialisation and connection-pool static state.  Must be
+            // included here so Roslyn can resolve the type at compile time; the assembly is
+            // loaded in the Default ALC via the MemoryHarness.csproj package reference.
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

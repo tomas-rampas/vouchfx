@@ -90,6 +90,14 @@ public static class ClosureProbeScript
     ///     Under the closure run the harness stub seeds two requests; under the trivial
     ///     probe the null accessor returns an empty list and the loop is a no-op.
     ///   </description></item>
+    ///   <item><description>
+    ///     <b>Microsoft.Data.SqlClient real SqlConnection (Phase 1b)</b> — builds a REAL
+    ///     <c>SqlConnection</c> (exercises SNI initialisation and connection-string parsing
+    ///     static initialisers, the exact state <c>db-assert.sqlserver</c>'s emitted
+    ///     helper relies on), reads <c>ConnectionString.Length</c>, then <c>Dispose()</c>s
+    ///     in <c>finally</c>.  No <c>Open()</c> — the host does not exist.  Gated to
+    ///     <c>iter % 50 == 0</c> (same cadence as the Kafka native-handle build).
+    ///   </description></item>
     /// </list>
     /// </summary>
     /// <remarks>
@@ -192,6 +200,25 @@ public static class ClosureProbeScript
             finally
             {
                 mongoClient?.Dispose();
+            }
+
+            // ── Microsoft.Data.SqlClient real SqlConnection build + Dispose ─────
+            // Build a REAL SqlConnection (exercises static initialisers, connection string
+            // validation, SNI initialisation on first touch).  Read a trivial property
+            // (ConnectionString), then Dispose() in finally.  No Open() / query — the
+            // address does not exist.  Exercises the same discipline the db-assert.sqlserver
+            // provider's emitted helper uses (Microsoft.Data.SqlClient).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            Microsoft.Data.SqlClient.SqlConnection? sqlConn = null;
+            try
+            {
+                sqlConn = new Microsoft.Data.SqlClient.SqlConnection(
+                    "Server=localhost,1433;Database=probe_db;User Id=sa;Password=P@ssw0rd;TrustServerCertificate=true;");
+                Vars["sql_conn_str_len"] = sqlConn.ConnectionString.Length;
+            }
+            finally
+            {
+                sqlConn?.Dispose();
             }
         }
 

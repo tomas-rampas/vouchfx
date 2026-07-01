@@ -420,7 +420,43 @@ public sealed class DbAssertMongodbProviderTests
             e.Contains("mongodb dependency", StringComparison.Ordinal));
     }
 
-    // ── 13. Emit: StatementBlock braces ───────────────────────────────────────
+    // ── 13. Validate: dot-notation paths rejected (MAJOR M1 guard) ───────────
+
+    /// <summary>
+    /// A dot in an expect.document field name (e.g. "address.city") is silently treated
+    /// as a literal top-level key lookup by BsonDocument.Contains, producing an incorrect
+    /// Fail verdict even when the nested value matches.  Validate must reject it with a
+    /// clear error so authors get fast feedback rather than a mis-verdict at execution time.
+    /// </summary>
+    [Fact]
+    public void Validate_DocumentFieldWithDotNotation_IsInvalid()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["testmongo"] = "mongodb",
+        };
+        var ctx = new StubProjectContext(deps);
+
+        var model = new DbAssertMongodbModel(
+            Target: "testmongo",
+            Collection: "orders",
+            Filter: "{}",
+            Expect: new MongoExpectation(
+                Count: null,
+                Document: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["address.city"] = "NYC",
+                }));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("address.city", StringComparison.Ordinal) &&
+            e.Contains("Dot-notation", StringComparison.Ordinal));
+    }
+
+    // ── 14. Emit: StatementBlock braces ───────────────────────────────────────
 
     /// <summary>
     /// The emitted StatementBlock must begin with '{' and end with '}'.

@@ -182,7 +182,7 @@
                     "type": "integer"
                   },
                   "document": {
-                    "description": "Map of field path to expected string value, asserted against the first matched document.",
+                    "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
                     "type": "object",
                     "additionalProperties": {
                       "type": "string"

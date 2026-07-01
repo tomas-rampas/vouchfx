@@ -86,7 +86,7 @@ public sealed class DbAssertMongodbProvider
                   "type": "integer"
                 },
                 "document": {
-                  "description": "Map of field path to expected string value, asserted against the first matched document.",
+                  "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
                   "type": "object",
                   "additionalProperties": { "type": "string" }
                 }
@@ -174,7 +174,23 @@ public sealed class DbAssertMongodbProvider
                 "db-assert.mongodb: 'expect' must specify count and/or document.");
         }
 
-        // (e) dependency reconciliation: target must name a declared mongodb dependency.
+        // (e) document field names must be top-level keys; dot-notation paths are not
+        //     supported in v1. A dotted key silently produces an incorrect Fail because
+        //     firstDoc.Contains("a.b") is always false even when "a.b" is a nested path.
+        //     Reject it here with a loud error rather than allowing a mis-verdict.
+        if (model.Expect.Document is not null)
+        {
+            foreach (var fieldName in model.Expect.Document.Keys)
+            {
+                if (fieldName.Contains('.', StringComparison.Ordinal))
+                    errors.Add(
+                        $"db-assert.mongodb: expect.document field name '{fieldName}' contains " +
+                        "'.'. Dot-notation paths are not supported in v1. " +
+                        "Use a flat (top-level) field name instead.");
+            }
+        }
+
+        // (f) dependency reconciliation: target must name a declared mongodb dependency.
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
             if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
