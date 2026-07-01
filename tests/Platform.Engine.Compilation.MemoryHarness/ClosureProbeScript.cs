@@ -220,6 +220,25 @@ public static class ClosureProbeScript
             {
                 sqlConn?.Dispose();
             }
+
+            // ── MySqlConnector real MySqlConnection build + Dispose ─────────────
+            // Build a REAL MySqlConnection (exercises static initialisers, connection
+            // string parsing, pool registration logic).  Read a trivial property
+            // (ConnectionString), then Dispose() in finally.  No Open() / query —
+            // the host does not exist.  Exercises the same discipline the
+            // db-assert.mysql provider's emitted helper uses (MySqlConnector).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            MySqlConnector.MySqlConnection? mysqlConn = null;
+            try
+            {
+                mysqlConn = new MySqlConnector.MySqlConnection(
+                    "Server=localhost;Database=probe;Uid=probe;Pwd=probe;");
+                Vars["mysql_conn_str_len"] = mysqlConn.ConnectionString.Length;
+            }
+            finally
+            {
+                mysqlConn?.Dispose();
+            }
         }
 
         // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─

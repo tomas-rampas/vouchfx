@@ -368,6 +368,14 @@ public static class MemoryProbe
             // loaded in the Default ALC via the MemoryHarness.csproj package reference.
             typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
 
+            // ── Phase 1c: db-assert.mysql closure ─────────────────────────────
+            // The db-assert.mysql provider uses MySqlConnector.MySqlConnection.  The closure
+            // probe builds and disposes a real MySqlConnection every 50th iteration to exercise
+            // the connection-pool static state.  Must be included here so Roslyn can resolve
+            // MySqlConnector types at compile time; the assembly loads in the Default ALC via
+            // the MemoryHarness.csproj PackageReference.
+            typeof(MySqlConnector.MySqlConnection).Assembly.Location,
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

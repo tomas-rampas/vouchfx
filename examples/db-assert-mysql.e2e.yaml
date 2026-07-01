@@ -1,0 +1,35 @@
+metadata:
+  name: db-assert-mysql-example
+  description: >
+    Example showing db-assert.mysql: POST to a REST service that creates an order,
+    then assert the row appears in MySQL with the expected status.
+
+environment:
+  services:
+    - id: orders-api
+      image: "ghcr.io/example/orders-api:latest"
+  dependencies:
+    ordersdb:
+      type: mysql
+
+steps:
+  - id: create-order
+    type: http.rest
+    method: POST
+    url: "http://orders-api/orders"
+    body: '{"item":"widget","qty":3}'
+    expect:
+      statusCode: 201
+    capture:
+      orderId: "$.id"
+
+  - id: assert-order-in-mysql
+    type: db-assert.mysql
+    target: ordersdb
+    query: "SELECT id, status FROM orders WHERE id = @orderId"
+    parameters:
+      orderId: "{orderId}"
+    expect:
+      rowCount: 1
+      row:
+        status: "PENDING"

@@ -27,6 +27,7 @@ using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Mongodb;
+using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
@@ -66,6 +67,7 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -76,7 +78,7 @@ public sealed class VsCodeShippedSchemaSyncTests
     /// <summary>
     /// The schema the VSCode extension ships must be byte-for-byte identical to the
     /// schema the engine's <see cref="SchemaComposer"/> composes from the full
-    /// six-Core-provider registry.  If this fails, the extension's editor view of the
+    /// Core-provider registry.  If this fails, the extension's editor view of the
     /// language has drifted from the compiler's view — the core DSL §9 invariant.
     /// </summary>
     [Fact]

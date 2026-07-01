@@ -32,6 +32,7 @@ using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.DbAssert.Mongodb;
+using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
@@ -69,6 +70,7 @@ public sealed class SchemaFreezeTests
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -77,7 +79,7 @@ public sealed class SchemaFreezeTests
     };
 
     /// <summary>
-    /// The composed v1 JSON Schema for the full six-Core-provider registry must
+    /// The composed v1 JSON Schema for the full Core-provider registry must
     /// be byte-for-byte identical to the committed golden.  If this fails, the v1
     /// schema has drifted.
     /// </summary>

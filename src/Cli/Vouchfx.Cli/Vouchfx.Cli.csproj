@@ -97,6 +97,8 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj"
+                      IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
@@ -114,6 +116,7 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="MongoDB.Driver" />
+    <PackageReference Include="MySqlConnector" />
   </ItemGroup>
 
 </Project>

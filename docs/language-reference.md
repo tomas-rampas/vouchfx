@@ -26,9 +26,10 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (9):
+Registered step types (10):
 
 - [`db-assert.mongodb`](#db-assertmongodb)
+- [`db-assert.mysql`](#db-assertmysql)
 - [`db-assert.postgres`](#db-assertpostgres)
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
@@ -50,6 +51,24 @@ Set `type: db-assert.mongodb` to use this step.
 | `expect` | `object` | Assertion block declaring the expected query outcome. At least one of count or document must be specified. |
 | `filter` | `string` | JSON filter document. May contain {placeholder} tokens resolved at runtime. |
 | `target` | `string` | Logical name of the mongodb dependency to query, as declared under environment.dependencies. |
+
+### `db-assert.mysql`
+
+Set `type: db-assert.mysql` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
+| `query` | `string` | The SQL query to execute. May be a multi-line literal. |
+| `target` | `string` | Logical name of the mysql dependency to query, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
 
 ### `db-assert.postgres`
 

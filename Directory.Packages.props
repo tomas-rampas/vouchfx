@@ -45,6 +45,7 @@
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.1" />
+    <PackageVersion Include="MySqlConnector" Version="2.4.0" />
     <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
     <PackageVersion Include="MongoDB.Driver" Version="3.8.1" />
     <PackageVersion Include="StackExchange.Redis" Version="2.13.1" />

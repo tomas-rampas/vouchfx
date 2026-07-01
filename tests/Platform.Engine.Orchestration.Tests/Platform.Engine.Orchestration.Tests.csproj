@@ -34,6 +34,8 @@
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <!-- MongoDB.Driver: required by DbAssertMongodbDockerTests (compile-ref + seed). -->
     <PackageReference Include="MongoDB.Driver" />
+    <!-- MySqlConnector: required by DbAssertMysqlDockerTests (compile-ref + seed). -->
+    <PackageReference Include="MySqlConnector" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,6 +54,9 @@
                       IsAspireProjectResource="false" />
     <!-- db-assert.mongodb provider: used by DbAssertMongodbDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.mysql provider: used by DbAssertMysqlDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj"
                       IsAspireProjectResource="false" />
     <!-- Sprint 4 capstone: http.rest provider + ScenarioRunner (Runtime). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"

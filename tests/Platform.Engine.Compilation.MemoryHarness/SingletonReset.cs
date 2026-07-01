@@ -122,6 +122,15 @@ public static class SingletonReset
         // The per-cycle Dispose() is sufficient; the pool is constant overhead.
         log.Add("Microsoft.Data.SqlClient: real SqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
 
+        // ── MySqlConnector connection pool (db-assert.mysql) ─────────────────
+        // The closure probe builds a REAL MySqlConnection every 50 iterations and
+        // Disposes it in finally.  MySqlConnector's connection pool is process-wide;
+        // Dispose() returns the connection to the pool (or closes it if the pool is
+        // full), so no net accumulation occurs.  No explicit ClearPoolAsync() is
+        // called because the pool is bounded and shared with the Default ALC (§5).
+        // The per-cycle Dispose() is sufficient; the pool is constant overhead.
+        log.Add("MySqlConnector: real MySqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
+
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is
         // referenced by the harness or the probe script, and no TracerProvider is

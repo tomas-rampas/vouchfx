@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsNineDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsTenDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(9, assemblies.Length);
-        // Nine *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(9, assemblies.Distinct().Count());
+        Assert.Equal(10, assemblies.Length);
+        // Ten *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(10, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheNineCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheTenCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -42,6 +42,7 @@ public sealed class ProviderRegistryFactoryTests
                      "db-assert.postgres",
                      "db-assert.sqlserver",
                      "db-assert.mongodb",
+                     "db-assert.mysql",
                      "script.csharp",
                      "mq-publish.kafka",
                      "mq-expect.kafka",
