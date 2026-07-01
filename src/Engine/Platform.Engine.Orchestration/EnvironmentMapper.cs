@@ -282,7 +282,9 @@ public static class EnvironmentMapper
             ["mailpit"] = new DependencyRegistration(
                 Build: (builder, name, spec, serviceEndpoints) =>
                 {
-                    var tag = string.IsNullOrEmpty(spec.Version) ? "latest" : spec.Version;
+                    // Pin a stable tag for determinism (§4): never float on 'latest'.
+                    // Authors may still override via the dependency's 'version' field.
+                    var tag = string.IsNullOrEmpty(spec.Version) ? "v1.21" : spec.Version;
                     var containerBuilder = builder
                         .AddContainer(name, "axllent/mailpit", tag)
                         .WithHttpEndpoint(targetPort: 8025, name: "http")

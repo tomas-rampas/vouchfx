@@ -445,6 +445,82 @@ public sealed class EnvironmentMapperTests
     }
 
     // -----------------------------------------------------------------------
+    // Map_MailpitDependency_AddsContainerWithHttpAndSmtpEndpoints
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mailpit dependency provisions an <c>axllent/mailpit</c> container (pinned tag)
+    /// exposing BOTH the HTTP API endpoint (targetPort 8025, name <c>"http"</c>) and the
+    /// SMTP endpoint (targetPort 1025, name <c>"smtp"</c>), with an HTTP health check on
+    /// the <c>"http"</c> endpoint.  The container is health-gated and listed among the
+    /// managed dependency names.
+    /// </summary>
+    /// <remarks>
+    /// Non-Docker: inspects the in-memory resource graph after <c>Configure</c> but before
+    /// <c>StartAsync</c>, so it asserts the container image/tag, both endpoint annotations,
+    /// the health-check annotation, and the gate/dependency membership — all set at builder
+    /// time.  Mirrors <see cref="Map_KafkaWithSchemaRegistry_AddsRegistryContainer"/>.
+    /// </remarks>
+    [Fact]
+    public void Map_MailpitDependency_AddsContainerWithHttpAndSmtpEndpoints()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mp"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — a ContainerResource named "mp" was added.
+        var mailpit = builder.Resources
+            .OfType<ContainerResource>()
+            .SingleOrDefault(r => r.Name == "mp");
+        Assert.NotNull(mailpit);
+
+        // Assert — it uses the axllent/mailpit image with the pinned default tag (v1.21).
+        var imageAnnotation = mailpit!.Annotations
+            .OfType<ContainerImageAnnotation>()
+            .SingleOrDefault();
+        Assert.NotNull(imageAnnotation);
+        Assert.Equal("axllent/mailpit", imageAnnotation!.Image);
+        Assert.Equal("v1.21", imageAnnotation.Tag);
+
+        // Assert — the HTTP API endpoint annotation (targetPort 8025, name "http").
+        var httpEndpoint = mailpit.Annotations
+            .OfType<EndpointAnnotation>()
+            .SingleOrDefault(a => a.Name == "http");
+        Assert.NotNull(httpEndpoint);
+        Assert.Equal(8025, httpEndpoint!.TargetPort);
+
+        // Assert — the SMTP endpoint annotation (targetPort 1025, name "smtp").
+        var smtpEndpoint = mailpit.Annotations
+            .OfType<EndpointAnnotation>()
+            .SingleOrDefault(a => a.Name == "smtp");
+        Assert.NotNull(smtpEndpoint);
+        Assert.Equal(1025, smtpEndpoint!.TargetPort);
+
+        // Assert — an HTTP health-check annotation is registered (WithHttpHealthCheck on
+        // the "http" endpoint).  HealthCheckAnnotation carries a non-empty Key.
+        Assert.Contains(
+            mailpit.Annotations.OfType<HealthCheckAnnotation>(),
+            h => !string.IsNullOrEmpty(h.Key));
+
+        // Assert — "mp" is health-gated and listed as a managed dependency.
+        Assert.Contains("mp", mapped.HealthGateResourceNames);
+        Assert.Contains("mp", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
     // Map_KafkaWithoutSchemaRegistry_AddsNoRegistry
     // -----------------------------------------------------------------------
 

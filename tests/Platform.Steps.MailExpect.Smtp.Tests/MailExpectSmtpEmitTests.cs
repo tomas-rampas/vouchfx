@@ -431,21 +431,20 @@ public sealed class MailExpectSmtpEmitTests
         Assert.Contains("false", outcome.Observation!, StringComparison.Ordinal);
     }
 
-    // ── 15. BodyContains fetches detail endpoint (second call) → Pass ─────────────
+    // ── 15. BodyContains fetches detail endpoint (per-candidate call) → Pass ──────
 
     /// <summary>
-    /// When <c>body-contains</c> is declared, the emitted helper must issue a
-    /// second HTTP call (<c>GET /api/v1/message/{ID}</c>) to fetch the full body
-    /// when the Snippet in the messages list does not already contain the text.
-    /// Confirms the second-call path writes <see cref="Verdict.Pass"/> when the
-    /// full body text matches.
+    /// When <c>body-contains</c> is declared, the emitted helper UNCONDITIONALLY issues a
+    /// second HTTP call (<c>GET /api/v1/message/{ID}</c>) per candidate to fetch the full
+    /// plain-text body — it does not inspect the list <c>Snippet</c>.  Confirms the
+    /// detail-call path writes <see cref="Verdict.Pass"/> when the fetched body text matches.
     /// </summary>
     [Fact]
     public async Task Emit_CompileAndRun_BodyContainsMatch_SecondCallPath_ReturnsPass()
     {
         const string stepId = "mail-body-contains";
-        // Snippet in the list response is short and does NOT contain "click here"
-        // — this forces the emitted helper to issue the detail-endpoint call.
+        // The helper fetches the full body from the detail endpoint unconditionally for
+        // body-contains; the list Snippet is never consulted.
         var model = MakeModel("mymail", new MailMatch(BodyContains: "click here"));
         var ctx = new StubCompileContext(stepId);
         var (csx, refs) = BuildCsx(model, ctx);
@@ -481,6 +480,111 @@ public sealed class MailExpectSmtpEmitTests
             $"Expected Vars to contain key '{outcomeKey}'. Actual: [{string.Join(", ", vars.Keys)}]");
         var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
         Assert.Equal(Verdict.Pass, outcome.Verdict);
+    }
+
+    // ── 16. BodyContains + failing detail fetch → candidate skipped → Fail ───────
+
+    /// <summary>
+    /// FIX 3 regression: when <c>body-contains</c> is declared and the per-candidate
+    /// detail fetch (<c>GET /api/v1/message/{ID}</c>) fails (HTTP 500), the emitted
+    /// helper must treat THAT candidate as NON-matching (skip it) — never a terminal
+    /// step <see cref="Verdict.EnvironmentError"/>.  Here the single candidate matches
+    /// <c>To</c> and <c>subject-contains</c> from the list, but its body fetch 500s, so
+    /// zero messages match.  With no explicit <c>count</c> the at-least-one expectation
+    /// fails, yielding <see cref="Verdict.Fail"/> (NOT EnvironmentError, NOT Inconclusive).
+    /// </summary>
+    [Fact]
+    public async Task Emit_BodyContains_DetailFetchFailure_TreatsAsCandidateNonMatching()
+    {
+        const string stepId = "mail-detail-fetch-500";
+        const string target = "mailpit-detail-fail";
+
+        // The candidate matches To + subject-contains from the list; body-contains forces a
+        // per-candidate detail fetch, which the mock fails with 500.
+        var model = MakeModel(target, new MailMatch(
+            To: "user@example.com",
+            SubjectContains: "Welcome",
+            BodyContains: "expected"));
+        var ctx = new StubCompileContext(stepId);
+        var (csx, refs) = BuildCsx(model, ctx);
+
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: refs);
+
+        // List: exactly one candidate matching To + Subject, id "msg-1".
+        var listJson = """
+            {
+              "messages": [
+                {
+                  "ID": "msg-1",
+                  "To": [{"Name": "User", "Address": "user@example.com"}],
+                  "Subject": "Welcome aboard",
+                  "Snippet": ""
+                }
+              ]
+            }
+            """;
+
+        using var listener = StartMailpitWithFailingDetail(out var baseUrl, listJson);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(target)] = baseUrl,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain key '{outcomeKey}'. Actual: [{string.Join(", ", vars.Keys)}]");
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+        // The candidate's detail fetch failed → treated as non-matching (skipped), so zero
+        // messages matched → the at-least-one expectation fails → Fail.  Crucially NOT
+        // EnvironmentError (a failed detail fetch is not terminal) and NOT Inconclusive.
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.Contains("false", outcome.Observation!, StringComparison.Ordinal);
+    }
+
+    // ── 17. List call failure → EnvironmentError (outer path stays intact) ────────
+
+    /// <summary>
+    /// FIX 3 regression (counterpart): a failure of the LIST call
+    /// (<c>GET /api/v1/messages?limit=100</c>, here HTTP 500) is TERMINAL — the
+    /// <c>HttpRequestException</c> propagates to the helper's outer
+    /// <c>catch (System.Exception)</c> handler and classifies the step as
+    /// <see cref="Verdict.EnvironmentError"/>.  This proves the per-candidate skip logic
+    /// did NOT swallow the outer environment-error path.
+    /// </summary>
+    [Fact]
+    public async Task Emit_ListCallFailure_ReturnsEnvironmentError()
+    {
+        const string stepId = "mail-list-500";
+        const string target = "mailpit-list-fail";
+
+        var model = MakeModel(target, new MailMatch(To: "user@example.com"));
+        var ctx = new StubCompileContext(stepId);
+        var (csx, refs) = BuildCsx(model, ctx);
+
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: refs);
+
+        // The mock returns 500 for every request, so the list call itself fails.
+        using var listener = StartMailpitAlways500(out var baseUrl);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(target)] = baseUrl,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId(stepId));
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain key '{outcomeKey}'. Actual: [{string.Join(", ", vars.Keys)}]");
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────
@@ -617,6 +721,116 @@ public sealed class MailExpectSmtpEmitTests
 
                 ctx.Response.ContentType = "application/json";
                 ctx.Response.StatusCode = 200;
+                var bytes = Encoding.UTF8.GetBytes(responseBody);
+                ctx.Response.ContentLength64 = bytes.Length;
+                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                ctx.Response.OutputStream.Close();
+            }
+        })
+        { IsBackground = true };
+        thread.Start();
+
+        return new DisposableAction(() =>
+        {
+            cts.Cancel();
+            listener.Stop();
+            listener.Close();
+        });
+    }
+
+    /// <summary>
+    /// Starts a minimal HttpListener that returns a normal 200
+    /// <paramref name="messagesJson"/> for the list call
+    /// (<c>GET /api/v1/messages</c>) but 500 for every per-candidate detail request
+    /// (<c>GET /api/v1/message/{ID}</c>).  Unlike <see cref="StartMockMailpit"/> the
+    /// status code is set CONDITIONALLY (not overwritten to 200 at the end), so the
+    /// 500 actually reaches the client — exercising the FIX 3 per-candidate skip path.
+    /// </summary>
+    private static DisposableAction StartMailpitWithFailingDetail(
+        out string baseUrl, string messagesJson)
+    {
+        var listener = new HttpListener();
+        var port = GetFreePort();
+        baseUrl = $"http://127.0.0.1:{port}";
+        listener.Prefixes.Add(baseUrl + "/");
+        listener.Start();
+
+        var cts = new CancellationTokenSource();
+        var thread = new Thread(() =>
+        {
+            while (!cts.Token.IsCancellationRequested)
+            {
+                HttpListenerContext ctx;
+                try { ctx = listener.GetContext(); }
+                catch { break; }
+
+                var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+                int statusCode;
+                string responseBody;
+
+                // Check the detail path FIRST: "/api/v1/message/…" is more specific than the
+                // list path "/api/v1/messages" (no trailing slash), so the two never collide.
+                if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
+                {
+                    statusCode = 500;
+                    responseBody = """{"error":"internal server error"}""";
+                }
+                else if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
+                {
+                    statusCode = 200;
+                    responseBody = messagesJson;
+                }
+                else
+                {
+                    statusCode = 404;
+                    responseBody = "{}";
+                }
+
+                ctx.Response.ContentType = "application/json";
+                ctx.Response.StatusCode = statusCode;
+                var bytes = Encoding.UTF8.GetBytes(responseBody);
+                ctx.Response.ContentLength64 = bytes.Length;
+                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                ctx.Response.OutputStream.Close();
+            }
+        })
+        { IsBackground = true };
+        thread.Start();
+
+        return new DisposableAction(() =>
+        {
+            cts.Cancel();
+            listener.Stop();
+            listener.Close();
+        });
+    }
+
+    /// <summary>
+    /// Starts a minimal HttpListener that returns HTTP 500 for EVERY request, so the
+    /// helper's list call (<c>GET /api/v1/messages?limit=100</c>) fails outright.  The
+    /// status code is set unconditionally to 500 (never overwritten to 200), exercising
+    /// the FIX 3 outer EnvironmentError path.
+    /// </summary>
+    private static DisposableAction StartMailpitAlways500(out string baseUrl)
+    {
+        var listener = new HttpListener();
+        var port = GetFreePort();
+        baseUrl = $"http://127.0.0.1:{port}";
+        listener.Prefixes.Add(baseUrl + "/");
+        listener.Start();
+
+        var cts = new CancellationTokenSource();
+        var thread = new Thread(() =>
+        {
+            while (!cts.Token.IsCancellationRequested)
+            {
+                HttpListenerContext ctx;
+                try { ctx = listener.GetContext(); }
+                catch { break; }
+
+                const string responseBody = """{"error":"internal server error"}""";
+                ctx.Response.ContentType = "application/json";
+                ctx.Response.StatusCode = 500;
                 var bytes = Encoding.UTF8.GetBytes(responseBody);
                 ctx.Response.ContentLength64 = bytes.Length;
                 ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);

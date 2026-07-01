@@ -31,9 +31,20 @@
 //   JsonDocument instances are similarly Dispose()d in finally blocks.
 //   No static state bridges the Default/collectible ALC boundary.
 //
+// Substitution + secret model (canonical M2 pattern — mirrors webhook-listen.http /
+// mq-expect.kafka):
+//   • The match criteria (to / subjectContains / bodyContains) are emitted as RAW
+//     template strings and passed to the helper.  Inside the helper's guarded try each
+//     is resolved in a SINGLE pass via Secret_Helpers.ResolveTemplate(secrets, vars, …),
+//     which handles BOTH {placeholder} substitution AND ${secret:source/path} resolution
+//     over the original template text — at EXECUTION time, so no secret value is ever
+//     baked into the emitted IL (§17).  A missing secret throws SecretResolutionException
+//     → caught → Verdict.EnvironmentError for THIS step only, REFERENCE-ONLY (§17).
+//
 // CsxFragment rules (§13.3.1):
 //   • RequiredUsings: bare namespace strings only (no inline 'using' lines).
-//   • RequiredHelpers: one 'static class MailExpectSmtp_Helpers' source string.
+//   • RequiredHelpers: 'static class MailExpectSmtp_Helpers' plus the shared
+//     Substitute_Helpers and Secret_Helpers sources (byte-identical; CsxAssembler dedupes).
 //   • StatementBlock: C# 11 $$"""…""" with {{expr}} interpolation holes; no 'using var'.
 //   • SanitiseId applied to context.StepId before use in variable names.
 using System.Globalization;
@@ -62,10 +73,12 @@ namespace Platform.Steps.MailExpect.Smtp;
 /// CSX reads the Mailpit HTTP API endpoint staged at
 /// <c>Vars[VarKeys.Connection(model.Target)]</c>, enumerates messages, counts those
 /// matching the criteria, and writes a typed <see cref="StepOutcome"/> into
-/// <c>Vars</c> for the runner to read after execution (§13.3.1).  All match values
-/// are emitted as JSON-escaped literals — no <c>{placeholder}</c> or
-/// <c>${secret:…}</c> substitution is applied to match criteria (they are
-/// structural comparators, not author-authored templates).
+/// <c>Vars</c> for the runner to read after execution (§13.3.1).  The match values
+/// (<c>to</c> / <c>subject-contains</c> / <c>body-contains</c>) are emitted as RAW
+/// template literals and resolved at runtime inside the helper's guarded region via
+/// <c>Secret_Helpers.ResolveTemplate</c> — both <c>{placeholder}</c> substitution and
+/// <c>${secret:source/path}</c> resolution, so no secret value is ever baked into the
+/// emitted IL (§17).
 /// </para>
 /// <para>
 /// This is a <c>verifyMode: RETRY</c> provider (§7): the emitted scan is
@@ -159,15 +172,15 @@ public sealed class MailExpectSmtpProvider
                   "type": "object",
                   "properties": {
                     "to": {
-                      "description": "Expected recipient address (case-insensitive equality).",
+                      "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
                       "type": "string"
                     },
                     "subject-contains": {
-                      "description": "Substring the message subject must contain (ordinal).",
+                      "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
                       "type": "string"
                     },
                     "body-contains": {
-                      "description": "Substring the plain-text body must contain (ordinal).  Fetching the body requires a second Mailpit API call per candidate message.",
+                      "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message.",
                       "type": "string"
                     }
                   },
@@ -350,13 +363,22 @@ public sealed class MailExpectSmtpProvider
         "    /// Inconclusive on timeout — this helper NEVER writes Inconclusive, §7/§12.1).\n" +
         "    /// EnvironmentError when the Mailpit HTTP URL is absent or the API fails.\n" +
         "    /// </summary>\n" +
+        "    /// <remarks>\n" +
+        "    /// The match templates (to / subjectContains / bodyContains) are resolved INSIDE\n" +
+        "    /// the guarded region, BEFORE any Mailpit API call, via Secret_Helpers.ResolveTemplate\n" +
+        "    /// (single pass over the original template: both {placeholder} substitution AND\n" +
+        "    /// ${secret:source/path} resolution, §17).  A missing secret throws\n" +
+        "    /// SecretResolutionException → caught → EnvironmentError for THIS step only,\n" +
+        "    /// reference-only (source/path, never the value).\n" +
+        "    /// </remarks>\n" +
         "    public static async System.Threading.Tasks.Task ExpectAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        Platform.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
-        "        string? to,\n" +
-        "        string? subjectContains,\n" +
-        "        string? bodyContains,\n" +
+        "        string? toTemplate,\n" +
+        "        string? subjectContainsTemplate,\n" +
+        "        string? bodyContainsTemplate,\n" +
         "        int? expectedCount)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
@@ -374,10 +396,27 @@ public sealed class MailExpectSmtpProvider
         "            }\n" +
         "            else\n" +
         "            {\n" +
+        "                // Resolve every match template INSIDE the guarded region and BEFORE any\n" +
+        "                // Mailpit API call, in a SINGLE pass via ResolveTemplate (both\n" +
+        "                // {placeholder} substitution and ${secret:source/path} resolution over the\n" +
+        "                // original template).  This ordering means a missing secret throws\n" +
+        "                // SecretResolutionException before any HTTP contact, so the missing-secret\n" +
+        "                // path is reachable with no Mailpit server present (§17).\n" +
+        "                var to = toTemplate is null\n" +
+        "                    ? null\n" +
+        "                    : Secret_Helpers.ResolveTemplate(secrets, vars, toTemplate);\n" +
+        "                var subjectContains = subjectContainsTemplate is null\n" +
+        "                    ? null\n" +
+        "                    : Secret_Helpers.ResolveTemplate(secrets, vars, subjectContainsTemplate);\n" +
+        "                var bodyContains = bodyContainsTemplate is null\n" +
+        "                    ? null\n" +
+        "                    : Secret_Helpers.ResolveTemplate(secrets, vars, bodyContainsTemplate);\n" +
         "                System.Net.Http.HttpClient http = new System.Net.Http.HttpClient();\n" +
         "                http.Timeout = System.TimeSpan.FromSeconds(30);\n" +
         "                try\n" +
         "                {\n" +
+        "                    // Scan cap: ?limit=100 bounds the inbox enumeration to the 100 most\n" +
+        "                    // recent messages Mailpit returns per attempt (newest-first).\n" +
         "                    var listJson = await http.GetStringAsync(baseUrl + \"/api/v1/messages?limit=100\").ConfigureAwait(false);\n" +
         "                    var listDoc = System.Text.Json.JsonDocument.Parse(listJson);\n" +
         "                    int matched = 0;\n" +
@@ -419,18 +458,31 @@ public sealed class MailExpectSmtpProvider
         "                                    }\n" +
         "                                    else\n" +
         "                                    {\n" +
-        "                                        var bodyJson = await http.GetStringAsync(\n" +
-        "                                            baseUrl + \"/api/v1/message/\" + System.Uri.EscapeDataString(msgId)\n" +
-        "                                        ).ConfigureAwait(false);\n" +
-        "                                        var bodyDoc = System.Text.Json.JsonDocument.Parse(bodyJson);\n" +
+        "                                        // Per-candidate body fetch is resilient: a transient 4xx/5xx or\n" +
+        "                                        // parse failure for THIS candidate is treated as NON-matching\n" +
+        "                                        // (skip it) — never a terminal step EnvironmentError.  Only a\n" +
+        "                                        // failure of the list call (outer try) is terminal.\n" +
         "                                        try\n" +
         "                                        {\n" +
-        "                                            string? text = bodyDoc.RootElement.TryGetProperty(\"Text\", out var tEl)\n" +
-        "                                                ? tEl.GetString() : null;\n" +
-        "                                            if (text is null || !text.Contains(bodyContains, System.StringComparison.Ordinal))\n" +
-        "                                                ok = false;\n" +
+        "                                            var bodyJson = await http.GetStringAsync(\n" +
+        "                                                baseUrl + \"/api/v1/message/\" + System.Uri.EscapeDataString(msgId)\n" +
+        "                                            ).ConfigureAwait(false);\n" +
+        "                                            var bodyDoc = System.Text.Json.JsonDocument.Parse(bodyJson);\n" +
+        "                                            try\n" +
+        "                                            {\n" +
+        "                                                string? text = bodyDoc.RootElement.TryGetProperty(\"Text\", out var tEl)\n" +
+        "                                                    ? tEl.GetString() : null;\n" +
+        "                                                if (text is null || !text.Contains(bodyContains, System.StringComparison.Ordinal))\n" +
+        "                                                    ok = false;\n" +
+        "                                            }\n" +
+        "                                            finally { bodyDoc.Dispose(); }\n" +
         "                                        }\n" +
-        "                                        finally { bodyDoc.Dispose(); }\n" +
+        "                                        catch (System.Exception)\n" +
+        "                                        {\n" +
+        "                                            // This candidate's body could not be fetched or parsed — treat\n" +
+        "                                            // it as non-matching and continue scanning the remaining ones.\n" +
+        "                                            ok = false;\n" +
+        "                                        }\n" +
         "                                    }\n" +
         "                                }\n" +
         "                                if (ok) matched++;\n" +
@@ -457,6 +509,17 @@ public sealed class MailExpectSmtpProvider
         "                }\n" +
         "            }\n" +
         "        }\n" +
+        "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
+        "        {\n" +
+        "            // Missing / unknown secret = EnvironmentError (§12.1): a run-environment\n" +
+        "            // configuration problem, NOT a product defect.  REFERENCE-ONLY observation\n" +
+        "            // (§17): the discrete source/path coordinates only — never the value (none\n" +
+        "            // exists when resolution fails).\n" +
+        "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
+        "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
+        "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
+        "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
@@ -479,20 +542,27 @@ public sealed class MailExpectSmtpProvider
     /// <para>
     /// Emits a CSX block whose execution calls
     /// <c>MailExpectSmtp_Helpers.ExpectAsync</c> with the model's target connection
-    /// key, match criteria (JSON-serialised), and expected count.  The helper queries
-    /// Mailpit's HTTP API, counts matching messages, and writes a typed
+    /// key, match criteria (RAW template literals), and expected count.  The helper
+    /// queries Mailpit's HTTP API, counts matching messages, and writes a typed
     /// <see cref="StepOutcome"/> into
     /// <c>Vars[VarKeys.Outcome(sanitisedStepId)]</c>.
     /// </para>
     /// <para>
-    /// Match values are emitted as JSON-escaped string literals and NOT resolved via
-    /// <c>Secret_Helpers.ResolveTemplate</c> — they are structural comparators
-    /// (plain string values), not author-authored templates.
+    /// Substitution + secret model (canonical M2 pattern): the match values
+    /// (<c>to</c> / <c>subject-contains</c> / <c>body-contains</c>) are emitted as RAW
+    /// template literals (JSON-escaped C# string literals).  They are NOT pre-resolved
+    /// at the call site — the helper resolves each in a single pass via
+    /// <c>Secret_Helpers.ResolveTemplate</c> (both <c>{placeholder}</c> substitution and
+    /// <c>${secret:source/path}</c> resolution) inside its guarded region, BEFORE any
+    /// Mailpit call, so a missing secret maps to a step-scoped
+    /// <see cref="Verdict.EnvironmentError"/> and no secret value is ever baked into the
+    /// emitted IL (§17).
     /// </para>
     /// <para>
     /// CsxFragment rules observed (§13.3.1): bare namespace strings in
     /// <see cref="CsxFragment.RequiredUsings"/>; the full
-    /// <c>static class MailExpectSmtp_Helpers</c> definition in
+    /// <c>static class MailExpectSmtp_Helpers</c> definition plus the shared
+    /// <c>Substitute_Helpers</c> and <c>Secret_Helpers</c> sources in
     /// <see cref="CsxFragment.RequiredHelpers"/>; a single C# 11 <c>$$"""…"""</c>
     /// <see cref="CsxFragment.StatementBlock"/> with no <c>using var</c>; the step
     /// id sanitised via <c>CsxFragment.SanitiseId</c> before splicing.
@@ -503,6 +573,12 @@ public sealed class MailExpectSmtpProvider
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
         var match = model.Expect.Match;
 
+        // The match criteria are optional: emit the JSON-escaped RAW template literal when
+        // present, or the bare 'null' literal when absent.  Any {placeholder} or ${secret:…}
+        // token inside survives as LITERAL TEXT here (not an emit-time interpolation hole)
+        // and is resolved at runtime inside the helper.  CRITICAL: inside a $$"""…""" block,
+        // {{expr}} is the interpolation hole; a lone {placeholder} or ${secret:…} passes
+        // through verbatim — so no secret value is ever baked into the emitted IL (§17).
         var toLiteral = match.To is null
             ? "null"
             : JsonSerializer.Serialize(match.To);
@@ -521,10 +597,12 @@ public sealed class MailExpectSmtpProvider
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
         // 'using var' is explicitly prohibited in Roslyn script bodies (§13.3.1).
+        // 'Secrets' is the ScriptGlobalVariables.Secrets instance property.
         var block = $$"""
             {
                 await MailExpectSmtp_Helpers.ExpectAsync(
                     Vars,
+                    Secrets,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
                     {{toLiteral}},
@@ -534,9 +612,18 @@ public sealed class MailExpectSmtpProvider
             }
             """;
 
+        // Build the helpers list: MailExpectSmtp_Helpers + Substitute_Helpers +
+        // Secret_Helpers.  Both shared helper sources are byte-identical across
+        // providers — deduplication is handled by CsxAssembler.
+        var helpers = new List<string>(s_helpers)
+        {
+            SubstituteHelper.Source,
+            SecretHelper.Source,
+        };
+
         return new CsxFragment(
             RequiredUsings: s_usings,
-            RequiredHelpers: s_helpers,
+            RequiredHelpers: helpers,
             StatementBlock: block);
     }
 

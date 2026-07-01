@@ -410,15 +410,15 @@
                     "type": "object",
                     "properties": {
                       "to": {
-                        "description": "Expected recipient address (case-insensitive equality).",
+                        "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
                         "type": "string"
                       },
                       "subject-contains": {
-                        "description": "Substring the message subject must contain (ordinal).",
+                        "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
                         "type": "string"
                       },
                       "body-contains": {
-                        "description": "Substring the plain-text body must contain (ordinal).  Fetching the body requires a second Mailpit API call per candidate message.",
+                        "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message.",
                         "type": "string"
                       }
                     },

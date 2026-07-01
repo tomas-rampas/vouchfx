@@ -21,11 +21,11 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Platform.Engine.Abstractions;
 using Platform.Engine.Authoring.Model;
 using Platform.Engine.Orchestration;
 using Platform.Engine.Runtime;
 using Platform.Sdk;
-using Platform.Engine.Abstractions;
 using Platform.Steps.MailExpect.Smtp;
 using Xunit;
 
@@ -33,7 +33,7 @@ namespace Platform.Engine.Orchestration.Tests;
 
 /// <summary>
 /// Docker-gated integration tests for the <c>mail-expect.smtp</c> Core provider.
-/// Requires a reachable Docker daemon (axllent/mailpit:latest).
+/// Requires a reachable Docker daemon (axllent/mailpit:v1.21 — the pinned default).
 /// </summary>
 [Trait("requires", "docker")]
 public sealed class MailExpectSmtpDockerTests : IAsyncLifetime

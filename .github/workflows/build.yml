@@ -223,8 +223,10 @@ jobs:
       #                                            http.rest / capture / Respawn capstones.
       #   hashicorp/vault:latest                 — VaultSecretSourceDockerTests dev-mode
       #                                            Vault container (§17 secret source).
-      #   axllent/mailpit:latest                 — MailExpectSmtpDockerTests SMTP capture
-      #                                            container (mail-expect.smtp provider).
+      #   axllent/mailpit:v1.21                  — MailExpectSmtpDockerTests SMTP capture
+      #                                            container (mail-expect.smtp provider);
+      #                                            pinned tag mirrors EnvironmentMapper's
+      #                                            mailpit default (determinism, §4).
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -247,7 +249,7 @@ jobs:
             confluentinc/cp-schema-registry:7.6.1 \
             traefik/whoami:latest \
             hashicorp/vault:latest \
-            axllent/mailpit:latest ; do
+            axllent/mailpit:v1.21 ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
             echo "::endgroup::"
