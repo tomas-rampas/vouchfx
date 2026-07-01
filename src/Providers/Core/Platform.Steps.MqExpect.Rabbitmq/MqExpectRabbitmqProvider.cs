@@ -274,11 +274,21 @@ public sealed class MqExpectRabbitmqProvider
         "            const int maxMessages = 200;\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
+        "            // Peek-and-hold: collect unmatched delivery tags and requeue ALL of them\n" +
+        "            // AFTER the drain loop exits.  Immediate per-message nack+requeue INSIDE\n" +
+        "            // the loop causes head-of-queue starvation: when the first ready message\n" +
+        "            // does not match, RabbitMQ places the requeued message back at (or near)\n" +
+        "            // the head, and the next BasicGet re-fetches the SAME message, so the loop\n" +
+        "            // never advances past the non-matching head to reach the matching message\n" +
+        "            // behind it.  Holding all unacked tags prevents redelivery until the drain\n" +
+        "            // is complete; the broker automatically requeues any still-unacked messages\n" +
+        "            // if the channel closes (exception paths are therefore safe).\n" +
+        "            var pendingTags = new System.Collections.Generic.List<ulong>();\n" +
         "            while (scanned < maxMessages && !matched)\n" +
         "            {\n" +
         "                var result = await channel.BasicGetAsync(queue, autoAck: false, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "                if (result is null)\n" +
-        "                    break;  // queue empty\n" +
+        "                    break;  // all ready messages are held as outstanding, or queue is empty\n" +
         "                scanned++;\n" +
         "                var body = System.Text.Encoding.UTF8.GetString(result.Body.Span);\n" +
         "                if (MatchesMessage(body, result.BasicProperties.Headers, payloadContains,\n" +
@@ -289,10 +299,15 @@ public sealed class MqExpectRabbitmqProvider
         "                }\n" +
         "                else\n" +
         "                {\n" +
-        "                    // Re-queue non-matching messages so each RETRY attempt sees them again.\n" +
-        "                    await channel.BasicNackAsync(result.DeliveryTag, multiple: false, requeue: true, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                    // Hold the tag — do NOT requeue inside the loop (see comment above).\n" +
+        "                    pendingTags.Add(result.DeliveryTag);\n" +
         "                }\n" +
         "            }\n" +
+        "            // Requeue every inspected-but-unmatched message on all normal exit paths\n" +
+        "            // (matched / cap reached / queue drained). Exception paths rely on the\n" +
+        "            // broker's channel-close automatic requeue — no nack needed in catch.\n" +
+        "            foreach (var pendingTag in pendingTags)\n" +
+        "                await channel.BasicNackAsync(pendingTag, multiple: false, requeue: true, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "            if (matched)\n" +
         "            {\n" +
         "                verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +

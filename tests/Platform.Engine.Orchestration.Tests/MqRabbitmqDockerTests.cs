@@ -74,6 +74,12 @@ public sealed class MqRabbitmqDockerTests
         typeof(Json.Path.JsonPath).Assembly.Location,
         typeof(System.Text.Json.JsonSerializer).Assembly.Location,
         typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        // System.Globalization.CultureInfo is needed for the scanned count in the
+        // mq-expect observation: scanned.ToString(CultureInfo.InvariantCulture).
+        typeof(System.Globalization.CultureInfo).Assembly.Location,
+        // System.Uri is forwarded to System.Private.Uri; Roslyn does not resolve it
+        // automatically from System.Runtime so it must be listed explicitly.
+        typeof(System.Uri).Assembly.Location,
     };
 
     /// <summary>Minimal <see cref="ICompileContext"/> for emit calls inside tests.</summary>
@@ -346,6 +352,58 @@ public sealed class MqRabbitmqDockerTests
         _output.WriteLine($"Verdict: {outcome.Verdict}, Observation: {outcome.Observation}");
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.NotNull(outcome.Observation);
+    }
+
+    /// <summary>
+    /// Regression test for the drain-loop head-of-queue starvation bug (B1).
+    /// Seeds a NON-MATCHING message first, then the MATCHING message.  The drain
+    /// loop must advance past the non-matching head to find the matching message
+    /// behind it and yield <see cref="Verdict.Pass"/>.
+    /// <para>
+    /// With the old in-loop <c>BasicNackAsync(requeue:true)</c> pattern this test
+    /// returned <see cref="Verdict.Fail"/>: the non-matching head was requeued
+    /// immediately and re-fetched on every subsequent <c>BasicGet</c> call, so the
+    /// loop never advanced to the matching message. The fix uses a peek-and-hold
+    /// approach: unmatched delivery tags are collected and requeued in bulk AFTER
+    /// the drain exits, ensuring each call to <c>BasicGet</c> returns a DISTINCT message.
+    /// </para>
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task MqExpectRabbitmq_MatchingMessageBehindNonMatchingHead_ReturnsPass()
+    {
+        await using var suite = await SuiteTopology.StartAsync(
+            environment: BuildEnv(),
+            appHostAssemblyName: AppHostAssemblyName,
+            startupTimeout: StartupTimeout);
+
+        var amqpUri = suite.DiscoveredServices[DepName] as string;
+        Assert.False(string.IsNullOrWhiteSpace(amqpUri));
+
+        // Enqueue a non-matching message first (will sit at the head of the queue).
+        await SeedAsync(amqpUri!, "{\"event\":\"payment-received\"}");
+
+        // Enqueue the matching message second (sits behind the non-matching head).
+        await SeedAsync(amqpUri!, "{\"event\":\"order-shipped\",\"id\":\"7\"}");
+
+        var model = new MqExpectRabbitmqModel(
+            Target: DepName,
+            Queue: TestQueue,
+            Match: new RabbitmqMatch(
+                PayloadContains: "order-shipped",   // Only the second message matches.
+                Headers: null,
+                Json: null));
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(DepName)] = amqpUri,
+        };
+
+        var outcome = await RunExpectAsync(model, "expect-behind-head", vars);
+
+        _output.WriteLine($"Verdict: {outcome.Verdict}, Observation: {outcome.Observation}");
+        // Must be Pass — the drain must have advanced past the non-matching head.
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
     }
 
     /// <summary>
