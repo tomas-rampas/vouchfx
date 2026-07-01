@@ -101,6 +101,8 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
@@ -117,6 +119,7 @@
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="MongoDB.Driver" />
     <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
 </Project>

@@ -26,8 +26,9 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (10):
+Registered step types (11):
 
+- [`cache-assert.redis`](#cache-assertredis)
 - [`db-assert.mongodb`](#db-assertmongodb)
 - [`db-assert.mysql`](#db-assertmysql)
 - [`db-assert.postgres`](#db-assertpostgres)
@@ -38,6 +39,25 @@ Registered step types (10):
 - [`mq-publish.kafka`](#mq-publishkafka)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
+
+### `cache-assert.redis`
+
+Set `type: cache-assert.redis` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard). |
+| `key` | `string` | The Redis key to inspect. May contain {placeholder} tokens resolved at step-execution time. |
+| `operation` | `string` | The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive. |
+| `target` | `string` | Logical name of the redis dependency to inspect, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `field` | `string` | The hash field name for the hget operation (required for hget only). May contain {placeholder} tokens. |
 
 ### `db-assert.mongodb`
 

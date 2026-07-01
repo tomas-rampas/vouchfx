@@ -26,6 +26,7 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -73,6 +74,7 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
     };
 
     /// <summary>

@@ -77,10 +77,16 @@ public static class SingletonReset
         // is possible or necessary — the per-instance Dispose is sufficient.
         log.Add("MongoDB.Driver: real MongoClient Built+Disposed per 50-iter cycle; ClusterRegistry entry removed on Dispose — no global reset needed");
 
-        // ── StackExchange.Redis multiplexer pool ──────────────────────────────
-        // ConfigurationOptions.Parse is a pure in-memory parse; no multiplexer or
-        // socket is opened.  There is no connection pool to reset.
-        log.Add("StackExchange.Redis: ConfigurationOptions.Parse is in-memory; no multiplexer opened, no reset needed");
+        // ── StackExchange.Redis multiplexer (cache-assert.redis) ──────────────
+        // Phase (cache-assert.redis): the closure probe now builds a REAL
+        // ConnectionMultiplexer every 50 iterations (iter % 50 == 0) with
+        // abortConnect=false — which spins the heartbeat timer, socket, and reconnect
+        // thread the provider's emitted helper relies on — and Dispose()s it in the
+        // probe's own finally on every cycle it builds one.  Dispose() tears down those
+        // per-instance resources, so no multiplexer accumulates across iterations and
+        // there is no process-wide pool to reset.  No global StackExchange.Redis reset API
+        // exists or is needed; the per-instance Dispose is sufficient (§5).
+        log.Add("StackExchange.Redis: real multiplexer built+disposed per 50-iter cycle (iter % 50) — per-instance heartbeat/socket/reconnect resources released on Dispose, no global reset needed");
 
         // ── Confluent.SchemaRegistry / Apache.Avro ────────────────────────────
         // Sprint 6: the closure probe constructs a CachedSchemaRegistryClient every

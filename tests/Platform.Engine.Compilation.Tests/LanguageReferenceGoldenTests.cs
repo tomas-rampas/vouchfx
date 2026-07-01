@@ -24,6 +24,7 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -74,6 +75,7 @@ public sealed class LanguageReferenceGoldenTests
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
     };
 
     /// <summary>
@@ -138,6 +140,7 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("### `mq-publish.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `webhook-listen.http`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `cache-assert.redis`", generated, StringComparison.Ordinal);
 
         // The common step fields, documented once.
         Assert.Contains("## Common step fields", generated, StringComparison.Ordinal);

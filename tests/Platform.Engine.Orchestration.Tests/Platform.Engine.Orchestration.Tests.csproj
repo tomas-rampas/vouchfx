@@ -36,6 +36,8 @@
     <PackageReference Include="MongoDB.Driver" />
     <!-- MySqlConnector: required by DbAssertMysqlDockerTests (compile-ref + seed). -->
     <PackageReference Include="MySqlConnector" />
+    <!-- StackExchange.Redis: required by CacheAssertRedisDockerTests (compile-ref + seed). -->
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
   <ItemGroup>
@@ -65,6 +67,9 @@
                       IsAspireProjectResource="false" />
     <!-- mail-expect.smtp provider: used by MailExpectSmtpDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- cache-assert.redis provider: used by CacheAssertRedisDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

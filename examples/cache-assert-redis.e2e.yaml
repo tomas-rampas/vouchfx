@@ -1,0 +1,98 @@
+metadata:
+  name: cache-assert-redis-example
+  description: >
+    Example showing how to assert on Redis cache state with the cache-assert.redis
+    provider.  A system-under-test writes a value into Redis; the steps then verify the
+    value, the key's presence, its TTL, and a few collection shapes (hash / list / set).
+    `cache-assert` is a single-provider family, so the bare `cache-assert` alias resolves
+    to `cache-assert.redis`.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # Redis cache.  Its connection string is staged as conn::cache for cache-assert.redis.
+    cache:
+      type: redis
+
+steps:
+  - id: prime-cache
+    type: http.rest
+    description: >
+      Trigger the system under test to write the user's session into Redis.
+      The SUT should SET user:42 = "active" (with a TTL) and populate a profile hash.
+    target: app
+    request:
+      method: POST
+      path: /sessions
+      body: '{"userId":"42","status":"active"}'
+    expect:
+      status: 201
+    capture:
+      userId: $.userId
+
+  # ── String value assertion (bare-family alias) ──────────────────────────────
+  - id: assert-session-value
+    type: cache-assert          # bare alias → cache-assert.redis
+    description: The cached session value for the user equals "active".
+    target: cache
+    key: "user:{userId}"        # {userId} is substituted at execution time
+    operation: get
+    expect:
+      value: active
+    verifyMode: RETRY           # poll until the SUT has written the value
+    timeout: PT10S
+
+  # ── Key presence assertion ──────────────────────────────────────────────────
+  - id: assert-session-present
+    type: cache-assert.redis
+    description: The session key exists.
+    target: cache
+    key: "user:{userId}"
+    operation: exists
+    expect:
+      exists: true
+
+  # ── TTL presence assertion (has-a-positive-TTL check) ───────────────────────
+  - id: assert-session-has-ttl
+    type: cache-assert.redis
+    description: The session key was written with an expiry (a positive TTL).
+    target: cache
+    key: "user:{userId}"
+    operation: ttl
+    expect:
+      exists: true             # ttl asserts presence of a positive TTL, not an exact value
+
+  # ── Hash-field assertion ────────────────────────────────────────────────────
+  - id: assert-profile-status
+    type: cache-assert.redis
+    description: The user's profile hash records a verified status.
+    target: cache
+    key: "user:{userId}:profile"
+    operation: hget
+    field: status
+    expect:
+      value: verified
+
+  # ── List length assertion ───────────────────────────────────────────────────
+  - id: assert-queue-length
+    type: cache-assert.redis
+    description: Exactly three items are queued for the user.
+    target: cache
+    key: "user:{userId}:queue"
+    operation: llen
+    expect:
+      length: 3
+
+  # ── Set cardinality assertion ───────────────────────────────────────────────
+  - id: assert-tag-count
+    type: cache-assert.redis
+    description: The user has two tags.
+    target: cache
+    key: "user:{userId}:tags"
+    operation: scard
+    expect:
+      length: 2

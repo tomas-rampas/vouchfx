@@ -86,6 +86,45 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
+    // Step-type resolution — bare cache-assert alias (single provider) + dotted
+    // =========================================================================
+
+    [Fact]
+    public void Build_BareCacheAssert_SingleProvider_ResolvesAlias()
+    {
+        // Arrange — registry only has cache-assert.redis; the bare "cache-assert" alias
+        // must resolve to it (cache-assert is a single-provider family, like mail-expect).
+        var registry = RegistryWith(new StubProvider("cache-assert", "redis"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("cache-assert", node.Kind.Family);
+        Assert.Equal("redis", node.Kind.Provider);
+        Assert.Equal("cache-assert.redis", node.CanonicalType);
+    }
+
+    [Fact]
+    public void Build_DottedCacheAssertRedis_ResolvesCorrectly()
+    {
+        // Arrange — registry has cache-assert.redis; the dotted type resolves directly.
+        var registry = RegistryWith(new StubProvider("cache-assert", "redis"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert.redis"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("cache-assert", node.Kind.Family);
+        Assert.Equal("redis", node.Kind.Provider);
+        Assert.Equal("cache-assert.redis", node.CanonicalType);
+    }
+
+    // =========================================================================
     // Step-type resolution — ambiguous bare family
     // =========================================================================
 

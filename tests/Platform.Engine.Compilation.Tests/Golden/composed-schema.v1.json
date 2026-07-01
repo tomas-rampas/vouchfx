@@ -145,6 +145,74 @@
           "if": {
             "properties": {
               "type": {
+                "const": "cache-assert.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "key",
+              "operation",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to inspect, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "key": {
+                "description": "The Redis key to inspect.  May contain {placeholder} tokens resolved at step-execution time.",
+                "type": "string"
+              },
+              "operation": {
+                "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive.",
+                "type": "string",
+                "enum": [
+                  "get",
+                  "exists",
+                  "ttl",
+                  "hget",
+                  "hlen",
+                  "llen",
+                  "scard"
+                ]
+              },
+              "field": {
+                "description": "The hash field name for the hget operation (required for hget only).  May contain {placeholder} tokens.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard).",
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time.",
+                    "type": "string"
+                  },
+                  "exists": {
+                    "description": "Expected key presence for exists, or expected has-a-positive-TTL presence for ttl.",
+                    "type": "boolean"
+                  },
+                  "length": {
+                    "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality).",
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "db-assert.mongodb"
               }
             },

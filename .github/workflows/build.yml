@@ -227,6 +227,9 @@ jobs:
       #                                            container (mail-expect.smtp provider);
       #                                            pinned tag mirrors EnvironmentMapper's
       #                                            mailpit default (determinism, §4).
+      #   redis:7                                — CacheAssertRedisDockerTests cache container
+      #                                            (cache-assert.redis provider); Aspire.Hosting.Redis
+      #                                            AddRedis default image family.
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -245,6 +248,7 @@ jobs:
             postgres:18.3 \
             mcr.microsoft.com/mssql/server:2022-latest \
             mongo:7 \
+            redis:7 \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             traefik/whoami:latest \

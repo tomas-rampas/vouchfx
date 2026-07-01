@@ -34,6 +34,7 @@ using System.Linq;
 using System.Reflection;
 using Platform.Engine.Compilation.MemoryHarness;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -183,6 +184,10 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "db-assert.mysql",
             CanonicalClient: "MySqlConnector.MySqlConnection (MySQL client / connection pool)",
             ProbeMarker: "MySqlConnector.MySqlConnection"),
+        new CoreProviderCoverage(
+            StepKind: "cache-assert.redis",
+            CanonicalClient: "StackExchange.Redis.ConnectionMultiplexer (Redis client / heartbeat timer + socket + reconnect thread)",
+            ProbeMarker: "StackExchange.Redis.ConnectionMultiplexer.Connect"),
     };
 
     /// <summary>
@@ -205,6 +210,7 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
     };
 
     // -------------------------------------------------------------------------
@@ -232,8 +238,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Ten Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql).
-        Assert.Equal(10, actualKinds.Count);
+        // Eleven Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis).
+        Assert.Equal(11, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -260,8 +266,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (ten distinct rows).
-        Assert.Equal(10, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (eleven distinct rows).
+        Assert.Equal(11, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------
