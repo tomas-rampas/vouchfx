@@ -17,7 +17,7 @@ namespace Platform.Steps.CacheAssert.Elasticsearch;
 /// </param>
 /// <param name="Value">
 /// Expected string value.  May contain <c>{placeholder}</c> tokens resolved at execution
-/// time via <c>Substitute_Helpers.Resolve</c> — never baked into the emitted IL (§17).
+/// time via <c>Secret_Helpers.ResolveTemplate</c> — never baked into the emitted IL (§17).
 /// </param>
 public sealed record EsFieldAssertion(string Field, string Value);
 

@@ -487,4 +487,34 @@ public sealed class CacheAssertElasticsearchProviderTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("count", StringComparison.Ordinal));
     }
+
+    // ── 25–28. Validate: index charset — invalid characters ───────────────────
+
+    [Theory]
+    [InlineData("orders index")]   // embedded space
+    [InlineData("orders?filter")]  // question mark
+    [InlineData("orders#alias")]   // hash
+    [InlineData("orders\x01")]     // control character
+    public void Validate_IndexWithInvalidCharset_ReturnsFailure(string index)
+    {
+        var model = MakeModel(index: index);
+        var result = _provider.Validate(model, ElasticDeps());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("invalid character", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ── 29–30. Validate: index charset — allowed patterns ─────────────────────
+
+    [Theory]
+    [InlineData("orders,products")] // comma → multi-index
+    [InlineData("logs-*")]          // asterisk → wildcard
+    public void Validate_IndexWithAllowedPattern_ReturnsSuccess(string index)
+    {
+        var model = MakeModel(index: index);
+        var result = _provider.Validate(model, ElasticDeps());
+
+        Assert.True(result.IsValid);
+    }
 }

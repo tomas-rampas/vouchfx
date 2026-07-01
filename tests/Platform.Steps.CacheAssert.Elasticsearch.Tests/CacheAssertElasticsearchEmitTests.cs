@@ -19,6 +19,10 @@
 //   13. Full compile-and-run (no docker): credential URL not leaked in observation (§17 redaction).
 //   14. Full compile-and-run (no docker): match_all default query compiles (no explicit query).
 //   15. Full compile-and-run (no docker): field assertion path compiles (with expect.fields).
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -313,7 +317,309 @@ public sealed class CacheAssertElasticsearchEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
     }
 
+    // ── 16. Non-2xx redaction: host authority + creds absent from observation ──
+    //
+    // §17 FIX 1: the non-2xx branch must NOT include the host:port or any raw
+    // response snippet in the observation.  A credentialed conn with a stub that
+    // returns 400 is driven; the observation must contain NEITHER the password NOR
+    // the host authority.
+
+    [Fact]
+    public async Task Emit_CompileAndRun_Non2xx_ObservationHasNoHostOrCredentials()
+    {
+        var port = FindFreePort();
+        const string badBody = "{\"error\":{\"type\":\"index_not_found_exception\"}}";
+        StubHttpServer? stub = null;
+        try
+        {
+            stub = StubHttpServer.Start(port, 400, badBody);
+
+            // Credentialed connection — host authority is "localhost:{port}"
+            var connUrl = $"http://elastic:sup3rsecret@localhost:{port}";
+            var model = MakeModel(target: "search", index: "orders", count: 1);
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Connection("search")] = connUrl,
+            };
+
+            var outcome = await RunStepAsync(model, "non2xx-redact", vars);
+
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.NotNull(outcome.Observation);
+
+            // Password must never appear in the observation.
+            Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
+
+            // Host authority (host:port) must not appear — only index/status is allowed.
+            Assert.DoesNotContain($"localhost:{port}", outcome.Observation!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            stub?.Dispose();
+        }
+    }
+
+    // ── 17. False-pass guard: empty hits.hits + declared fields → Fail ─────────
+    //
+    // §FIX 2: when the ES response has total.value>0 but hits.hits:[] (size:0 query),
+    // and the model declares field assertions, the step must Fail (not Pass silently).
+
+    [Fact]
+    public async Task Emit_CompileAndRun_EmptyHitsArrayWithFieldAssertions_ReturnsFail()
+    {
+        var port = FindFreePort();
+        // total.value=5 (count passes) but hits.hits:[] (empty — size:0 query equivalent)
+        const string esBody = "{\"hits\":{\"total\":{\"value\":5,\"relation\":\"eq\"},\"hits\":[]}}";
+        StubHttpServer? stub = null;
+        try
+        {
+            stub = StubHttpServer.Start(port, 200, esBody);
+
+            var fields = new[] { new EsFieldAssertion("status", "active") };
+            var model = MakeModel(target: "search", index: "orders", fields: fields);
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Connection("search")] = $"http://localhost:{port}",
+            };
+
+            var outcome = await RunStepAsync(model, "empty-hits-fields", vars);
+
+            // Must Fail — not silently pass without evaluating the declared field assertion.
+            Assert.Equal(Verdict.Fail, outcome.Verdict);
+            Assert.NotNull(outcome.Observation);
+            Assert.Contains("fieldError", outcome.Observation!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            stub?.Dispose();
+        }
+    }
+
+    // ── 18. Injection breakout: {placeholder} value stays an escaped string ───
+    //
+    // §17 FIX 3 (security regression lock): a placeholder value containing embedded
+    // quotes and JSON structure must arrive at the server as a properly-escaped
+    // string literal — the injected "must" array must NOT become a JSON clause.
+
+    [Fact]
+    public async Task Emit_CompileAndRun_PlaceholderBreakout_ValueRemainsEscapedString()
+    {
+        var port = FindFreePort();
+        // Return 200 + empty hits so the step runs to completion.
+        const string esBody = "{\"hits\":{\"total\":{\"value\":0,\"relation\":\"eq\"},\"hits\":[]}}";
+        StubHttpServer? stub = null;
+        try
+        {
+            stub = StubHttpServer.Start(port, 200, esBody, captureBody: true);
+
+            // Breakout attempt: the value contains quotes and an extra JSON clause.
+            // If ResolveQuery were naive, this would inject a "must" property into the query.
+            const string breakoutValue = "x\",\"must\":[{\"match_all\":{}}],\"x\":\"";
+
+            var query = "{\"query\":{\"match\":{\"status\":\"{v}\"}}}";
+            var model = MakeModel(target: "search", index: "orders", query: query);
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Connection("search")] = $"http://localhost:{port}",
+                ["v"] = breakoutValue,
+            };
+
+            await RunStepAsync(model, "inject-breakout", vars);
+
+            // Wait for the stub to capture the POST body (with a generous timeout).
+            var captured = await stub.WaitForCapturedBodyAsync(TimeSpan.FromSeconds(5));
+            Assert.NotNull(captured);
+
+            // The captured body must parse as valid JSON.
+            var doc = JsonDocument.Parse(captured!);
+
+            // The injected "must" key must NOT be a property at any JSON level we can reach.
+            Assert.False(
+                doc.RootElement.TryGetProperty("must", out _),
+                "Breakout injection must not create a top-level 'must' property.");
+
+            // The value of query.match.status must be the breakout string (escaped, not parsed).
+            var statusValue = doc.RootElement
+                .GetProperty("query")
+                .GetProperty("match")
+                .GetProperty("status")
+                .GetString();
+            Assert.Equal(breakoutValue, statusValue);
+        }
+        finally
+        {
+            stub?.Dispose();
+        }
+    }
+
+    // ── 19–22. IStepDiffRenderer: CanRender / RenderDiff ─────────────────────
+
+    [Fact]
+    public void DiffRenderer_CanRender_CountMismatchShape_ReturnsTrue()
+    {
+        using var doc = JsonDocument.Parse(
+            "{\"matched\":false,\"expected\":\">=1\",\"actual\":0,\"index\":\"orders\"}");
+        Assert.True(_provider.CanRender(doc.RootElement));
+    }
+
+    [Fact]
+    public void DiffRenderer_CanRender_FieldMismatchShape_ReturnsTrue()
+    {
+        using var doc = JsonDocument.Parse(
+            "{\"matched\":false,\"field\":\"status\",\"expected\":\"active\",\"actual\":\"inactive\"}");
+        Assert.True(_provider.CanRender(doc.RootElement));
+    }
+
+    [Fact]
+    public void DiffRenderer_CanRender_PassShape_ReturnsFalse()
+    {
+        using var doc = JsonDocument.Parse("{\"matched\":true,\"hits\":5}");
+        Assert.False(_provider.CanRender(doc.RootElement));
+    }
+
+    [Fact]
+    public void DiffRenderer_CanRender_EnvironmentErrorShape_ReturnsFalse()
+    {
+        using var doc = JsonDocument.Parse(
+            "{\"error\":\"HTTP 503\",\"index\":\"orders\"}");
+        Assert.False(_provider.CanRender(doc.RootElement));
+    }
+
+    [Fact]
+    public void DiffRenderer_RenderDiff_CountMismatch_IncludesExpectedAndActual()
+    {
+        using var doc = JsonDocument.Parse(
+            "{\"matched\":false,\"expected\":\">=1\",\"actual\":0,\"index\":\"orders\"}");
+        var rendered = _provider.RenderDiff(doc.RootElement);
+
+        Assert.NotNull(rendered);
+        Assert.Contains(">=1", rendered!, StringComparison.Ordinal);
+        Assert.Contains("0", rendered!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DiffRenderer_RenderDiff_FieldMismatch_IncludesFieldNameAndValues()
+    {
+        using var doc = JsonDocument.Parse(
+            "{\"matched\":false,\"field\":\"status\",\"expected\":\"active\",\"actual\":\"inactive\"}");
+        var rendered = _provider.RenderDiff(doc.RootElement);
+
+        Assert.NotNull(rendered);
+        // Field name must appear in the rendered output (reviewer FIX 4 n2).
+        Assert.Contains("status", rendered!, StringComparison.Ordinal);
+        Assert.Contains("active", rendered!, StringComparison.Ordinal);
+        Assert.Contains("inactive", rendered!, StringComparison.Ordinal);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>Finds a free loopback TCP port by binding temporarily to port 0.</summary>
+    private static int FindFreePort()
+    {
+        var tl = new TcpListener(IPAddress.Loopback, 0);
+        tl.Start();
+        var port = ((IPEndPoint)tl.LocalEndpoint).Port;
+        tl.Stop();
+        return port;
+    }
+
+    /// <summary>
+    /// Minimal in-process HTTP stub that listens on <c>http://localhost:{port}/</c>,
+    /// returns a fixed status code and JSON body for every incoming POST, and
+    /// optionally captures the first request body.
+    /// </summary>
+    private sealed class StubHttpServer : IDisposable
+    {
+        private readonly HttpListener _hl;
+        private readonly CancellationTokenSource _cts;
+        private readonly TaskCompletionSource<string?> _capturedBody;
+
+        private StubHttpServer(
+            HttpListener hl,
+            CancellationTokenSource cts,
+            TaskCompletionSource<string?> capturedBody)
+        {
+            _hl = hl;
+            _cts = cts;
+            _capturedBody = capturedBody;
+        }
+
+        /// <summary>Returns the captured request body, or <see langword="null"/> if capture was disabled.</summary>
+        public Task<string?> WaitForCapturedBodyAsync(TimeSpan timeout)
+        {
+            var delayTask = Task.Delay(timeout).ContinueWith(_ => (string?)null);
+            return Task.WhenAny(_capturedBody.Task, delayTask)
+                .ContinueWith(t => t.Result.Result);
+        }
+
+        public static StubHttpServer Start(int port, int statusCode, string responseBody,
+            bool captureBody = false)
+        {
+            var prefix = $"http://localhost:{port}/";
+            var hl = new HttpListener();
+            hl.Prefixes.Add(prefix);
+            hl.Start();
+
+            var cts = new CancellationTokenSource();
+            var tcs = new TaskCompletionSource<string?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            _ = Task.Run(async () =>
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    HttpListenerContext? ctx = null;
+                    try
+                    {
+                        ctx = await hl.GetContextAsync().ConfigureAwait(false);
+                    }
+                    catch (HttpListenerException)
+                    {
+                        break;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        break;
+                    }
+
+                    if (ctx is null)
+                        continue;
+
+                    // Capture the request body if requested (FIX 3 injection test).
+                    if (captureBody)
+                    {
+                        using var reader = new StreamReader(
+                            ctx.Request.InputStream, Encoding.UTF8, leaveOpen: true);
+                        var body = await reader.ReadToEndAsync().ConfigureAwait(false);
+                        tcs.TrySetResult(body);
+                    }
+                    else
+                    {
+                        tcs.TrySetResult(null);
+                    }
+
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.StatusCode = statusCode;
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.Close();
+                }
+            });
+
+            return new StubHttpServer(hl, cts, tcs);
+        }
+
+        public void Dispose()
+        {
+            _cts.Cancel();
+            try { _hl.Stop(); }
+            catch { /* already stopped */ }
+            try { _hl.Close(); }
+            catch { /* already closed */ }
+            _cts.Dispose();
+        }
+    }
 
     private static CacheAssertElasticsearchModel MakeModel(
         string target = "search",

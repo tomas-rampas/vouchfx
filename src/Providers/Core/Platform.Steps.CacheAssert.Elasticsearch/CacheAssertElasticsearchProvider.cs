@@ -325,6 +325,24 @@ public sealed class CacheAssertElasticsearchProvider
         if (string.IsNullOrWhiteSpace(model.Index))
             errors.Add("cache-assert.elasticsearch: 'index' must not be blank.");
 
+        // index must not contain characters that make a malformed URL path segment.
+        // Whitespace, '?', '#', and control characters are rejected.
+        // ',' (multi-index syntax) and '*' (wildcard pattern) are intentionally allowed.
+        if (!string.IsNullOrWhiteSpace(model.Index))
+        {
+            foreach (var ch in model.Index)
+            {
+                if (char.IsWhiteSpace(ch) || ch == '?' || ch == '#' || char.IsControl(ch))
+                {
+                    errors.Add(
+                        "cache-assert.elasticsearch: 'index' contains an invalid character. " +
+                        "Whitespace, '?', '#', and control characters are not permitted in index names; " +
+                        "use ',' for multi-index and '*' for wildcard patterns.");
+                    break;
+                }
+            }
+        }
+
         // query, if provided, must be parseable JSON.
         if (model.Query is not null)
         {
@@ -476,7 +494,7 @@ public sealed class CacheAssertElasticsearchProvider
         "                catch (System.UriFormatException uex)\n" +
         "                {\n" +
         "                    verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
-        "                    observation = \"{\\\"error\\\":\\\"Invalid Elasticsearch URL: \" + System.Text.Json.JsonSerializer.Serialize(uex.Message) + \"\\\"}\";\n" +
+        "                    observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(uex.GetType().Name) + \"}\";\n" +
         "                    sw.Stop();\n" +
         "                    vars[outcomeKey] = new Platform.Engine.Abstractions.StepOutcome(verdict, sw.ElapsedMilliseconds, observation);\n" +
         "                    return;\n" +
@@ -520,8 +538,7 @@ public sealed class CacheAssertElasticsearchProvider
         "                    if (!response.IsSuccessStatusCode)\n" +
         "                    {\n" +
         "                        verdict = Platform.Engine.Abstractions.Verdict.EnvironmentError;\n" +
-        "                        var snippet = body.Length > 200 ? body.Substring(0, 200) : body;\n" +
-        "                        observation = \"{\\\"error\\\":\\\"HTTP \" + (int)response.StatusCode + \" from \" + System.Text.Json.JsonSerializer.Serialize(url) + \"\\\",\\\"detail\\\":\" + System.Text.Json.JsonSerializer.Serialize(snippet) + \"}\";\n" +
+        "                        observation = \"{\\\"error\\\":\\\"HTTP \" + (int)response.StatusCode + \"\\\",\\\"index\\\":\" + System.Text.Json.JsonSerializer.Serialize(index) + \"}\";\n" +
         "                    }\n" +
         "                    else\n" +
         "                    {\n" +
@@ -576,7 +593,7 @@ public sealed class CacheAssertElasticsearchProvider
         "                                verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
         "                                observation = \"{\\\"matched\\\":true,\\\"hits\\\":\" + totalHits.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "\n" +
-        "                                if (assertFieldNames != null && assertFieldNames.Length > 0 && totalHits > 0)\n" +
+        "                                if (assertFieldNames != null && assertFieldNames.Length > 0)\n" +
         "                                {\n" +
         "                                    var hitsArr = doc.RootElement.GetProperty(\"hits\").GetProperty(\"hits\");\n" +
         "                                    if (hitsArr.ValueKind == System.Text.Json.JsonValueKind.Array && hitsArr.GetArrayLength() > 0)\n" +
@@ -620,6 +637,12 @@ public sealed class CacheAssertElasticsearchProvider
         "                                                break;\n" +
         "                                            }\n" +
         "                                        }\n" +
+        "                                    }\n" +
+        "                                    else\n" +
+        "                                    {\n" +
+        "                                        // Count passed but hits.hits is empty (e.g. size:0 query) — cannot evaluate field assertions.\n" +
+        "                                        verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
+        "                                        observation = \"{\\\"matched\\\":false,\\\"fieldError\\\":\\\"no hit document available (hits.hits empty)\\\"}\";\n" +
         "                                    }\n" +
         "                                }\n" +
         "                            }\n" +
@@ -788,15 +811,17 @@ public sealed class CacheAssertElasticsearchProvider
     /// EnvironmentError shape are intentionally NOT renderable.
     /// </remarks>
     public bool CanRender(JsonElement observation) =>
-        TryReadFail(observation, out _, out _);
+        TryReadFail(observation, out _, out _, out _);
 
     /// <inheritdoc cref="IStepDiffRenderer.RenderDiff" />
     public string? RenderDiff(JsonElement observation)
     {
-        if (!TryReadFail(observation, out var expected, out var actual))
+        if (!TryReadFail(observation, out var expected, out var actual, out var field))
             return null;
 
-        return RenderTable(expected, actual);
+        return field is not null
+            ? RenderFieldTable(field, expected, actual)
+            : RenderTable(expected, actual);
     }
 
     // ── IStepDiffRenderer helpers ─────────────────────────────────────────────
@@ -804,8 +829,10 @@ public sealed class CacheAssertElasticsearchProvider
     private static bool TryReadFail(
         JsonElement observation,
         out string expected,
-        out string actual)
+        out string actual,
+        out string? field)
     {
+        field = null;
         expected = string.Empty;
         actual = string.Empty;
 
@@ -816,7 +843,7 @@ public sealed class CacheAssertElasticsearchProvider
             || matchedEl.ValueKind != JsonValueKind.False)
             return false;
 
-        // Count mismatch shape.
+        // Both count-mismatch and field-mismatch shapes contain "expected" + "actual".
         if (observation.TryGetProperty("expected", out var expEl)
             && observation.TryGetProperty("actual", out var actEl))
         {
@@ -826,6 +853,14 @@ public sealed class CacheAssertElasticsearchProvider
             actual = actEl.ValueKind == JsonValueKind.String
                 ? actEl.GetString() ?? string.Empty
                 : actEl.ToString();
+
+            // Field-mismatch shape additionally contains "field".
+            if (observation.TryGetProperty("field", out var fieldEl)
+                && fieldEl.ValueKind == JsonValueKind.String)
+            {
+                field = fieldEl.GetString();
+            }
+
             return true;
         }
 
@@ -834,4 +869,7 @@ public sealed class CacheAssertElasticsearchProvider
 
     private static string RenderTable(string expected, string actual) =>
         $"| | Value |\n|---|---|\n| expected | `{expected}` |\n| actual | `{actual}` |";
+
+    private static string RenderFieldTable(string field, string expected, string actual) =>
+        $"| field | {field} |\n|---|---|\n| expected | `{expected}` |\n| actual | `{actual}` |";
 }

@@ -848,10 +848,12 @@ public sealed class EnvironmentMapperTests
 
     /// <summary>
     /// An elasticsearch dependency produces a server resource only (no database resource),
-    /// and the server itself is in the health-gate list.
+    /// the server itself is in the health-gate list, and the stability environment variables
+    /// (<c>discovery.type</c>, <c>xpack.security.enabled</c>, <c>ES_JAVA_OPTS</c>) are
+    /// wired onto the resource so a future refactor cannot silently drop them.
     /// </summary>
     [Fact]
-    public void Map_ElasticsearchDependency_AddsServer_GateOnServer()
+    public async Task Map_ElasticsearchDependency_AddsServer_GateOnServer()
     {
         // Arrange
         var env = new EnvironmentSpec(
@@ -871,15 +873,32 @@ public sealed class EnvironmentMapperTests
         mapped.Configure(builder);
 
         // Assert — server resource named "search" exists
-        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "search"));
+        var searchResource = builder.Resources.SingleOrDefault(r => r.Name == "search");
+        Assert.NotNull(searchResource);
 
         // Assert — the retained server resource implements IResourceWithConnectionString.
-        Assert.IsAssignableFrom<IResourceWithConnectionString>(
-            builder.Resources.SingleOrDefault(r => r.Name == "search"));
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(searchResource);
 
         // Assert — gate is on the server
         Assert.Contains("search", mapped.HealthGateResourceNames);
         Assert.Contains("search", mapped.DependencyNames);
+
+        // Assert — stability env vars are present on the resource.
+        // Literal-string WithEnvironment calls register EnvironmentCallbackAnnotation entries;
+        // running them populates the dictionary synchronously.
+        var envVars = new Dictionary<string, object>();
+        var callbackContext = new EnvironmentCallbackContext(
+            new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run),
+            searchResource!,
+            envVars);
+        foreach (var envCallback in searchResource!.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            await envCallback.Callback(callbackContext);
+        }
+
+        Assert.Equal("single-node", Assert.IsType<string>(envVars["discovery.type"]));
+        Assert.Equal("false", Assert.IsType<string>(envVars["xpack.security.enabled"]));
+        Assert.Equal("-Xms512m -Xmx512m", Assert.IsType<string>(envVars["ES_JAVA_OPTS"]));
     }
 
     // -----------------------------------------------------------------------
