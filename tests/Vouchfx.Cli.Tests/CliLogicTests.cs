@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 11 Core provider assemblies; the registry freezes
-//     with the 11 expected step kinds.
+//   • ProviderRegistryFactory — names the 13 Core provider assemblies; the registry freezes
+//     with the 13 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsElevenDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsThirteenDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(11, assemblies.Length);
-        // Eleven *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(11, assemblies.Distinct().Count());
+        Assert.Equal(13, assemblies.Length);
+        // Thirteen *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(13, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheElevenCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheThirteenCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -46,6 +46,8 @@ public sealed class ProviderRegistryFactoryTests
                      "script.csharp",
                      "mq-publish.kafka",
                      "mq-expect.kafka",
+                     "mq-publish.rabbitmq",
+                     "mq-expect.rabbitmq",
                      "webhook-listen.http",
                      "mail-expect.smtp",
                      "cache-assert.redis",

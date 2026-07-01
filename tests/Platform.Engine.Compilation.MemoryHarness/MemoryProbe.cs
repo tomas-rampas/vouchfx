@@ -376,6 +376,15 @@ public static class MemoryProbe
             // the MemoryHarness.csproj PackageReference.
             typeof(MySqlConnector.MySqlConnection).Assembly.Location,
 
+            // ── Sprint-13: mq-publish.rabbitmq / mq-expect.rabbitmq closure ──────
+            // The two RabbitMQ providers use RabbitMQ.Client 7.x (IConnection /
+            // IChannel both IAsyncDisposable only).  System.Uri is forwarded to
+            // System.Private.Uri — Roslyn does not pick it up from System.Runtime
+            // automatically, so it must be listed explicitly (new System.Uri(amqpUri)
+            // appears in the connection factory initialiser).
+            typeof(RabbitMQ.Client.ConnectionFactory).Assembly.Location,
+            typeof(System.Uri).Assembly.Location,
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

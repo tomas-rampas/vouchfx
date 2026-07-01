@@ -42,7 +42,9 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -188,6 +190,14 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "cache-assert.redis",
             CanonicalClient: "StackExchange.Redis.ConnectionMultiplexer (Redis client / heartbeat timer + socket + reconnect thread)",
             ProbeMarker: "StackExchange.Redis.ConnectionMultiplexer.Connect"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.rabbitmq",
+            CanonicalClient: "RabbitMQ.Client.ConnectionFactory (RabbitMQ connection/channel)",
+            ProbeMarker: "RabbitMQ.Client.ConnectionFactory"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.rabbitmq",
+            CanonicalClient: "RabbitMQ.Client.ConnectionFactory (RabbitMQ connection/channel)",
+            ProbeMarker: "RabbitMQ.Client.ConnectionFactory"),
     };
 
     /// <summary>
@@ -211,6 +221,8 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
     };
 
     // -------------------------------------------------------------------------
@@ -238,8 +250,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Eleven Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis).
-        Assert.Equal(11, actualKinds.Count);
+        // Thirteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq).
+        Assert.Equal(13, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -266,8 +278,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (eleven distinct rows).
-        Assert.Equal(11, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (thirteen distinct rows).
+        Assert.Equal(13, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

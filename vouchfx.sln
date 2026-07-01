@@ -115,6 +115,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.Redis.Tests", "tests\Platform.Steps.CacheAssert.Redis.Tests\Platform.Steps.CacheAssert.Redis.Tests.csproj", "{55DE7E67-9FA0-4258-A210-989299673440}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Rabbitmq", "src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj", "{B0E10187-4F11-6A23-C854-7E8F90012A3B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Rabbitmq.Tests", "tests\Platform.Steps.MqPublish.Rabbitmq.Tests\Platform.Steps.MqPublish.Rabbitmq.Tests.csproj", "{C1F21298-5012-7B34-D965-8F9001234C5D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rabbitmq", "src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj", "{D2030309-6123-8C45-EA76-9001234D6E7F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rabbitmq.Tests", "tests\Platform.Steps.MqExpect.Rabbitmq.Tests\Platform.Steps.MqExpect.Rabbitmq.Tests.csproj", "{E314040A-7234-9D56-FB87-0112345E7F80}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -312,6 +320,22 @@ Global
 		{55DE7E67-9FA0-4258-A210-989299673440}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{55DE7E67-9FA0-4258-A210-989299673440}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{55DE7E67-9FA0-4258-A210-989299673440}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B0E10187-4F11-6A23-C854-7E8F90012A3B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B0E10187-4F11-6A23-C854-7E8F90012A3B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B0E10187-4F11-6A23-C854-7E8F90012A3B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B0E10187-4F11-6A23-C854-7E8F90012A3B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C1F21298-5012-7B34-D965-8F9001234C5D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C1F21298-5012-7B34-D965-8F9001234C5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C1F21298-5012-7B34-D965-8F9001234C5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C1F21298-5012-7B34-D965-8F9001234C5D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D2030309-6123-8C45-EA76-9001234D6E7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D2030309-6123-8C45-EA76-9001234D6E7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D2030309-6123-8C45-EA76-9001234D6E7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D2030309-6123-8C45-EA76-9001234D6E7F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E314040A-7234-9D56-FB87-0112345E7F80}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E314040A-7234-9D56-FB87-0112345E7F80}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E314040A-7234-9D56-FB87-0112345E7F80}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E314040A-7234-9D56-FB87-0112345E7F80}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -365,5 +389,9 @@ Global
 		{1F4B7ED9-993E-4209-A69F-7A31ADC904A2} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{03899BE0-2033-439F-84B7-1A4F847706AE} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
 		{55DE7E67-9FA0-4258-A210-989299673440} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{B0E10187-4F11-6A23-C854-7E8F90012A3B} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{C1F21298-5012-7B34-D965-8F9001234C5D} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{D2030309-6123-8C45-EA76-9001234D6E7F} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{E314040A-7234-9D56-FB87-0112345E7F80} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

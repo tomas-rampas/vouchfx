@@ -230,6 +230,10 @@ jobs:
       #   redis:7                                — CacheAssertRedisDockerTests cache container
       #                                            (cache-assert.redis provider); Aspire.Hosting.Redis
       #                                            AddRedis default image family.
+      #   rabbitmq:4-management                  — MqRabbitmqDockerTests AMQP broker container
+      #                                            (mq-publish.rabbitmq / mq-expect.rabbitmq);
+      #                                            management variant includes the HTTP API for
+      #                                            exchange/queue management.
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -253,7 +257,8 @@ jobs:
             confluentinc/cp-schema-registry:7.6.1 \
             traefik/whoami:latest \
             hashicorp/vault:latest \
-            axllent/mailpit:v1.21 ; do
+            axllent/mailpit:v1.21 \
+            rabbitmq:4-management ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
             echo "::endgroup::"

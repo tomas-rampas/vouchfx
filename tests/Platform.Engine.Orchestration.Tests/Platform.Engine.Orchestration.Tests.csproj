@@ -38,6 +38,8 @@
     <PackageReference Include="MySqlConnector" />
     <!-- StackExchange.Redis: required by CacheAssertRedisDockerTests (compile-ref + seed). -->
     <PackageReference Include="StackExchange.Redis" />
+    <!-- RabbitMQ.Client: required by MqRabbitmqDockerTests (compile-ref + seed/setup). -->
+    <PackageReference Include="RabbitMQ.Client" />
   </ItemGroup>
 
   <ItemGroup>
@@ -70,6 +72,11 @@
                       IsAspireProjectResource="false" />
     <!-- cache-assert.redis provider: used by CacheAssertRedisDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.rabbitmq + mq-expect.rabbitmq providers: used by MqRabbitmqDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

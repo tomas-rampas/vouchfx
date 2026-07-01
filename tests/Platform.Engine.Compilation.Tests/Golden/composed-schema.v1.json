@@ -641,6 +641,62 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mq-expect.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "queue",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The AMQP queue to consume messages from.",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared.",
+                "type": "object",
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "headers": {
+                    "description": "Optional map of expected AMQP header names to their expected string values.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message body parsed as JSON.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-publish.kafka"
               }
             },
@@ -710,6 +766,52 @@
                   }
                 },
                 "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "routingKey",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "exchange": {
+                "description": "Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "routingKey": {
+                "description": "The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "headers": {
+                "description": "Optional map of AMQP message header names to their string values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": true

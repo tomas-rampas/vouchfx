@@ -47,6 +47,8 @@
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <!-- db-assert.mysql — MySqlConnector transitive closure. -->
     <PackageReference Include="MySqlConnector" />
+    <!-- mq-publish.rabbitmq / mq-expect.rabbitmq — RabbitMQ.Client transitive closure. -->
+    <PackageReference Include="RabbitMQ.Client" />
   </ItemGroup>
 
   <ItemGroup Label="Sprint-6 Kafka serdes (§5.7) — closure probe exercises the real Avro / schema-registry code paths">

@@ -26,7 +26,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (11):
+Registered step types (13):
 
 - [`cache-assert.redis`](#cache-assertredis)
 - [`db-assert.mongodb`](#db-assertmongodb)
@@ -36,7 +36,9 @@ Registered step types (11):
 - [`http.rest`](#httprest)
 - [`mail-expect.smtp`](#mail-expectsmtp)
 - [`mq-expect.kafka`](#mq-expectkafka)
+- [`mq-expect.rabbitmq`](#mq-expectrabbitmq)
 - [`mq-publish.kafka`](#mq-publishkafka)
+- [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
 
@@ -175,6 +177,18 @@ Set `type: mq-expect.kafka` to use this step.
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry decoding. When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON. |
 
+### `mq-expect.rabbitmq`
+
+Set `type: mq-expect.rabbitmq` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
+| `queue` | `string` | The AMQP queue to consume messages from. |
+| `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
+
 ### `mq-publish.kafka`
 
 Set `type: mq-publish.kafka` to use this step.
@@ -194,6 +208,25 @@ Set `type: mq-publish.kafka` to use this step.
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
 | `headers` | `object` | Optional map of message header names to their string values. |
 | `key` | `string` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. |
+
+### `mq-publish.rabbitmq`
+
+Set `type: mq-publish.rabbitmq` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. |
+| `routingKey` | `string` | The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `exchange` | `string` | Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens. |
+| `headers` | `object` | Optional map of AMQP message header names to their string values. |
 
 ### `script.csharp`
 

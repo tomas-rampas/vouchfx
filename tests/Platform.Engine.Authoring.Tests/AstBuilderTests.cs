@@ -142,6 +142,34 @@ public sealed class AstBuilderTests
         Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Build_BareMqPublish_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    {
+        // Arrange — mq-publish has both kafka and rabbitmq providers registered.
+        var registry = RegistryWith(
+            new StubProvider("mq-publish", "kafka"),
+            new StubProvider("mq-publish", "rabbitmq"));
+        var doc = DocWithStep(StepSpecWith(id: "publish", type: "mq-publish"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_BareMqExpect_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    {
+        // Arrange — mq-expect has both kafka and rabbitmq providers registered.
+        var registry = RegistryWith(
+            new StubProvider("mq-expect", "kafka"),
+            new StubProvider("mq-expect", "rabbitmq"));
+        var doc = DocWithStep(StepSpecWith(id: "expect", type: "mq-expect"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     // =========================================================================
     // Step-type resolution — db-assert bare-family guard
     // =========================================================================

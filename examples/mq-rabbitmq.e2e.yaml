@@ -1,0 +1,67 @@
+metadata:
+  name: mq-rabbitmq-example
+  description: >
+    Example showing how to publish a message to a RabbitMQ queue and then assert
+    that the expected message is present, using the mq-publish.rabbitmq and
+    mq-expect.rabbitmq providers backed by a live RabbitMQ container.
+    The mq-expect step uses verifyMode: RETRY so the engine polls until the message
+    arrives or the timeout expires — authors never write Thread.Sleep.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # RabbitMQ: AMQP 0-9-1 broker.  The connection URI is staged as conn::rmq
+    # (VarKeys.Connection("rmq")) by the orchestrator and consumed by both
+    # mq-publish.rabbitmq and mq-expect.rabbitmq via the 'target' field.
+    rmq:
+      type: rabbitmq
+
+steps:
+  - id: trigger-order-event
+    type: http.rest
+    description: >
+      Trigger the system under test to publish an order event to RabbitMQ.
+      The SUT should publish to the 'orders' queue via the AMQP URI it receives
+      at startup.
+    target: app
+    request:
+      method: POST
+      path: /orders
+      body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 202
+
+  - id: publish-order-event
+    type: mq-publish.rabbitmq
+    description: >
+      Direct publish step: sends an order-created event to the default exchange
+      routed to the 'orders' queue.  Use this pattern when your test needs to
+      seed a specific message rather than relying on the SUT to produce it.
+    target: rmq
+    routingKey: orders
+    payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'
+    headers:
+      x-event-type: order-created
+
+  - id: assert-order-event
+    type: mq-expect.rabbitmq
+    description: >
+      Assert that a message matching the criteria is present in the 'orders' queue.
+      The criteria are AND-conjunctive: the body must contain 'order-created', the
+      'x-event-type' header must be 'order-created', and the JSONPath $.orderId
+      must select 'ord-001'.
+      verifyMode: RETRY polls until the message arrives or the timeout expires.
+    target: rmq
+    queue: orders
+    match:
+      payloadContains: "order-created"
+      headers:
+        x-event-type: order-created
+      json:
+        $.orderId: ord-001
+    verifyMode: RETRY
+    timeout: PT30S

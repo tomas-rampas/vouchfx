@@ -262,6 +262,35 @@ public static class ClosureProbeScript
             {
                 mux?.Dispose();
             }
+
+            // ── RabbitMQ.Client ConnectionFactory build (every 50 iters) ────────────────────────
+            // Build a REAL ConnectionFactory and attempt CreateConnectionAsync to a deliberately
+            // unreachable address (timeout set to 10ms so it fails fast).  The factory ctor
+            // exercises the same static initialisers the mq-publish.rabbitmq / mq-expect.rabbitmq
+            // providers rely on.  No broker is needed: the test is that the reference graph loads
+            // into and is released from the collectible ALC without anchoring static state.
+            // IConnection is IAsyncDisposable only in RabbitMQ.Client 7.x — disposed via
+            // await DisposeAsync().ConfigureAwait(false) in finally (§5 / §13.3.1).
+            RabbitMQ.Client.IConnection? rmqConn = null;
+            try
+            {
+                var rmqFactory = new RabbitMQ.Client.ConnectionFactory
+                {
+                    Uri = new System.Uri("amqp://localhost:5672"),
+                    RequestedConnectionTimeout = System.TimeSpan.FromMilliseconds(10)
+                };
+                try
+                {
+                    rmqConn = await rmqFactory.CreateConnectionAsync(System.Threading.CancellationToken.None).ConfigureAwait(false);
+                }
+                catch { }
+                Vars["rmq_factory_built"] = 1L;
+            }
+            finally
+            {
+                if (rmqConn is not null)
+                    await rmqConn.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─
