@@ -297,7 +297,7 @@ public sealed class MqPublishRabbitmqProvider
         "    /// the observation / event stream.  Matches amqp://user:pass@ and replaces\n" +
         "    /// with amqp://***@ (case-insensitive; handles amqps:// URIs too).\n" +
         "    /// </summary>\n" +
-        "    private static string RedactAmqpUri(string message)\n" +
+        "    internal static string RedactAmqpUri(string message)\n" +
         "    {\n" +
         "        return System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message ?? string.Empty,\n" +

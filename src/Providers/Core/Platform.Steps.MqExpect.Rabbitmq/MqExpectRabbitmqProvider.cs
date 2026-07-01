@@ -422,7 +422,7 @@ public sealed class MqExpectRabbitmqProvider
         "        return true;\n" +
         "    }\n" +
         "\n" +
-        "    private static string RedactAmqpUri(string message)\n" +
+        "    internal static string RedactAmqpUri(string message)\n" +
         "    {\n" +
         "        return System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message ?? string.Empty,\n" +

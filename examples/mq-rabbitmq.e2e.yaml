@@ -17,6 +17,12 @@ environment:
     # RabbitMQ: AMQP 0-9-1 broker.  The connection URI is staged as conn::rmq
     # (VarKeys.Connection("rmq")) by the orchestrator and consumed by both
     # mq-publish.rabbitmq and mq-expect.rabbitmq via the 'target' field.
+    #
+    # NOTE: the 'orders' queue used in the steps below must already exist when the
+    # test runs.  If your SUT declares it on startup, the trigger-order-event step
+    # (HTTP call) will cause the queue to be created before the publish step runs.
+    # For standalone use (skipping trigger-order-event), declare the queue via a
+    # seed script or rely on your SUT image creating it at container-health time.
     rmq:
       type: rabbitmq
 
