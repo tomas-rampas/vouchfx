@@ -95,6 +95,8 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
@@ -109,6 +111,7 @@
     <PackageReference Include="JsonPath.Net" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="MongoDB.Driver" />
   </ItemGroup>
 
 </Project>

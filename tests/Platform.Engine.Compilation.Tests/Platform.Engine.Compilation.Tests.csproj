@@ -77,6 +77,7 @@
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj" />

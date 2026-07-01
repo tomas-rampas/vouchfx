@@ -175,6 +175,24 @@ public static class ClosureProbeScript
                 // Dispose() alone releases the native handle, which is all the leak gate needs.
                 consumer.Dispose();
             }
+
+            // ── MongoDB.Driver real MongoClient build + Dispose ────────────────
+            // Build a REAL MongoClient (exercises static initialisers, connection pool
+            // creation). Read a trivial property (Settings.Server), then Dispose() in
+            // finally.  No Connect() / query — the address does not exist; only the handle
+            // is allocated and released.  Exercises the same discipline the db-assert.mongodb
+            // provider's emitted helper uses (MongoDB.Driver 3.x: IMongoClient : IDisposable).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            MongoDB.Driver.MongoClient? mongoClient = null;
+            try
+            {
+                mongoClient = new MongoDB.Driver.MongoClient("mongodb://localhost:27017");
+                Vars["mongo_client_svr_len"] = mongoClient.Settings.Server.ToString().Length;
+            }
+            finally
+            {
+                mongoClient?.Dispose();
+            }
         }
 
         // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─

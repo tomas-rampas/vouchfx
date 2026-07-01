@@ -26,8 +26,9 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (7):
+Registered step types (8):
 
+- [`db-assert.mongodb`](#db-assertmongodb)
 - [`db-assert.postgres`](#db-assertpostgres)
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
@@ -35,6 +36,19 @@ Registered step types (7):
 - [`mq-publish.kafka`](#mq-publishkafka)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
+
+### `db-assert.mongodb`
+
+Set `type: db-assert.mongodb` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `collection` | `string` | Name of the MongoDB collection to query. |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of count or document must be specified. |
+| `filter` | `string` | JSON filter document. May contain {placeholder} tokens resolved at runtime. |
+| `target` | `string` | Logical name of the mongodb dependency to query, as declared under environment.dependencies. |
 
 ### `db-assert.postgres`
 

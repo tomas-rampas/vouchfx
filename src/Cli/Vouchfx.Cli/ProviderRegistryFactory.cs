@@ -8,6 +8,7 @@
 
 using System.Reflection;
 using Platform.Sdk;
+using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
@@ -36,14 +37,15 @@ internal static class ProviderRegistryFactory
     /// <remarks>
     /// One anchor type per Core provider assembly.  The Core providers wired into the
     /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>db-assert.sqlserver</c>,
-    /// <c>script.csharp</c>, <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c> and
-    /// <c>webhook-listen.http</c>.
+    /// <c>db-assert.mongodb</c>, <c>script.csharp</c>, <c>mq-publish.kafka</c>,
+    /// <c>mq-expect.kafka</c> and <c>webhook-listen.http</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka

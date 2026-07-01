@@ -24,6 +24,7 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
@@ -64,6 +65,7 @@ public sealed class LanguageReferenceGoldenTests
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
@@ -122,10 +124,11 @@ public sealed class LanguageReferenceGoldenTests
     {
         var generated = GenerateReference();
 
-        // All Core step types (original six plus db-assert.sqlserver).
+        // All Core step types (original six plus db-assert.sqlserver and db-assert.mongodb).
         Assert.Contains("### `http.rest`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.postgres`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.sqlserver`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.mongodb`", generated, StringComparison.Ordinal);
         Assert.Contains("### `script.csharp`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-publish.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.kafka`", generated, StringComparison.Ordinal);
