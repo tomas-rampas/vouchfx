@@ -103,6 +103,8 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj"
+                      IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj"

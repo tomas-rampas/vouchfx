@@ -73,6 +73,9 @@
     <!-- cache-assert.redis provider: used by CacheAssertRedisDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
                       IsAspireProjectResource="false" />
+    <!-- cache-assert.elasticsearch provider: used by CacheAssertElasticsearchDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj"
+                      IsAspireProjectResource="false" />
     <!-- mq-publish.rabbitmq + mq-expect.rabbitmq providers: used by MqRabbitmqDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
                       IsAspireProjectResource="false" />

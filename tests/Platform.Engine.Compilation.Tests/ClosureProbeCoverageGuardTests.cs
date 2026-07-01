@@ -34,6 +34,7 @@ using System.Linq;
 using System.Reflection;
 using Platform.Engine.Compilation.MemoryHarness;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
@@ -198,6 +199,10 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "mq-expect.rabbitmq",
             CanonicalClient: "RabbitMQ.Client.ConnectionFactory (RabbitMQ connection/channel)",
             ProbeMarker: "RabbitMQ.Client.ConnectionFactory"),
+        new CoreProviderCoverage(
+            StepKind: "cache-assert.elasticsearch",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by http.rest probe; cache-assert.elasticsearch queries the Elasticsearch HTTP API via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
     };
 
     /// <summary>
@@ -223,6 +228,7 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
     };
 
     // -------------------------------------------------------------------------
@@ -250,8 +256,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Thirteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq).
-        Assert.Equal(13, actualKinds.Count);
+        // Fourteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch).
+        Assert.Equal(14, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -278,8 +284,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (thirteen distinct rows).
-        Assert.Equal(13, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (fourteen distinct rows).
+        Assert.Equal(14, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

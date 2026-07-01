@@ -201,6 +201,13 @@ public static class EnvironmentMapper
                     var serverBuilder = builder.AddElasticsearch(name);
                     if (!string.IsNullOrEmpty(spec.Version))
                         serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    // Stability environment variables: single-node discovery, security
+                    // disabled (avoids TLS/credential setup in test environments), and
+                    // bounded JVM heap to prevent OOM on CI runners.
+                    serverBuilder = serverBuilder
+                        .WithEnvironment("discovery.type", "single-node")
+                        .WithEnvironment("xpack.security.enabled", "false")
+                        .WithEnvironment("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
                     return (retained, retained);
                 },

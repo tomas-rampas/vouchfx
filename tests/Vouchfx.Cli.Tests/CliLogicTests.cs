@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 13 Core provider assemblies; the registry freezes
-//     with the 13 expected step kinds.
+//   • ProviderRegistryFactory — names the 14 Core provider assemblies; the registry freezes
+//     with the 14 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsThirteenDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsFourteenDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(13, assemblies.Length);
-        // Thirteen *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(13, assemblies.Distinct().Count());
+        Assert.Equal(14, assemblies.Length);
+        // Fourteen *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(14, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheThirteenCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheFourteenCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -51,6 +51,7 @@ public sealed class ProviderRegistryFactoryTests
                      "webhook-listen.http",
                      "mail-expect.smtp",
                      "cache-assert.redis",
+                     "cache-assert.elasticsearch",
                  })
         {
             Assert.True(

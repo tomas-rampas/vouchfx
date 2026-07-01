@@ -8,6 +8,7 @@
 
 using System.Reflection;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
@@ -44,8 +45,8 @@ internal static class ProviderRegistryFactory
     /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>db-assert.sqlserver</c>,
     /// <c>db-assert.mongodb</c>, <c>db-assert.mysql</c>, <c>script.csharp</c>,
     /// <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c>, <c>mq-publish.rabbitmq</c>,
-    /// <c>mq-expect.rabbitmq</c>, <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>
-    /// and <c>cache-assert.redis</c>.
+    /// <c>mq-expect.rabbitmq</c>, <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
+    /// <c>cache-assert.redis</c> and <c>cache-assert.elasticsearch</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
@@ -62,6 +63,7 @@ internal static class ProviderRegistryFactory
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
     };
 
     /// <summary>

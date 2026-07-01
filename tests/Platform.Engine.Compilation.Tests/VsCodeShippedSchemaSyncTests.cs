@@ -26,6 +26,7 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
@@ -79,6 +80,7 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
     };
 
     /// <summary>

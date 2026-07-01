@@ -88,6 +88,16 @@ public static class SingletonReset
         // exists or is needed; the per-instance Dispose is sufficient (§5).
         log.Add("StackExchange.Redis: real multiplexer built+disposed per 50-iter cycle (iter % 50) — per-instance heartbeat/socket/reconnect resources released on Dispose, no global reset needed");
 
+        // ── HttpClient / BCL (cache-assert.elasticsearch) ────────────────────
+        // cache-assert.elasticsearch queries the Elasticsearch HTTP API via BCL
+        // HttpClient.  Its closure is entirely subsumed by the http.rest probe, which
+        // already exercises the BCL HttpClient/SocketsHttpHandler pool by creating and
+        // disposing an HttpClient per cycle (see the "HttpClient: disposed per cycle"
+        // entry above).  No additional harness-level reset is required; the shared probe
+        // marker (new System.Net.Http.HttpClient()) satisfies both rows in the
+        // ClosureProbeCoverageGuardTests enumerated-coverage table.
+        log.Add("cache-assert.elasticsearch: BCL HttpClient closure subsumed by the http.rest probe (HttpClient disposed per cycle) — no additional reset needed");
+
         // ── Confluent.SchemaRegistry / Apache.Avro ────────────────────────────
         // Sprint 6: the closure probe constructs a CachedSchemaRegistryClient every
         // iteration and Dispose()s it inside the probe's own finally.  Its schema cache

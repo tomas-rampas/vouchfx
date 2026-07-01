@@ -26,8 +26,9 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (13):
+Registered step types (14):
 
+- [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
 - [`db-assert.mongodb`](#db-assertmongodb)
 - [`db-assert.mysql`](#db-assertmysql)
@@ -41,6 +42,24 @@ Registered step types (13):
 - [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
+
+### `cache-assert.elasticsearch`
+
+Set `type: cache-assert.elasticsearch` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Expected result-set characteristics. |
+| `index` | `string` | Elasticsearch index to query. |
+| `target` | `string` | Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `query` | `string` | Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{"query":{"match":{"status":"active"}}}'). When absent a match_all query is used. May contain {placeholder} tokens resolved at execution time. |
 
 ### `cache-assert.redis`
 

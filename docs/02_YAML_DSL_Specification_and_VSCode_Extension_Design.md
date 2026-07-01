@@ -495,7 +495,7 @@ The community catalogue at platform launch is summarised in the table below. The
 | mq-publish | mq-publish.kafka, mq-publish.rabbitmq | — | — |
 | mq-expect | mq-expect.kafka, mq-expect.rabbitmq | — | — |
 | db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | — | — |
-| cache-assert | cache-assert.redis | — | — |
+| cache-assert | cache-assert.redis, cache-assert.elasticsearch | — | — |
 | mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
 | script | script.csharp | — | — |
@@ -514,7 +514,22 @@ Two patterns make the choice explicit and reviewable. First, the provider is nam
 >
 > A bare family name (e.g., `type: http`, `type: script`) is accepted as a convenient alias **only when that family has exactly one registered provider**. When a family has two or more providers, the bare form is rejected as ambiguous, and the author must use the explicit dotted form.
 >
-> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), `mail-expect` (→ mail-expect.smtp), and `cache-assert` (→ cache-assert.redis). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq), and `mq-expect` (kafka, rabbitmq). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), and `mail-expect` (→ mail-expect.smtp). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq), `mq-expect` (kafka, rabbitmq), and `cache-assert` (redis, elasticsearch). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+
+#### `cache-assert.elasticsearch` — step fields
+
+Asserts the state of an Elasticsearch index by submitting a Query DSL request and verifying the result set.
+
+| Field | Required | Description |
+|---|---|---|
+| `target` | Yes | The logical name of the `elasticsearch` dependency declared in `environment.dependencies`. |
+| `index` | Yes | The Elasticsearch index name to query. Supports `{placeholder}` substitution. |
+| `query` | No | A JSON string containing an Elasticsearch Query DSL body (e.g. `{"query":{"term":{"id":"{orderId}"}}}`). Supports `{placeholder}` substitution in field values. Defaults to a match-all query when omitted. |
+| `expect.count` | No | Exact number of hits required. Mutually exclusive with `expect.min-count`. |
+| `expect.min-count` | No | Minimum number of hits required (default `1` when neither count assertion is specified). |
+| `expect.fields` | No | List of `{field, value}` pairs asserted against the `_source` of the first hit. Each entry must match exactly. |
+
+Use `verifyMode: RETRY` with a `timeout` when the index may lag behind the write path (eventual consistency). `{placeholder}` references in `query` are resolved at execution time after all preceding capture expressions have been applied.
 
 # 6. Variable Capture and Substitution
 

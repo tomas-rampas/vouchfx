@@ -124,6 +124,23 @@ public sealed class AstBuilderTests
         Assert.Equal("cache-assert.redis", node.CanonicalType);
     }
 
+    [Fact]
+    public void Build_BareCacheAssert_MultiProvider_ThrowsAmbiguous()
+    {
+        // Arrange — cache-assert now has BOTH redis AND elasticsearch providers.
+        // The bare alias "cache-assert" is ambiguous and must throw.
+        var registry = RegistryWith(
+            new StubProvider("cache-assert", "redis"),
+            new StubProvider("cache-assert", "elasticsearch"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("redis", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("elasticsearch", ex.Message, StringComparison.Ordinal);
+    }
+
     // =========================================================================
     // Step-type resolution — ambiguous bare family
     // =========================================================================
