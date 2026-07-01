@@ -32,9 +32,13 @@
 //   Dot-notation is rejected in field assertions at validation time.
 //
 // Secret model (§17):
-//   Elasticsearch URL credentials (user:password@host) are stripped from the URL
-//   before it is used as a key or logged.  RedactCredentials() removes the userinfo
-//   component from exception messages so secret values never appear in observations.
+//   Three layers protect credentials in observations:
+//     1. URL userinfo is extracted on entry and used only as a Basic-auth header;
+//        baseUrl is rebuilt as scheme://host:port (no credentials in any log path).
+//     2. The generic System.Exception catch writes only ex.GetType().Name — not
+//        the URL, message, or stack — so HttpRequestException etc. leak nothing.
+//     3. Field expected-value resolved by Secret_Helpers.ResolveTemplate (§17 ledger
+//        scrub in BuildStepObservation covers the "expected" field in Fail observations).
 //   The emitted helper uses Secret_Helpers.ResolveTemplate for field expected-value
 //   templates, so ${secret:source/path} tokens are resolved at execution time.
 //
@@ -431,8 +435,7 @@ public sealed class CacheAssertElasticsearchProvider
         "{\n" +
         "    private static readonly System.Text.RegularExpressions.Regex _placeholderRegex =\n" +
         "        new System.Text.RegularExpressions.Regex(\n" +
-        "            @\"\\{([A-Za-z_][A-Za-z0-9_\\-]*)\\}\",\n" +
-        "            System.Text.RegularExpressions.RegexOptions.Compiled);\n" +
+        "            @\"\\{([A-Za-z_][A-Za-z0-9_\\-]*)\\}\");\n" +
         "\n" +
         "    /// <summary>\n" +
         "    /// Executes a cache-assert.elasticsearch step: queries the Elasticsearch HTTP API\n" +
@@ -677,23 +680,6 @@ public sealed class CacheAssertElasticsearchProvider
         "        });\n" +
         "    }\n" +
         "\n" +
-        "    /// <summary>\n" +
-        "    /// Removes the userinfo (user:password@) component from a URL string so that\n" +
-        "    /// credentials do not appear in EnvironmentError observations (§17).\n" +
-        "    /// Returns the original string if parsing fails.\n" +
-        "    /// </summary>\n" +
-        "    public static string RedactCredentials(string url)\n" +
-        "    {\n" +
-        "        if (string.IsNullOrEmpty(url)) return url;\n" +
-        "        try\n" +
-        "        {\n" +
-        "            var uri = new System.Uri(url);\n" +
-        "            if (!string.IsNullOrEmpty(uri.UserInfo))\n" +
-        "                return url.Replace(uri.UserInfo + \"@\", \"***@\", System.StringComparison.Ordinal);\n" +
-        "        }\n" +
-        "        catch { /* best-effort */ }\n" +
-        "        return url;\n" +
-        "    }\n" +
         "}",
     };
 

@@ -238,9 +238,19 @@ public sealed class CacheAssertElasticsearchEmitTests
     }
 
     // ── 13. Compile round-trip: credential URL absent from observation ─────────
+    //
+    // §17 protection is three-layered — this test verifies all three:
+    //   (1) baseUrl has userinfo stripped before any observation is built
+    //   (2) the generic System.Exception catch emits ONLY ex.GetType().Name, so
+    //       the URL never appears in the observation even if something throws
+    //   (3) therefore the observation is exactly {"error":"HttpRequestException"}
+    //       — no URL, no host, no password
+    //
+    // The test is intentionally strict: it checks the ACTUAL content (not merely
+    // that the password is absent), so deleting any protection layer breaks it.
 
     [Fact]
-    public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
+    public async Task Emit_CompileAndRun_CredentialedConnFails_ObservationContainsOnlyTypeName()
     {
         const string connUrl = "http://elastic:sup3rsecret@localhost:56790";
         var model = MakeModel(target: "search");
@@ -254,8 +264,15 @@ public sealed class CacheAssertElasticsearchEmitTests
 
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.NotNull(outcome.Observation);
-        // §17: the password must never appear in the observation.
+
+        // §17 layer (2): generic catch emits ONLY the exception type name — no URL,
+        // no host, no password.
         Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
+        Assert.DoesNotContain("elastic", outcome.Observation!, StringComparison.Ordinal);
+        Assert.DoesNotContain("56790", outcome.Observation!, StringComparison.Ordinal);
+
+        // The observation must be the type-name-only JSON produced by the catch block.
+        Assert.Contains("HttpRequestException", outcome.Observation!, StringComparison.Ordinal);
     }
 
     // ── 14. Compile round-trip: default match_all query compiles ──────────────
