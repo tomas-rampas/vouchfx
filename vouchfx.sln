@@ -127,6 +127,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rab
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rabbitmq.Tests", "tests\Platform.Steps.MqExpect.Rabbitmq.Tests\Platform.Steps.MqExpect.Rabbitmq.Tests.csproj", "{E314040A-7234-9D56-FB87-0112345E7F80}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Nats", "src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj", "{F425051B-8345-AECF-0C98-1223456F8091}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Nats.Tests", "tests\Platform.Steps.MqPublish.Nats.Tests\Platform.Steps.MqPublish.Nats.Tests.csproj", "{05536C2D-9456-BFDF-1DA9-2334567F9102}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nats", "src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj", "{16647D3E-0567-C0EF-2EBA-3445678F0213}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nats.Tests", "tests\Platform.Steps.MqExpect.Nats.Tests\Platform.Steps.MqExpect.Nats.Tests.csproj", "{27758E4F-1678-D100-3FCB-4556789F1324}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -348,6 +356,22 @@ Global
 		{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F425051B-8345-AECF-0C98-1223456F8091}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F425051B-8345-AECF-0C98-1223456F8091}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F425051B-8345-AECF-0C98-1223456F8091}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F425051B-8345-AECF-0C98-1223456F8091}.Release|Any CPU.Build.0 = Release|Any CPU
+		{05536C2D-9456-BFDF-1DA9-2334567F9102}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05536C2D-9456-BFDF-1DA9-2334567F9102}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05536C2D-9456-BFDF-1DA9-2334567F9102}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05536C2D-9456-BFDF-1DA9-2334567F9102}.Release|Any CPU.Build.0 = Release|Any CPU
+		{16647D3E-0567-C0EF-2EBA-3445678F0213}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{16647D3E-0567-C0EF-2EBA-3445678F0213}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{16647D3E-0567-C0EF-2EBA-3445678F0213}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{16647D3E-0567-C0EF-2EBA-3445678F0213}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27758E4F-1678-D100-3FCB-4556789F1324}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27758E4F-1678-D100-3FCB-4556789F1324}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27758E4F-1678-D100-3FCB-4556789F1324}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27758E4F-1678-D100-3FCB-4556789F1324}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}

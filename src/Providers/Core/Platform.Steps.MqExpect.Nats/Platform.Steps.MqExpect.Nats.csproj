@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Steps.MqExpect.Nats</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- NATS.Net 2.x: NatsConnection (Core) + JetStream context + FetchAsync API.
+         These are compile-time MetadataReferences only; they resolve from the Default
+         ALC and are never loaded into the collectible ALC (§5 memory-model). -->
+    <PackageReference Include="NATS.Net" />
+  </ItemGroup>
+
+  <ItemGroup Label="JSONPath evaluation for match (PLAIN-payload slice)">
+    <!-- JsonPath.Net is a compile-time MetadataReference only; it resolves from the
+         Default ALC and is never loaded into the collectible ALC (§5 memory-model). -->
+    <PackageReference Include="JsonPath.Net" />
+  </ItemGroup>
+
+</Project>

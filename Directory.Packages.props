@@ -53,6 +53,11 @@
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.1" />
+    <!-- Aspire.Hosting.Nats 13.4.2 transitively requires >= 2.7.3; pin to the
+         exact required minimum to avoid NU1109 downgrade errors under
+         CentralPackageTransitivePinningEnabled. The mq-publish.nats and
+         mq-expect.nats providers were authored against this API surface. -->
+    <PackageVersion Include="NATS.Net" Version="2.7.3" />
   </ItemGroup>
   <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
