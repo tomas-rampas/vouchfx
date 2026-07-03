@@ -65,7 +65,7 @@ public sealed class MqExpectAzureServiceBusProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.",
+          "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
           "type": "object",
           "required": ["target"],
           "properties": {
@@ -78,11 +78,11 @@ public sealed class MqExpectAzureServiceBusProvider
               "type": "string"
             },
             "topic": {
-              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} and ${secret:source/path} tokens.",
+              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
               "type": "string"
             },
             "subscription": {
-              "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} and ${secret:source/path} tokens.",
+              "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} substitution tokens.",
               "type": "string"
             },
             "expectPayloadContains": {
@@ -245,7 +245,7 @@ public sealed class MqExpectAzureServiceBusProvider
         "    /// attempts — idempotent poll discipline (§7).\n" +
         "    /// LEAK GATE (§5): ServiceBusClient and ServiceBusReceiver are IAsyncDisposable.\n" +
         "    /// Both are disposed via await .DisposeAsync().ConfigureAwait(false) in finally\n" +
-        "    /// blocks.  'using var' / 'await using var' are prohibited in CSX bodies\n" +
+        "    /// blocks.  Roslyn-script bodies prohibit scoped-variable 'using' declarations\n" +
         "    /// (§13.3.1); disposal is always explicit in emitted helpers.\n" +
         "    /// Entity provisioning: entities must be declared in EnvironmentMapper Config.json\n" +
         "    /// (via extra.queues / extra.topics in the authoring YAML).  A missing entity\n" +
@@ -280,9 +280,13 @@ public sealed class MqExpectAzureServiceBusProvider
         "        Azure.Messaging.ServiceBus.ServiceBusReceiver? receiver = null;\n" +
         "        try\n" +
         "        {\n" +
-        "            var queue = queueTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, queueTemplate);\n" +
-        "            var topic = topicTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, topicTemplate);\n" +
-        "            var subscription = subscriptionTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, subscriptionTemplate);\n" +
+        "            // Entity names: {placeholder} substitution only — secrets must NOT appear\n" +
+        "            // in broker entity names (§17).  A ${secret:…} token left unresolved\n" +
+        "            // becomes a literal broker path → ServiceBusException → EnvironmentError.\n" +
+        "            var queue = queueTemplate is null ? null : Substitute_Helpers.Resolve(vars, queueTemplate);\n" +
+        "            var topic = topicTemplate is null ? null : Substitute_Helpers.Resolve(vars, topicTemplate);\n" +
+        "            var subscription = subscriptionTemplate is null ? null : Substitute_Helpers.Resolve(vars, subscriptionTemplate);\n" +
+        "            // Peek criteria: full secret + placeholder resolution (§17).\n" +
         "            var payloadContains = payloadContainsTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, payloadContainsTemplate);\n" +
         "            var expectPropValues = new string[expectPropValueTemplates.Length];\n" +
         "            for (int __pi = 0; __pi < expectPropValueTemplates.Length; __pi++)\n" +
@@ -468,9 +472,12 @@ public sealed class MqExpectAzureServiceBusProvider
         get
         {
             // Azure.Messaging.ServiceBus — ServiceBusClient, ServiceBusReceiver,
-            // ServiceBusReceivedMessage, ServiceBusException.  All types referenced by the
-            // emitted CSX helpers are in this single assembly.
+            // ServiceBusReceivedMessage, ServiceBusException.
             yield return typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly;
+            // Azure.Core — required as a direct compile-time reference: msg.Body returns
+            // BinaryData (defined in Azure.Core) and Azure.Core types appear in ServiceBus
+            // method signatures.  Roslyn needs Azure.Core to resolve these at compile time.
+            yield return typeof(Azure.Response).Assembly;
         }
     }
 

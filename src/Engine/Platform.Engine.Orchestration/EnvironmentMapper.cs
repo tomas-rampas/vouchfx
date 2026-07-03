@@ -27,6 +27,7 @@
 //   • HealthGateNames — produces the ordered gate-name sequence for the topology fixture to await.
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
+using System.Text.Json;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Platform.Engine.Authoring.Model;
@@ -334,16 +335,15 @@ public static class EnvironmentMapper
             //
             // Container topology:
             //   <name>-sqledge  — mcr.microsoft.com/mssql/server:2022-latest (SQL persistence)
-            //   <name>           — mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+            //   <name>           — mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
             //     • AMQP port 5672   → resolved as conn::<name>
             //     • HTTP port 5300   → health check at /health
             //     • Config.json bind-mounted from a generated temp file
             //
             // Entity declarations: queues and topics are read from spec.Extra
             // (extra.queues: [...], extra.topics: [{name, subscriptions: [...]}]) and
-            // written into Config.json.  Authors who need entities at step time (with
-            // unknown names at topology-setup time) can also rely on the provider's
-            // auto-create logic (ServiceBusAdministrationClient.Create*IfNotExistsAsync).
+            // written into Config.json.  Entities not declared here will not be available;
+            // a missing entity surfaces as ServiceBusException → EnvironmentError (§12.1).
             //
             // Health gate: <name> only (the emulator's /health check requires SQL to be
             // ready, so the sidecar's "running" state is subsumed by the emulator gate).
@@ -355,6 +355,9 @@ public static class EnvironmentMapper
 
                     // SQL Server sidecar — required by the ASB emulator for persistence.
                     // MSSQL_SA_PASSWORD meets SQL Server complexity requirements.
+                    // The "2022-latest" tag is intentionally floating: SQL Server 2022 minor/CU
+                    // updates are backwards-compatible and this topology validates the ASB layer,
+                    // not SQL internals — pinning would add upgrade churn with no safety benefit.
                     var sidecarBuilder = builder
                         .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")
                         .WithEnvironment("ACCEPT_EULA", "Y")
@@ -362,15 +365,24 @@ public static class EnvironmentMapper
 
                     // Generate a Config.json that declares the ASB emulator namespace.
                     // Queues and topics are read from spec.Extra; if absent, an empty
-                    // namespace is declared (the provider auto-creates entities on demand).
+                    // namespace is declared.  Entities not declared here will not be
+                    // available; a missing entity surfaces as ServiceBusException → EnvironmentError.
                     var queues = ParseAsbQueues(spec.Extra);
                     var topics = ParseAsbTopics(spec.Extra);
                     var configJson = GenerateAsbConfigJson(queues, topics);
-                    var configPath = Path.GetTempFileName();
+                    // Write to a vouchfx-prefixed temp subdirectory so the file is
+                    // identifiable for manual cleanup.  The OS reclaims temp files on
+                    // reboot; the emulator reads this path at container-start time and
+                    // the normal teardown path (§4.5) removes the container before the
+                    // engine exits, so the file is only retained on abnormal DCP exits.
+                    var asbTempDir = Path.Combine(
+                        Path.GetTempPath(), $"vouchfx-asb-{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(asbTempDir);
+                    var configPath = Path.Combine(asbTempDir, "Config.json");
                     File.WriteAllText(configPath, configJson);
 
                     var emulatorBuilder = builder
-                        .AddContainer(name, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
+                        .AddContainer(name, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "1.1.2")
                         .WithEnvironment("ACCEPT_EULA", "Y")
                         .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1")
                         .WithEnvironment("SQL_SERVER", sidecarName)
@@ -379,6 +391,9 @@ public static class EnvironmentMapper
                         .WithHttpEndpoint(targetPort: 5300, name: "health")
                         .WithHttpHealthCheck(path: "/health", endpointName: "health")
                         .WaitFor(sidecarBuilder);
+
+                    if (!string.IsNullOrEmpty(spec.Version))
+                        emulatorBuilder = emulatorBuilder.WithImageTag(spec.Version);
 
                     // Capture the AMQP endpoint reference; resolve after StartAsync.
                     // IResourceBuilder<T> is covariant (out T) in Aspire 13.x, so
@@ -629,6 +644,10 @@ public static class EnvironmentMapper
     /// The raw YAML mapping node from <see cref="DependencySpec.Extra"/>; may be
     /// <see langword="null"/> (no extra fields → no registry).
     /// </param>
+    /// <summary>Cached options for <see cref="GenerateAsbConfigJson"/> serialisation (CA1869).</summary>
+    private static readonly JsonSerializerOptions s_asbConfigJsonOptions =
+        new JsonSerializerOptions { WriteIndented = true };
+
     private static bool KafkaWantsSchemaRegistry(YamlMappingNode? extra)
     {
         if (extra is null)
@@ -699,61 +718,47 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// Generates the Config.json content for the Azure Service Bus emulator.
+    /// Generates the Config.json content for the Azure Service Bus emulator using
+    /// <see cref="JsonSerializer"/> so special characters in queue/topic names are
+    /// correctly escaped and manual <c>EscapeJson</c> is avoided (FIX 5).
     /// </summary>
-    /// <remarks>
-    /// The emulator namespace is always <c>sbemulatorns</c> (fixed by the emulator image).
-    /// Queues and topics declared here are pre-created at emulator startup.
-    /// Entities not declared in the YAML will not be available in the emulator unless
-    /// they are created by the broker after startup through the emulator's own mechanisms.
-    /// The <c>Logging</c> section is required by the emulator; omitting it causes a
-    /// <c>NullReferenceException</c> at startup and prevents the container from becoming healthy.
-    /// </remarks>
     private static string GenerateAsbConfigJson(
         IReadOnlyList<string> queues,
         IReadOnlyList<(string Name, IReadOnlyList<string> Subscriptions)> topics)
     {
-        // Build queue JSON fragments: {"Name":"q","Properties":{}}
-        var queueFragments = string.Join(",", queues.Select(q =>
-            $"{{\"Name\":\"{EscapeJson(q)}\",\"Properties\":{{}}}}"));
-
-        // Build topic JSON fragments with subscriptions.
-        var topicFragments = string.Join(",", topics.Select(t =>
-        {
-            var subFragments = string.Join(",", t.Subscriptions.Select(sub =>
-                $"{{\"Name\":\"{EscapeJson(sub)}\",\"Properties\":{{}}}}"));
-            return $"{{\"Name\":\"{EscapeJson(t.Name)}\",\"Properties\":{{}},\"Subscriptions\":[{subFragments}]}}";
-        }));
-
-        // Use $$ raw string: single { } = literal brace, {{ expr }} = interpolation hole.
         // The "Logging" section is REQUIRED by the emulator — omitting it causes a
         // NullReferenceException at startup ("Logging config cannot be null").
         // "Console" is the safest type for non-persistent containers.
-        return $$"""
+        var config = new
+        {
+            UserConfig = new
             {
-              "UserConfig": {
-                "Namespaces": [
-                  {
-                    "Name": "sbemulatorns",
-                    "Queues": [{{queueFragments}}],
-                    "Topics": [{{topicFragments}}]
-                  }
-                ],
-                "Logging": {
-                  "Type": "Console"
-                }
-              }
-            }
-            """;
-    }
+                Namespaces = new[]
+                {
+                    new
+                    {
+                        Name = "sbemulatorns",
+                        Queues = queues
+                            .Select(q => new { Name = q, Properties = new { } })
+                            .ToArray(),
+                        Topics = topics
+                            .Select(t => new
+                            {
+                                Name = t.Name,
+                                Properties = new { },
+                                Subscriptions = t.Subscriptions
+                                    .Select(s => new { Name = s, Properties = new { } })
+                                    .ToArray(),
+                            })
+                            .ToArray(),
+                    },
+                },
+                Logging = new { Type = "Console" },
+            },
+        };
 
-    /// <summary>
-    /// Minimal JSON string escape: replaces <c>\</c> and <c>"</c> characters so that
-    /// user-supplied queue/topic names are safe to embed in JSON string literals.
-    /// </summary>
-    private static string EscapeJson(string value) =>
-        value.Replace("\\", "\\\\", StringComparison.Ordinal)
-             .Replace("\"", "\\\"", StringComparison.Ordinal);
+        return JsonSerializer.Serialize(config, s_asbConfigJsonOptions);
+    }
 
     /// <summary>
     /// Resolves the fully-qualified image reference by applying <paramref name="registry"/>

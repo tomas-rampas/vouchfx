@@ -21,6 +21,7 @@
 //  18. Schema: SchemaFragment references "queue".
 //
 // All tests are non-docker.  No topology is started.
+using Platform.Engine.Compilation;
 using Platform.Sdk;
 using Platform.Steps.MqExpect.AzureServiceBus;
 using Xunit;
@@ -49,6 +50,18 @@ file sealed class StubProjectContext : IProjectContext
 /// Stub <see cref="IBindingContext"/> for tests that do not require binding services.
 /// </summary>
 internal sealed class StubBindingContext : IBindingContext { }
+
+/// <summary>Minimal <see cref="ICompileContext"/> for emit tests in provider test class.</summary>
+file sealed class StubCompileContext : ICompileContext
+{
+    public StubCompileContext(string stepId) => StepId = stepId;
+    public string StepId { get; }
+    public string SuiteNamespace => "Generated";
+    public IReadOnlyDictionary<string, string> Captures { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } =
+        new Dictionary<string, CaptureExpr>(StringComparer.Ordinal);
+}
 
 // ── Test class ────────────────────────────────────────────────────────────────
 
@@ -440,60 +453,43 @@ public sealed class MqExpectAzureServiceBusProviderTests
     }
 
     // ── Credential-redaction regression (§17) ──────────────────────────────────
-    // The emitted helper's RedactAsbConnStr performs two-layer scrubbing:
-    // (a) literal full connection-string replacement;
-    // (b) regex scrub of SharedAccessKey=<value> up to the next semicolon.
-    // These tests exercise the same logic to guard against accidental key exposure.
+    // FIX 6: tests now assert on the actual EMITTED helper source rather than
+    // re-implementing the redaction logic inline.  See MqExpectAzureServiceBusEmitTests.cs
+    // for the full emit-level suite (tests 13–15) covering two-layer redaction and
+    // Base64 key patterns.
 
     [Fact]
-    public void RedactCredentials_LiteralConnStr_IsRemovedFromObservation()
+    public void RedactCredentials_EmittedHelper_ContainsLiteralReplacementLayer()
     {
-        const string key = "MySecretKey123=";
-        var connStr = $"Endpoint=sb://localhost:5672;SharedAccessKeyName=Root;SharedAccessKey={key};UseDevelopmentEmulator=true;";
-        var errorMessage = $"ServiceBusException: {connStr} returned 401";
+        var fragment = _provider.Emit(
+            new MqExpectAzureServiceBusModel("asb", "orders", null, null, "hello", null),
+            new StubCompileContext("s"));
+        var helperSource = string.Join("\n", fragment.RequiredHelpers);
 
-        var redacted = errorMessage.Replace(connStr, "***", StringComparison.Ordinal);
-
-        Assert.DoesNotContain(key, redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain(connStr, redacted, StringComparison.Ordinal);
+        Assert.Contains(".Replace(connStr,", helperSource, StringComparison.Ordinal);
+        Assert.Contains("***", helperSource, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RedactCredentials_SharedAccessKeyPattern_IsRemovedFromObservation()
+    public void RedactCredentials_EmittedHelper_ContainsSharedAccessKeyRegexLayer()
     {
-        const string key = "SuperSecret999=";
-        var errorMessage = $"Auth error: SharedAccessKey={key};something-else";
+        var fragment = _provider.Emit(
+            new MqExpectAzureServiceBusModel("asb", "orders", null, null, "hello", null),
+            new StubCompileContext("s"));
+        var helperSource = string.Join("\n", fragment.RequiredHelpers);
 
-        var redacted = System.Text.RegularExpressions.Regex.Replace(
-            errorMessage,
-            "SharedAccessKey=[^;]*",
-            "SharedAccessKey=***",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        Assert.DoesNotContain(key, redacted, StringComparison.Ordinal);
-        Assert.Contains("SharedAccessKey=***", redacted, StringComparison.Ordinal);
+        Assert.Contains("SharedAccessKey=[^;]*", helperSource, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RedactCredentials_CombinedLayers_SharedAccessKeyAbsentFromObservation()
+    public void RedactCredentials_EmittedHelper_ContainsBothLayers()
     {
-        const string key = "B64secretValue+abc/xyz==";
-        var connStr = $"Endpoint=sb://broker:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey={key};UseDevelopmentEmulator=true;";
-        var errorMessage = $"Error connecting to {connStr}: SharedAccessKey={key} rejected";
+        var fragment = _provider.Emit(
+            new MqExpectAzureServiceBusModel("asb", "orders", null, null, "hello", null),
+            new StubCompileContext("s"));
+        var helperSource = string.Join("\n", fragment.RequiredHelpers);
 
-        // Layer (a): literal full conn string.
-        var redacted = string.IsNullOrEmpty(connStr)
-            ? errorMessage
-            : errorMessage.Replace(connStr, "***", StringComparison.Ordinal);
-
-        // Layer (b): regex for any remaining SharedAccessKey=<value>.
-        redacted = System.Text.RegularExpressions.Regex.Replace(
-            redacted,
-            "SharedAccessKey=[^;]*",
-            "SharedAccessKey=***",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        Assert.DoesNotContain(key, redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain(connStr, redacted, StringComparison.Ordinal);
+        Assert.Contains(".Replace(connStr,", helperSource, StringComparison.Ordinal);
+        Assert.Contains("SharedAccessKey=[^;]*", helperSource, StringComparison.Ordinal);
     }
 }

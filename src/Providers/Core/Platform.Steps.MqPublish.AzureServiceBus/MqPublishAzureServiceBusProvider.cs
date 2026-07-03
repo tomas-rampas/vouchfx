@@ -8,9 +8,11 @@
 // The Azure Service Bus emulator (two-container topology: SQL Server sidecar + ASB emulator)
 // is the test-time broker.  Production scenarios use a real Azure Service Bus namespace.
 //
-// Substitution + secret model (canonical M2 pattern — mirrors mq-publish.nats):
-//   The entity name (queue/topic) and payload are emitted as RAW template strings and
-//   resolved inside the helper's guarded try via Secret_Helpers.ResolveTemplate (§17).
+// Substitution + secret model (§17):
+//   Entity names (queue/topic): {placeholder} substitution only — Substitute_Helpers.Resolve.
+//   Secrets MUST NOT appear in entity names; a ${secret:…} token is left as literal text,
+//   the broker sees an invalid entity path, and the step returns EnvironmentError (§12.1).
+//   Payload + property values: full secret + placeholder resolution — Secret_Helpers.ResolveTemplate.
 //   A missing secret throws SecretResolutionException → caught → Verdict.EnvironmentError.
 //
 // Entity provisioning: entities (queues/topics) must be declared in the authoring YAML under
@@ -81,11 +83,11 @@ public sealed class MqPublishAzureServiceBusProvider
               "type": "string"
             },
             "queue": {
-              "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} and ${secret:source/path} tokens.",
+              "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
               "type": "string"
             },
             "topic": {
-              "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} and ${secret:source/path} tokens.",
+              "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
               "type": "string"
             },
             "payload": {
@@ -228,7 +230,7 @@ public sealed class MqPublishAzureServiceBusProvider
         "    /// <remarks>\n" +
         "    /// LEAK GATE (§5): ServiceBusClient and ServiceBusSender are IAsyncDisposable.\n" +
         "    /// Both are disposed via await .DisposeAsync().ConfigureAwait(false) in finally\n" +
-        "    /// blocks.  'using var' / 'await using var' are prohibited in CSX bodies\n" +
+        "    /// blocks.  Roslyn-script bodies prohibit scoped-variable 'using' declarations\n" +
         "    /// (§13.3.1); disposal is always explicit in emitted helpers.\n" +
         "    /// Entity provisioning: entities must be declared in EnvironmentMapper Config.json\n" +
         "    /// (via extra.queues / extra.topics in the authoring YAML).  A missing entity\n" +
@@ -264,14 +266,20 @@ public sealed class MqPublishAzureServiceBusProvider
         "        Azure.Messaging.ServiceBus.ServiceBusSender? sender = null;\n" +
         "        try\n" +
         "        {\n" +
-        "            // Resolve author-text fields INSIDE the guarded region (§17) via\n" +
-        "            // ResolveTemplate (single pass: {placeholder} substitution + ${secret} resolution).\n" +
-        "            var queue = queueTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, queueTemplate);\n" +
-        "            var topic = topicTemplate is null ? null : Secret_Helpers.ResolveTemplate(secrets, vars, topicTemplate);\n" +
+        "            // Entity names: {placeholder} substitution only — secrets must NOT appear in\n" +
+        "            // broker entity names (§17).  A ${secret:…} token left unresolved becomes a\n" +
+        "            // literal broker path, causing ServiceBusException → EnvironmentError (§12.1).\n" +
+        "            var queue = queueTemplate is null ? null : Substitute_Helpers.Resolve(vars, queueTemplate);\n" +
+        "            var topic = topicTemplate is null ? null : Substitute_Helpers.Resolve(vars, topicTemplate);\n" +
+        "            // Payload and property values: full secret + placeholder resolution (§17).\n" +
         "            var payload = Secret_Helpers.ResolveTemplate(secrets, vars, payloadTemplate);\n" +
         "            var propValues = new string[propValueTemplates.Length];\n" +
         "            for (int __pi = 0; __pi < propValueTemplates.Length; __pi++)\n" +
         "                propValues[__pi] = Secret_Helpers.ResolveTemplate(secrets, vars, propValueTemplates[__pi]);\n" +
+        "            // Capture the raw (pre-resolution) entity template for the observation.\n" +
+        "            // Emitting the template prevents a resolved secret value from leaking into\n" +
+        "            // the observation / event stream (§17).\n" +
+        "            var entityTemplate = queueTemplate ?? topicTemplate ?? \"unknown\";\n" +
         "            var entityPath = queue ?? topic ?? throw new System.InvalidOperationException(\"Either queue or topic must be set.\");\n" +
         "            // Entities must be declared in EnvironmentMapper Config.json (via extra.queues/\n" +
         "            // extra.topics in the authoring YAML).  A missing entity surfaces as\n" +
@@ -283,7 +291,7 @@ public sealed class MqPublishAzureServiceBusProvider
         "                msg.ApplicationProperties[propKeys[__pi]] = propValues[__pi];\n" +
         "            await sender.SendMessageAsync(msg, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "            verdict = Platform.Engine.Abstractions.Verdict.Pass;\n" +
-        "            observation = \"{\\\"sent\\\":true,\\\"entity\\\":\" + System.Text.Json.JsonSerializer.Serialize(entityPath) + \"}\";\n" +
+        "            observation = \"{\\\"sent\\\":true,\\\"entity\\\":\" + System.Text.Json.JsonSerializer.Serialize(entityTemplate) + \"}\";\n" +
         "        }\n" +
         "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
         "        {\n" +
@@ -350,9 +358,10 @@ public sealed class MqPublishAzureServiceBusProvider
     {
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
-        // Queue and topic templates are emitted as RAW template literals so any
-        // {placeholder} or ${secret:…} token survives as literal text and is resolved
-        // at runtime by Secret_Helpers.ResolveTemplate (§17).
+        // Queue and topic templates are emitted as RAW template literals so that any
+        // {placeholder} token survives to be resolved at runtime by Substitute_Helpers.Resolve.
+        // Entity names do NOT support ${secret:…} tokens (§17 — see s_helpers comment).
+        // Payload and property-value templates are resolved by Secret_Helpers.ResolveTemplate.
         var queueLiteral = model.Queue is null
             ? "null"
             : JsonSerializer.Serialize(model.Queue);
@@ -418,12 +427,13 @@ public sealed class MqPublishAzureServiceBusProvider
         get
         {
             // Azure.Messaging.ServiceBus — ServiceBusClient, ServiceBusSender, ServiceBusMessage,
-            // ServiceBusException, ServiceBusReceivedMessage.  All types referenced by the emitted
-            // CSX helpers are in this single assembly.  Azure.Core is a transitive dep of ServiceBus
-            // but is NOT referenced by the emitted CSX (no Azure.Response<T> in the data-plane path),
-            // so it does not need to be contributed explicitly — it is resolved from Azure.Messaging.
-            // ServiceBus.dll's metadata at compile time without being loaded into the collectible ALC.
+            // ServiceBusException.
             yield return typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly;
+            // Azure.Core — required as a direct compile-time reference: the emitted CSX uses
+            // BinaryData (msg.Body, defined in Azure.Core) and Azure.Core types appear in
+            // ServiceBus method signatures.  Roslyn needs the Azure.Core assembly to resolve
+            // these type references at compile time.
+            yield return typeof(Azure.Response).Assembly;
         }
     }
 

@@ -20,25 +20,26 @@ environment:
     # Azure Service Bus Emulator: AMQP 1.0 broker backed by SQL Server 2022.
     # EnvironmentMapper starts two containers:
     #   asb-sqledge — mcr.microsoft.com/mssql/server:2022-latest (SQL persistence sidecar)
-    #   asb         — mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    #   asb         — mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
     #     AMQP port 5672 → conn::asb (connection string with UseDevelopmentEmulator=true)
     #     HTTP port 5300 → /health gate (emulator waits for SQL to be ready)
     #
     # The 'queues' list is written into Config.json at topology-setup time so the
-    # emulator pre-creates the entity.  Entities not listed here are auto-created
-    # by the provider (mq-publish.azureservicebus / mq-expect.azureservicebus) via
-    # ServiceBusAdministrationClient before the first operation.
+    # emulator pre-creates the entity.  Entities NOT declared here will not exist
+    # in the emulator; a missing entity surfaces as EnvironmentError.
     #
-    # For topic-based messaging, declare topics under the 'topics' key:
-    #   topics:
-    #     - name: orders-topic
-    #       subscriptions:
-    #         - orders-sub
+    # For topic-based messaging, declare topics under the 'topics' key.
+    # The final step in this file peeks orders-topic/orders-sub, so they must
+    # also be declared here:
     asb:
       type: azureservicebus
       extra:
         queues:
           - orders
+        topics:
+          - name: orders-topic
+            subscriptions:
+              - orders-sub
 
 steps:
   - id: trigger-order-event
