@@ -4,8 +4,8 @@ metadata:
     Example showing how to assert on Redis cache state with the cache-assert.redis
     provider.  A system-under-test writes a value into Redis; the steps then verify the
     value, the key's presence, its TTL, and a few collection shapes (hash / list / set).
-    `cache-assert` is a single-provider family, so the bare `cache-assert` alias resolves
-    to `cache-assert.redis`.
+    `cache-assert` is a multi-provider family (redis + elasticsearch), so the dotted form
+    `cache-assert.redis` is required — the bare `cache-assert` alias is ambiguous.
 
 environment:
   services:
@@ -34,9 +34,9 @@ steps:
     capture:
       userId: $.userId
 
-  # ── String value assertion (bare-family alias) ──────────────────────────────
+  # ── String value assertion ───────────────────────────────────────────────────
   - id: assert-session-value
-    type: cache-assert          # bare alias → cache-assert.redis
+    type: cache-assert.redis
     description: The cached session value for the user equals "active".
     target: cache
     key: "user:{userId}"        # {userId} is substituted at execution time

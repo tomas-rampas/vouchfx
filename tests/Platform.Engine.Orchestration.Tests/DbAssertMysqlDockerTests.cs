@@ -22,7 +22,7 @@
 //   • MySqlConnector is added to additionalReferencePaths (compile-ref only,
 //     never collectible ALC).
 //   • NOTE: Do NOT run this test locally or in CI unless Docker is available and
-//     the mysql:8.0 image is pre-pulled.
+//     the mysql:9.7 image is pre-pulled (Aspire.Hosting.MySql 13.4.2 default).
 using Platform.Engine.Abstractions;
 using Platform.Engine.Authoring.Model;
 using Platform.Engine.Compilation;

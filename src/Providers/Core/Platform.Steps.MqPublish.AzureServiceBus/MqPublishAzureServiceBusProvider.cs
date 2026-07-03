@@ -429,10 +429,10 @@ public sealed class MqPublishAzureServiceBusProvider
             // Azure.Messaging.ServiceBus — ServiceBusClient, ServiceBusSender, ServiceBusMessage,
             // ServiceBusException.
             yield return typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly;
-            // Azure.Core — required as a direct compile-time reference: the emitted CSX uses
-            // BinaryData (msg.Body, defined in Azure.Core) and Azure.Core types appear in
-            // ServiceBus method signatures.  Roslyn needs the Azure.Core assembly to resolve
-            // these type references at compile time.
+            // Azure.Core — required as a direct compile-time reference: Azure.Core types
+            // (e.g. Azure.Response, Azure.RequestContext) appear in Azure.Messaging.ServiceBus
+            // method signatures, so Roslyn needs the Azure.Core assembly to resolve those
+            // type references in the emitted CSX at compile time.
             yield return typeof(Azure.Response).Assembly;
         }
     }

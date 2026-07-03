@@ -237,6 +237,12 @@ jobs:
       #   nats:2.14                              — MqNatsDockerTests JetStream broker container
       #                                            (mq-publish.nats / mq-expect.nats);
       #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
+      #   mysql:9.7                              — DbAssertMysqlDockerTests MySQL container
+      #                                            (db-assert.mysql provider);
+      #                                            Aspire.Hosting.MySql 13.4.2 default
+      #                                            (MySqlContainerImageTags:
+      #                                            docker.io/library/mysql:9.7);
+      #                                            no test overrides the tag.
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -264,6 +270,7 @@ jobs:
             rabbitmq:4-management \
             elasticsearch:8.17.3 \
             nats:2.14 \
+            mysql:9.7 \
             mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2 ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"

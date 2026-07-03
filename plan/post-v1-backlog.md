@@ -48,3 +48,48 @@ collected by the engine).
 - [ ] When the flag is `false`, no telemetry events are emitted for that scenario regardless of global consent.
 - [ ] The v1 schema `$id` is unaffected; v2 introduces a new `$id`.
 - [ ] The v1 YAML DSL specification (DSL §3) documents the field in the v2 docs.
+
+---
+
+## PB-02 · Per-scenario state reset for non-Postgres datastores
+
+**Deferred to:** v2 (engineering effort; no contract change required)
+**Originally deferred in:** Provider batch expansion (Sprint 13 / M5 pilot)
+**Spec:** Blueprint §4 (orchestration); DSL §3.2.3 (seeding initial state)
+
+### Why this is postponed
+
+Only Postgres dependencies are automatically reset between sequential scenarios that share a single
+topology. The engine applies `RespawnPostgresIsolation` (Respawn library) after each scenario
+completes, flushing tables so the next scenario starts clean. No equivalent reset is wired for the
+eight other stateful stores added in the provider batch:
+
+- **SQL Server / MySQL** — Respawn ships adapters for both (`DbAdapter.SqlServer`, `DbAdapter.MySql`);
+  wiring them mirrors the Postgres path and is straightforward.
+- **MongoDB** — requires a bespoke reset (drop + re-create collections, or use `db.dropDatabase()`).
+- **Redis** — `FLUSHDB` on the connection; straightforward.
+- **Elasticsearch** — delete-by-query or index-wipe per the declared dependency name.
+
+The **parallel path** (topology-per-scenario, enabled by `--parallel` or `parallelism:` in the suite
+manifest) is already isolated by construction: each scenario gets its own topology and its own
+fresh containers, so no cross-scenario state leaks. The limitation only applies to sequential
+scenarios sharing one topology.
+
+This is an acceptable v1 limitation. Authors can work around it by running scenarios in parallel,
+or by adding explicit cleanup steps (e.g. a `script.csharp` step that truncates tables) as the
+first step of each scenario.
+
+### Constraints
+
+- No v1 contract change required. The reset hook is an internal orchestration concern.
+- Reset must be applied after each scenario finishes and before the next starts — not during seed.
+- A failed reset must surface as `EnvironmentError`, not `Fail`, consistent with §12.1.
+
+### Acceptance criteria (v2 planning)
+
+- [ ] SQL Server and MySQL dependencies are auto-reset between sequential scenarios using Respawn
+      adapters (`DbAdapter.SqlServer`, `DbAdapter.MySql`).
+- [ ] MongoDB, Redis, and Elasticsearch dependencies are auto-reset via bespoke strategies.
+- [ ] A failed reset surfaces as `EnvironmentError` with a clear observation naming the dependency.
+- [ ] The parallel path continues to isolate by topology (no change needed).
+- [ ] DSL §3.2.3 known-limitation note is removed once full coverage is wired.
