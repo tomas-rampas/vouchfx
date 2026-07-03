@@ -305,7 +305,7 @@ public sealed class MqExpectNatsProvider
         "                jsonValues[ji] = Secret_Helpers.ResolveTemplate(secrets, vars, jsonValueTemplates[ji]);\n" +
         "            }\n" +
         "            conn = new NATS.Client.Core.NatsConnection(new NATS.Client.Core.NatsOpts { Url = natsUrl });\n" +
-        "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.4.0 API.\n" +
+        "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.7.x API.\n" +
         "            // CreateJetStreamContext() extension method does not exist in 2.4.x.\n" +
         "            var js = new NATS.Client.JetStream.NatsJSContext(conn);\n" +
         "            // Ensure the stream exists (idempotent — if the publish step ran first it\n" +

@@ -256,7 +256,7 @@ public sealed class MqPublishNatsProvider
         "            var subject = Secret_Helpers.ResolveTemplate(secrets, vars, subjectTemplate);\n" +
         "            var payload = Secret_Helpers.ResolveTemplate(secrets, vars, payloadTemplate);\n" +
         "            conn = new NATS.Client.Core.NatsConnection(new NATS.Client.Core.NatsOpts { Url = natsUrl });\n" +
-        "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.4.0 API.\n" +
+        "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.7.x API.\n" +
         "            // The CreateJetStreamContext() extension method does not exist in 2.4.x.\n" +
         "            var js = new NATS.Client.JetStream.NatsJSContext(conn);\n" +
         "            // StreamConfig is in NATS.Client.JetStream.Models (NATS.Net 2.4.0).\n" +
@@ -426,8 +426,8 @@ public sealed class MqPublishNatsProvider
         {
             // NATS.Client.Core — NatsConnection, NatsOpts, NatsException.
             yield return typeof(NATS.Client.Core.NatsConnection).Assembly;
-            // NATS.Client.JetStream — NatsJSContext (CreateJetStreamContext extension),
-            // StreamConfig, NatsJSPublishAck.
+            // NATS.Client.JetStream — NatsJSContext (NatsJSContext(NatsConnection) ctor),
+            // Models.StreamConfig, NatsJSApiException.
             yield return typeof(NATS.Client.JetStream.NatsJSContext).Assembly;
         }
     }
