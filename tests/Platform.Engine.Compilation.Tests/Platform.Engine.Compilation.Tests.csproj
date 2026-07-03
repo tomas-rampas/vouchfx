@@ -88,6 +88,8 @@
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj" />
   </ItemGroup>
 
 </Project>

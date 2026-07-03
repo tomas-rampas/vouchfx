@@ -291,6 +291,32 @@ public static class ClosureProbeScript
                 if (rmqConn is not null)
                     await rmqConn.DisposeAsync().ConfigureAwait(false);
             }
+
+            // ── NATS.Net NatsConnection build + DisposeAsync (every 50 iters) ─────
+            // Build a REAL NatsConnection (exercises NATS.Client.Core static initialisers
+            // and the JetStream context path the mq-publish.nats / mq-expect.nats
+            // providers rely on).  The connect attempt targets a deliberately unreachable
+            // address (no server running locally) so no network I/O completes; only the
+            // handle allocation and async-dispose discipline are exercised.  Swallow any
+            // connection-level exception so the probe is non-destructive.
+            // NatsConnection is IAsyncDisposable.  Dispose via
+            // await natsConn.DisposeAsync().ConfigureAwait(false) in a finally block —
+            // 'using var' / 'await using var' are prohibited in CSX bodies (§13.3.1).
+            NATS.Client.Core.NatsConnection? natsConn = null;
+            try
+            {
+                natsConn = new NATS.Client.Core.NatsConnection(
+                    new NATS.Client.Core.NatsOpts { Url = "nats://localhost:4222" });
+                Vars["nats_conn_built"] = 1L;
+            }
+            catch { }
+            finally
+            {
+                if (natsConn is not null)
+                {
+                    try { await natsConn.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+            }
         }
 
         // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─

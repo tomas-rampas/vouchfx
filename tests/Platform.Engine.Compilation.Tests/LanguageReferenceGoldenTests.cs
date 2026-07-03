@@ -33,8 +33,10 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
@@ -82,6 +84,8 @@ public sealed class LanguageReferenceGoldenTests
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishNatsProvider).Assembly,        // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,         // mq-expect.nats
     };
 
     /// <summary>
@@ -136,7 +140,7 @@ public sealed class LanguageReferenceGoldenTests
     {
         var generated = GenerateReference();
 
-        // All Core step types (original six plus db-assert.sqlserver, db-assert.mongodb, db-assert.mysql, mq-publish.rabbitmq, mq-expect.rabbitmq).
+        // All Core step types (original six plus db-assert.sqlserver, db-assert.mongodb, db-assert.mysql, mq-publish.rabbitmq, mq-expect.rabbitmq, mq-publish.nats, mq-expect.nats).
         Assert.Contains("### `http.rest`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.postgres`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.sqlserver`", generated, StringComparison.Ordinal);
@@ -147,6 +151,8 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("### `mq-expect.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-publish.rabbitmq`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.rabbitmq`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-publish.nats`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-expect.nats`", generated, StringComparison.Ordinal);
         Assert.Contains("### `webhook-listen.http`", generated, StringComparison.Ordinal);
         Assert.Contains("### `cache-assert.redis`", generated, StringComparison.Ordinal);
         Assert.Contains("### `cache-assert.elasticsearch`", generated, StringComparison.Ordinal);

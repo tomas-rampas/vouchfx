@@ -26,7 +26,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (14):
+Registered step types (16):
 
 - [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
@@ -37,8 +37,10 @@ Registered step types (14):
 - [`http.rest`](#httprest)
 - [`mail-expect.smtp`](#mail-expectsmtp)
 - [`mq-expect.kafka`](#mq-expectkafka)
+- [`mq-expect.nats`](#mq-expectnats)
 - [`mq-expect.rabbitmq`](#mq-expectrabbitmq)
 - [`mq-publish.kafka`](#mq-publishkafka)
+- [`mq-publish.nats`](#mq-publishnats)
 - [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
@@ -196,6 +198,24 @@ Set `type: mq-expect.kafka` to use this step.
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry decoding. When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON. |
 
+### `mq-expect.nats`
+
+Set `type: mq-expect.nats` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a fetched message must satisfy. At least one criterion (payloadContains or json) must be declared. |
+| `subject` | `string` | The NATS JetStream subject to filter messages on. |
+| `target` | `string` | Logical name of the nats dependency to consume from, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stream` | `string` | Optional JetStream stream name. When absent, derived from 'subject' (same rule as mq-publish.nats). |
+
 ### `mq-expect.rabbitmq`
 
 Set `type: mq-expect.rabbitmq` to use this step.
@@ -227,6 +247,26 @@ Set `type: mq-publish.kafka` to use this step.
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
 | `headers` | `object` | Optional map of message header names to their string values. |
 | `key` | `string` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. |
+
+### `mq-publish.nats`
+
+Publishes one UTF-8 message to a NATS JetStream subject. A Pass verdict confirms the publish was accepted by the server (JetStream ack); delivery is NOT further confirmed. Verify delivery with a following mq-expect.nats step.
+
+Set `type: mq-publish.nats` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message payload sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. |
+| `subject` | `string` | The NATS JetStream subject to publish to. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the nats dependency to publish to, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stream` | `string` | Optional NATS JetStream stream name. When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed). |
 
 ### `mq-publish.rabbitmq`
 

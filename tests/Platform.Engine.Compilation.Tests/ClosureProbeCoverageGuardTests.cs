@@ -43,8 +43,10 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
@@ -203,6 +205,14 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "cache-assert.elasticsearch",
             CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by http.rest probe; cache-assert.elasticsearch queries the Elasticsearch HTTP API via HttpClient)",
             ProbeMarker: "new System.Net.Http.HttpClient()"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.nats",
+            CanonicalClient: "NATS.Client.Core.NatsConnection (NATS JetStream connection/publish via NATS.Net 2.x)",
+            ProbeMarker: "NATS.Client.Core.NatsConnection"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.nats",
+            CanonicalClient: "NATS.Client.Core.NatsConnection (NATS JetStream connection/consume via NATS.Net 2.x)",
+            ProbeMarker: "NATS.Client.Core.NatsConnection"),
     };
 
     /// <summary>
@@ -229,6 +239,8 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
     };
 
     // -------------------------------------------------------------------------
@@ -256,8 +268,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Fourteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch).
-        Assert.Equal(14, actualKinds.Count);
+        // Sixteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats).
+        Assert.Equal(16, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -284,8 +296,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (fourteen distinct rows).
-        Assert.Equal(14, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (sixteen distinct rows).
+        Assert.Equal(16, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

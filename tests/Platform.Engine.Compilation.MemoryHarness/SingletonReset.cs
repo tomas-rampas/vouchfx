@@ -157,6 +157,18 @@ public static class SingletonReset
         // per-cycle DisposeAsync() is both necessary and sufficient.
         log.Add("RabbitMQ.Client: per-cycle connection attempt is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
 
+        // ── NATS.Net NatsConnection (mq-publish.nats / mq-expect.nats) ───────
+        // The closure probe builds a REAL NatsConnection on a bounded cadence
+        // (every 50th iteration) and calls await conn.DisposeAsync().ConfigureAwait(false)
+        // inside the probe's own finally block.  NATS.Net 2.x has NO global connection
+        // pool or process-wide singleton: each new NatsConnection() constructs an
+        // independent TCP/TLS connection; DisposeAsync() flushes pending work, closes
+        // the socket, and cancels the internal reader/writer tasks.  There is nothing
+        // to reset at the harness level — the per-cycle DisposeAsync() is both
+        // necessary and sufficient.  'using var' is prohibited in CSX (§13.3.1);
+        // disposal is always explicit in the probe and in emitted helpers.
+        log.Add("NATS.Net NatsConnection: per-50-iter connection is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
+
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is
         // referenced by the harness or the probe script, and no TracerProvider is

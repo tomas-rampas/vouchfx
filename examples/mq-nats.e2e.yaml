@@ -1,0 +1,77 @@
+metadata:
+  name: mq-nats-example
+  description: >
+    Example showing how to publish a message to a NATS JetStream subject and then
+    assert that the expected message is present, using the mq-publish.nats and
+    mq-expect.nats providers backed by a live NATS server container.
+    The mq-expect step uses verifyMode: RETRY so the engine polls until the message
+    arrives or the timeout expires — authors never write Thread.Sleep.
+    Both providers use JetStream (not Core NATS) so messages are durably retained
+    and the RETRY consumer can scan from offset 0 on every attempt.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # NATS JetStream: the connection URL is staged as conn::nats-broker
+    # (VarKeys.Connection("nats-broker")) by the orchestrator and consumed by both
+    # mq-publish.nats and mq-expect.nats via the 'target' field.
+    #
+    # The provider creates (or opens) a JetStream stream whose subjects cover the
+    # declared 'subject' automatically — no manual stream configuration is required
+    # in the YAML.  The stream name is derived from the subject by uppercasing and
+    # replacing non-alphanumeric characters with underscores
+    # (e.g. orders.created -> ORDERS_CREATED).  Override it with the optional
+    # 'stream' field when you need an explicit name.
+    nats-broker:
+      type: nats
+
+steps:
+  - id: trigger-order-event
+    type: http.rest
+    description: >
+      Trigger the system under test to publish an order event to NATS JetStream.
+      The SUT should publish to the 'orders.created' subject via the NATS URL it
+      receives at startup.
+    target: app
+    request:
+      method: POST
+      path: /orders
+      body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 202
+
+  - id: publish-order-event
+    type: mq-publish.nats
+    description: >
+      Direct publish step: sends an order-created event to the NATS JetStream
+      subject 'orders.created'.  The provider creates the stream automatically
+      (covering subjects matching 'orders.created') if it does not yet exist, then
+      publishes with a JetStream ack so delivery to the server is confirmed.
+      NOTE: a Pass verdict confirms the JetStream ack from the server; it does NOT
+      confirm that a consumer has read the message.  Verify consumption with a
+      following mq-expect.nats step (see assert-order-event).
+    target: nats-broker
+    subject: orders.created
+    payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'
+
+  - id: assert-order-event
+    type: mq-expect.nats
+    description: >
+      Assert that a message matching the criteria is present on the 'orders.created'
+      subject.  The criteria are AND-conjunctive: the payload must contain the
+      substring 'order-created' AND the JSONPath $.orderId must select 'ord-001'.
+      The consumer scans from the beginning of the retained log on every RETRY
+      attempt (DeliverPolicy.All ephemeral consumer) so the check is idempotent.
+      verifyMode: RETRY polls until the message is found or the timeout expires.
+    target: nats-broker
+    subject: orders.created
+    match:
+      payloadContains: "order-created"
+      json:
+        $.orderId: ord-001
+    verifyMode: RETRY
+    timeout: PT30S

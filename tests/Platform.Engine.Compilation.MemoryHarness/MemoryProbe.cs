@@ -385,6 +385,16 @@ public static class MemoryProbe
             typeof(RabbitMQ.Client.ConnectionFactory).Assembly.Location,
             typeof(System.Uri).Assembly.Location,
 
+            // ── mq-publish.nats / mq-expect.nats closure ────────────────────────
+            // The two NATS providers use NATS.Net 2.x which splits into two assemblies:
+            // NATS.Client.Core (NatsConnection, NatsOpts, NatsException) and
+            // NATS.Client.JetStream (NatsJSContext, StreamConfig, ConsumerConfig, etc.).
+            // Both must be included so the closure probe's NatsConnection build/dispose
+            // compiles.  The assemblies resolve from the Default ALC (the harness
+            // references NATS.Net directly); they must never load into the collectible ALC.
+            typeof(NATS.Client.Core.NatsConnection).Assembly.Location,
+            typeof(NATS.Client.JetStream.NatsJSContext).Assembly.Location,
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

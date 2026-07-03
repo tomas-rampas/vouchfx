@@ -40,8 +40,10 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
@@ -83,6 +85,8 @@ public sealed class SchemaFreezeTests
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
     };
 

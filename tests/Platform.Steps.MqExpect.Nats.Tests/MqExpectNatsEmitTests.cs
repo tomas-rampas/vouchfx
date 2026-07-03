@@ -13,6 +13,7 @@
 //  10. Resources: yields exactly one nats ResourceRequirement.
 //  11. CompileReferenceAssemblies: contains NATS.Client.Core, NATS.Client.JetStream, JsonPath.Net.
 //  12. Full compile-and-run (no docker): EnvironmentError when the conn key is absent.
+//  13. Full compile-and-run (no docker): EnvironmentError when the broker is unreachable.
 using System;
 using System.Collections.Generic;
 using Platform.Engine.Abstractions;
@@ -320,6 +321,69 @@ public sealed class MqExpectNatsEmitTests
         var globals = new ScriptGlobalVariables(vars);
 
         // No connection key seeded in Vars — the helper must short-circuit to EnvironmentError.
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+    }
+
+    // ── 13. Compile round-trip: EnvironmentError when broker is unreachable ──────
+
+    /// <summary>
+    /// When the connection string targets a definitely-dead NATS URL (port 1 is
+    /// always refused by the OS), the emitted helper must write
+    /// <see cref="Verdict.EnvironmentError"/> to the outcome key.  NATS.Net
+    /// connects lazily, so the error surfaces when <c>CreateStreamAsync</c> or
+    /// the subscribe loop is first entered rather than at <c>NatsConnection</c>
+    /// construction.  Port 1 (tcpmux) returns ECONNREFUSED immediately, so this
+    /// test completes in milliseconds without any Docker broker.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_BrokerUnreachable_ReturnsEnvironmentError()
+    {
+        const string stepId = "exp-nats-dead";
+        const string target = "dead-bus";
+        var json = new Dictionary<string, string> { ["$.ok"] = "true" };
+        var model = MakeModel(target, "orders.created", new NatsMatch("needle", json));
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(NATS.Client.Core.NatsConnection).Assembly.Location,
+            typeof(NATS.Client.JetStream.NatsJSContext).Assembly.Location,
+            typeof(Json.Path.JsonPath).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Text.Json.Nodes.JsonNode).Assembly.Location,
+            typeof(System.Text.Encoding).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            typeof(System.Uri).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        // Port 1 is always refused; NATS.Net surfaces the connection error on
+        // the first operation (subscribe / CreateConsumerAsync) since
+        // NatsConnection connects lazily — not at construction.
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(target)] = "nats://127.0.0.1:1",
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
         await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
 
         var safeId = CsxFragment.SanitiseId(stepId);

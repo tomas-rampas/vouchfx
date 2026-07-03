@@ -17,8 +17,10 @@ using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
@@ -45,7 +47,8 @@ internal static class ProviderRegistryFactory
     /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>db-assert.sqlserver</c>,
     /// <c>db-assert.mongodb</c>, <c>db-assert.mysql</c>, <c>script.csharp</c>,
     /// <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c>, <c>mq-publish.rabbitmq</c>,
-    /// <c>mq-expect.rabbitmq</c>, <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
+    /// <c>mq-expect.rabbitmq</c>, <c>mq-publish.nats</c>, <c>mq-expect.nats</c>,
+    /// <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
     /// <c>cache-assert.redis</c> and <c>cache-assert.elasticsearch</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
@@ -60,6 +63,8 @@ internal static class ProviderRegistryFactory
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
         typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
