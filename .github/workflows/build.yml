@@ -234,6 +234,9 @@ jobs:
       #                                            (mq-publish.rabbitmq / mq-expect.rabbitmq);
       #                                            management variant includes the HTTP API for
       #                                            exchange/queue management.
+      #   nats:2.14                              — MqNatsDockerTests JetStream broker container
+      #                                            (mq-publish.nats / mq-expect.nats);
+      #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -259,7 +262,8 @@ jobs:
             hashicorp/vault:latest \
             axllent/mailpit:v1.21 \
             rabbitmq:4-management \
-            elasticsearch:8.17.3 ; do
+            elasticsearch:8.17.3 \
+            nats:2.14 ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
             echo "::endgroup::"

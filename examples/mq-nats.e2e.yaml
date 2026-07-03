@@ -65,8 +65,26 @@ steps:
       subject.  The criteria are AND-conjunctive: the payload must contain the
       substring 'order-created' AND the JSONPath $.orderId must select 'ord-001'.
       The consumer scans from the beginning of the retained log on every RETRY
-      attempt (DeliverPolicy.All ephemeral consumer) so the check is idempotent.
+      attempt (DeliverPolicy.All ordered consumer, truly ephemeral — no durable
+      state on the server) so the check is idempotent.
       verifyMode: RETRY polls until the message is found or the timeout expires.
+
+      IMPORTANT — shared-stream caution (FIX M3 documented constraint):
+      mq-expect.nats scans from the START of the retained JetStream log on every
+      attempt (mirroring mq-expect.kafka retained-log behaviour).  Do NOT share a
+      single nats dependency across scenarios that assert on the same subject —
+      retained messages from a prior scenario run will match the criteria of a
+      subsequent scenario and produce a false Pass.  If you need multiple scenarios
+      on the same subject, declare a separate nats dependency per scenario so each
+      gets its own container, OR use the explicit 'stream' field with distinct stream
+      names.
+
+      Stream name derivation (N5 documented limitation):
+      When 'stream' is omitted the name is derived from 'subject' by uppercasing and
+      replacing non-alphanumeric characters (other than '-') with '_', collapsing
+      consecutive underscores.  Subjects 'orders.created' and 'orders_created' both
+      derive to 'ORDERS_CREATED'.  Use the explicit 'stream' field to avoid
+      collisions between subjects that derive to the same name.
     target: nats-broker
     subject: orders.created
     match:

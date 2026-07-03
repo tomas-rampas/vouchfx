@@ -40,6 +40,8 @@
     <PackageReference Include="StackExchange.Redis" />
     <!-- RabbitMQ.Client: required by MqRabbitmqDockerTests (compile-ref + seed/setup). -->
     <PackageReference Include="RabbitMQ.Client" />
+    <!-- NATS.Net: required by MqNatsDockerTests (compile-ref for Assembly.Location access). -->
+    <PackageReference Include="NATS.Net" />
   </ItemGroup>
 
   <ItemGroup>
@@ -80,6 +82,11 @@
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.nats + mq-expect.nats providers: used by MqNatsDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

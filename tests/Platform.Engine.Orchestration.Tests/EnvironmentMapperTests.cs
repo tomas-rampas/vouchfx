@@ -947,10 +947,13 @@ public sealed class EnvironmentMapperTests
 
     /// <summary>
     /// A nats dependency produces a server resource only (no database resource),
-    /// and the server itself is in the health-gate list.
+    /// the server itself is in the health-gate list, and JetStream is enabled via
+    /// <c>WithJetStream()</c> (which appends <c>-js</c> to the container command-line
+    /// arguments — FIX B1: without this, every mq-publish.nats / mq-expect.nats step
+    /// returns EnvironmentError).
     /// </summary>
     [Fact]
-    public void Map_NatsDependency_AddsServer_GateOnServer()
+    public async Task Map_NatsDependency_AddsServer_GateOnServer()
     {
         // Arrange
         var env = new EnvironmentSpec(
@@ -970,15 +973,27 @@ public sealed class EnvironmentMapperTests
         mapped.Configure(builder);
 
         // Assert — server resource named "events" exists
-        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "events"));
+        var eventsResource = builder.Resources.SingleOrDefault(r => r.Name == "events");
+        Assert.NotNull(eventsResource);
 
         // Assert — the retained server resource implements IResourceWithConnectionString.
-        Assert.IsAssignableFrom<IResourceWithConnectionString>(
-            builder.Resources.SingleOrDefault(r => r.Name == "events"));
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(eventsResource);
 
         // Assert — gate is on the server
         Assert.Contains("events", mapped.HealthGateResourceNames);
         Assert.Contains("events", mapped.DependencyNames);
+
+        // Assert — JetStream is enabled: WithJetStream() registers a CommandLineArgsCallbackAnnotation
+        // that appends '-js' to the container args.  We invoke the callbacks in-memory (no DCP/Docker)
+        // and verify the flag is present.  This is the FIX B1 regression gate.
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, eventsResource!, CancellationToken.None);
+        foreach (var argsCallback in eventsResource!.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Contains(args, a => a is string s && s == "-js");
     }
 
     // -----------------------------------------------------------------------

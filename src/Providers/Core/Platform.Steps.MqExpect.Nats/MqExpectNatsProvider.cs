@@ -9,10 +9,24 @@
 //
 // RETRY model (§7): this provider is the primary verifyMode: RETRY consumer.  The engine
 // wraps a RETRY step in a polling loop, so the emitted helper performs an IDEMPOTENT
-// SINGLE poll: it creates an ephemeral consumer per attempt (DeliverPolicy.All, scanning
-// from the beginning), fetches all available messages, and writes Pass or Fail.  It
-// contains NO retry logic — the RetryRunner re-invokes the delegate and converts a
-// sustained Fail to Inconclusive on timeout (§12.1).  The helper NEVER writes Inconclusive.
+// SINGLE poll: it creates an ORDERED consumer per attempt (DeliverPolicy.All, scanning
+// from the beginning of the retained log), fetches all available messages, and writes
+// Pass or Fail.  It contains NO retry logic — the RetryRunner re-invokes the delegate
+// and converts a sustained Fail to Inconclusive on timeout (§12.1).  The helper NEVER
+// writes Inconclusive.
+//
+// Consumer model: ordered consumers are ephemeral (no durable state on the server).
+// Previous code used CreateOrUpdateConsumerAsync with a Name field, which created a DURABLE
+// consumer that accumulated on the server across RETRY attempts.  Ordered consumers are
+// created transiently per-connection and cleaned up automatically when the NatsConnection
+// is disposed — FIX M2.
+//
+// Shared-stream caution (FIX M3 — documented constraint):
+//   mq-expect.nats scans from the START of the retained log on every attempt
+//   (DeliverPolicy.All ordered consumer, matching kafka retained-log behaviour).
+//   Do NOT share a single nats dependency across scenarios that assert on the same
+//   subject: retained messages from prior runs will produce a false Pass.  Use separate
+//   dependency declarations per scenario, or use explicit 'stream' names that differ.
 //
 // Substitution + secret model (canonical M2 pattern):
 //   The payloadContains template and json expected VALUES are emitted as RAW template
@@ -63,6 +77,7 @@ public sealed class MqExpectNatsProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Asserts that a message matching the declared criteria is present on a NATS JetStream subject.  The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour.  IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "subject", "match"],
           "properties": {
@@ -248,7 +263,7 @@ public sealed class MqExpectNatsProvider
         "static class MqExpectNats_Helpers\n" +
         "{\n" +
         "    /// <summary>\n" +
-        "    /// Performs ONE idempotent fetch over a NATS JetStream subject via an ephemeral\n" +
+        "    /// Performs ONE idempotent fetch over a NATS JetStream subject via an ordered\n" +
         "    /// consumer (DeliverPolicy.All) and writes a typed StepOutcome into Vars.\n" +
         "    /// Missing NATS URL = EnvironmentError (§12.1).\n" +
         "    /// A matching message = Pass; no match this attempt = Fail (the RETRY runner\n" +
@@ -264,6 +279,10 @@ public sealed class MqExpectNatsProvider
         "    /// BEFORE the connection is created, via Secret_Helpers.ResolveTemplate.  A\n" +
         "    /// missing secret throws SecretResolutionException -> caught -> EnvironmentError\n" +
         "    /// for THIS step only, with NO broker contacted.\n" +
+        "    /// Consumer model (FIX M2): CreateOrderedConsumerAsync produces a truly ephemeral\n" +
+        "    /// consumer — no durable state accumulates on the server across RETRY attempts.\n" +
+        "    /// The previous code used CreateOrUpdateConsumerAsync with a Name, which created a\n" +
+        "    /// DURABLE consumer that leaked on the server with each retry.\n" +
         "    /// </remarks>\n" +
         "    public static async System.Threading.Tasks.Task ExpectAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
@@ -306,38 +325,41 @@ public sealed class MqExpectNatsProvider
         "            }\n" +
         "            conn = new NATS.Client.Core.NatsConnection(new NATS.Client.Core.NatsOpts { Url = natsUrl });\n" +
         "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.7.x API.\n" +
-        "            // CreateJetStreamContext() extension method does not exist in 2.4.x.\n" +
         "            var js = new NATS.Client.JetStream.NatsJSContext(conn);\n" +
-        "            // Ensure the stream exists (idempotent — if the publish step ran first it\n" +
-        "            // already exists; if this step runs first in a RETRY scenario, creating it\n" +
-        "            // here gives publish a chance to land before the next attempt).\n" +
-        "            // StreamConfig is in NATS.Client.JetStream.Models (NATS.Net 2.4.0).\n" +
-        "            // CreateOrUpdateStreamAsync does not exist; swallow NatsJSApiException for\n" +
-        "            // 'stream already exists' errors so the step is idempotent.\n" +
+        "            // Ensure the stream exists (idempotent — CreateStreamAsync in NATS.Net 2.7.x\n" +
+        "            // returns the existing stream when the name matches; only CreateOrUpdateStreamAsync\n" +
+        "            // also updates divergent config).  If the stream does not yet exist and JetStream\n" +
+        "            // is disabled on the server, this throws NatsJSApiException with ErrCode != 10058\n" +
+        "            // — that exception propagates as EnvironmentError (§12.1) so the author can\n" +
+        "            // distinguish an infrastructure problem from a missing message (FIX N6).\n" +
+        "            // ErrCode 10058 = 'stream name already in use' — safe to ignore (same stream,\n" +
+        "            // created with different subject list in a race); all other codes rethrow.\n" +
         "            try\n" +
         "            {\n" +
         "                await js.CreateStreamAsync(\n" +
         "                    new NATS.Client.JetStream.Models.StreamConfig(streamName, new string[] { subject }),\n" +
         "                    System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "            }\n" +
-        "            catch (NATS.Client.JetStream.NatsJSApiException) { }\n" +
-        "            // Ephemeral consumer: DeliverPolicy.All scans from the beginning of the\n" +
-        "            // retained log on every attempt, giving the RETRY runner a clean slate.\n" +
-        "            // ConsumerConfig and its policy enums are in NATS.Client.JetStream.Models.\n" +
-        "            var consumerName = \"vouchfx-\" + System.Guid.NewGuid().ToString(\"n\");\n" +
-        "            var consumer = await js.CreateOrUpdateConsumerAsync(streamName,\n" +
-        "                new NATS.Client.JetStream.Models.ConsumerConfig\n" +
+        "            catch (NATS.Client.JetStream.NatsJSApiException ex) when (ex.Error.ErrCode == 10058) { }\n" +
+        "            // Ordered consumer: truly ephemeral — no durable state on the server.\n" +
+        "            // DeliverPolicy defaults to All, scanning from the beginning of the retained\n" +
+        "            // log on every attempt — the RETRY runner gets a clean slate each time.\n" +
+        "            // FilterSubjects narrows the scan to the declared subject.\n" +
+        "            // NatsJSOrderedConsumerOpts is in NATS.Client.JetStream (NATS.Net 2.7.x).\n" +
+        "            var consumer = await js.CreateOrderedConsumerAsync(streamName,\n" +
+        "                new NATS.Client.JetStream.NatsJSOrderedConsumerOpts\n" +
         "                {\n" +
-        "                    Name = consumerName,\n" +
-        "                    DeliverPolicy = NATS.Client.JetStream.Models.ConsumerConfigDeliverPolicy.All,\n" +
-        "                    FilterSubject = subject,\n" +
-        "                    AckPolicy = NATS.Client.JetStream.Models.ConsumerConfigAckPolicy.Explicit,\n" +
-        "                    MaxDeliver = 1,\n" +
+        "                    FilterSubjects = new string[] { subject },\n" +
         "                }, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
-        "            // FetchAsync<T> requires an explicit deserializer (NATS.Net 2.4.0).\n" +
+        "            // FetchAsync<T> requires an explicit deserializer (NATS.Net 2.7.x).\n" +
         "            // NatsRawSerializer<byte[]>.Default handles raw byte[] without transformation.\n" +
+        "            // MaxMsgs=10000 caps the single-attempt scan (N7 — documented bound: if more\n" +
+        "            // than 10 000 messages are retained, only the first 10 000 are inspected).\n" +
+        "            // Expires=1s is the per-attempt fetch window (N7 — the server sends available\n" +
+        "            // messages then closes the fetch after this interval).\n" +
+        "            // Ordered consumers manage their own acking internally — no AckAsync needed.\n" +
         "            await foreach (var msg in consumer.FetchAsync<byte[]>(\n" +
         "                new NATS.Client.JetStream.NatsJSFetchOpts\n" +
         "                {\n" +
@@ -355,7 +377,6 @@ public sealed class MqExpectNatsProvider
         "                    matched = true;\n" +
         "                    break;\n" +
         "                }\n" +
-        "                try { await msg.AckAsync(opts: null, cancellationToken: System.Threading.CancellationToken.None).ConfigureAwait(false); } catch { }\n" +
         "            }\n" +
         "            if (matched)\n" +
         "            {\n" +
@@ -604,6 +625,13 @@ public sealed class MqExpectNatsProvider
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    // N5 — stream-name collision limitation (documented constraint):
+    // DeriveStreamName maps both 'orders.created' and 'orders_created' to 'ORDERS_CREATED'
+    // because it replaces every non-alphanumeric character (other than '-') with '_' and then
+    // collapses runs.  If an author uses two subjects that collapse to the same name they MUST
+    // set the explicit 'stream' field on at least one step.  Adding a subject hash would reduce
+    // collisions but changes the derived name for all existing YAML files; the explicit override
+    // is the supported escape hatch for v1.
     private static string DeriveStreamName(string subject)
     {
         var sb = new System.Text.StringBuilder(subject.Length);

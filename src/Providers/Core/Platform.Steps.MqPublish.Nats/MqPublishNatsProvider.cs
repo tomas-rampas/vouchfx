@@ -259,16 +259,19 @@ public sealed class MqPublishNatsProvider
         "            // NatsJSContext constructor: NatsJSContext(NatsConnection) — NATS.Net 2.7.x API.\n" +
         "            // The CreateJetStreamContext() extension method does not exist in 2.4.x.\n" +
         "            var js = new NATS.Client.JetStream.NatsJSContext(conn);\n" +
-        "            // StreamConfig is in NATS.Client.JetStream.Models (NATS.Net 2.4.0).\n" +
-        "            // CreateOrUpdateStreamAsync does not exist; use CreateStreamAsync and swallow\n" +
-        "            // NatsJSApiException if the stream already exists.\n" +
+        "            // CreateStreamAsync in NATS.Net 2.7.x returns the existing stream when the name\n" +
+        "            // matches (idempotent by design).  ErrCode 10058 ('stream name already in use')\n" +
+        "            // is a safe-to-ignore race condition where two concurrent publish steps try to\n" +
+        "            // create the same stream with different subject lists.  Any other ErrCode (e.g.\n" +
+        "            // 10076 'JetStream not enabled') re-throws so the outer catch maps it to\n" +
+        "            // EnvironmentError — FIX N6: do NOT swallow all JetStream errors.\n" +
         "            try\n" +
         "            {\n" +
         "                await js.CreateStreamAsync(\n" +
         "                    new NATS.Client.JetStream.Models.StreamConfig(streamName, new string[] { subject }),\n" +
         "                    System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
         "            }\n" +
-        "            catch (NATS.Client.JetStream.NatsJSApiException) { }\n" +
+        "            catch (NATS.Client.JetStream.NatsJSApiException ex) when (ex.Error.ErrCode == 10058) { }\n" +
         "            var payloadBytes = System.Text.Encoding.UTF8.GetBytes(payload);\n" +
         "            // PublishAsync<T> requires an explicit serializer (NATS.Net 2.4.0).\n" +
         "            // NatsRawSerializer<byte[]>.Default serialises/deserialises raw bytes verbatim.\n" +

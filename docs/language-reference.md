@@ -200,6 +200,8 @@ Set `type: mq-expect.kafka` to use this step.
 
 ### `mq-expect.nats`
 
+Asserts that a message matching the declared criteria is present on a NATS JetStream subject. The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour. IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass. Use verifyMode: RETRY to poll until the message arrives.
+
 Set `type: mq-expect.nats` to use this step.
 
 **Required fields**

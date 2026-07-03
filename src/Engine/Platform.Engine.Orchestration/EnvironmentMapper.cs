@@ -227,7 +227,11 @@ public static class EnvironmentMapper
             ["nats"] = new DependencyRegistration(
                 Build: (builder, name, spec, _) =>
                 {
-                    var serverBuilder = builder.AddNats(name);
+                    // WithJetStream() appends the '-js' flag so the NATS container starts with
+                    // JetStream enabled.  Without it, CreateStreamAsync / PublishAsync throw
+                    // NatsJSApiException and every mq-publish.nats / mq-expect.nats step
+                    // returns EnvironmentError — FIX B1.
+                    var serverBuilder = builder.AddNats(name).WithJetStream();
                     if (!string.IsNullOrEmpty(spec.Version))
                         serverBuilder = serverBuilder.WithImageTag(spec.Version);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
