@@ -1,0 +1,56 @@
+# examples/db-assert-sqlserver.e2e.yaml — minimal db-assert.sqlserver suite.
+#
+# Demonstrates the db-assert.sqlserver step kind against a managed SQL Server
+# dependency.  The script.csharp step seeds the orders table; db-assert.sqlserver
+# then asserts the inserted row is present.
+#
+# Run (non-docker compile proof — no topology started):
+#   dotnet test --filter "FullyQualifiedName~SchemaFreezeTests"
+#
+# Run (full docker capstone — requires Docker + SQL Server image):
+#   vouchfx run examples/db-assert-sqlserver.e2e.yaml
+
+metadata:
+  name: sqlserver-assert-example
+  owner: vouchfx-core
+  tags: [db, sqlserver, example]
+  description: >-
+    Minimal example: seeds an orders table in a SQL Server dependency via
+    script.csharp and asserts the row with db-assert.sqlserver.
+
+environment:
+  dependencies:
+    ordersdb:
+      type: sqlserver
+
+steps:
+  - id: seed-order
+    type: script.csharp
+    script: |
+      var connStr = (string)Vars["conn::ordersdb"];
+      var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+      try
+      {
+          await conn.OpenAsync();
+          var cmd = conn.CreateCommand();
+          try
+          {
+              cmd.CommandText =
+                  "IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'orders') " +
+                  "CREATE TABLE orders (id INT PRIMARY KEY, status NVARCHAR(50) NOT NULL); " +
+                  "DELETE FROM orders; " +
+                  "INSERT INTO orders (id, status) VALUES (1, 'PENDING');";
+              await cmd.ExecuteNonQueryAsync();
+          }
+          finally { cmd.Dispose(); }
+      }
+      finally { conn.Dispose(); }
+
+  - id: assert-order-exists
+    type: db-assert.sqlserver
+    target: ordersdb
+    query: "SELECT id, status FROM orders WHERE id = 1"
+    expect:
+      rowCount: 1
+      row:
+        status: PENDING

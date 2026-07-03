@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Steps.MailExpect.Smtp</RootNamespace>
+  </PropertyGroup>
+
+  <!-- BCL-only provider: HttpClient + JsonDocument live in System.Net.Http and
+       System.Text.Json, both part of the .NET 8 shared framework.  No NuGet
+       packages are required — the emitted helper resolves every type from the
+       Default ALC's BCL reference assemblies at Roslyn compile time (§5). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -24,10 +24,20 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
+using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Mongodb;
+using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
+using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
+using Platform.Steps.MqExpect.Rabbitmq;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
+using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -62,10 +72,20 @@ public sealed class LanguageReferenceGoldenTests
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishNatsProvider).Assembly,        // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,         // mq-expect.nats
     };
 
     /// <summary>
@@ -110,23 +130,32 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
-    /// The generated reference must cover all six Core providers, the common step
-    /// fields, and a Required/Optional breakdown — a structural guard so a future
-    /// generator change that silently drops a section is caught even if the golden
-    /// were regenerated in the same commit.
+    /// The generated reference must cover all Core providers (including
+    /// <c>db-assert.sqlserver</c>), the common step fields, and a Required/Optional
+    /// breakdown — a structural guard so a future generator change that silently drops
+    /// a section is caught even if the golden were regenerated in the same commit.
     /// </summary>
     [Fact]
-    public void GeneratedReference_CoversAllSixCoreProvidersAndCommonFields()
+    public void GeneratedReference_CoversAllCoreProvidersAndCommonFields()
     {
         var generated = GenerateReference();
 
-        // All six Core step types.
+        // All Core step types (original six plus db-assert.sqlserver, db-assert.mongodb, db-assert.mysql, mq-publish.rabbitmq, mq-expect.rabbitmq, mq-publish.nats, mq-expect.nats).
         Assert.Contains("### `http.rest`", generated, StringComparison.Ordinal);
         Assert.Contains("### `db-assert.postgres`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.sqlserver`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.mongodb`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.mysql`", generated, StringComparison.Ordinal);
         Assert.Contains("### `script.csharp`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-publish.kafka`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.kafka`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-publish.rabbitmq`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-expect.rabbitmq`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-publish.nats`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-expect.nats`", generated, StringComparison.Ordinal);
         Assert.Contains("### `webhook-listen.http`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `cache-assert.redis`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `cache-assert.elasticsearch`", generated, StringComparison.Ordinal);
 
         // The common step fields, documented once.
         Assert.Contains("## Common step fields", generated, StringComparison.Ordinal);

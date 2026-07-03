@@ -93,6 +93,30 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
@@ -106,6 +130,16 @@
     <PackageReference Include="Apache.Avro" />
     <PackageReference Include="JsonPath.Net" />
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="MongoDB.Driver" />
+    <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="RabbitMQ.Client" />
+    <PackageReference Include="NATS.Net" />
+    <!-- mq-publish.azureservicebus / mq-expect.azureservicebus — Azure Service Bus
+         client DLLs must be in the runner's output directory so the providers resolve
+         their Assembly.Location at runtime and use them as Roslyn MetadataReferences. -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
   </ItemGroup>
 
 </Project>

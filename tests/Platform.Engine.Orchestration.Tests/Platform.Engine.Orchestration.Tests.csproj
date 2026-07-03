@@ -30,6 +30,20 @@
     </PackageReference>
     <!-- Npgsql: required by S01-A-03 connection-string acceptance test (live SELECT 1). -->
     <PackageReference Include="Npgsql" />
+    <!-- Microsoft.Data.SqlClient: required by DbAssertSqlServerDockerTests (compile-ref). -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <!-- MongoDB.Driver: required by DbAssertMongodbDockerTests (compile-ref + seed). -->
+    <PackageReference Include="MongoDB.Driver" />
+    <!-- MySqlConnector: required by DbAssertMysqlDockerTests (compile-ref + seed). -->
+    <PackageReference Include="MySqlConnector" />
+    <!-- StackExchange.Redis: required by CacheAssertRedisDockerTests (compile-ref + seed). -->
+    <PackageReference Include="StackExchange.Redis" />
+    <!-- RabbitMQ.Client: required by MqRabbitmqDockerTests (compile-ref + seed/setup). -->
+    <PackageReference Include="RabbitMQ.Client" />
+    <!-- NATS.Net: required by MqNatsDockerTests (compile-ref for Assembly.Location access). -->
+    <PackageReference Include="NATS.Net" />
+    <!-- Azure.Messaging.ServiceBus: required by MqAzureServiceBusDockerTests (compile-ref + Assembly.Location). -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,10 +57,43 @@
     <!-- script.csharp provider: used by RespawnResetProofTests (S04-A-01). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj"
                       IsAspireProjectResource="false" />
+    <!-- db-assert.sqlserver provider: used by DbAssertSqlServerDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.mongodb provider: used by DbAssertMongodbDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.mysql provider: used by DbAssertMysqlDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj"
+                      IsAspireProjectResource="false" />
     <!-- Sprint 4 capstone: http.rest provider + ScenarioRunner (Runtime). -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mail-expect.smtp provider: used by MailExpectSmtpDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- cache-assert.redis provider: used by CacheAssertRedisDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- cache-assert.elasticsearch provider: used by CacheAssertElasticsearchDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.rabbitmq + mq-expect.rabbitmq providers: used by MqRabbitmqDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.nats + mq-expect.nats providers: used by MqNatsDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.azureservicebus + mq-expect.azureservicebus providers: used by MqAzureServiceBusDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

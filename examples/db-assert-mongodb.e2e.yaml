@@ -1,0 +1,51 @@
+metadata:
+  name: mongodb-order-assertion
+  owner: platform-team
+  tags: [mongodb, db-assert, orders]
+  description: >
+    Verifies that a placed order is persisted correctly in MongoDB.
+    The http.rest step places the order; the db-assert.mongodb step
+    asserts the document is present with the expected field values.
+
+environment:
+  services:
+    - name: orders-api
+      image: "ghcr.io/example/orders-api:latest"
+      env:
+        MONGO_CONNECTION: "${secret:vault/mongo-orders}"
+
+  dependencies:
+    - name: orders-mongo
+      type: mongodb
+
+steps:
+  - id: place-order
+    type: http.rest
+    url: "http://orders-api/orders"
+    method: POST
+    body: |
+      {"productId": "ABC-123", "quantity": 2}
+    capture:
+      orderId: "$.id"
+
+  - id: assert-order-persisted
+    type: db-assert.mongodb
+    target: orders-mongo
+    collection: orders
+    filter: '{"_id": "{orderId}"}'
+    expect:
+      count: 1
+      document:
+        productId: "ABC-123"
+        quantity: "2"
+        status: "PENDING"
+    verifyMode: RETRY
+    timeout: PT30S
+
+  - id: assert-no-cancelled-orders
+    type: db-assert.mongodb
+    target: orders-mongo
+    collection: orders
+    filter: '{"status": "CANCELLED"}'
+    expect:
+      count: 0

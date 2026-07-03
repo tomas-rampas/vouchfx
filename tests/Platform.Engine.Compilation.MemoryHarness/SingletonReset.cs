@@ -70,15 +70,33 @@ public static class SingletonReset
         log.Add("Confluent.Kafka: native producer/consumer handles Built+Disposed per cycle in the probe finally; native lib loads once into the Default ALC (constant overhead), no global reset needed");
 
         // ── MongoDB.Driver cluster registry ───────────────────────────────────
-        // The closure probe creates a MongoClientSettings object but never builds a
-        // MongoClient, so the driver's internal ClusterRegistry is never populated.
-        // No reset is possible or necessary.
-        log.Add("MongoDB.Driver: MongoClientSettings created; no MongoClient built, no cluster registered");
+        // Phase 1b: the closure probe builds a REAL MongoClient every 50 iterations
+        // (inside the if(iter%50==0) block) and Disposes it in finally.  MongoDB.Driver
+        // 3.x registers the cluster in a static ClusterRegistry keyed by ClusterId;
+        // Dispose removes the entry, so the registry stays bounded.  No global reset
+        // is possible or necessary — the per-instance Dispose is sufficient.
+        log.Add("MongoDB.Driver: real MongoClient Built+Disposed per 50-iter cycle; ClusterRegistry entry removed on Dispose — no global reset needed");
 
-        // ── StackExchange.Redis multiplexer pool ──────────────────────────────
-        // ConfigurationOptions.Parse is a pure in-memory parse; no multiplexer or
-        // socket is opened.  There is no connection pool to reset.
-        log.Add("StackExchange.Redis: ConfigurationOptions.Parse is in-memory; no multiplexer opened, no reset needed");
+        // ── StackExchange.Redis multiplexer (cache-assert.redis) ──────────────
+        // Phase (cache-assert.redis): the closure probe now builds a REAL
+        // ConnectionMultiplexer every 50 iterations (iter % 50 == 0) with
+        // abortConnect=false — which spins the heartbeat timer, socket, and reconnect
+        // thread the provider's emitted helper relies on — and Dispose()s it in the
+        // probe's own finally on every cycle it builds one.  Dispose() tears down those
+        // per-instance resources, so no multiplexer accumulates across iterations and
+        // there is no process-wide pool to reset.  No global StackExchange.Redis reset API
+        // exists or is needed; the per-instance Dispose is sufficient (§5).
+        log.Add("StackExchange.Redis: real multiplexer built+disposed per 50-iter cycle (iter % 50) — per-instance heartbeat/socket/reconnect resources released on Dispose, no global reset needed");
+
+        // ── HttpClient / BCL (cache-assert.elasticsearch) ────────────────────
+        // cache-assert.elasticsearch queries the Elasticsearch HTTP API via BCL
+        // HttpClient.  Its closure is entirely subsumed by the http.rest probe, which
+        // already exercises the BCL HttpClient/SocketsHttpHandler pool by creating and
+        // disposing an HttpClient per cycle (see the "HttpClient: disposed per cycle"
+        // entry above).  No additional harness-level reset is required; the shared probe
+        // marker (new System.Net.Http.HttpClient()) satisfies both rows in the
+        // ClosureProbeCoverageGuardTests enumerated-coverage table.
+        log.Add("cache-assert.elasticsearch: BCL HttpClient closure subsumed by the http.rest probe (HttpClient disposed per cycle) — no additional reset needed");
 
         // ── Confluent.SchemaRegistry / Apache.Avro ────────────────────────────
         // Sprint 6: the closure probe constructs a CachedSchemaRegistryClient every
@@ -107,6 +125,61 @@ public static class SingletonReset
         // it.  Nothing accumulates across iterations, so there is nothing to reset.  This entry
         // is documentation-only (mirroring the Polly/SchemaRegistry "stateless, no reset" notes).
         log.Add("Webhooks/IWebhookCaptureAccessor: by-reference Default-ALC stub with an immutable pre-seeded snapshot, read-only from the CSX, no global state — nothing to reset");
+
+        // ── Microsoft.Data.SqlClient connection pool (Phase 1b) ──────────────
+        // The closure probe builds a REAL SqlConnection every 50 iterations and
+        // Disposes it in finally.  SqlClient's connection pool is process-wide;
+        // SqlConnection.Dispose() returns the connection to the pool (or closes it
+        // if the pool is full), so no net accumulation occurs.  No explicit
+        // SqlConnection.ClearAllPools() is called because:
+        //   (a) the pool is bounded and shared with the Default ALC (§5);
+        //   (b) calling ClearAllPools() in the probe would interfer with any other
+        //       SqlClient usage in the process.
+        // The per-cycle Dispose() is sufficient; the pool is constant overhead.
+        log.Add("Microsoft.Data.SqlClient: real SqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
+
+        // ── MySqlConnector connection pool (db-assert.mysql) ─────────────────
+        // The closure probe builds a REAL MySqlConnection every 50 iterations and
+        // Disposes it in finally.  MySqlConnector's connection pool is process-wide;
+        // Dispose() returns the connection to the pool (or closes it if the pool is
+        // full), so no net accumulation occurs.  No explicit ClearPoolAsync() is
+        // called because the pool is bounded and shared with the Default ALC (§5).
+        // The per-cycle Dispose() is sufficient; the pool is constant overhead.
+        log.Add("MySqlConnector: real MySqlConnection Built+Disposed per 50-iter cycle; connection returned to bounded pool on Dispose — no global reset needed");
+
+        // ── RabbitMQ.Client connection (mq-publish.rabbitmq / mq-expect.rabbitmq) ─
+        // The closure probe builds a REAL IConnection + IChannel pair on a bounded
+        // cadence and calls DisposeAsync() on each inside the probe's own finally on
+        // every cycle it builds them.  RabbitMQ.Client 7.x has NO global connection
+        // pool or process-wide singleton: each CreateConnectionAsync() constructs an
+        // independent TCP connection; DisposeAsync() closes the socket and joins the
+        // I/O threads.  There is nothing to reset at the harness level — the
+        // per-cycle DisposeAsync() is both necessary and sufficient.
+        log.Add("RabbitMQ.Client: per-cycle connection attempt is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
+
+        // ── NATS.Net NatsConnection (mq-publish.nats / mq-expect.nats) ───────
+        // The closure probe builds a REAL NatsConnection on a bounded cadence
+        // (every 50th iteration) and calls await conn.DisposeAsync().ConfigureAwait(false)
+        // inside the probe's own finally block.  NATS.Net 2.x has NO global connection
+        // pool or process-wide singleton: each new NatsConnection() constructs an
+        // independent TCP/TLS connection; DisposeAsync() flushes pending work, closes
+        // the socket, and cancels the internal reader/writer tasks.  There is nothing
+        // to reset at the harness level — the per-cycle DisposeAsync() is both
+        // necessary and sufficient.  'using var' is prohibited in CSX (§13.3.1);
+        // disposal is always explicit in the probe and in emitted helpers.
+        log.Add("NATS.Net NatsConnection: per-50-iter connection is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
+
+        // ── Azure.Messaging.ServiceBus ServiceBusClient ───────────────────────
+        // The closure probe builds a REAL ServiceBusClient on a bounded cadence
+        // (every 50th iteration) and calls await asbClient.DisposeAsync().ConfigureAwait(false)
+        // inside the probe's own finally block.  Azure.Messaging.ServiceBus 7.x has NO
+        // global connection pool or process-wide singleton: each new ServiceBusClient()
+        // constructs an independent AMQP connection; DisposeAsync() flushes pending work,
+        // closes the transport link, and cancels the internal connection management tasks.
+        // There is nothing to reset at the harness level — the per-cycle DisposeAsync()
+        // is both necessary and sufficient.  'using var' is prohibited in CSX (§13.3.1);
+        // disposal is always explicit in the probe and in emitted helpers.
+        log.Add("Azure.Messaging.ServiceBus: per-50-iter ServiceBusClient is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
 
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is

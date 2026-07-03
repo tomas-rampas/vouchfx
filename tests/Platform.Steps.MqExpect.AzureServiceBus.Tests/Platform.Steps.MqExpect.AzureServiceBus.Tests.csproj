@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Azure.Messaging.ServiceBus — needed so the emit compile-round-trip can
+         supply the ASB assemblies as compile-time metadata references for the emitted CSX. -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj" />
+    <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,49 @@
+metadata:
+  name: mail-expect-smtp-example
+  description: >
+    Example showing how to assert that a system-under-test sends an expected
+    email via the mail-expect.smtp provider backed by a Mailpit SMTP capture
+    container.  The SUT sends email through Mailpit's SMTP port (1025); the
+    step queries Mailpit's HTTP API to verify the message arrived.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # Mailpit: captures SMTP email and exposes a REST API + web UI.
+    # HTTP API: http://localhost:8025 (staged as conn::mailpit)
+    # SMTP port: localhost:1025 (staged as svc::mailpit-smtp)
+    mailpit:
+      type: mailpit
+
+steps:
+  - id: trigger-welcome-email
+    type: http.rest
+    description: >
+      Trigger the system under test to send a welcome email.
+      The SUT should send email through mailpit's SMTP port 1025.
+    target: app
+    request:
+      method: POST
+      path: /send-welcome
+      body: '{"to":"alice@example.com","name":"Alice"}'
+    expect:
+      status: 202
+
+  - id: assert-welcome-email
+    type: mail-expect.smtp
+    description: >
+      Assert that exactly one welcome email arrived at alice@example.com.
+      verifyMode: RETRY polls until the email arrives or the timeout expires.
+    target: mailpit
+    expect:
+      count: 1
+      match:
+        to: alice@example.com
+        subject-contains: "Welcome"
+        body-contains: "Hello, Alice"
+    verifyMode: RETRY
+    timeout: PT30S

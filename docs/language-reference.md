@@ -26,14 +26,92 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (6):
+Registered step types (16):
 
+- [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
+- [`cache-assert.redis`](#cache-assertredis)
+- [`db-assert.mongodb`](#db-assertmongodb)
+- [`db-assert.mysql`](#db-assertmysql)
 - [`db-assert.postgres`](#db-assertpostgres)
+- [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
+- [`mail-expect.smtp`](#mail-expectsmtp)
 - [`mq-expect.kafka`](#mq-expectkafka)
+- [`mq-expect.nats`](#mq-expectnats)
+- [`mq-expect.rabbitmq`](#mq-expectrabbitmq)
 - [`mq-publish.kafka`](#mq-publishkafka)
+- [`mq-publish.nats`](#mq-publishnats)
+- [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
+
+### `cache-assert.elasticsearch`
+
+Set `type: cache-assert.elasticsearch` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Expected result-set characteristics. |
+| `index` | `string` | Elasticsearch index to query. |
+| `target` | `string` | Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `query` | `string` | Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{"query":{"match":{"status":"active"}}}'). When absent a match_all query is used. May contain {placeholder} tokens resolved at execution time. |
+
+### `cache-assert.redis`
+
+Set `type: cache-assert.redis` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard). |
+| `key` | `string` | The Redis key to inspect. May contain {placeholder} tokens resolved at step-execution time. |
+| `operation` | `string` | The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive. |
+| `target` | `string` | Logical name of the redis dependency to inspect, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `field` | `string` | The hash field name for the hget operation (required for hget only). May contain {placeholder} tokens. |
+
+### `db-assert.mongodb`
+
+Set `type: db-assert.mongodb` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `collection` | `string` | Name of the MongoDB collection to query. |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of count or document must be specified. |
+| `filter` | `string` | JSON filter document. May contain {placeholder} tokens resolved at runtime. |
+| `target` | `string` | Logical name of the mongodb dependency to query, as declared under environment.dependencies. |
+
+### `db-assert.mysql`
+
+Set `type: db-assert.mysql` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
+| `query` | `string` | The SQL query to execute. May be a multi-line literal. |
+| `target` | `string` | Logical name of the mysql dependency to query, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
 
 ### `db-assert.postgres`
 
@@ -46,6 +124,24 @@ Set `type: db-assert.postgres` to use this step.
 | `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
 | `query` | `string` | The SQL query to execute. May be a multi-line literal. |
 | `target` | `string` | Logical name of the postgres dependency to query, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
+
+### `db-assert.sqlserver`
+
+Set `type: db-assert.sqlserver` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block declaring the expected query outcome. At least one of rowCount or row must be specified. |
+| `query` | `string` | The SQL query to execute. May be a multi-line literal. |
+| `target` | `string` | Logical name of the sqlserver dependency to query, as declared under environment.dependencies. |
 
 **Optional fields**
 
@@ -73,6 +169,17 @@ Set `type: http.rest` to use this step.
 | `expect` | `object` | Optional assertion block applied to the HTTP response. |
 | `headers` | `object` | Optional map of request header names to values. |
 
+### `mail-expect.smtp`
+
+Set `type: mail-expect.smtp` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | The expectation block: how many messages must match the criteria. |
+| `target` | `string` | Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries. |
+
 ### `mq-expect.kafka`
 
 Set `type: mq-expect.kafka` to use this step.
@@ -90,6 +197,38 @@ Set `type: mq-expect.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry decoding. When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON. |
+
+### `mq-expect.nats`
+
+Asserts that a message matching the declared criteria is present on a NATS JetStream subject. The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour. IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass. Use verifyMode: RETRY to poll until the message arrives.
+
+Set `type: mq-expect.nats` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a fetched message must satisfy. At least one criterion (payloadContains or json) must be declared. |
+| `subject` | `string` | The NATS JetStream subject to filter messages on. |
+| `target` | `string` | Logical name of the nats dependency to consume from, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stream` | `string` | Optional JetStream stream name. When absent, derived from 'subject' (same rule as mq-publish.nats). |
+
+### `mq-expect.rabbitmq`
+
+Set `type: mq-expect.rabbitmq` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
+| `queue` | `string` | The AMQP queue to consume messages from. |
+| `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
 
 ### `mq-publish.kafka`
 
@@ -110,6 +249,47 @@ Set `type: mq-publish.kafka` to use this step.
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
 | `headers` | `object` | Optional map of message header names to their string values. |
 | `key` | `string` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. |
+
+### `mq-publish.nats`
+
+Publishes one UTF-8 message to a NATS JetStream subject. A Pass verdict confirms the publish was accepted by the server (JetStream ack); delivery is NOT further confirmed. Verify delivery with a following mq-expect.nats step.
+
+Set `type: mq-publish.nats` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message payload sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. |
+| `subject` | `string` | The NATS JetStream subject to publish to. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the nats dependency to publish to, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stream` | `string` | Optional NATS JetStream stream name. When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed). |
+
+### `mq-publish.rabbitmq`
+
+A Pass verdict confirms hand-off to the broker client; delivery is NOT confirmed (publisher confirms are a post-v1 feature). Verify delivery with a following mq-expect.rabbitmq step.
+
+Set `type: mq-publish.rabbitmq` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. |
+| `routingKey` | `string` | The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `exchange` | `string` | Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens. |
+| `headers` | `object` | Optional map of AMQP message header names to their string values. |
 
 ### `script.csharp`
 

@@ -10,6 +10,7 @@
 //   7. Resources: yields a postgres ResourceRequirement whose Name equals model.Target.
 //   8. CompileReferenceAssemblies: contains the Npgsql assembly.
 //   9. Full compile-and-run (no docker): EnvironmentError when conn key is absent.
+//  10. Full compile-and-run (no docker): EnvironmentError when conn string is malformed.
 using Platform.Engine.Abstractions;
 using Platform.Engine.Compilation;
 using Platform.Sdk;
@@ -252,6 +253,7 @@ public sealed class DbAssertPostgresEmitTests
             typeof(Npgsql.NpgsqlConnection).Assembly.Location,
             typeof(System.Text.Json.JsonSerializer).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
         var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
 
@@ -273,6 +275,171 @@ public sealed class DbAssertPostgresEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
         Assert.NotNull(outcome.Observation);
+    }
+
+    // ── 10. Compile round-trip: EnvironmentError when conn string is malformed ───────
+
+    /// <summary>
+    /// When the connection key is present but the connection string is malformed
+    /// (causing <c>NpgsqlConnection</c>'s constructor or <c>OpenAsync</c> to throw),
+    /// the emitted helper must catch the exception and write
+    /// <see cref="Verdict.EnvironmentError"/> rather than propagating the throw.
+    /// With the connection constructor moved inside the <c>try</c> block (niggle-b fix),
+    /// constructor failures are also caught.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_MalformedConnStr_ReturnsEnvironmentError()
+    {
+        const string stepId = "db-step-bad-conn";
+        var model = MakeModel("my-dep", "SELECT 1", null, rowCount: 1);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            // Non-null but wholly invalid connection string — constructor or OpenAsync must throw.
+            [VarKeys.Connection("my-dep")] = "@@@malformed@@@",
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        // Must NOT propagate the exception — the helper catches it and writes EnvironmentError.
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+    }
+
+    // ── 11. Compile round-trip: credential absent from observation on failure ──────
+
+    /// <summary>
+    /// When the connection string contains credentials and the connection attempt fails,
+    /// the observation must NOT expose the password (§17 — no secrets in observations).
+    /// <c>RedactCredentials</c> inside <c>DbAssertPostgres_Helpers</c> sanitises
+    /// both the full connection string and ADO-style <c>Password=</c> segments.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
+    {
+        const string stepId = "pg-cred-leak-check";
+        const string connStr = "Host=bad-host;Port=5432;Database=db;Username=user;Password=sup3rsecret;Timeout=1;";
+        var model = MakeModel("dep", "SELECT 1", null, rowCount: 1);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection("dep")] = connStr,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        Assert.True(vars.ContainsKey(outcomeKey),
+            $"Expected Vars to contain outcome key '{outcomeKey}'. " +
+            $"Actual keys: [{string.Join(", ", vars.Keys)}]");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.True(outcome.DurationMs >= 0, "DurationMs must be non-negative.");
+        Assert.NotNull(outcome.Observation);
+        Assert.DoesNotContain("sup3rsecret", outcome.Observation, StringComparison.Ordinal);
+    }
+
+    // ── 12. Direct test of RedactCredentials with a crafted dangerous message ────
+
+    /// <summary>
+    /// Directly tests the emitted <c>DbAssertPostgres_Helpers.RedactCredentials</c> method
+    /// by invoking it — via a compiled test CSX body — with a crafted message that
+    /// intentionally contains the password.  This verifies that the redaction logic
+    /// actually strips the secret rather than relying on the Npgsql driver never emitting
+    /// credentials in its error message (which is driver-version-dependent).
+    /// Both the literal connection-string replacement path and the ADO <c>Password=</c>
+    /// key-value pattern are exercised.
+    /// </summary>
+    [Fact]
+    public async Task Emit_RedactCredentials_WithCraftedMessageContainingSecret_SecretIsStripped()
+    {
+        const string stepId = "pg-redact-direct";
+        const string connStr = "Host=bad-host;Port=5432;Database=db;Username=user;Password=sup3rsecret;";
+        // Craft a message that DOES contain both the full connStr and the ADO-style Password= segment,
+        // simulating a hypothetical driver that leaks credentials in its error output.
+        const string craftedMessage =
+            "authentication failed, connection string was: " +
+            "Host=bad-host;Port=5432;Database=db;Username=user;Password=sup3rsecret;";
+
+        var model = MakeModel("dep", "SELECT 1", null, rowCount: 1);
+        var ctx = new StubCompileContext(stepId);
+        var fragment = _provider.Emit(model, ctx);
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = DbAssertPostgres_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var additionalRefs = new[]
+        {
+            typeof(Npgsql.NpgsqlConnection).Assembly.Location,
+            typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+            typeof(System.Globalization.CultureInfo).Assembly.Location,
+            typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+        };
+        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        Assert.True(vars.ContainsKey("__redact_result__"),
+            "Expected '__redact_result__' in Vars after calling RedactCredentials.");
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        Assert.DoesNotContain("sup3rsecret", result, StringComparison.Ordinal);
+        Assert.Contains("***", result, StringComparison.Ordinal);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────

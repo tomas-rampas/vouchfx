@@ -445,6 +445,82 @@ public sealed class EnvironmentMapperTests
     }
 
     // -----------------------------------------------------------------------
+    // Map_MailpitDependency_AddsContainerWithHttpAndSmtpEndpoints
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mailpit dependency provisions an <c>axllent/mailpit</c> container (pinned tag)
+    /// exposing BOTH the HTTP API endpoint (targetPort 8025, name <c>"http"</c>) and the
+    /// SMTP endpoint (targetPort 1025, name <c>"smtp"</c>), with an HTTP health check on
+    /// the <c>"http"</c> endpoint.  The container is health-gated and listed among the
+    /// managed dependency names.
+    /// </summary>
+    /// <remarks>
+    /// Non-Docker: inspects the in-memory resource graph after <c>Configure</c> but before
+    /// <c>StartAsync</c>, so it asserts the container image/tag, both endpoint annotations,
+    /// the health-check annotation, and the gate/dependency membership — all set at builder
+    /// time.  Mirrors <see cref="Map_KafkaWithSchemaRegistry_AddsRegistryContainer"/>.
+    /// </remarks>
+    [Fact]
+    public void Map_MailpitDependency_AddsContainerWithHttpAndSmtpEndpoints()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mp"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — a ContainerResource named "mp" was added.
+        var mailpit = builder.Resources
+            .OfType<ContainerResource>()
+            .SingleOrDefault(r => r.Name == "mp");
+        Assert.NotNull(mailpit);
+
+        // Assert — it uses the axllent/mailpit image with the pinned default tag (v1.21).
+        var imageAnnotation = mailpit!.Annotations
+            .OfType<ContainerImageAnnotation>()
+            .SingleOrDefault();
+        Assert.NotNull(imageAnnotation);
+        Assert.Equal("axllent/mailpit", imageAnnotation!.Image);
+        Assert.Equal("v1.21", imageAnnotation.Tag);
+
+        // Assert — the HTTP API endpoint annotation (targetPort 8025, name "http").
+        var httpEndpoint = mailpit.Annotations
+            .OfType<EndpointAnnotation>()
+            .SingleOrDefault(a => a.Name == "http");
+        Assert.NotNull(httpEndpoint);
+        Assert.Equal(8025, httpEndpoint!.TargetPort);
+
+        // Assert — the SMTP endpoint annotation (targetPort 1025, name "smtp").
+        var smtpEndpoint = mailpit.Annotations
+            .OfType<EndpointAnnotation>()
+            .SingleOrDefault(a => a.Name == "smtp");
+        Assert.NotNull(smtpEndpoint);
+        Assert.Equal(1025, smtpEndpoint!.TargetPort);
+
+        // Assert — an HTTP health-check annotation is registered (WithHttpHealthCheck on
+        // the "http" endpoint).  HealthCheckAnnotation carries a non-empty Key.
+        Assert.Contains(
+            mailpit.Annotations.OfType<HealthCheckAnnotation>(),
+            h => !string.IsNullOrEmpty(h.Key));
+
+        // Assert — "mp" is health-gated and listed as a managed dependency.
+        Assert.Contains("mp", mapped.HealthGateResourceNames);
+        Assert.Contains("mp", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
     // Map_KafkaWithoutSchemaRegistry_AddsNoRegistry
     // -----------------------------------------------------------------------
 
@@ -585,7 +661,7 @@ public sealed class EnvironmentMapperTests
             Services: null,
             Dependencies: new Dictionary<string, DependencySpec>
             {
-                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+                ["store"] = new DependencySpec(Type: "cassandra", Version: null, Extra: null),
             },
             Seed: null,
             ImageRegistry: null,
@@ -593,7 +669,331 @@ public sealed class EnvironmentMapperTests
 
         // Act + Assert
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
-        Assert.Contains("redis", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cassandra", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_SqlServerDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A sqlserver dependency produces both a server resource and a database resource
+    /// (named &lt;name&gt;db), with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_SqlServerDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["db"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "db" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "db"));
+
+        // Assert — database resource named "dbdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "dbdb"));
+
+        // Assert — the retained database resource implements IResourceWithConnectionString (the
+        // contract that ResolveServices reads the connection string from).
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "dbdb"));
+
+        // Assert — gate is on the database resource (§4 invariant)
+        Assert.Contains("dbdb", mapped.HealthGateResourceNames);
+        Assert.Contains("db", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_MySqlDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mysql dependency produces both a server resource and a database resource,
+    /// with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_MySqlDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mdb"] = new DependencySpec(Type: "mysql", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "mdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "mdb"));
+
+        // Assert — database resource named "mdbdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "mdbdb"));
+
+        // Assert — the retained database resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "mdbdb"));
+
+        // Assert — gate is on the database resource
+        Assert.Contains("mdbdb", mapped.HealthGateResourceNames);
+        Assert.Contains("mdb", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_MongoDbDependency_AddsServerAndDatabase_GateOnDatabase
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A mongodb dependency produces both a server resource and a database resource,
+    /// with the database in the health-gate list (§4 invariant).
+    /// </summary>
+    [Fact]
+    public void Map_MongoDbDependency_AddsServerAndDatabase_GateOnDatabase()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "orders" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "orders"));
+
+        // Assert — database resource named "ordersdb" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "ordersdb"));
+
+        // Assert — the retained database resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "ordersdb"));
+
+        // Assert — gate is on the database resource
+        Assert.Contains("ordersdb", mapped.HealthGateResourceNames);
+        Assert.Contains("orders", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_RedisDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A redis dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_RedisDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "cache" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "cache"));
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "cache"));
+
+        // Assert — gate is on the server (no separate database resource)
+        Assert.Contains("cache", mapped.HealthGateResourceNames);
+        Assert.Contains("cache", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_ElasticsearchDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// An elasticsearch dependency produces a server resource only (no database resource),
+    /// the server itself is in the health-gate list, and the stability environment variables
+    /// (<c>discovery.type</c>, <c>xpack.security.enabled</c>, <c>ES_JAVA_OPTS</c>) are
+    /// wired onto the resource so a future refactor cannot silently drop them.
+    /// </summary>
+    [Fact]
+    public async Task Map_ElasticsearchDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["search"] = new DependencySpec(Type: "elasticsearch", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "search" exists
+        var searchResource = builder.Resources.SingleOrDefault(r => r.Name == "search");
+        Assert.NotNull(searchResource);
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(searchResource);
+
+        // Assert — gate is on the server
+        Assert.Contains("search", mapped.HealthGateResourceNames);
+        Assert.Contains("search", mapped.DependencyNames);
+
+        // Assert — stability env vars are present on the resource.
+        // Literal-string WithEnvironment calls register EnvironmentCallbackAnnotation entries;
+        // running them populates the dictionary synchronously.
+        var envVars = new Dictionary<string, object>();
+        var callbackContext = new EnvironmentCallbackContext(
+            new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run),
+            searchResource!,
+            envVars);
+        foreach (var envCallback in searchResource!.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            await envCallback.Callback(callbackContext);
+        }
+
+        Assert.Equal("single-node", Assert.IsType<string>(envVars["discovery.type"]));
+        Assert.Equal("false", Assert.IsType<string>(envVars["xpack.security.enabled"]));
+        Assert.Equal("-Xms512m -Xmx512m", Assert.IsType<string>(envVars["ES_JAVA_OPTS"]));
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_RabbitMqDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A rabbitmq dependency produces a server resource only (no database resource),
+    /// and the server itself is in the health-gate list.
+    /// </summary>
+    [Fact]
+    public void Map_RabbitMqDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "rabbitmq", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "bus" exists
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "bus"));
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(
+            builder.Resources.SingleOrDefault(r => r.Name == "bus"));
+
+        // Assert — gate is on the server
+        Assert.Contains("bus", mapped.HealthGateResourceNames);
+        Assert.Contains("bus", mapped.DependencyNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_NatsDependency_AddsServer_GateOnServer
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A nats dependency produces a server resource only (no database resource),
+    /// the server itself is in the health-gate list, and JetStream is enabled via
+    /// <c>WithJetStream()</c> (which appends <c>-js</c> to the container command-line
+    /// arguments — FIX B1: without this, every mq-publish.nats / mq-expect.nats step
+    /// returns EnvironmentError).
+    /// </summary>
+    [Fact]
+    public async Task Map_NatsDependency_AddsServer_GateOnServer()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "nats", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — server resource named "events" exists
+        var eventsResource = builder.Resources.SingleOrDefault(r => r.Name == "events");
+        Assert.NotNull(eventsResource);
+
+        // Assert — the retained server resource implements IResourceWithConnectionString.
+        Assert.IsAssignableFrom<IResourceWithConnectionString>(eventsResource);
+
+        // Assert — gate is on the server
+        Assert.Contains("events", mapped.HealthGateResourceNames);
+        Assert.Contains("events", mapped.DependencyNames);
+
+        // Assert — JetStream is enabled: WithJetStream() registers a CommandLineArgsCallbackAnnotation
+        // that appends '-js' to the container args.  We invoke the callbacks in-memory (no DCP/Docker)
+        // and verify the flag is present.  This is the FIX B1 regression gate.
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, eventsResource!, CancellationToken.None);
+        foreach (var argsCallback in eventsResource!.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Contains(args, a => a is string s && s == "-js");
     }
 
     // -----------------------------------------------------------------------

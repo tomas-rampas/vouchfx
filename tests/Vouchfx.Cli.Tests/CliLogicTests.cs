@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 6 Core provider assemblies; the registry freezes
-//     with the 6 expected step kinds.
+//   • ProviderRegistryFactory — names the 18 Core provider assemblies; the registry freezes
+//     with the 18 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsSixDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsEighteenDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(6, assemblies.Length);
-        // Six *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(6, assemblies.Distinct().Count());
+        Assert.Equal(18, assemblies.Length);
+        // Eighteen *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(18, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheSixCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheEighteenCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -40,10 +40,22 @@ public sealed class ProviderRegistryFactoryTests
                  {
                      "http.rest",
                      "db-assert.postgres",
+                     "db-assert.sqlserver",
+                     "db-assert.mongodb",
+                     "db-assert.mysql",
                      "script.csharp",
                      "mq-publish.kafka",
                      "mq-expect.kafka",
+                     "mq-publish.rabbitmq",
+                     "mq-expect.rabbitmq",
+                     "mq-publish.nats",
+                     "mq-expect.nats",
+                     "mq-publish.azureservicebus",
+                     "mq-expect.azureservicebus",
                      "webhook-listen.http",
+                     "mail-expect.smtp",
+                     "cache-assert.redis",
+                     "cache-assert.elasticsearch",
                  })
         {
             Assert.True(

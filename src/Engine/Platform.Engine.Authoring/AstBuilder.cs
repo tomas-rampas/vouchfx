@@ -257,7 +257,7 @@ public static class AstBuilder
                     step.Id,
                     line,
                     col,
-                    $"ambiguous step family '{raw}'; specify a provider, e.g. {raw}.{matches[0].Kind.Provider}"),
+                    $"ambiguous step family '{raw}'; registered providers: {string.Join(", ", matches.Select(m => m.Kind.Provider).OrderBy(p => p, StringComparer.Ordinal))}; specify a provider, e.g. {raw}.{matches.Select(m => m.Kind.Provider).OrderBy(p => p, StringComparer.Ordinal).First()}"),
         };
     }
 
