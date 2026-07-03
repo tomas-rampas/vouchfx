@@ -205,7 +205,7 @@ This section defines the language's step types. The first six subsections descri
 
 The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author writes the dotted form — `type: db-assert.postgres` — except when a family has only one registered provider, in which case the bare family name is accepted as a convenience. The canonical form is always the dotted name, and the editor and error messages render it that way. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
 
-Together the six shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
+Together the eight shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
 
 ## 5.1 The http family
 
@@ -653,7 +653,7 @@ Each provider's schema fragment contributes the fields specific to that step typ
 
 ### The v1 schema is frozen
 
-The composed v1 JSON Schema — the root language schema plus the fragments from all six Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+The composed v1 JSON Schema — the root language schema plus the fragments from all eighteen Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {

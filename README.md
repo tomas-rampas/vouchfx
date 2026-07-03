@@ -25,8 +25,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 > **Milestone M4 — Tooling & hardening — is engineering-complete, phase-exit pending** (see [exit criteria](plan/m4-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
-> with Aspire and Testcontainers, executes all six Core providers (`http.rest`, `db-assert.postgres`,
-> `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`) end-to-end with
+> with Aspire and Testcontainers, executes all eighteen Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB),
+> cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus), HTTP, webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
 > with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated. Remaining phase-exit items are human-gated: the steering review, the GitLab live-pipeline run (#153), and certificate provisioning.
 > Still to come: community provider tiers (Verified and Community governance) and the v1.0 release in Sprint 12 — see
@@ -51,9 +51,12 @@ The contract that makes a suite run unchanged across local / SaaS / CI: the comp
 Steps are typed `<family>.<provider>` — *family* is intent, *provider* is technology
 (`db-assert.postgres`, `mq-publish.kafka`). Providers are **compile-time, source-level plugins**: add
 a project, implement the contract, and a reflective registry discovers it at startup — no runtime
-loader, no sandbox. All six **Core** providers are now delivered: `http.rest`, `db-assert.postgres`,
-`script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, and `webhook-listen.http`. All are governed
-across three tiers (Core / Verified / Community), all Apache-2.0.
+loader, no sandbox. Eighteen **Core** providers are now delivered across eight step families:
+`http.rest`; `db-assert.postgres`, `db-assert.sqlserver`, `db-assert.mysql`, `db-assert.mongodb`;
+`cache-assert.redis`, `cache-assert.elasticsearch`; `mq-publish.kafka`, `mq-publish.rabbitmq`,
+`mq-publish.nats`, `mq-publish.azureservicebus`; `mq-expect.kafka`, `mq-expect.rabbitmq`,
+`mq-expect.nats`, `mq-expect.azureservicebus`; `webhook-listen.http`; `mail-expect.smtp`; and
+`script.csharp`. All are governed across three tiers (Core / Verified / Community), all Apache-2.0.
 
 ## A test, in shape
 
