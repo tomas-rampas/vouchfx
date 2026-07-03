@@ -39,6 +39,13 @@
     <PackageVersion Include="JsonSchema.Net" Version="9.2.1" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
+  <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
+    <!-- Azure.Messaging.ServiceBus 7.18.x: ServiceBusClient, ServiceBusSender,
+         ServiceBusReceiver (PeekMessagesAsync), ServiceBusAdministrationClient.
+         Pin to a stable 7.18 build; advance at engine cadence, not Azure SDK cadence.
+         Both mq-publish.azureservicebus and mq-expect.azureservicebus reference this. -->
+    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
+  </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
     <PackageVersion Include="Npgsql" Version="8.0.7" />
     <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the

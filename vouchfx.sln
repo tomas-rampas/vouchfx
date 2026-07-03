@@ -135,6 +135,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nat
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nats.Tests", "tests\Platform.Steps.MqExpect.Nats.Tests\Platform.Steps.MqExpect.Nats.Tests.csproj", "{27758E4F-1678-D100-3FCB-4556789F1324}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.AzureServiceBus", "src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj", "{38869F50-2789-E211-4FDC-5667890F2435}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.AzureServiceBus.Tests", "tests\Platform.Steps.MqPublish.AzureServiceBus.Tests\Platform.Steps.MqPublish.AzureServiceBus.Tests.csproj", "{49970061-3890-F322-50ED-6778901F3546}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.AzureServiceBus", "src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj", "{59981172-4901-0433-61FE-7889012F4657}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.AzureServiceBus.Tests", "tests\Platform.Steps.MqExpect.AzureServiceBus.Tests\Platform.Steps.MqExpect.AzureServiceBus.Tests.csproj", "{69092283-5012-1544-72AF-8990123F5768}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -372,6 +380,22 @@ Global
 		{27758E4F-1678-D100-3FCB-4556789F1324}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{27758E4F-1678-D100-3FCB-4556789F1324}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{27758E4F-1678-D100-3FCB-4556789F1324}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38869F50-2789-E211-4FDC-5667890F2435}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38869F50-2789-E211-4FDC-5667890F2435}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38869F50-2789-E211-4FDC-5667890F2435}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38869F50-2789-E211-4FDC-5667890F2435}.Release|Any CPU.Build.0 = Release|Any CPU
+		{49970061-3890-F322-50ED-6778901F3546}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{49970061-3890-F322-50ED-6778901F3546}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49970061-3890-F322-50ED-6778901F3546}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{49970061-3890-F322-50ED-6778901F3546}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59981172-4901-0433-61FE-7889012F4657}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59981172-4901-0433-61FE-7889012F4657}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59981172-4901-0433-61FE-7889012F4657}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59981172-4901-0433-61FE-7889012F4657}.Release|Any CPU.Build.0 = Release|Any CPU
+		{69092283-5012-1544-72AF-8990123F5768}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{69092283-5012-1544-72AF-8990123F5768}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{69092283-5012-1544-72AF-8990123F5768}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{69092283-5012-1544-72AF-8990123F5768}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -431,5 +455,9 @@ Global
 		{E314040A-7234-9D56-FB87-0112345E7F80} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{A4B5C6D7-E8F9-0A1B-C2D3-E4F567890A1B} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
 		{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{38869F50-2789-E211-4FDC-5667890F2435} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{49970061-3890-F322-50ED-6778901F3546} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{59981172-4901-0433-61FE-7889012F4657} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{69092283-5012-1544-72AF-8990123F5768} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

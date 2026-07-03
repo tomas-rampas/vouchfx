@@ -42,6 +42,8 @@
     <PackageReference Include="RabbitMQ.Client" />
     <!-- NATS.Net: required by MqNatsDockerTests (compile-ref for Assembly.Location access). -->
     <PackageReference Include="NATS.Net" />
+    <!-- Azure.Messaging.ServiceBus: required by MqAzureServiceBusDockerTests (compile-ref + Assembly.Location). -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
   </ItemGroup>
 
   <ItemGroup>
@@ -87,6 +89,11 @@
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.azureservicebus + mq-expect.azureservicebus providers: used by MqAzureServiceBusDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

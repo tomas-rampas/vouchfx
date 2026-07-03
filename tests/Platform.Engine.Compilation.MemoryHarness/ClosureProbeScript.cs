@@ -317,6 +317,33 @@ public static class ClosureProbeScript
                     try { await natsConn.DisposeAsync().ConfigureAwait(false); } catch { }
                 }
             }
+
+            // ── Azure.Messaging.ServiceBus ServiceBusClient build + DisposeAsync ────
+            // Build a REAL ServiceBusClient (exercises static initialisers, connection-
+            // string parsing, and the AMQP transport-layer setup the
+            // mq-publish.azureservicebus / mq-expect.azureservicebus providers' emitted
+            // helpers rely on).  Read a trivial property, then DisposeAsync() in finally.
+            // No SendAsync / PeekMessagesAsync — there is no broker; only the client
+            // instance is allocated and released.
+            // ServiceBusClient is IAsyncDisposable.  Dispose via
+            // await asbClient.DisposeAsync().ConfigureAwait(false) in a finally block —
+            // 'using var' / 'await using var' are prohibited in CSX bodies (§13.3.1).
+            Azure.Messaging.ServiceBus.ServiceBusClient? asbClient = null;
+            try
+            {
+                asbClient = new Azure.Messaging.ServiceBus.ServiceBusClient(
+                    "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;" +
+                    "SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;");
+                Vars["asb_client_built"] = 1L;
+            }
+            catch { }
+            finally
+            {
+                if (asbClient is not null)
+                {
+                    try { await asbClient.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+            }
         }
 
         // ── Sprint-6: Avro serdes + schema-registry client (cheap — every iter) ─

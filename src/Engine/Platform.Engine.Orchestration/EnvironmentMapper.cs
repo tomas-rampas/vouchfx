@@ -13,14 +13,17 @@
 //   • DisableDashboard = true path is enforced by HeadlessTopology; EnvironmentMapper is topology-agnostic.
 //
 // Provider registration table (s_dependencyRegistry):
-//   Ten dependency types are supported.  Each entry supplies:
+//   Eleven dependency types are supported.  Each entry supplies:
 //   • Build — called inside the configure delegate; mutates the Aspire builder, populates
-//     serviceEndpoints for sidecar containers (kafka schema-registry), and returns
+//     serviceEndpoints for sidecar containers (kafka schema-registry, mailpit SMTP), populates
+//     depConnBuilders for dependencies that need custom connection-string construction
+//     (azureservicebus — whose emulator is a plain container, not an Aspire typed resource,
+//     so it does not implement IResourceWithConnectionString), and returns
 //     (Retained, MostSpecific) IResourceBuilder<IResource> pairs:
 //     - Retained    → stored in dependencyBuilders[name]; used for connection-string resolution.
 //     - MostSpecific → added to mostSpecificDependencyResources; services WaitFor these.
 //     For database-backed types (postgres/sqlserver/mysql/mongodb) both are the *database* resource.
-//     For server-only types (redis/elasticsearch/rabbitmq/nats/kafka) both are the server resource.
+//     For server-only types (redis/elasticsearch/rabbitmq/nats/kafka/azureservicebus) both are the server resource.
 //   • HealthGateNames — produces the ordered gate-name sequence for the topology fixture to await.
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
@@ -100,9 +103,9 @@ public sealed record MappedTopology(
 /// </para>
 /// <para>
 /// <b>Dependency mapping</b> (each logical name → <see cref="DependencySpec"/>):
-/// Ten types are supported via the internal registration table.  Database-backed types
+/// Eleven types are supported via the internal registration table.  Database-backed types
 /// (postgres, sqlserver, mysql, mongodb) gate on the <em>database</em> resource; server-only
-/// types (redis, elasticsearch, rabbitmq, nats, kafka) gate on the server itself.
+/// types (redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus) gate on the server itself.
 /// </para>
 /// <para>
 /// <b>WaitFor rule (§4)</b>: every service resource calls <c>WaitFor</c> on every dependency's
@@ -120,9 +123,19 @@ public static class EnvironmentMapper
     /// Per-type registration: how to build the Aspire resource graph entry and which
     /// resource names to await in the health gate.
     /// </summary>
+    /// <remarks>
+    /// The Build delegate's fifth parameter, <c>depConnBuilders</c>, is a mutable dictionary
+    /// for dependencies whose connection string cannot be resolved via
+    /// <see cref="IResourceWithConnectionString.GetConnectionStringAsync"/> — e.g., plain
+    /// container-based dependencies like <c>azureservicebus</c>.  The Build lambda captures
+    /// an <see cref="EndpointReference"/> and stores a factory lambda that constructs the
+    /// connection string from the resolved host/port after <c>StartAsync</c> completes.
+    /// Existing types that do not need this mechanism receive <c>_</c> for the parameter.
+    /// </remarks>
     private sealed record DependencyRegistration(
         Func<IDistributedApplicationBuilder, string, DependencySpec,
              Dictionary<string, EndpointReference>,
+             Dictionary<string, Func<CancellationToken, Task<string?>>>,
              (IResourceBuilder<IResource> Retained, IResourceBuilder<IResource> MostSpecific)> Build,
         Func<string, DependencySpec, IEnumerable<string>> HealthGateNames);
 
@@ -135,7 +148,7 @@ public static class EnvironmentMapper
             // hardware.  Retain the DATABASE builder for connection-string discovery too.
 
             ["postgres"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddPostgres(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -147,7 +160,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["sqlserver"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddSqlServer(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -159,7 +172,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mysql"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddMySql(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -171,7 +184,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mongodb"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddMongoDB(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -185,7 +198,7 @@ public static class EnvironmentMapper
             // ---- server-only: gate on the server itself ----
 
             ["redis"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddRedis(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -196,7 +209,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["elasticsearch"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddElasticsearch(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -214,7 +227,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["rabbitmq"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     var serverBuilder = builder.AddRabbitMQ(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -225,7 +238,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["nats"] = new DependencyRegistration(
-                Build: (builder, name, spec, _) =>
+                Build: (builder, name, spec, _, _) =>
                 {
                     // WithJetStream() appends the '-js' flag so the NATS container starts with
                     // JetStream enabled.  Without it, CreateStreamAsync / PublishAsync throw
@@ -246,7 +259,7 @@ public static class EnvironmentMapper
             // Gate ordering: broker first, then SR (SR depends on the broker).
 
             ["kafka"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints) =>
+                Build: (builder, name, spec, serviceEndpoints, _) =>
                 {
                     var kafkaBuilder = builder.AddKafka(name);
                     if (!string.IsNullOrEmpty(spec.Version))
@@ -291,7 +304,7 @@ public static class EnvironmentMapper
             // Health gate: container's /api/v1/info endpoint via HTTP health check.
 
             ["mailpit"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints) =>
+                Build: (builder, name, spec, serviceEndpoints, _) =>
                 {
                     // Pin a stable tag for determinism (§4): never float on 'latest'.
                     // Authors may still override via the dependency's 'version' field.
@@ -309,6 +322,86 @@ public static class EnvironmentMapper
                     serviceEndpoints[name + "-smtp"] = containerBuilder.GetEndpoint("smtp");
 
                     var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
+                    return (retained, retained);
+                },
+                HealthGateNames: (name, _) => new[] { name }),
+
+            // ---- azureservicebus: emulator two-container topology ----
+            // The Azure Service Bus emulator requires a SQL Server sidecar for persistence.
+            // It does NOT implement IResourceWithConnectionString (it is a plain container),
+            // so the connection string is constructed from the resolved AMQP host/port via
+            // depConnBuilders — the custom connection-string builder mechanism.
+            //
+            // Container topology:
+            //   <name>-sqledge  — mcr.microsoft.com/mssql/server:2022-latest (SQL persistence)
+            //   <name>           — mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+            //     • AMQP port 5672   → resolved as conn::<name>
+            //     • HTTP port 5300   → health check at /health
+            //     • Config.json bind-mounted from a generated temp file
+            //
+            // Entity declarations: queues and topics are read from spec.Extra
+            // (extra.queues: [...], extra.topics: [{name, subscriptions: [...]}]) and
+            // written into Config.json.  Authors who need entities at step time (with
+            // unknown names at topology-setup time) can also rely on the provider's
+            // auto-create logic (ServiceBusAdministrationClient.Create*IfNotExistsAsync).
+            //
+            // Health gate: <name> only (the emulator's /health check requires SQL to be
+            // ready, so the sidecar's "running" state is subsumed by the emulator gate).
+
+            ["azureservicebus"] = new DependencyRegistration(
+                Build: (builder, name, spec, _, depConnBuilders) =>
+                {
+                    var sidecarName = name + "-sqledge";
+
+                    // SQL Server sidecar — required by the ASB emulator for persistence.
+                    // MSSQL_SA_PASSWORD meets SQL Server complexity requirements.
+                    var sidecarBuilder = builder
+                        .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")
+                        .WithEnvironment("ACCEPT_EULA", "Y")
+                        .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1");
+
+                    // Generate a Config.json that declares the ASB emulator namespace.
+                    // Queues and topics are read from spec.Extra; if absent, an empty
+                    // namespace is declared (the provider auto-creates entities on demand).
+                    var queues = ParseAsbQueues(spec.Extra);
+                    var topics = ParseAsbTopics(spec.Extra);
+                    var configJson = GenerateAsbConfigJson(queues, topics);
+                    var configPath = Path.GetTempFileName();
+                    File.WriteAllText(configPath, configJson);
+
+                    var emulatorBuilder = builder
+                        .AddContainer(name, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
+                        .WithEnvironment("ACCEPT_EULA", "Y")
+                        .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1")
+                        .WithEnvironment("SQL_SERVER", sidecarName)
+                        .WithBindMount(configPath, "/ServiceBus_Emulator/ConfigFiles/Config.json", isReadOnly: true)
+                        .WithEndpoint(targetPort: 5672, name: "amqp")
+                        .WithHttpEndpoint(targetPort: 5300, name: "health")
+                        .WithHttpHealthCheck(path: "/health", endpointName: "health")
+                        .WaitFor(sidecarBuilder);
+
+                    // Capture the AMQP endpoint reference; resolve after StartAsync.
+                    // IResourceBuilder<T> is covariant (out T) in Aspire 13.x, so
+                    // sidecarBuilder (IResourceBuilder<ContainerResource>) is accepted
+                    // as IResourceBuilder<IResource> by WaitFor above.
+                    var asbEndpoint = emulatorBuilder.GetEndpoint("amqp");
+
+                    // Store a custom connection-string builder so ResolveServices can
+                    // construct result[name] without IResourceWithConnectionString.
+                    // The URL is parsed after StartAsync when the host port is known.
+                    depConnBuilders[name] = _ =>
+                    {
+                        var url = asbEndpoint.Url;
+                        var uri = new Uri(url);
+                        var connStr =
+                            $"Endpoint=sb://{uri.Host}:{uri.Port};" +
+                            "SharedAccessKeyName=RootManageSharedAccessKey;" +
+                            "SharedAccessKey=SAS_KEY_VALUE;" +
+                            "UseDevelopmentEmulator=true;";
+                        return Task.FromResult<string?>(connStr);
+                    };
+
+                    var retained = (IResourceBuilder<IResource>)(object)emulatorBuilder;
                     return (retained, retained);
                 },
                 HealthGateNames: (name, _) => new[] { name }),
@@ -409,6 +502,14 @@ public static class EnvironmentMapper
         var dependencyBuilders = new Dictionary<string, IResourceBuilder<IResource>>(
             StringComparer.Ordinal);
 
+        // Dependency name → custom connection-string factory.
+        // Used for dependencies that are plain containers (not Aspire typed resources) and
+        // therefore do not implement IResourceWithConnectionString (e.g., azureservicebus).
+        // The factory lambda is stored during Configure and invoked by ResolveServices after
+        // StartAsync so the resolved host/port is available.
+        var depConnBuilders = new Dictionary<string, Func<CancellationToken, Task<string?>>>(
+            StringComparer.Ordinal);
+
         // ----------------------------------------------------------------
         // Build the ordered health-gate name list.
         // §4 invariant: most-specific first — databases before servers before services.
@@ -437,7 +538,8 @@ public static class EnvironmentMapper
             foreach (var (name, spec) in dependencies)
             {
                 var entry = s_dependencyRegistry[spec.Type];
-                var (retained, mostSpecific) = entry.Build(builder, name, spec, serviceEndpoints);
+                var (retained, mostSpecific) = entry.Build(
+                    builder, name, spec, serviceEndpoints, depConnBuilders);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
             }
@@ -493,6 +595,17 @@ public static class EnvironmentMapper
                     }
                 }
 
+                // Custom connection-string builders for dependencies that are plain containers
+                // (not Aspire typed resources) and do not implement IResourceWithConnectionString.
+                // The factory lambda resolves the host/port from the EndpointReference (available
+                // after StartAsync) and constructs the full connection string.
+                foreach (var (name, connBuilder) in depConnBuilders)
+                {
+                    var connStr = await connBuilder(ct).ConfigureAwait(false);
+                    if (connStr is not null)
+                        result[name] = connStr;
+                }
+
                 return result;
             };
 
@@ -527,6 +640,120 @@ public static class EnvironmentMapper
         return node is YamlScalarNode { Value: { } value } &&
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Parses the <c>extra.queues</c> sequence from an Azure Service Bus dependency's
+    /// <see cref="DependencySpec.Extra"/> YAML node.
+    /// </summary>
+    private static IReadOnlyList<string> ParseAsbQueues(YamlMappingNode? extra)
+    {
+        if (extra is null)
+            return Array.Empty<string>();
+        if (!extra.Children.TryGetValue(new YamlScalarNode("queues"), out var node))
+            return Array.Empty<string>();
+        if (node is not YamlSequenceNode seq)
+            return Array.Empty<string>();
+        return seq.Children
+            .OfType<YamlScalarNode>()
+            .Where(s => s.Value is not null)
+            .Select(s => s.Value!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Parses the <c>extra.topics</c> sequence from an Azure Service Bus dependency's
+    /// <see cref="DependencySpec.Extra"/> YAML node.
+    /// Each entry may carry a <c>name</c> scalar and an optional <c>subscriptions</c> sequence.
+    /// </summary>
+    private static IReadOnlyList<(string Name, IReadOnlyList<string> Subscriptions)> ParseAsbTopics(
+        YamlMappingNode? extra)
+    {
+        if (extra is null)
+            return Array.Empty<(string, IReadOnlyList<string>)>();
+        if (!extra.Children.TryGetValue(new YamlScalarNode("topics"), out var node))
+            return Array.Empty<(string, IReadOnlyList<string>)>();
+        if (node is not YamlSequenceNode seq)
+            return Array.Empty<(string, IReadOnlyList<string>)>();
+
+        var result = new List<(string, IReadOnlyList<string>)>();
+        foreach (var item in seq.Children.OfType<YamlMappingNode>())
+        {
+            if (!item.Children.TryGetValue(new YamlScalarNode("name"), out var nameNode) ||
+                nameNode is not YamlScalarNode { Value: { } topicName })
+                continue;
+
+            var subs = new List<string>();
+            if (item.Children.TryGetValue(new YamlScalarNode("subscriptions"), out var subsNode) &&
+                subsNode is YamlSequenceNode subsSeq)
+            {
+                subs.AddRange(subsSeq.Children
+                    .OfType<YamlScalarNode>()
+                    .Where(s => s.Value is not null)
+                    .Select(s => s.Value!));
+            }
+
+            result.Add((topicName, subs));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Generates the Config.json content for the Azure Service Bus emulator.
+    /// </summary>
+    /// <remarks>
+    /// The emulator namespace is always <c>sbemulatorns</c> (fixed by the emulator image).
+    /// Queues and topics declared here are pre-created at emulator startup.
+    /// Entities not declared in the YAML will not be available in the emulator unless
+    /// they are created by the broker after startup through the emulator's own mechanisms.
+    /// The <c>Logging</c> section is required by the emulator; omitting it causes a
+    /// <c>NullReferenceException</c> at startup and prevents the container from becoming healthy.
+    /// </remarks>
+    private static string GenerateAsbConfigJson(
+        IReadOnlyList<string> queues,
+        IReadOnlyList<(string Name, IReadOnlyList<string> Subscriptions)> topics)
+    {
+        // Build queue JSON fragments: {"Name":"q","Properties":{}}
+        var queueFragments = string.Join(",", queues.Select(q =>
+            $"{{\"Name\":\"{EscapeJson(q)}\",\"Properties\":{{}}}}"));
+
+        // Build topic JSON fragments with subscriptions.
+        var topicFragments = string.Join(",", topics.Select(t =>
+        {
+            var subFragments = string.Join(",", t.Subscriptions.Select(sub =>
+                $"{{\"Name\":\"{EscapeJson(sub)}\",\"Properties\":{{}}}}"));
+            return $"{{\"Name\":\"{EscapeJson(t.Name)}\",\"Properties\":{{}},\"Subscriptions\":[{subFragments}]}}";
+        }));
+
+        // Use $$ raw string: single { } = literal brace, {{ expr }} = interpolation hole.
+        // The "Logging" section is REQUIRED by the emulator — omitting it causes a
+        // NullReferenceException at startup ("Logging config cannot be null").
+        // "Console" is the safest type for non-persistent containers.
+        return $$"""
+            {
+              "UserConfig": {
+                "Namespaces": [
+                  {
+                    "Name": "sbemulatorns",
+                    "Queues": [{{queueFragments}}],
+                    "Topics": [{{topicFragments}}]
+                  }
+                ],
+                "Logging": {
+                  "Type": "Console"
+                }
+              }
+            }
+            """;
+    }
+
+    /// <summary>
+    /// Minimal JSON string escape: replaces <c>\</c> and <c>"</c> characters so that
+    /// user-supplied queue/topic names are safe to embed in JSON string literals.
+    /// </summary>
+    private static string EscapeJson(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal)
+             .Replace("\"", "\\\"", StringComparison.Ordinal);
 
     /// <summary>
     /// Resolves the fully-qualified image reference by applying <paramref name="registry"/>

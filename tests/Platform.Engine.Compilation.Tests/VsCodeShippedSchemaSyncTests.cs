@@ -34,9 +34,11 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
@@ -85,6 +87,8 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
         typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
+        typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
     };
 
     /// <summary>

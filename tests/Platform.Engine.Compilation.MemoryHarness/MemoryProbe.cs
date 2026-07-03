@@ -395,6 +395,17 @@ public static class MemoryProbe
             typeof(NATS.Client.Core.NatsConnection).Assembly.Location,
             typeof(NATS.Client.JetStream.NatsJSContext).Assembly.Location,
 
+            // ── mq-publish.azureservicebus / mq-expect.azureservicebus closure ──
+            // The two ASB providers use Azure.Messaging.ServiceBus.ServiceBusClient.
+            // Azure.Core.dll is a transitive dependency of Azure.Messaging.ServiceBus
+            // and is deployed to the same output directory; it must be listed explicitly
+            // because Roslyn does not auto-resolve it from the TPA.
+            typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly.Location,
+            System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(
+                    typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly.Location)!,
+                "Azure.Core.dll"),
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

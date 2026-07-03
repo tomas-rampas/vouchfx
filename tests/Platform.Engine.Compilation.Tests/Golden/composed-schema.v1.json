@@ -634,6 +634,55 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mq-expect.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.",
+            "type": "object",
+            "required": [
+              "target"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
+                "type": "string"
+              },
+              "topic": {
+                "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "subscription": {
+                "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "expectPayloadContains": {
+                "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "expectProperties": {
+                "description": "Optional application-property key=value pairs all of which must be present on the matched message.  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-expect.kafka"
               }
             },
@@ -817,6 +866,52 @@
                   }
                 },
                 "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to an Azure Service Bus queue or topic.  A Pass verdict confirms the send was accepted by the broker.  Verify with a following mq-expect.azureservicebus step.",
+            "type": "object",
+            "required": [
+              "target",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "topic": {
+                "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "properties": {
+                "description": "Optional application properties to attach to the message (string key=value pairs).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": true

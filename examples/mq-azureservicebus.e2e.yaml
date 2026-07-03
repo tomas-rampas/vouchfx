@@ -1,0 +1,102 @@
+metadata:
+  name: mq-azureservicebus-example
+  description: >
+    Example showing how to publish a message to an Azure Service Bus queue and then
+    assert that the expected message is present, using the mq-publish.azureservicebus
+    and mq-expect.azureservicebus providers backed by a live Azure Service Bus Emulator
+    container (plus its SQL Server sidecar).
+    The mq-expect step uses verifyMode: RETRY so the engine polls until the message
+    arrives or the timeout expires — authors never write Thread.Sleep.
+    PeekMessagesAsync is used for peeking so messages are NOT consumed; the queue
+    retains messages across multiple RETRY attempts.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # Azure Service Bus Emulator: AMQP 1.0 broker backed by SQL Server 2022.
+    # EnvironmentMapper starts two containers:
+    #   asb-sqledge — mcr.microsoft.com/mssql/server:2022-latest (SQL persistence sidecar)
+    #   asb         — mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    #     AMQP port 5672 → conn::asb (connection string with UseDevelopmentEmulator=true)
+    #     HTTP port 5300 → /health gate (emulator waits for SQL to be ready)
+    #
+    # The 'queues' list is written into Config.json at topology-setup time so the
+    # emulator pre-creates the entity.  Entities not listed here are auto-created
+    # by the provider (mq-publish.azureservicebus / mq-expect.azureservicebus) via
+    # ServiceBusAdministrationClient before the first operation.
+    #
+    # For topic-based messaging, declare topics under the 'topics' key:
+    #   topics:
+    #     - name: orders-topic
+    #       subscriptions:
+    #         - orders-sub
+    asb:
+      type: azureservicebus
+      extra:
+        queues:
+          - orders
+
+steps:
+  - id: trigger-order-event
+    type: http.rest
+    description: >
+      Trigger the system under test to publish an order event to Azure Service Bus.
+      The SUT should publish to the 'orders' queue via the connection string it
+      receives as the AZURE_SERVICE_BUS_CONNECTION_STRING environment variable
+      (injected by Aspire when wired with a WithReference binding).
+    target: app
+    request:
+      method: POST
+      path: /orders
+      body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 202
+
+  - id: publish-order-event
+    type: mq-publish.azureservicebus
+    description: >
+      Direct publish step: sends an order-created event to the 'orders' queue.
+      Properties (application-level key-value pairs carried on the message) are
+      optional and are set via the 'properties' map.  Specifying 'topic' instead
+      of 'queue' sends to a topic; 'queue' and 'topic' are mutually exclusive.
+    target: asb
+    queue: orders
+    payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'
+    properties:
+      eventType: order-created
+      correlationId: corr-123
+
+  - id: assert-order-event
+    type: mq-expect.azureservicebus
+    description: >
+      Assert that a message matching the criteria is present in the 'orders' queue.
+      Uses non-destructive peek (PeekMessagesAsync) so messages remain for subsequent
+      RETRY attempts.  Criteria are AND-conjunctive: the body must contain the
+      expectPayloadContains substring AND all expectProperties key-value pairs must
+      match.  Specifying 'topic' + 'subscription' instead of 'queue' peeks from a
+      topic subscription.
+      verifyMode: RETRY polls until the message arrives or the timeout expires.
+    target: asb
+    queue: orders
+    expectPayloadContains: "order-created"
+    expectProperties:
+      eventType: order-created
+    verifyMode: RETRY
+    timeout: PT30S
+
+  - id: assert-order-topic-event
+    type: mq-expect.azureservicebus
+    description: >
+      Topic + subscription variant: peeks from a topic subscription.
+      Remove this step (or the topic declarations in extra.topics) if you are
+      only using queues.
+    target: asb
+    topic: orders-topic
+    subscription: orders-sub
+    expectPayloadContains: "order-shipped"
+    verifyMode: RETRY
+    timeout: PT30S

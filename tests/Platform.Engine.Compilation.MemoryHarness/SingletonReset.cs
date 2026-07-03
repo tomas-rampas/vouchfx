@@ -169,6 +169,18 @@ public static class SingletonReset
         // disposal is always explicit in the probe and in emitted helpers.
         log.Add("NATS.Net NatsConnection: per-50-iter connection is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
 
+        // ── Azure.Messaging.ServiceBus ServiceBusClient ───────────────────────
+        // The closure probe builds a REAL ServiceBusClient on a bounded cadence
+        // (every 50th iteration) and calls await asbClient.DisposeAsync().ConfigureAwait(false)
+        // inside the probe's own finally block.  Azure.Messaging.ServiceBus 7.x has NO
+        // global connection pool or process-wide singleton: each new ServiceBusClient()
+        // constructs an independent AMQP connection; DisposeAsync() flushes pending work,
+        // closes the transport link, and cancels the internal connection management tasks.
+        // There is nothing to reset at the harness level — the per-cycle DisposeAsync()
+        // is both necessary and sufficient.  'using var' is prohibited in CSX (§13.3.1);
+        // disposal is always explicit in the probe and in emitted helpers.
+        log.Add("Azure.Messaging.ServiceBus: per-50-iter ServiceBusClient is built + DisposeAsync'd; no global connection pool or singleton; no reset needed");
+
         // ── OpenTelemetry TracerProvider ──────────────────────────────────────
         // OpenTelemetry is NOT part of the proven closure — no OTel package is
         // referenced by the harness or the probe script, and no TracerProvider is
