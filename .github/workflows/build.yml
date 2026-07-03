@@ -223,6 +223,26 @@ jobs:
       #                                            http.rest / capture / Respawn capstones.
       #   hashicorp/vault:latest                 — VaultSecretSourceDockerTests dev-mode
       #                                            Vault container (§17 secret source).
+      #   axllent/mailpit:v1.21                  — MailExpectSmtpDockerTests SMTP capture
+      #                                            container (mail-expect.smtp provider);
+      #                                            pinned tag mirrors EnvironmentMapper's
+      #                                            mailpit default (determinism, §4).
+      #   redis:7                                — CacheAssertRedisDockerTests cache container
+      #                                            (cache-assert.redis provider); Aspire.Hosting.Redis
+      #                                            AddRedis default image family.
+      #   rabbitmq:4-management                  — MqRabbitmqDockerTests AMQP broker container
+      #                                            (mq-publish.rabbitmq / mq-expect.rabbitmq);
+      #                                            management variant includes the HTTP API for
+      #                                            exchange/queue management.
+      #   nats:2.14                              — MqNatsDockerTests JetStream broker container
+      #                                            (mq-publish.nats / mq-expect.nats);
+      #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
+      #   mysql:9.7                              — DbAssertMysqlDockerTests MySQL container
+      #                                            (db-assert.mysql provider);
+      #                                            Aspire.Hosting.MySql 13.4.2 default
+      #                                            (MySqlContainerImageTags:
+      #                                            docker.io/library/mysql:9.7);
+      #                                            no test overrides the tag.
       #
       # Best-effort & non-fatal by design
       # ---------------------------------
@@ -239,10 +259,19 @@ jobs:
         run: |
           for image in \
             postgres:18.3 \
+            mcr.microsoft.com/mssql/server:2022-latest \
+            mongo:7 \
+            redis:7 \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             traefik/whoami:latest \
-            hashicorp/vault:latest ; do
+            hashicorp/vault:latest \
+            axllent/mailpit:v1.21 \
+            rabbitmq:4-management \
+            elasticsearch:8.17.3 \
+            nats:2.14 \
+            mysql:9.7 \
+            mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2 ; do
             echo "::group::docker pull $image"
             docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
             echo "::endgroup::"

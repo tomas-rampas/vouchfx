@@ -45,9 +45,15 @@ public static class ClosureProbeScript
     ///     length to <c>Vars</c>.
     ///   </description></item>
     ///   <item><description>
-    ///     <b>StackExchange.Redis</b> (<c>ConfigurationOptions.Parse</c>) — parses a
-    ///     localhost endpoint string in-memory, writes <c>ToString()</c> length to
-    ///     <c>Vars</c>.  No connection attempt is made.
+    ///     <b>StackExchange.Redis (cache-assert.redis)</b> — builds a REAL
+    ///     <c>ConnectionMultiplexer.Connect(…,abortConnect=false)</c> (the exact
+    ///     create-and-dispose discipline the cache-assert.redis provider's emitted helper
+    ///     relies on): <c>abortConnect=false</c> returns a multiplexer without a running
+    ///     server but still spins its heartbeat timer, socket, and reconnect thread, reads
+    ///     <c>Configuration.Length</c>, then <c>Dispose()</c>s it in a <c>finally</c>.  No
+    ///     <c>GetDatabase</c>/<c>StringGet</c> — there is no broker.  Gated to
+    ///     <c>iter % 50 == 0</c> (same cadence as the Kafka native-handle build) because each
+    ///     <c>Connect()</c> spins background threads.
     ///   </description></item>
     ///   <item><description>
     ///     <b>HttpClient / SocketsHttpHandler</b> (BCL) — creates an
@@ -90,6 +96,14 @@ public static class ClosureProbeScript
     ///     Under the closure run the harness stub seeds two requests; under the trivial
     ///     probe the null accessor returns an empty list and the loop is a no-op.
     ///   </description></item>
+    ///   <item><description>
+    ///     <b>Microsoft.Data.SqlClient real SqlConnection (Phase 1b)</b> — builds a REAL
+    ///     <c>SqlConnection</c> (exercises SNI initialisation and connection-string parsing
+    ///     static initialisers, the exact state <c>db-assert.sqlserver</c>'s emitted
+    ///     helper relies on), reads <c>ConnectionString.Length</c>, then <c>Dispose()</c>s
+    ///     in <c>finally</c>.  No <c>Open()</c> — the host does not exist.  Gated to
+    ///     <c>iter % 50 == 0</c> (same cadence as the Kafka native-handle build).
+    ///   </description></item>
     /// </list>
     /// </summary>
     /// <remarks>
@@ -115,10 +129,6 @@ public static class ClosureProbeScript
         // ── MongoDB.Driver touch ─────────────────────────────────────────────
         var mongoSettings = new MongoDB.Driver.MongoClientSettings();
         Vars["mongo_app_len"] = (mongoSettings.ApplicationName ?? string.Empty).Length;
-
-        // ── StackExchange.Redis touch ────────────────────────────────────────
-        var redisOpts = StackExchange.Redis.ConfigurationOptions.Parse("localhost");
-        Vars["redis_str_len"] = redisOpts.ToString().Length;
 
         // ── HttpClient / SocketsHttpHandler touch ────────────────────────────
         // No 'using var' — CSX disallows it.  Dispose in finally.
@@ -174,6 +184,165 @@ public static class ClosureProbeScript
                 // No Close() — Close() requires a subscription/group join (a network op).
                 // Dispose() alone releases the native handle, which is all the leak gate needs.
                 consumer.Dispose();
+            }
+
+            // ── MongoDB.Driver real MongoClient build + Dispose ────────────────
+            // Build a REAL MongoClient (exercises static initialisers, connection pool
+            // creation). Read a trivial property (Settings.Server), then Dispose() in
+            // finally.  No Connect() / query — the address does not exist; only the handle
+            // is allocated and released.  Exercises the same discipline the db-assert.mongodb
+            // provider's emitted helper uses (MongoDB.Driver 3.x: IMongoClient : IDisposable).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            MongoDB.Driver.MongoClient? mongoClient = null;
+            try
+            {
+                mongoClient = new MongoDB.Driver.MongoClient("mongodb://localhost:27017");
+                Vars["mongo_client_svr_len"] = mongoClient.Settings.Server.ToString().Length;
+            }
+            finally
+            {
+                mongoClient?.Dispose();
+            }
+
+            // ── Microsoft.Data.SqlClient real SqlConnection build + Dispose ─────
+            // Build a REAL SqlConnection (exercises static initialisers, connection string
+            // validation, SNI initialisation on first touch).  Read a trivial property
+            // (ConnectionString), then Dispose() in finally.  No Open() / query — the
+            // address does not exist.  Exercises the same discipline the db-assert.sqlserver
+            // provider's emitted helper uses (Microsoft.Data.SqlClient).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            Microsoft.Data.SqlClient.SqlConnection? sqlConn = null;
+            try
+            {
+                sqlConn = new Microsoft.Data.SqlClient.SqlConnection(
+                    "Server=localhost,1433;Database=probe_db;User Id=sa;Password=P@ssw0rd;TrustServerCertificate=true;");
+                Vars["sql_conn_str_len"] = sqlConn.ConnectionString.Length;
+            }
+            finally
+            {
+                sqlConn?.Dispose();
+            }
+
+            // ── MySqlConnector real MySqlConnection build + Dispose ─────────────
+            // Build a REAL MySqlConnection (exercises static initialisers, connection
+            // string parsing, pool registration logic).  Read a trivial property
+            // (ConnectionString), then Dispose() in finally.  No Open() / query —
+            // the host does not exist.  Exercises the same discipline the
+            // db-assert.mysql provider's emitted helper uses (MySqlConnector).
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            MySqlConnector.MySqlConnection? mysqlConn = null;
+            try
+            {
+                mysqlConn = new MySqlConnector.MySqlConnection(
+                    "Server=localhost;Database=probe;Uid=probe;Pwd=probe;");
+                Vars["mysql_conn_str_len"] = mysqlConn.ConnectionString.Length;
+            }
+            finally
+            {
+                mysqlConn?.Dispose();
+            }
+
+            // ── StackExchange.Redis real ConnectionMultiplexer build + Dispose ──
+            // Build a REAL ConnectionMultiplexer (the exact create-and-dispose discipline
+            // the cache-assert.redis provider's emitted helper relies on).  abortConnect=false
+            // returns a multiplexer WITHOUT a running server (no Redis needed) but still spins
+            // up the heartbeat timer, socket, and reconnect thread that MUST be released before
+            // the collectible ALC unloads (§5).  Read a trivial property (Configuration), then
+            // Dispose() in finally.  No StringGet / GetDatabase call — there is no server; only
+            // the multiplexer's internal resources are allocated and released.
+            // 'using var' is prohibited in CSX bodies (§13.3.1); explicit Dispose() in finally.
+            StackExchange.Redis.ConnectionMultiplexer? mux = null;
+            try
+            {
+                mux = StackExchange.Redis.ConnectionMultiplexer.Connect(
+                    "localhost:6379,abortConnect=false,connectTimeout=200,connectRetry=0");
+                Vars["redis_cfg_len"] = mux.Configuration.Length;
+            }
+            finally
+            {
+                mux?.Dispose();
+            }
+
+            // ── RabbitMQ.Client ConnectionFactory build (every 50 iters) ────────────────────────
+            // Build a REAL ConnectionFactory and attempt CreateConnectionAsync to a deliberately
+            // unreachable address (timeout set to 10ms so it fails fast).  The factory ctor
+            // exercises the same static initialisers the mq-publish.rabbitmq / mq-expect.rabbitmq
+            // providers rely on.  No broker is needed: the test is that the reference graph loads
+            // into and is released from the collectible ALC without anchoring static state.
+            // IConnection is IAsyncDisposable only in RabbitMQ.Client 7.x — disposed via
+            // await DisposeAsync().ConfigureAwait(false) in finally (§5 / §13.3.1).
+            RabbitMQ.Client.IConnection? rmqConn = null;
+            try
+            {
+                var rmqFactory = new RabbitMQ.Client.ConnectionFactory
+                {
+                    Uri = new System.Uri("amqp://localhost:5672"),
+                    RequestedConnectionTimeout = System.TimeSpan.FromMilliseconds(10)
+                };
+                try
+                {
+                    rmqConn = await rmqFactory.CreateConnectionAsync(System.Threading.CancellationToken.None).ConfigureAwait(false);
+                }
+                catch { }
+                Vars["rmq_factory_built"] = 1L;
+            }
+            finally
+            {
+                if (rmqConn is not null)
+                    await rmqConn.DisposeAsync().ConfigureAwait(false);
+            }
+
+            // ── NATS.Net NatsConnection build + DisposeAsync (every 50 iters) ─────
+            // Build a REAL NatsConnection (exercises NATS.Client.Core static initialisers
+            // and the JetStream context path the mq-publish.nats / mq-expect.nats
+            // providers rely on).  The connect attempt targets a deliberately unreachable
+            // address (no server running locally) so no network I/O completes; only the
+            // handle allocation and async-dispose discipline are exercised.  Swallow any
+            // connection-level exception so the probe is non-destructive.
+            // NatsConnection is IAsyncDisposable.  Dispose via
+            // await natsConn.DisposeAsync().ConfigureAwait(false) in a finally block —
+            // 'using var' / 'await using var' are prohibited in CSX bodies (§13.3.1).
+            NATS.Client.Core.NatsConnection? natsConn = null;
+            try
+            {
+                natsConn = new NATS.Client.Core.NatsConnection(
+                    new NATS.Client.Core.NatsOpts { Url = "nats://localhost:4222" });
+                Vars["nats_conn_built"] = 1L;
+            }
+            catch { }
+            finally
+            {
+                if (natsConn is not null)
+                {
+                    try { await natsConn.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+            }
+
+            // ── Azure.Messaging.ServiceBus ServiceBusClient build + DisposeAsync ────
+            // Build a REAL ServiceBusClient (exercises static initialisers, connection-
+            // string parsing, and the AMQP transport-layer setup the
+            // mq-publish.azureservicebus / mq-expect.azureservicebus providers' emitted
+            // helpers rely on).  Read a trivial property, then DisposeAsync() in finally.
+            // No SendAsync / PeekMessagesAsync — there is no broker; only the client
+            // instance is allocated and released.
+            // ServiceBusClient is IAsyncDisposable.  Dispose via
+            // await asbClient.DisposeAsync().ConfigureAwait(false) in a finally block —
+            // 'using var' / 'await using var' are prohibited in CSX bodies (§13.3.1).
+            Azure.Messaging.ServiceBus.ServiceBusClient? asbClient = null;
+            try
+            {
+                asbClient = new Azure.Messaging.ServiceBus.ServiceBusClient(
+                    "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;" +
+                    "SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;");
+                Vars["asb_client_built"] = 1L;
+            }
+            catch { }
+            finally
+            {
+                if (asbClient is not null)
+                {
+                    try { await asbClient.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
             }
         }
 

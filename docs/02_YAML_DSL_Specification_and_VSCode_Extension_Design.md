@@ -164,6 +164,8 @@ environment:
 
 Declarative fixtures are the recommended default because they live in source control beside the test, are visible in review, and produce the same baseline on every machine. When data must be created through the system's own APIs rather than injected directly — because the creation path is itself part of what is under test — a `script` step early in the scenario is the right tool instead, constructing entities and capturing their identifiers for later steps. A seed that fails to apply produces an environment error, not an assertion failure, so a broken fixture is never mistaken for a broken system. The reproducibility envelope records the content hash of every applied fixture.
 
+> **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. This limitation is tracked in the post-v1 backlog as PB-02.
+
 ### 3.2.4 Test doubles
 
 When a dependency cannot be exercised for real — a payment gateway that costs money, a third-party API with no sandbox, a service that does not yet exist — the platform's position is that a test double is provisioned like any other dependency: as a container running a stubbing tool such as WireMock or Mountebank, declared in this same section and addressed through the same logical name. The platform ships no built-in mocking; a double is a deliberate, visible entry in the environment rather than a hidden behaviour. Because the double speaks the real protocol, the steps that call it are written identically to steps that call the real service, and swapping one for the other later requires no change to the test logic — only to this declaration.
@@ -205,7 +207,7 @@ This section defines the language's step types. The first six subsections descri
 
 The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author writes the dotted form — `type: db-assert.postgres` — except when a family has only one registered provider, in which case the bare family name is accepted as a convenience. The canonical form is always the dotted name, and the editor and error messages render it that way. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
 
-Together the six shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
+Together the eight shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
 
 ## 5.1 The http family
 
@@ -240,7 +242,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The Core provider is `mq-publish.kafka`, which ships with full schema-registry and Avro support. Bare-family alias: `type: mq-publish` resolves to `mq-publish.kafka` (the single provider in this family).
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-publish` is an ambiguous-family error.
 
 ### 5.2.1 mq-publish.kafka: plain payload
 
@@ -313,7 +315,7 @@ The `mq-publish.kafka` provider auto-registers the supplied inline schema under 
 
 ## 5.3 The mq-expect family
 
-An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The Core provider is `mq-expect.kafka`; bare-family alias: `type: mq-expect` resolves to `mq-expect.kafka` (the single provider in this family).
+An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-expect` is an ambiguous-family error.
 
 ### 5.3.1 mq-expect.kafka: plain payload
 
@@ -492,13 +494,15 @@ The community catalogue at platform launch is summarised in the table below. The
 |---|---|---|---|
 | http | http.rest | http.soap, http.graphql | http.signalr, http.long-polling |
 | rpc | — | rpc.grpc | rpc.thrift, rpc.json-rpc |
-| mq-publish | mq-publish.kafka | — | — |
-| mq-expect | mq-expect.kafka | — | — |
-| db-assert | db-assert.postgres | — | — |
+| mq-publish | mq-publish.kafka, mq-publish.rabbitmq | — | — |
+| mq-expect | mq-expect.kafka, mq-expect.rabbitmq | — | — |
+| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | — | — |
+| cache-assert | cache-assert.redis, cache-assert.elasticsearch | — | — |
+| mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
 | script | script.csharp | — | — |
 
-*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine.*
+*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. Note: A bare family name (e.g., `type: mq-publish`) is accepted as an alias ONLY when the family has exactly one registered provider. Families with two or more providers require the explicit dotted form (e.g., `type: mq-publish.kafka`).*
 
 ### 5.7.1 How adding a provider feels to a contributor
 
@@ -510,7 +514,24 @@ Two patterns make the choice explicit and reviewable. First, the provider is nam
 
 > **Bare-family aliases**
 >
-> Families with a single registered provider accept a bare family name as a convenient alias. For example, `type: http` is equivalent to `type: http.rest`, `type: mq-publish` to `type: mq-publish.kafka`, `type: mq-expect` to `type: mq-expect.kafka`, and `type: script` to `type: script.csharp`. The canonical dotted form is always valid and is preferred in new test files. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> A bare family name (e.g., `type: http`, `type: script`) is accepted as a convenient alias **only when that family has exactly one registered provider**. When a family has two or more providers, the bare form is rejected as ambiguous, and the author must use the explicit dotted form.
+>
+> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), and `mail-expect` (→ mail-expect.smtp). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq), `mq-expect` (kafka, rabbitmq), and `cache-assert` (redis, elasticsearch). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+
+#### `cache-assert.elasticsearch` — step fields
+
+Asserts the state of an Elasticsearch index by submitting a Query DSL request and verifying the result set.
+
+| Field | Required | Description |
+|---|---|---|
+| `target` | Yes | The logical name of the `elasticsearch` dependency declared in `environment.dependencies`. |
+| `index` | Yes | The Elasticsearch index name to query. Supports `{placeholder}` substitution. |
+| `query` | No | A JSON string containing an Elasticsearch Query DSL body (e.g. `{"query":{"term":{"id":"{orderId}"}}}`). Supports `{placeholder}` substitution in field values. Defaults to a match-all query when omitted. |
+| `expect.count` | No | Exact number of hits required. Mutually exclusive with `expect.min-count`. |
+| `expect.min-count` | No | Minimum number of hits required (default `1` when neither count assertion is specified). |
+| `expect.fields` | No | List of `{field, value}` pairs asserted against the `_source` of the first hit. Each entry must match exactly. |
+
+Use `verifyMode: RETRY` with a `timeout` when the index may lag behind the write path (eventual consistency). `{placeholder}` references in `query` are resolved at execution time after all preceding capture expressions have been applied.
 
 # 6. Variable Capture and Substitution
 
@@ -634,7 +655,7 @@ Each provider's schema fragment contributes the fields specific to that step typ
 
 ### The v1 schema is frozen
 
-The composed v1 JSON Schema — the root language schema plus the fragments from all six Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+The composed v1 JSON Schema — the root language schema plus the fragments from all eighteen Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {

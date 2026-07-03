@@ -43,6 +43,18 @@
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="MongoDB.Driver" />
     <PackageReference Include="StackExchange.Redis" />
+    <!-- db-assert.sqlserver (Phase 1b) — Microsoft.Data.SqlClient transitive closure. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <!-- db-assert.mysql — MySqlConnector transitive closure. -->
+    <PackageReference Include="MySqlConnector" />
+    <!-- mq-publish.rabbitmq / mq-expect.rabbitmq — RabbitMQ.Client transitive closure. -->
+    <PackageReference Include="RabbitMQ.Client" />
+    <!-- mq-publish.nats / mq-expect.nats — NATS.Net (Core + JetStream) transitive closure. -->
+    <PackageReference Include="NATS.Net" />
+    <!-- mq-publish.azureservicebus / mq-expect.azureservicebus — Azure Service Bus
+         client (ServiceBusClient + ServiceBusAdministrationClient) transitive closure.
+         The closure probe builds + DisposeAsync's a real ServiceBusClient every 50 iters. -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
   </ItemGroup>
 
   <ItemGroup Label="Sprint-6 Kafka serdes (§5.7) — closure probe exercises the real Avro / schema-registry code paths">

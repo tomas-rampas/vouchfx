@@ -65,6 +65,83 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
+    // Step-type resolution — bare mail-expect alias (single provider)
+    // =========================================================================
+
+    [Fact]
+    public void Build_BareMailExpect_SingleProvider_ResolvesAlias()
+    {
+        // Arrange — registry only has mail-expect.smtp; bare "mail-expect" should resolve to it.
+        var registry = RegistryWith(new StubProvider("mail-expect", "smtp"));
+        var doc = DocWithStep(StepSpecWith(id: "check-mail", type: "mail-expect"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("mail-expect", node.Kind.Family);
+        Assert.Equal("smtp", node.Kind.Provider);
+        Assert.Equal("mail-expect.smtp", node.CanonicalType);
+    }
+
+    // =========================================================================
+    // Step-type resolution — bare cache-assert alias (single provider) + dotted
+    // =========================================================================
+
+    [Fact]
+    public void Build_BareCacheAssert_SingleProvider_ResolvesAlias()
+    {
+        // Arrange — registry only has cache-assert.redis; the bare "cache-assert" alias
+        // must resolve to it (cache-assert is a single-provider family, like mail-expect).
+        var registry = RegistryWith(new StubProvider("cache-assert", "redis"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("cache-assert", node.Kind.Family);
+        Assert.Equal("redis", node.Kind.Provider);
+        Assert.Equal("cache-assert.redis", node.CanonicalType);
+    }
+
+    [Fact]
+    public void Build_DottedCacheAssertRedis_ResolvesCorrectly()
+    {
+        // Arrange — registry has cache-assert.redis; the dotted type resolves directly.
+        var registry = RegistryWith(new StubProvider("cache-assert", "redis"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert.redis"));
+
+        // Act
+        var ast = AstBuilder.Build(doc, registry);
+
+        // Assert
+        var node = ast.Steps[0];
+        Assert.Equal("cache-assert", node.Kind.Family);
+        Assert.Equal("redis", node.Kind.Provider);
+        Assert.Equal("cache-assert.redis", node.CanonicalType);
+    }
+
+    [Fact]
+    public void Build_BareCacheAssert_MultiProvider_ThrowsAmbiguous()
+    {
+        // Arrange — cache-assert now has BOTH redis AND elasticsearch providers.
+        // The bare alias "cache-assert" is ambiguous and must throw.
+        var registry = RegistryWith(
+            new StubProvider("cache-assert", "redis"),
+            new StubProvider("cache-assert", "elasticsearch"));
+        var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("redis", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("elasticsearch", ex.Message, StringComparison.Ordinal);
+    }
+
+    // =========================================================================
     // Step-type resolution — ambiguous bare family
     // =========================================================================
 
@@ -80,6 +157,40 @@ public sealed class AstBuilderTests
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
         Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_BareMqPublish_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    {
+        // Arrange — mq-publish has both kafka and rabbitmq providers registered.
+        var registry = RegistryWith(
+            new StubProvider("mq-publish", "kafka"),
+            new StubProvider("mq-publish", "rabbitmq"));
+        var doc = DocWithStep(StepSpecWith(id: "publish", type: "mq-publish"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Both providers must be named in the error so the author knows ALL candidates.
+        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_BareMqExpect_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    {
+        // Arrange — mq-expect has both kafka and rabbitmq providers registered.
+        var registry = RegistryWith(
+            new StubProvider("mq-expect", "kafka"),
+            new StubProvider("mq-expect", "rabbitmq"));
+        var doc = DocWithStep(StepSpecWith(id: "expect", type: "mq-expect"));
+
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Both providers must be named in the error so the author knows ALL candidates.
+        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================

@@ -1,0 +1,46 @@
+# cache-assert-elasticsearch.e2e.yaml
+# Verifies that an Elasticsearch index contains the expected documents.
+# Demonstrates: cache-assert.elasticsearch step type, query DSL body,
+# exact-count assertion, and field value assertion.
+metadata:
+  name: elasticsearch-document-check
+  owner: platform-team
+  tags: [elasticsearch, cache-assert, smoke]
+  description: >
+    Inserts a document via http.rest, then asserts that Elasticsearch
+    reflects the change using cache-assert.elasticsearch.
+
+environment:
+  services:
+    - name: orders-api
+      image: orders-api:latest
+
+  dependencies:
+    - name: search
+      type: elasticsearch
+
+steps:
+  - id: seed-order
+    type: http.rest
+    url: http://orders-api/orders
+    method: POST
+    body: '{"id":"ord-001","status":"fulfilled","region":"EU"}'
+    expect:
+      status: 201
+    capture:
+      orderId: "$.id"
+
+  - id: check-order-indexed
+    type: cache-assert.elasticsearch
+    target: search
+    index: orders
+    query: '{"query":{"term":{"id":"{orderId}"}}}'
+    expect:
+      count: 1
+      fields:
+        - field: status
+          value: fulfilled
+        - field: region
+          value: EU
+    verifyMode: RETRY
+    timeout: 30s

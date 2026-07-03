@@ -360,6 +360,52 @@ public static class MemoryProbe
             typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
             typeof(Avro.Schema).Assembly.Location,
 
+            // ── Phase 1b: db-assert.sqlserver closure ──────────────────────────
+            // The db-assert.sqlserver provider uses Microsoft.Data.SqlClient.SqlConnection
+            // (via SqlCommand/SqlDataReader).  The closure probe builds a real SqlConnection
+            // to exercise SNI initialisation and connection-pool static state.  Must be
+            // included here so Roslyn can resolve the type at compile time; the assembly is
+            // loaded in the Default ALC via the MemoryHarness.csproj package reference.
+            typeof(Microsoft.Data.SqlClient.SqlConnection).Assembly.Location,
+
+            // ── Phase 1c: db-assert.mysql closure ─────────────────────────────
+            // The db-assert.mysql provider uses MySqlConnector.MySqlConnection.  The closure
+            // probe builds and disposes a real MySqlConnection every 50th iteration to exercise
+            // the connection-pool static state.  Must be included here so Roslyn can resolve
+            // MySqlConnector types at compile time; the assembly loads in the Default ALC via
+            // the MemoryHarness.csproj PackageReference.
+            typeof(MySqlConnector.MySqlConnection).Assembly.Location,
+
+            // ── Sprint-13: mq-publish.rabbitmq / mq-expect.rabbitmq closure ──────
+            // The two RabbitMQ providers use RabbitMQ.Client 7.x (IConnection /
+            // IChannel both IAsyncDisposable only).  System.Uri is forwarded to
+            // System.Private.Uri — Roslyn does not pick it up from System.Runtime
+            // automatically, so it must be listed explicitly (new System.Uri(amqpUri)
+            // appears in the connection factory initialiser).
+            typeof(RabbitMQ.Client.ConnectionFactory).Assembly.Location,
+            typeof(System.Uri).Assembly.Location,
+
+            // ── mq-publish.nats / mq-expect.nats closure ────────────────────────
+            // The two NATS providers use NATS.Net 2.x which splits into two assemblies:
+            // NATS.Client.Core (NatsConnection, NatsOpts, NatsException) and
+            // NATS.Client.JetStream (NatsJSContext, StreamConfig, ConsumerConfig, etc.).
+            // Both must be included so the closure probe's NatsConnection build/dispose
+            // compiles.  The assemblies resolve from the Default ALC (the harness
+            // references NATS.Net directly); they must never load into the collectible ALC.
+            typeof(NATS.Client.Core.NatsConnection).Assembly.Location,
+            typeof(NATS.Client.JetStream.NatsJSContext).Assembly.Location,
+
+            // ── mq-publish.azureservicebus / mq-expect.azureservicebus closure ──
+            // The two ASB providers use Azure.Messaging.ServiceBus.ServiceBusClient.
+            // Azure.Core.dll is a transitive dependency of Azure.Messaging.ServiceBus
+            // and is deployed to the same output directory; it must be listed explicitly
+            // because Roslyn does not auto-resolve it from the TPA.
+            typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly.Location,
+            System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(
+                    typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly.Location)!,
+                "Azure.Core.dll"),
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

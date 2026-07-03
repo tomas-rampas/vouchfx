@@ -145,6 +145,259 @@
           "if": {
             "properties": {
               "type": {
+                "const": "cache-assert.elasticsearch"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "index",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries.",
+                "type": "string"
+              },
+              "index": {
+                "description": "Elasticsearch index to query.",
+                "type": "string"
+              },
+              "query": {
+                "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Expected result-set characteristics.",
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "description": "Exact number of hits expected.  When set, overrides min-count.",
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "min-count": {
+                    "description": "Minimum number of hits expected (default 1).  Ignored when count is set.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 1
+                  },
+                  "fields": {
+                    "description": "Optional field assertions evaluated against the first hit's _source.  Each entry checks that the named top-level field equals the expected value.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "field",
+                        "value"
+                      ],
+                      "properties": {
+                        "field": {
+                          "description": "Top-level _source field name.  Dot-notation is not supported.",
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Expected string value.  May contain {placeholder} and ${secret:source/path} tokens.",
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cache-assert.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "key",
+              "operation",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to inspect, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "key": {
+                "description": "The Redis key to inspect.  May contain {placeholder} tokens resolved at step-execution time.",
+                "type": "string"
+              },
+              "operation": {
+                "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive.",
+                "type": "string",
+                "enum": [
+                  "get",
+                  "exists",
+                  "ttl",
+                  "hget",
+                  "hlen",
+                  "llen",
+                  "scard"
+                ]
+              },
+              "field": {
+                "description": "The hash field name for the hget operation (required for hget only).  May contain {placeholder} tokens.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard).",
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time.",
+                    "type": "string"
+                  },
+                  "exists": {
+                    "description": "Expected key presence for exists, or expected has-a-positive-TTL presence for ttl.",
+                    "type": "boolean"
+                  },
+                  "length": {
+                    "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality).",
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.mongodb"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "collection",
+              "filter",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mongodb dependency to query, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "collection": {
+                "description": "Name of the MongoDB collection to query.",
+                "type": "string"
+              },
+              "filter": {
+                "description": "JSON filter document.  May contain {placeholder} tokens resolved at runtime.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of count or document must be specified.",
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "description": "Expected number of documents matched by the filter.",
+                    "type": "integer"
+                  },
+                  "document": {
+                    "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.mysql"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mysql dependency to query, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string"
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query.",
+                    "type": "integer"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "db-assert.postgres"
               }
             },
@@ -162,6 +415,62 @@
             "properties": {
               "target": {
                 "description": "Logical name of the postgres dependency to query, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string"
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query.",
+                    "type": "integer"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.sqlserver"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the sqlserver dependency to query, as declared under environment.dependencies.",
                 "type": "string"
               },
               "query": {
@@ -265,6 +574,115 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mail-expect.smtp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "The expectation block: how many messages must match the criteria.",
+                "type": "object",
+                "required": [
+                  "match"
+                ],
+                "properties": {
+                  "count": {
+                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists.",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "match": {
+                    "description": "Criteria a message must satisfy.  At least one criterion must be declared.",
+                    "type": "object",
+                    "properties": {
+                      "to": {
+                        "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
+                        "type": "string"
+                      },
+                      "subject-contains": {
+                        "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
+                        "type": "string"
+                      },
+                      "body-contains": {
+                        "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message.",
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
+            "type": "object",
+            "required": [
+              "target"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
+                "type": "string"
+              },
+              "topic": {
+                "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
+                "type": "string"
+              },
+              "subscription": {
+                "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} substitution tokens.",
+                "type": "string"
+              },
+              "expectPayloadContains": {
+                "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "expectProperties": {
+                "description": "Optional application-property key=value pairs all of which must be present on the matched message.  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-expect.kafka"
               }
             },
@@ -347,6 +765,162 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mq-expect.nats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a message matching the declared criteria is present on a NATS JetStream subject.  The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour.  IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "subject",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the nats dependency to consume from, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "subject": {
+                "description": "The NATS JetStream subject to filter messages on.",
+                "type": "string"
+              },
+              "stream": {
+                "description": "Optional JetStream stream name.  When absent, derived from 'subject' (same rule as mq-publish.nats).",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
+                "type": "object",
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "queue",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The AMQP queue to consume messages from.",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared.",
+                "type": "object",
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "headers": {
+                    "description": "Optional map of expected AMQP header names to their expected string values.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message body parsed as JSON.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to an Azure Service Bus queue or topic.  A Pass verdict confirms the send was accepted by the broker.  Verify with a following mq-expect.azureservicebus step.",
+            "type": "object",
+            "required": [
+              "target",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "queue": {
+                "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
+                "type": "string"
+              },
+              "topic": {
+                "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "properties": {
+                "description": "Optional application properties to attach to the message (string key=value pairs).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-publish.kafka"
               }
             },
@@ -416,6 +990,93 @@
                   }
                 },
                 "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.nats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to a NATS JetStream subject.  A Pass verdict confirms the publish was accepted by the server (JetStream ack); delivery is NOT further confirmed.  Verify delivery with a following mq-expect.nats step.",
+            "type": "object",
+            "required": [
+              "target",
+              "subject",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the nats dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "subject": {
+                "description": "The NATS JetStream subject to publish to.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "stream": {
+                "description": "Optional NATS JetStream stream name.  When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed).",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "A Pass verdict confirms hand-off to the broker client; delivery is NOT confirmed (publisher confirms are a post-v1 feature). Verify delivery with a following mq-expect.rabbitmq step.",
+            "type": "object",
+            "required": [
+              "target",
+              "routingKey",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "exchange": {
+                "description": "Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "routingKey": {
+                "description": "The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "headers": {
+                "description": "Optional map of AMQP message header names to their string values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": true

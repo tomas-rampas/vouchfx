@@ -1,26 +1,26 @@
-// S10-D-02 — Memory-leak gate provably covers all SIX Core providers' closure.
+// S10-D-02 — Memory-leak gate provably covers every Core provider's closure.
 //
 // The permanent M1 memory-leak gate (ClosureMemoryProbeTests + the 5,000-iteration
 // harness in CI) exercises the transitive client closure of every Core provider inside
 // a collectible AssemblyLoadContext, so a singleton pinner that anchors a reference
 // across the collectible boundary is caught.  But that gate's value depends on the
-// closure probe ACTUALLY touching each provider's canonical client: a 7th Core provider
-// could be added (say, a `cache.redis` family) whose client never gets exercised, and
+// closure probe ACTUALLY touching each provider's canonical client: a new Core provider
+// could be added whose client never gets exercised, and
 // the leak gate would stay green while silently NOT covering it.
 //
 // This guard makes that failure impossible to introduce silently.  It pins, as the
-// source of truth, an explicit table mapping each of the six Core providers to the
+// source of truth, an explicit table mapping each Core provider to the
 // canonical client / closure marker its leak coverage depends on, and then asserts:
 //
-//   1. The enumerated six-provider table EQUALS the real Core-provider set — built by
-//      reflecting the SAME six anchor assemblies SchemaFreezeTests /
+//   1. The enumerated Core-provider table EQUALS the real Core-provider set — built by
+//      reflecting the SAME anchor assemblies SchemaFreezeTests /
 //      VsCodeShippedSchemaSyncTests / the CLI's ProviderRegistryFactory use, frozen
-//      through StepKindRegistry.BuildAndFreeze.  So if a 7th Core provider is added (or
+//      through StepKindRegistry.BuildAndFreeze.  So if a new Core provider is added (or
 //      one is renamed/removed) without updating this table, THIS test fails — it can't
 //      go stale against the real registry.
 //
 //   2. ClosureProbeScript.Source actually CONTAINS each provider's closure marker.  So
-//      adding the 7th provider to the table (to satisfy #1) without also extending
+//      adding a new provider to the table (to satisfy #1) without also extending
 //      ClosureProbeScript to exercise its client makes THIS test fail too.
 //
 // The net effect: adding a Core provider is a deliberate three-place edit — the new
@@ -34,10 +34,22 @@ using System.Linq;
 using System.Reflection;
 using Platform.Engine.Compilation.MemoryHarness;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
+using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Mongodb;
+using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
+using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
+using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
+using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -45,8 +57,8 @@ using Xunit;
 namespace Platform.Engine.Compilation.Tests;
 
 /// <summary>
-/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to the SIX
-/// Core providers, cross-checked against the real frozen registry so it cannot go stale.
+/// S10-D-02: the enumeration guard that ties the memory-leak closure probe to every Core
+/// provider, cross-checked against the real frozen registry so it cannot go stale.
 /// </summary>
 public sealed class ClosureProbeCoverageGuardTests
 {
@@ -116,6 +128,25 @@ public sealed class ClosureProbeCoverageGuardTests
     ///     reads captured requests through <c>ScriptGlobalVariables.Webhooks</c>; the probe
     ///     walks that exact read path + record graph across the collectible ALC.
     ///   </description></item>
+    ///   <item><description>
+    ///     <c>db-assert.sqlserver</c> → <c>Microsoft.Data.SqlClient.SqlConnection</c>: the
+    ///     provider asserts against SQL Server via <c>SqlCommand</c>/<c>SqlDataReader</c>;
+    ///     the probe builds a real <c>SqlConnection</c> (exercises SNI init + connection-pool
+    ///     static state) and disposes it in <c>finally</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>db-assert.mongodb</c> → <c>MongoDB.Driver.MongoClient</c>: the provider asserts
+    ///     against MongoDB; the probe builds a real <c>MongoClient</c> (exercises the
+    ///     connection-pool and SDAM background-thread static state) and disposes it in
+    ///     <c>finally</c>.  MongoDB.Driver 3.x: <c>IMongoClient</c> extends <c>IDisposable</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>mail-expect.smtp</c> → <c>System.Net.Http.HttpClient</c> (BCL): the provider
+    ///     queries the Mailpit HTTP API via <c>HttpClient</c>.  Its closure is subsumed by
+    ///     the <c>http.rest</c> probe — both use only the BCL <c>HttpClient</c>/
+    ///     <c>SocketsHttpHandler</c> pool, which the probe already exercises.  The shared
+    ///     probe marker (<c>new System.Net.Http.HttpClient()</c>) satisfies both rows.
+    ///   </description></item>
     /// </list>
     /// </remarks>
     private static readonly IReadOnlyList<CoreProviderCoverage> EnumeratedCoverage = new[]
@@ -144,10 +175,58 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "webhook-listen.http",
             CanonicalClient: "ScriptGlobalVariables.Webhooks captured-request read path",
             ProbeMarker: "Webhooks.GetCaptured("),
+        new CoreProviderCoverage(
+            StepKind: "db-assert.sqlserver",
+            CanonicalClient: "Microsoft.Data.SqlClient.SqlConnection (SQL Server client / SNI handle)",
+            ProbeMarker: "Microsoft.Data.SqlClient.SqlConnection"),
+        new CoreProviderCoverage(
+            StepKind: "db-assert.mongodb",
+            CanonicalClient: "MongoDB.Driver.MongoClient (MongoDB client / connection pool)",
+            ProbeMarker: "MongoDB.Driver.MongoClient(\"mongodb://localhost:27017\")"),
+        new CoreProviderCoverage(
+            StepKind: "mail-expect.smtp",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by http.rest probe; mail-expect.smtp queries the Mailpit HTTP API via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
+        new CoreProviderCoverage(
+            StepKind: "db-assert.mysql",
+            CanonicalClient: "MySqlConnector.MySqlConnection (MySQL client / connection pool)",
+            ProbeMarker: "MySqlConnector.MySqlConnection"),
+        new CoreProviderCoverage(
+            StepKind: "cache-assert.redis",
+            CanonicalClient: "StackExchange.Redis.ConnectionMultiplexer (Redis client / heartbeat timer + socket + reconnect thread)",
+            ProbeMarker: "StackExchange.Redis.ConnectionMultiplexer.Connect"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.rabbitmq",
+            CanonicalClient: "RabbitMQ.Client.ConnectionFactory (RabbitMQ connection/channel)",
+            ProbeMarker: "RabbitMQ.Client.ConnectionFactory"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.rabbitmq",
+            CanonicalClient: "RabbitMQ.Client.ConnectionFactory (RabbitMQ connection/channel)",
+            ProbeMarker: "RabbitMQ.Client.ConnectionFactory"),
+        new CoreProviderCoverage(
+            StepKind: "cache-assert.elasticsearch",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by http.rest probe; cache-assert.elasticsearch queries the Elasticsearch HTTP API via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.nats",
+            CanonicalClient: "NATS.Client.Core.NatsConnection (NATS JetStream connection/publish via NATS.Net 2.x)",
+            ProbeMarker: "NATS.Client.Core.NatsConnection"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.nats",
+            CanonicalClient: "NATS.Client.Core.NatsConnection (NATS JetStream connection/consume via NATS.Net 2.x)",
+            ProbeMarker: "NATS.Client.Core.NatsConnection"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.azureservicebus",
+            CanonicalClient: "Azure.Messaging.ServiceBus.ServiceBusClient (Azure Service Bus AMQP connection + transport lifecycle)",
+            ProbeMarker: "Azure.Messaging.ServiceBus.ServiceBusClient"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.azureservicebus",
+            CanonicalClient: "Azure.Messaging.ServiceBus.ServiceBusClient (Azure Service Bus AMQP connection + transport lifecycle; non-destructive PeekMessagesAsync path)",
+            ProbeMarker: "Azure.Messaging.ServiceBus.ServiceBusClient"),
     };
 
     /// <summary>
-    /// The six Core provider assemblies, anchored by one concrete provider type each —
+    /// All Core provider assemblies, anchored by one concrete provider type each —
     /// mirrors <see cref="SchemaFreezeTests"/>, <see cref="VsCodeShippedSchemaSyncTests"/>,
     /// and <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>.  Listing them
     /// by anchor type makes a renamed/removed provider a COMPILE error here, and building the
@@ -162,6 +241,18 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
+        typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
+        typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
     };
 
     // -------------------------------------------------------------------------
@@ -172,8 +263,8 @@ public sealed class ClosureProbeCoverageGuardTests
     /// <summary>
     /// The set of step kinds in <see cref="EnumeratedCoverage"/> must be exactly the set
     /// of <c>&lt;family&gt;.&lt;provider&gt;</c> keys the real frozen registry reports for
-    /// the six Core provider assemblies.  This cross-check is what stops the table going
-    /// stale: a 7th Core provider (or a rename) changes the registry's key set and this
+    /// all Core provider assemblies.  This cross-check is what stops the table going
+    /// stale: a new Core provider (or a rename) changes the registry's key set and this
     /// equality breaks until the table is deliberately updated.
     /// </summary>
     [Fact]
@@ -189,8 +280,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Exactly six — the Core tier is fixed at six providers for the v1.x engine.
-        Assert.Equal(6, actualKinds.Count);
+        // Eighteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus).
+        Assert.Equal(18, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -217,8 +308,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (six distinct rows).
-        Assert.Equal(6, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (eighteen distinct rows).
+        Assert.Equal(18, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------
@@ -231,7 +322,7 @@ public sealed class ClosureProbeCoverageGuardTests
     /// present verbatim in <see cref="ClosureProbeScript.Source"/>.  If a row is added to
     /// the table (to satisfy guard #1 when a provider is added) without extending the probe
     /// CSX to touch that client, this fails — closing the loop so the leak gate genuinely
-    /// covers all six providers' closure.
+    /// covers every Core provider's closure.
     /// </summary>
     [Theory]
     [MemberData(nameof(CoverageRows))]

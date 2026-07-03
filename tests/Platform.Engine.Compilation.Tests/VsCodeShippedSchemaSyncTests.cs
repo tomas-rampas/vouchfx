@@ -13,7 +13,7 @@
 //     green squiggles for steps the engine will reject (or red squiggles for
 //     steps it accepts) — silently eroding trust in the extension.
 //   • This is the DLL-side counterpart of the extension's own packaging check:
-//     the engine recomposes the schema from the FULL six-Core-provider registry
+//     the engine recomposes the schema from the FULL thirteen-Core-provider registry
 //     (exactly as SchemaFreezeTests does) and diffs it against the source-tree
 //     file the extension ships, catching drift the moment a provider's schema
 //     fragment changes without the shipped copy being regenerated.
@@ -26,10 +26,22 @@ using System.IO;
 using System.Reflection;
 using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
+using Platform.Steps.CacheAssert.Elasticsearch;
+using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Mongodb;
+using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
+using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
+using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
+using Platform.Steps.MqExpect.Nats;
+using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
+using Platform.Steps.MqPublish.Nats;
+using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -45,7 +57,13 @@ namespace Platform.Engine.Compilation.Tests;
 public sealed class VsCodeShippedSchemaSyncTests
 {
     /// <summary>
-    /// The six Core provider assemblies that compose the v1 schema, anchored by
+    /// Set <c>VOUCHFX_REGEN_SCHEMA=1</c> to make the gate REWRITE the shipped VSCode
+    /// schema from the freshly-composed schema instead of asserting against it.
+    /// </summary>
+    private const string RegenEnvVar = "VOUCHFX_REGEN_SCHEMA";
+
+    /// <summary>
+    /// The Core provider assemblies that compose the v1 schema, anchored by
     /// one concrete provider type per assembly (mirrors
     /// <c>SchemaFreezeTests.CoreProviderAssemblies</c> and
     /// <c>Vouchfx.Cli.ProviderRegistryFactory.CoreProviderAssemblies</c>).  Listing
@@ -55,16 +73,28 @@ public sealed class VsCodeShippedSchemaSyncTests
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
         typeof(ScriptCsharpProvider).Assembly,        // script.csharp
         typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
         typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
+        typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
     };
 
     /// <summary>
     /// The schema the VSCode extension ships must be byte-for-byte identical to the
     /// schema the engine's <see cref="SchemaComposer"/> composes from the full
-    /// six-Core-provider registry.  If this fails, the extension's editor view of the
+    /// Core-provider registry.  If this fails, the extension's editor view of the
     /// language has drifted from the compiler's view — the core DSL §9 invariant.
     /// </summary>
     [Fact]
@@ -73,6 +103,18 @@ public sealed class VsCodeShippedSchemaSyncTests
         var registry = StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
 
         var expected = SchemaComposer.ComposeSchemaJson(registry);
+
+        // Regeneration mode: rewrite the shipped VSCode schema from the freshly-composed
+        // schema and pass.  Used by a developer after a legitimate (additive) schema change.
+        if (IsRegenRequested())
+        {
+            var repoRoot = FindRepoRoot();
+            var vscPath = Path.Combine(
+                repoRoot, "tools", "vscode-vouchfx", "src", "schema", "composed-schema.v1.json");
+            File.WriteAllText(vscPath, expected);
+            return;
+        }
+
         var shipped = ReadShippedVsCodeSchema();
 
         // Normalise line endings AND any trailing final newline on both sides so a
@@ -85,10 +127,8 @@ public sealed class VsCodeShippedSchemaSyncTests
         Assert.True(
             string.Equals(expectedNormalised, shippedNormalised, StringComparison.Ordinal),
             "The shipped VSCode schema has DRIFTED from SchemaComposer.ComposeSchemaJson. "
-            + "The editor must never diverge from the compiler (DSL §9): regenerate "
-            + "tools/vscode-vouchfx/src/schema/composed-schema.v1.json from the composer "
-            + "(e.g. by copying the frozen golden, Golden/composed-schema.v1.json) and "
-            + "re-review."
+            + "The editor must never diverge from the compiler (DSL §9): regenerate with "
+            + $"VOUCHFX_REGEN_SCHEMA=1 and re-review."
             + Environment.NewLine
             + FirstDifference(expectedNormalised, shippedNormalised));
     }
@@ -113,6 +153,13 @@ public sealed class VsCodeShippedSchemaSyncTests
     // contract compares schema CONTENT, immune to line-ending style and to an
     // editor's insert_final_newline rewrite of the shipped file.
     private static string Normalise(string s) => s.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
+
+    private static bool IsRegenRequested()
+    {
+        var value = Environment.GetEnvironmentVariable(RegenEnvVar);
+        return !string.IsNullOrEmpty(value)
+            && (value == "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Reads the schema the VSCode extension ships, from the SOURCE tree (not the

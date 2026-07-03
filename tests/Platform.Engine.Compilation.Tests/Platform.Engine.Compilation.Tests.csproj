@@ -46,6 +46,7 @@
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="MongoDB.Driver" />
     <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="RabbitMQ.Client" />
   </ItemGroup>
 
   <ItemGroup>
@@ -76,9 +77,21 @@
       above; the remaining four are added here.
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj" />
   </ItemGroup>
 
 </Project>
