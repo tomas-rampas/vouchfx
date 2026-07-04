@@ -196,12 +196,14 @@ Supported dependency kinds and their available parts are:
 | `postgres`, `mysql`, `sqlserver`, `mongodb` | `host`, `port`, `username`, `password`, `database` |
 | `kafka` | `host`, `port` (internal bootstrap; scheme not included) |
 | `rabbitmq` | `host`, `port`, `username`, `password` |
-| `redis`, `elasticsearch`, `nats` | `host`, `port` |
+| `redis` | `host`, `port`, `password` |
+| `nats` | `host`, `port`, `username`, `password` |
+| `elasticsearch` | `host`, `port` |
 | `mailpit` | `host`, `port` (SMTP endpoint) |
 
-Unknown dependency names or parts result in a validation error at suite startup (EnvironmentError class). **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. For this reason, static secrets should be seeded via the same `env` mechanism as ordinary configuration.
+Unknown dependency names or parts result in a validation error at suite startup (EnvironmentError class). **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets.
 
-Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring a variable or listener name that collides with an existing `<name>_container` key is a validation error.
+Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias.
 
 ### 3.2.5 Test doubles
 
