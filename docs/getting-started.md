@@ -38,10 +38,10 @@ You should see version and runtime information. On Windows, this typically means
 
 ## Building vouchfx from source
 
-vouchfx is not yet a published `.NET Tool` (that lands in Sprint 11). For now, you build it from source. Clone the repository if you haven't already:
+vouchfx ships as a `dotnet global tool` (packaged in Sprint 11). For now, build it from source. Clone the repository if you haven't already:
 
 ```bash
-git clone https://github.com/vouchfx-org/vouchfx.git
+git clone https://github.com/tomas-rampas/vouchfx.git
 cd vouchfx
 ```
 
@@ -154,7 +154,7 @@ This command:
 3. For each scenario, starts the container topology (the `whoami` service), health-gates it, runs the steps in order, and collects verdicts.
 4. Renders a terminal report with per-step verdicts.
 
-**Tip:** Add the `bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>` — exactly how the packaged tool will work in Sprint 11. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
+**Tip:** Add the `bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>` — exactly how the packaged tool works. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
 
 ```bash
 dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run "$(pwd)/examples/getting-started"
@@ -238,11 +238,15 @@ The `docs/recipes.md` file collects common testing patterns: capturing and reusi
 
 For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
 
-- Every step family: `http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`.
+- Every step family across eighteen Core providers: eight families including HTTP, databases (PostgreSQL, MySQL, SQL Server, MongoDB), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus), caching (Redis, Elasticsearch), email, and scripts.
 - Capture and placeholder syntax: threading state forward.
 - Verifymode: `IMMEDIATE` (assert now) vs. `RETRY` (engine-owned polling with backoff).
 - Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/path}`), resolved at execution time.
 - Seed: SQL fixtures and warm-up logic applied before the first step.
+
+### Real-world sample applications
+
+For worked end-to-end examples with real C#, Python, and Java services, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository. It contains sample applications and complete test suites demonstrating common patterns.
 
 ### Architecture Blueprint
 

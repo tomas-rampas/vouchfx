@@ -285,4 +285,4 @@ The **official vouchfx telemetry backend (Phase B, #152)** is now implemented as
 
 ## Questions and feedback
 
-If you have questions about telemetry, privacy, or data handling, please open an issue on [GitHub](https://github.com/vouchfx-org/vouchfx/issues) or refer to [`SECURITY.md`](../SECURITY.md) for responsible disclosure.
+If you have questions about telemetry, privacy, or data handling, please open an issue on [GitHub](https://github.com/tomas-rampas/vouchfx/issues) or refer to [`SECURITY.md`](../SECURITY.md) for responsible disclosure.

@@ -6,10 +6,11 @@ This guide covers the structural and compositional patterns that appear in most 
 1. [The four top-level sections](#the-four-top-level-sections)
 2. [Metadata and test selection](#metadata-and-test-selection)
 3. [Environment: services and dependencies](#environment-services-and-dependencies)
-4. [Capturing and threading state forward](#capturing-and-threading-state-forward)
-5. [The four verdicts and `continueOnFailure`](#the-four-verdicts-and-continueonfailure)
-6. [Common step patterns](#common-step-patterns)
-7. [Multi-step workflows: the reference scenario](#multi-step-workflows-the-reference-scenario)
+4. [Configuring the system under test from the environment block](#configuring-the-system-under-test-from-the-environment-block)
+5. [Capturing and threading state forward](#capturing-and-threading-state-forward)
+6. [The four verdicts and `continueOnFailure`](#the-four-verdicts-and-continueonfailure)
+7. [Common step patterns](#common-step-patterns)
+8. [Multi-step workflows: the reference scenario](#multi-step-workflows-the-reference-scenario)
 
 ---
 
@@ -135,11 +136,12 @@ Optional overrides for Docker image resolution:
 ```yaml
 environment:
   imageRegistry: myregistry.azurecr.io
-  imagePullPolicy: Always  # or IfNotPresent (default)
   services:
     myservice:
       image: myimage:latest  # Resolved as myregistry.azurecr.io/myimage:latest
 ```
+
+> **Note:** The `imagePullPolicy` field is **not currently enforced** by the runtime; the container default applies. This field is reserved for future use. Use explicit `@sha256:…` digest pinning if reproducibility is critical.
 
 ### variables
 
@@ -290,6 +292,82 @@ steps:
 ```
 
 The double is a **visible, deliberate entry** in the environment. Swapping it for the real service later requires only a change to the environment declaration — the test logic stays the same.
+
+---
+
+## Configuring the system under test from the environment block
+
+A containerised system under test frequently needs configuration at startup — database URLs, broker endpoints, API keys, feature flags. Rather than baking these into the image, the `env` map on a service passes configuration at runtime, with support for **connection references** that the engine resolves to the actual network endpoints discovered during topology build.
+
+### Pattern: service with managed dependencies
+
+A service often depends on databases or brokers declared elsewhere in the environment. Use `${conn:<dependency>}` or `${conn:<dependency>.<part>}` to inject the resolved connection details:
+
+```yaml
+environment:
+  services:
+    orders-api:
+      image: myorg/orders-api:latest
+      env:
+        # Literal values
+        APP_ENV: "test"
+        LOG_LEVEL: "debug"
+        # Full connection string for a dependency
+        DATABASE_URL: "${conn:orders-db}"
+        # Individual parts: host, port, username, password, database
+        CACHE_HOST: "${conn:cache.host}"
+        CACHE_PORT: "${conn:cache.port}"
+        MESSAGE_BROKER_URL: "${conn:events}"
+  dependencies:
+    orders-db:
+      type: postgres
+      version: "16"
+    events:
+      type: kafka
+    cache:
+      type: redis
+```
+
+The engine resolves the connection strings **at topology-build time, in the service's network context**. Containerised services receive the container-internal hostnames and ports (e.g., the Aspire-generated logical names), not the host-published ones. This makes the topology portable: a service that talks to `${conn:orders-db}` works identically whether orders-db runs locally in Docker or in a managed cloud data platform.
+
+### Pattern: containerised SUT with webhook callbacks
+
+When a containerised system needs to call back to a webhook listener (a common pattern for async notifications), use the `_container` form of the listener variable to get the host-gateway address:
+
+```yaml
+environment:
+  services:
+    notification-system:
+      image: myorg/notifications:latest
+      env:
+        # Pass the container-reachable form of the callback URL
+        WEBHOOK_CALLBACK_URL: "{webhook-listener_container}/callbacks/delivery"
+
+steps:
+  - id: setup-webhook
+    type: http.rest
+    target: notification-system
+    method: POST
+    path: "/register"
+    body:
+      callbackUrl: "{webhook-listener_container}"
+    expect:
+      status: 200
+
+  - id: wait-for-notification
+    type: webhook-listen.http
+    listener: webhook-listener
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      method: POST
+      path: "/callbacks/delivery"
+      bodyContains: "notification-id-123"
+```
+
+Both `{webhook-listener}` (loopback, for host-local consumers) and `{webhook-listener_container}` (host-gateway, for containerised consumers) are available in `Vars`. The engine automatically configures each containerised service with `--add-host=host.docker.internal:host-gateway`, making the container-form addresses reachable.
+
+**See also:** [docs/02 §3.2.4](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#324-configuring-the-system-under-test) for the complete specification of `env`, connection parts, and validation rules. For real-world worked examples, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository.
 
 ---
 
