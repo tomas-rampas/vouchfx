@@ -9,22 +9,32 @@ metadata:
 
 environment:
   services:
-    - name: orders-api
+    orders-api:
       image: "ghcr.io/example/orders-api:latest"
       env:
-        MONGO_CONNECTION: "${secret:vault/mongo-orders}"
+        # Container-native connection string, resolved to the mongodb dependency's
+        # database resource (never the host-published localhost:randomport) — see
+        # the SUT configuration surface (`env:`).  A secret reference is NOT valid
+        # here: env: values resolve at container-BUILD time, before the topology
+        # starts, whereas ${secret:...} deliberately resolves only at
+        # step-execution time (§17) — baking a secret into a container's
+        # environment would expose it via `docker inspect`.
+        MONGO_CONNECTION: "${conn:orders-mongo}"
 
   dependencies:
-    - name: orders-mongo
+    orders-mongo:
       type: mongodb
 
 steps:
   - id: place-order
     type: http.rest
-    url: "http://orders-api/orders"
+    target: orders-api
     method: POST
+    path: /orders
     body: |
       {"productId": "ABC-123", "quantity": 2}
+    expect:
+      status: 201
     capture:
       orderId: "$.id"
 
@@ -40,7 +50,7 @@ steps:
         quantity: "2"
         status: "PENDING"
     verifyMode: RETRY
-    timeout: PT30S
+    timeout: 30s
 
   - id: assert-no-cancelled-orders
     type: db-assert.mongodb

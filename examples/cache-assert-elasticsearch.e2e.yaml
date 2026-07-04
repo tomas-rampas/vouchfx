@@ -12,18 +12,19 @@ metadata:
 
 environment:
   services:
-    - name: orders-api
+    orders-api:
       image: orders-api:latest
 
   dependencies:
-    - name: search
+    search:
       type: elasticsearch
 
 steps:
   - id: seed-order
     type: http.rest
-    url: http://orders-api/orders
+    target: orders-api
     method: POST
+    path: /orders
     body: '{"id":"ord-001","status":"fulfilled","region":"EU"}'
     expect:
       status: 201

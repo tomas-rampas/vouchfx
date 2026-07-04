@@ -34,10 +34,9 @@ steps:
       The SUT should publish to the 'orders' queue via the AMQP URI it receives
       at startup.
     target: app
-    request:
-      method: POST
-      path: /orders
-      body: '{"customerId":"cust-1","amount":49.99}'
+    method: POST
+    path: /orders
+    body: '{"customerId":"cust-1","amount":49.99}'
     expect:
       status: 202
 
@@ -73,4 +72,4 @@ steps:
       json:
         $.orderId: ord-001
     verifyMode: RETRY
-    timeout: PT30S
+    timeout: 30s
