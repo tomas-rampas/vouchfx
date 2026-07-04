@@ -92,7 +92,8 @@ public sealed class EnvironmentMapperTests
                     Image: "traefik/whoami",
                     Project: null,
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: null,
             Seed: null,
@@ -140,7 +141,8 @@ public sealed class EnvironmentMapperTests
                     Image: "myapp:1.0",
                     Project: null,
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: null,
             Seed: null,
@@ -202,7 +204,8 @@ public sealed class EnvironmentMapperTests
                     Image: null,
                     Project: realCsproj,
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: null,
             Seed: null,
@@ -598,7 +601,8 @@ public sealed class EnvironmentMapperTests
                     Image: "traefik/whoami",
                     Project: null,
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: new Dictionary<string, DependencySpec>
             {
@@ -1015,7 +1019,8 @@ public sealed class EnvironmentMapperTests
                     Image: "traefik/whoami",
                     Project: "./Api.csproj",
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: null,
             Seed: null,
@@ -1045,7 +1050,8 @@ public sealed class EnvironmentMapperTests
                     Image: null,
                     Project: null,
                     ImagePullPolicy: null,
-                    HttpPort: null),
+                    HttpPort: null,
+                    Env: null),
             },
             Dependencies: null,
             Seed: null,
@@ -1054,5 +1060,595 @@ public sealed class EnvironmentMapperTests
 
         // Act + Assert
         Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+    }
+
+    // -----------------------------------------------------------------------
+    // SUT configuration surface — service `env:` mapping
+    // -----------------------------------------------------------------------
+    //
+    // Test strategy (non-Docker): every env: value is applied via
+    // WithEnvironment(name, ReferenceExpression) — even a purely literal value with no
+    // ${conn:...} reference at all, confirmed by probing the pinned Aspire.Hosting 13.4.2
+    // package directly (ReferenceExpressionBuilder.AppendLiteral + .Build() always yields a
+    // ReferenceExpression; WithEnvironment never collapses it to a plain string).  Running the
+    // registered EnvironmentCallbackAnnotation callbacks (exactly as
+    // Map_KafkaWithSchemaRegistry_AddsRegistryContainer above already does) populates the
+    // resource's environment-variables dictionary with these ReferenceExpression objects
+    // WITHOUT resolving them — .GetValueAsync() is never invoked pre-StartAsync, so no live
+    // endpoint/Docker is required.  ReferenceExpression.ValueExpression, however, IS computable
+    // pre-start: it recursively substitutes every nested value provider's OWN ValueExpression,
+    // which for an EndpointReferenceExpression is a symbolic manifest placeholder such as
+    // "{orders.bindings.tcp.host}" (never a resolved IP/port).  Asserting against
+    // ValueExpression therefore proves BOTH which literal text is present AND which Aspire
+    // resource/endpoint a reference resolves to — without starting Docker.  The one thing this
+    // strategy cannot prove is the actual resolved container-network value; that is the job of
+    // the docker-gated end-to-end test.
+
+    /// <summary>
+    /// Runs every registered <see cref="EnvironmentCallbackAnnotation"/> on
+    /// <paramref name="resource"/> and returns the populated environment-variables dictionary —
+    /// mirrors the in-memory callback execution already used by
+    /// <see cref="Map_KafkaWithSchemaRegistry_AddsRegistryContainer"/> above.
+    /// </summary>
+    private static async Task<Dictionary<string, object>> ResolveEnvVarsAsync(IResource resource)
+    {
+        var envVars = new Dictionary<string, object>();
+        var callbackContext = new EnvironmentCallbackContext(
+            new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run),
+            resource,
+            envVars);
+        foreach (var callback in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            await callback.Callback(callbackContext);
+        }
+
+        return envVars;
+    }
+
+    /// <summary>Extracts the <see cref="ReferenceExpression.ValueExpression"/> of an env-var value.</summary>
+    private static string ValueExpressionOf(object envVarValue) =>
+        Assert.IsType<ReferenceExpression>(envVarValue).ValueExpression;
+
+    [Fact]
+    public async Task Map_ServiceEnv_LiteralValue_ResolvesToLiteralText()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["LOG_LEVEL"] = "information" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("information", ValueExpressionOf(envVars["LOG_LEVEL"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_FullFormReference_Postgres_ResolvesToDatabaseConnectionString()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["ConnectionStrings__orders"] = "${conn:orders}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — the DATABASE resource's own ConnectionStringExpression (name + "db"), which
+        // is itself Aspire's manifest-level reference to the SERVER's connection string plus
+        // ";Database=ordersdb" (PostgresDatabaseResource.ConnectionStringExpression, verified
+        // directly against the pinned Aspire.Hosting.PostgreSQL 13.4.2 package) — never a
+        // resolved host/port/localhost (no Docker involved; that is proven live by the
+        // docker-gated end-to-end test).
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        var resolved = ValueExpressionOf(envVars["ConnectionStrings__orders"]);
+        Assert.Equal("{orders.connectionString};Database=ordersdb", resolved);
+        Assert.DoesNotContain("127.0.0.1", resolved, StringComparison.Ordinal);
+        Assert.DoesNotContain("localhost", resolved, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_HostPortParts_Postgres_ReadServerPrimaryEndpoint()
+    {
+        // Arrange — host/port parts must read the SERVER's primary endpoint ("orders"), never
+        // the DATABASE resource ("ordersdb") — the §4 invariant is "retain the database for
+        // health-gating", not "read credentials/endpoints off the database resource".
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["DB_HOST"] = "${conn:orders.host}",
+                        ["DB_PORT"] = "${conn:orders.port}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("{orders.bindings.tcp.host}", ValueExpressionOf(envVars["DB_HOST"]));
+        Assert.Equal("{orders.bindings.tcp.port}", ValueExpressionOf(envVars["DB_PORT"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_UsernamePasswordDatabaseParts_Postgres()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["DB_USER"] = "${conn:orders.username}",
+                        ["DB_PASSWORD"] = "${conn:orders.password}",
+                        ["DB_NAME"] = "${conn:orders.database}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — postgres defaults: username is the fixed literal "postgres"; the database
+        // name is the literal db-resource name ("ordersdb"); password is a live Aspire
+        // parameter (unresolvable pre-start, so only its manifest placeholder is checked).
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("postgres", ValueExpressionOf(envVars["DB_USER"]));
+        Assert.Equal("ordersdb", ValueExpressionOf(envVars["DB_NAME"]));
+        Assert.Contains("password", ValueExpressionOf(envVars["DB_PASSWORD"]), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_UsernamePart_Mysql_IsFixedLiteralRoot()
+    {
+        // Arrange — MySqlServerResource exposes no UserNameParameter/Reference at all: the
+        // container always provisions the fixed 'root' superuser (verified against
+        // Aspire.Hosting.MySql 13.4.2 — AddMySql has no userName overload).
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["DB_USER"] = "${conn:billing.username}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["billing"] = new DependencySpec(Type: "mysql", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("root", ValueExpressionOf(envVars["DB_USER"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_FullFormReference_Kafka_UsesInternalEndpoint_NoSchemePrefix()
+    {
+        // Arrange — the FULL form must read KafkaServerResource.InternalEndpoint (the
+        // container-network bootstrap address), never ConnectionStringExpression (which
+        // resolves the EXTERNAL/host-published endpoint) — mirrors the schema-registry
+        // sidecar's own bootstrap-servers construction, minus its PLAINTEXT:// scheme prefix
+        // (a generic bootstrap.servers env var is plain host:port).
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["KAFKA_BOOTSTRAP"] = "${conn:broker}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["broker"] = new DependencySpec(Type: "kafka", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        var resolved = ValueExpressionOf(envVars["KAFKA_BOOTSTRAP"]);
+        Assert.Equal("{broker.bindings.internal.host}:{broker.bindings.internal.port}", resolved);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_FullFormReference_Mailpit_UsesSmtpEndpoint()
+    {
+        // Arrange — mailpit is a plain ContainerResource (no IResourceWithConnectionString);
+        // the full form must read the SMTP endpoint the registration's Build lambda already
+        // stages, never the HTTP API endpoint.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["SMTP_ADDR"] = "${conn:mail}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mail"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        var resolved = ValueExpressionOf(envVars["SMTP_ADDR"]);
+        Assert.Equal("{mail.bindings.smtp.host}:{mail.bindings.smtp.port}", resolved);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_UsernamePasswordParts_Rabbitmq()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["MQ_USER"] = "${conn:events.username}",
+                        ["MQ_PASSWORD"] = "${conn:events.password}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "rabbitmq", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — RabbitMQ's default fixed username is "guest".
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("guest", ValueExpressionOf(envVars["MQ_USER"]));
+        Assert.Contains("password", ValueExpressionOf(envVars["MQ_PASSWORD"]), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_MixedLiteralAndMultipleReferences_SqlServerJdbcUrl()
+    {
+        // Arrange — mirrors the frozen feature-contract example verbatim.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["SPRING_DATASOURCE_URL"] =
+                            "jdbc:sqlserver://${conn:paydb.host}:${conn:paydb.port};databaseName=${conn:paydb.database};encrypt=false",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["paydb"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal(
+            "jdbc:sqlserver://{paydb.bindings.tcp.host}:{paydb.bindings.tcp.port};databaseName=paydbdb;encrypt=false",
+            ValueExpressionOf(envVars["SPRING_DATASOURCE_URL"]));
+    }
+
+    [Fact]
+    public void Map_ServiceEnv_UnknownDependency_ThrowsArgumentException()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["FOO"] = "${conn:does-not-exist}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert — eager: thrown by Map() itself, before any builder mutation.
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("does-not-exist", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("redis", "username")]
+    [InlineData("nats", "database")]
+    [InlineData("kafka", "password")]
+    [InlineData("elasticsearch", "username")]
+    [InlineData("mailpit", "database")]
+    public void Map_ServiceEnv_UnsupportedPart_ThrowsArgumentException(string dependencyType, string part)
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["FOO"] = $"${{conn:dep.{part}}}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["dep"] = new DependencySpec(Type: dependencyType, Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains(part, ex.Message, StringComparison.Ordinal);
+        Assert.Contains(dependencyType, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Map_ServiceEnv_SecretReference_ThrowsArgumentException_CitingSecrets()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["API_KEY"] = "${secret:env/API_KEY}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("secret", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Map_ServiceEnv_AzureServiceBusFullForm_ThrowsArgumentException()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["ASB_CONN"] = "${conn:bus}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "azureservicebus", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert — rejected even in FULL form (not just '.part' access).
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("azureservicebus", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("not support", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_ImageFormService_AddsHostGatewayContainerRuntimeArg()
+    {
+        // Arrange — image-form services always get the '--add-host' runtime arg, regardless
+        // of whether they declare an env: block, so a containerised SUT can reach a host-run
+        // webhook listener via host.docker.internal on plain Linux Docker Engine CI runners
+        // too (Docker Desktop already resolves the name natively).
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var runtimeArgAnnotation = apiResource.Annotations.OfType<ContainerRuntimeArgsCallbackAnnotation>().Single();
+        var argsList = new List<object>();
+        await runtimeArgAnnotation.Callback(new ContainerRuntimeArgsCallbackContext(argsList, CancellationToken.None));
+        Assert.Contains("--add-host=host.docker.internal:host-gateway", argsList.Cast<string>());
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_ProjectFormService_AppliesEnvironmentToo()
+    {
+        // Arrange — env: must apply identically to a project-form service (both ContainerResource
+        // and ProjectResource implement IResourceWithEnvironment).
+        var realCsproj = Path.GetFullPath(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "..", "..", "..", "..", "..",
+                "src", "Engine", "Platform.Engine.Abstractions", "Platform.Engine.Abstractions.csproj"));
+
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: null,
+                    Project: realCsproj,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["ASPNETCORE_ENVIRONMENT"] = "Development" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("Development", ValueExpressionOf(envVars["ASPNETCORE_ENVIRONMENT"]));
+
+        // A project-form service is never a ContainerResource, so it must NOT have picked up
+        // the image-form-only '--add-host' container runtime arg.
+        Assert.Empty(apiResource.Annotations.OfType<ContainerRuntimeArgsCallbackAnnotation>());
     }
 }

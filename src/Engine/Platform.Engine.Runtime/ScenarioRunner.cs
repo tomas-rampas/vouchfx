@@ -1213,6 +1213,20 @@ public static class ScenarioRunner
                     // same name (rare) deliberately overrides it (forward-only Vars threading).
                     vars[VarKeys.Service(req.VarName)] = listener.Url;
                     vars[req.VarName] = listener.Url;
+
+                    // SUT configuration surface (point 3): ALSO stage a container-reachable
+                    // form of the SAME callback URL, with the loopback host rewritten to
+                    // host.docker.internal, so a suite author can hand {<listener>_container} to
+                    // a containerised SUT in a request body. The listener binds 0.0.0.0 (see the
+                    // WebhookListener remarks), so host.docker.internal:<port> reaches it from
+                    // inside the Aspire-managed Docker network on both Docker Desktop and (via
+                    // the '--add-host' runtime arg EnvironmentMapper adds to every image-form
+                    // service) plain Linux Docker Engine CI runners. A VarName that would
+                    // collide with this synthesised suffix (an author names one listener "x"
+                    // and another "x_container") is rejected earlier, in
+                    // ProviderPipeline.Compile, before the topology is even built — so this
+                    // assignment can never silently overwrite an unrelated listener's URL.
+                    vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(listener.Url);
                 }
 
                 if (buffers.Count > 0)
@@ -1255,7 +1269,29 @@ public static class ScenarioRunner
     }
 
     // The single host-resource kind handled by this sprint's runner (S07-F-01a).
-    private const string WebhookListenerKind = "webhook-listener";
+    // internal (not private): ProviderPipeline.Compile references this constant to detect a
+    // listener VarName collision (see ContainerVarSuffix below) before the topology is built.
+    internal const string WebhookListenerKind = "webhook-listener";
+
+    /// <summary>
+    /// The suffix appended to a webhook listener's <c>VarName</c> to stage the
+    /// container-reachable form of its callback URL (SUT configuration surface, point 3).
+    /// <see cref="ProviderPipeline"/> rejects any suite whose listener <c>VarName</c>s would
+    /// make two DISTINCT listeners collide on this suffix before the topology is built.
+    /// </summary>
+    internal const string ContainerVarSuffix = "_container";
+
+    /// <summary>
+    /// Rewrites the host of a loopback webhook listener URL (<c>127.0.0.1</c>/<c>localhost</c>)
+    /// to <c>host.docker.internal</c>, leaving the port and the unguessable token path segment
+    /// untouched, so a containerised SUT can reach the host-owned listener from inside the
+    /// Aspire-managed Docker network.
+    /// </summary>
+    private static string RewriteHostForContainer(string url)
+    {
+        var builder = new UriBuilder(url) { Host = "host.docker.internal" };
+        return builder.Uri.ToString();
+    }
 
     /// <summary>
     /// Executes the per-scenario compilation + isolated Roslyn run against an already-started

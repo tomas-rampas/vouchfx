@@ -632,4 +632,172 @@ public sealed class YamlDocumentParserTests
         Assert.NotNull(schemaRegistryNode);
         Assert.Equal("true", schemaRegistryNode.Value);
     }
+
+    // -------------------------------------------------------------------------
+    // SUT configuration surface — service 'env:' mapping
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_ServiceEnv_Absent_IsNull()
+    {
+        // Arrange — a service with no 'env:' block at all.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        Assert.Null(doc.Environment!.Services!["api"].Env);
+    }
+
+    [Fact]
+    public void Parse_ServiceEnv_LiteralAndReferenceValues_AreBoundAsRawStrings()
+    {
+        // Arrange — a mix of a literal value and ${conn:...} reference values, including a
+        // bare-integer-looking scalar (the YAML-scalar-coercion gotcha this parser is
+        // elsewhere careful about: '8080' must survive as the STRING "8080", not be coerced).
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  httpPort: 8080
+                  env:
+                    ConnectionStrings__orders: "${conn:ordersdb}"
+                    KAFKA_BOOTSTRAP: "${conn:broker}"
+                    SPRING_DATASOURCE_URL: "jdbc:sqlserver://${conn:paydb.host}:${conn:paydb.port};databaseName=${conn:paydb.database};encrypt=false"
+                    LOG_LEVEL: information
+                    RETRY_COUNT: 8080
+              dependencies:
+                ordersdb:
+                  type: postgres
+                broker:
+                  type: kafka
+                paydb:
+                  type: sqlserver
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var env = doc.Environment!.Services!["api"].Env;
+        Assert.NotNull(env);
+        Assert.Equal("${conn:ordersdb}", env!["ConnectionStrings__orders"]);
+        Assert.Equal("${conn:broker}", env["KAFKA_BOOTSTRAP"]);
+        Assert.Equal(
+            "jdbc:sqlserver://${conn:paydb.host}:${conn:paydb.port};databaseName=${conn:paydb.database};encrypt=false",
+            env["SPRING_DATASOURCE_URL"]);
+        Assert.Equal("information", env["LOG_LEVEL"]);
+        // Raw scalar form preserved — NOT coerced to an int/bool anywhere in this pipeline.
+        Assert.Equal("8080", env["RETRY_COUNT"]);
+    }
+
+    [Fact]
+    public void Parse_ServiceEnv_NonMappingNode_ThrowsYamlParseException()
+    {
+        // Arrange — 'env:' is a scalar, not a mapping.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env: "not-a-mapping"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("env", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mapping", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.Line > 0, "Line should be populated from the offending 'env' node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending 'env' node.");
+    }
+
+    [Fact]
+    public void Parse_ServiceEnv_NonScalarValue_ThrowsYamlParseException()
+    {
+        // Arrange — an env entry whose value is a nested mapping, not a scalar string.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO:
+                      nested: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("FOO", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.Line > 0, "Line should be populated from the offending value node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending value node.");
+    }
+
+    [Fact]
+    public void Parse_ServiceEnv_NonScalarKey_ThrowsYamlParseException()
+    {
+        // Arrange — an env mapping key that is itself a nested sequence, not a scalar name.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    ? [a, b]
+                    : "value"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.Line > 0, "Line should be populated from the offending key node.");
+        Assert.True(ex.Column > 0, "Column should be populated from the offending key node.");
+    }
+
+    [Fact]
+    public void Parse_ServiceEnv_AppliesToProjectFormServiceToo()
+    {
+        // Arrange — env: must be parsed identically for a project-form service.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+                  env:
+                    ASPNETCORE_ENVIRONMENT: Development
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var env = doc.Environment!.Services!["api"].Env;
+        Assert.NotNull(env);
+        Assert.Equal("Development", env!["ASPNETCORE_ENVIRONMENT"]);
+    }
 }

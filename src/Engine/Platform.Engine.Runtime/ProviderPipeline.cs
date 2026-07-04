@@ -255,6 +255,37 @@ internal static class ProviderPipeline
                 PollIntervalMs: null));
         }
 
+        // SUT configuration surface (point 3): ScenarioRunner ALSO stages a container-reachable
+        // alias of every webhook listener's callback URL under "<VarName>_container" (see
+        // ScenarioRunner.ContainerVarSuffix). Reject — HERE, before the topology is even built —
+        // a suite where that engine-synthesised alias collides with another, DISTINCT listener's
+        // own VarName; without this guard the two Vars writes would race (whichever staged last
+        // silently wins) and one listener's real callback URL would be replaced by an unrelated
+        // listener's container-rewritten alias.
+        var distinctListenerVarNames = hostResourcePlan
+            .Where(e => string.Equals(e.Requirement.Kind, ScenarioRunner.WebhookListenerKind, StringComparison.Ordinal))
+            .Select(e => e.Requirement.VarName)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var varName in distinctListenerVarNames)
+        {
+            var containerVarName = varName + ScenarioRunner.ContainerVarSuffix;
+            if (distinctListenerVarNames.Contains(containerVarName))
+            {
+                return new PipelineResult(
+                    Assembled: null,
+                    ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                    CompileReferencePaths: Array.Empty<string>(),
+                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                    Failure: new ValidationFailure(
+                        $"webhook-listen listener '{containerVarName}' collides with the engine-" +
+                        $"synthesised container-reachable alias of listener '{varName}' (staged at " +
+                        $"'{varName}{ScenarioRunner.ContainerVarSuffix}'). Rename one of the two " +
+                        "listeners so the alias is unambiguous."));
+            }
+        }
+
         var assembled = CsxAssembler.Assemble(fragments);
 
         return new PipelineResult(

@@ -494,8 +494,70 @@ public static class YamlDocumentParser
             var pullPolicy = GetScalar(serviceMapping, "imagePullPolicy");
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
+            var env = ParseEnvMap(serviceMapping, keyScalar.Value);
 
-            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort);
+            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env);
+        }
+
+        return dict.Count > 0 ? dict : null;
+    }
+
+    /// <summary>
+    /// Parses a service's optional <c>env:</c> mapping (SUT configuration surface) into a
+    /// strongly-typed <c>string -&gt; string</c> dictionary.
+    /// </summary>
+    /// <remarks>
+    /// Every value is retained in its RAW scalar form — a bare <c>8080</c> or <c>true</c>
+    /// arrives from YamlDotNet as a scalar string ("8080"/"true"), which is exactly the
+    /// literal text a container's environment variable needs; no numeric/boolean coercion is
+    /// applied here (the YAML-scalar-coercion gotcha this parser is elsewhere careful about).
+    /// Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c>) and
+    /// <c>${secret:...}</c> rejection are the orchestration-layer mapper's job (§17) — this
+    /// parser only extracts the literal text.
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown when the <c>env:</c> node is present but is not a mapping, when a key is not a
+    /// scalar, or when an entry's value is not a scalar (e.g. a nested mapping/sequence where
+    /// a plain string is expected).
+    /// </exception>
+    private static Dictionary<string, string>? ParseEnvMap(YamlMappingNode serviceMapping, string serviceName)
+    {
+        if (!TryGetNode(serviceMapping, "env", out var envNode))
+        {
+            return null;
+        }
+
+        if (envNode is not YamlMappingNode envMapping)
+        {
+            throw new YamlParseException(
+                $"Service '{serviceName}' 'env' at line {envNode.Start.Line} must be a mapping of " +
+                $"environment-variable name to string value (e.g. 'FOO: \"bar\"'), but found {envNode.NodeType}.",
+                envNode.Start.Line,
+                envNode.Start.Column);
+        }
+
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in envMapping.Children)
+        {
+            if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
+            {
+                throw new YamlParseException(
+                    $"Service '{serviceName}' 'env' key at line {key.Start.Line} must be a scalar " +
+                    $"environment-variable name, but found {key.NodeType}.",
+                    key.Start.Line,
+                    key.Start.Column);
+            }
+
+            if (value is not YamlScalarNode valueScalar || valueScalar.Value is null)
+            {
+                throw new YamlParseException(
+                    $"Service '{serviceName}' env entry '{keyScalar.Value}' at line {value.Start.Line} " +
+                    $"must be a scalar string value, but found {value.NodeType}.",
+                    value.Start.Line,
+                    value.Start.Column);
+            }
+
+            dict[keyScalar.Value] = valueScalar.Value;
         }
 
         return dict.Count > 0 ? dict : null;

@@ -28,6 +28,7 @@
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Platform.Engine.Authoring.Model;
@@ -495,6 +496,25 @@ public static class EnvironmentMapper
             }
         }
 
+        // Validate every service's `env:` mapping eagerly (SUT configuration surface) — every
+        // ${conn:name}/${conn:name.part} reference must name a declared dependency and, for the
+        // '.part' form, a part supported by that dependency's kind; a ${secret:...} reference is
+        // rejected outright (§17 — secrets resolve at step-execution time, never baked into a
+        // container's environment).  Validating before any builder mutation keeps Map() eager,
+        // consistent with the two loops above.
+        foreach (var (serviceName, spec) in env.Services ?? new Dictionary<string, ServiceSpec>())
+        {
+            if (spec.Env is null)
+            {
+                continue;
+            }
+
+            foreach (var (envKey, envValue) in spec.Env)
+            {
+                ValidateEnvValue(serviceName, envKey, envValue, env.Dependencies ?? new Dictionary<string, DependencySpec>());
+            }
+        }
+
         // ----------------------------------------------------------------
         // Capture environment-level values used by the Configure closure.
         // ----------------------------------------------------------------
@@ -559,6 +579,17 @@ public static class EnvironmentMapper
                 mostSpecificDependencyResources.Add(mostSpecific);
             }
 
+            // SUT configuration surface: build the per-dependency container-native accessor
+            // table ONCE, now that every dependency resource exists, so every service's `env:`
+            // mapping can resolve `${conn:name}` / `${conn:name.part}` references below without
+            // re-deriving the same server/database resource repeatedly.
+            var envAccessByDependency = new Dictionary<string, DependencyEnvAccess>(StringComparer.Ordinal);
+            foreach (var (name, spec) in dependencies)
+            {
+                envAccessByDependency[name] = ResolveDependencyEnvAccess(
+                    name, spec.Type, dependencyBuilders[name], serviceEndpoints);
+            }
+
             foreach (var (name, spec) in services)
             {
                 if (spec.Image is not null)
@@ -567,11 +598,19 @@ public static class EnvironmentMapper
                     var port = spec.HttpPort ?? 80;
                     var containerBuilder = builder.AddContainer(name, fullImage)
                         .WithHttpEndpoint(targetPort: port, name: "http")
-                        .WithHttpHealthCheck(path: "/", endpointName: "http");
+                        .WithHttpHealthCheck(path: "/", endpointName: "http")
+                        // SUT configuration surface (point 2): a containerised SUT can reach a
+                        // host-run resource (e.g. the webhook listener, which binds 0.0.0.0) via
+                        // host.docker.internal on Docker Desktop already; '--add-host' makes the
+                        // SAME hostname resolve on plain Linux Docker Engine (CI runners), which
+                        // has no built-in host.docker.internal DNS entry.
+                        .WithContainerRuntimeArgs("--add-host=host.docker.internal:host-gateway");
 
                     // §4 invariant: WaitFor the most-specific dependency resource.
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         containerBuilder = containerBuilder.WaitFor(depBuilder);
+
+                    ApplyEnv(containerBuilder, spec.Env, envAccessByDependency);
 
                     serviceEndpoints[name] = containerBuilder.GetEndpoint("http");
                 }
@@ -583,6 +622,8 @@ public static class EnvironmentMapper
                     // §4 invariant: WaitFor the most-specific dependency resource.
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         projectBuilder = projectBuilder.WaitFor(depBuilder);
+
+                    ApplyEnv(projectBuilder, spec.Env, envAccessByDependency);
                 }
             }
         };
@@ -629,6 +670,395 @@ public static class EnvironmentMapper
             ResolveServices: resolveServices,
             HealthGateResourceNames: healthGateNames,
             DependencyNames: dependencies.Keys.ToList());
+    }
+
+    // -----------------------------------------------------------------------
+    // SUT configuration surface (`env:`) — validation and ReferenceExpression construction.
+    //
+    // This is DELIBERATELY separate from the ResolveServices/dependencyBuilders machinery
+    // above: ResolveServices resolves the HOST-published endpoint/connection string (via
+    // GetConnectionStringAsync / EndpointReference.Url) for CSX step assertions running on the
+    // HOST in the Default ALC.  A containerised SUT can never reach that host-published
+    // localhost:randomport from inside the Aspire-managed Docker network, so `env:` values are
+    // built as Aspire ReferenceExpressions and applied via WithEnvironment(name, ReferenceExpression)
+    // — Aspire's OWN env-var materialisation resolves these to the container-network host/port
+    // when the consuming resource (the service) and the referenced resource (the dependency)
+    // share the same builder, exactly as WithReference()/WithEnvironment(EndpointReference)
+    // are designed to do.  Every Aspire API used here (ReferenceExpressionBuilder,
+    // EndpointReference.Property, WithEnvironment(ReferenceExpression), WithContainerRuntimeArgs,
+    // and every resource type's Host/Port/UserNameReference/PasswordParameter/DatabaseName
+    // members) was verified by reflection against the pinned Aspire.Hosting* 13.4.2 (13.3.0 for
+    // Elasticsearch) packages before use — see the sprint notes for the verification transcript.
+    // -----------------------------------------------------------------------
+
+    /// <summary>Matches a <c>${conn:name}</c> or <c>${conn:name.part}</c> reference.</summary>
+    /// <remarks>Group 1 is the dependency name; group 2 (optional) is the part accessor.</remarks>
+    private static readonly Regex s_connRefPattern = new(
+        @"\$\{conn:([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?\}",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Matches a <c>${secret:source/path}</c> reference — mirrors the grammar in
+    /// <see cref="Platform.Sdk.SecretHelper"/> exactly so the two stay in lock-step.
+    /// </summary>
+    private static readonly Regex s_secretRefPattern = new(
+        @"\$\{secret:[A-Za-z0-9_-]+/[^}]+\}",
+        RegexOptions.Compiled);
+
+    /// <summary>The <c>${conn:name.part}</c> accessors supported by database-backed kinds.</summary>
+    private static readonly string[] s_dbKindParts = { "host", "port", "username", "password", "database" };
+
+    /// <summary>The <c>${conn:name.part}</c> accessors supported by the <c>rabbitmq</c> kind.</summary>
+    private static readonly string[] s_rabbitmqParts = { "host", "port", "username", "password" };
+
+    /// <summary>
+    /// The <c>${conn:name.part}</c> accessors supported by single-endpoint kinds that carry no
+    /// author-facing credential (redis/nats/kafka/elasticsearch/mailpit).
+    /// </summary>
+    private static readonly string[] s_hostPortOnlyParts = { "host", "port" };
+
+    /// <summary>
+    /// Returns the <c>${conn:name.part}</c> accessor names supported for a dependency of
+    /// <paramref name="dependencyType"/> (case-insensitive).  Empty for any type this feature
+    /// does not support (currently only <c>azureservicebus</c>, which is rejected earlier and
+    /// never reaches this lookup in practice).
+    /// </summary>
+    private static string[] GetSupportedEnvParts(string dependencyType) =>
+        dependencyType.ToLowerInvariant() switch
+        {
+            "postgres" or "mysql" or "sqlserver" or "mongodb" => s_dbKindParts,
+            "rabbitmq" => s_rabbitmqParts,
+            "redis" or "nats" or "kafka" or "elasticsearch" or "mailpit" => s_hostPortOnlyParts,
+            _ => Array.Empty<string>(),
+        };
+
+    /// <summary>
+    /// Validates every <c>${conn:...}</c> / <c>${secret:...}</c> reference in a single
+    /// service <c>env:</c> value, throwing <see cref="ArgumentException"/> on the first
+    /// problem found.  Called eagerly, before any builder mutation (mirrors the
+    /// service-shape and dependency-type validation above).
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the value contains a <c>${secret:...}</c> reference (§17 — secrets resolve
+    /// at step-execution time, never at container-build time), names an unknown dependency,
+    /// names an <c>azureservicebus</c> dependency (unsupported by <c>env:</c> in v1), or uses
+    /// an unsupported <c>.part</c> accessor for the referenced dependency's kind.
+    /// </exception>
+    private static void ValidateEnvValue(
+        string serviceName,
+        string envKey,
+        string envValue,
+        IReadOnlyDictionary<string, DependencySpec> dependencies)
+    {
+        if (s_secretRefPattern.IsMatch(envValue))
+        {
+            throw new ArgumentException(
+                $"Service '{serviceName}' env entry '{envKey}' references a ${{secret:...}} value. " +
+                "Secrets resolve at step-execution time, never at container-build time (§17): " +
+                "baking a secret into a container's environment would expose it via 'docker " +
+                "inspect' and corrupt the reproducibility envelope (which hashes the reference, " +
+                "never the value). Configure the SUT to resolve the secret itself instead.",
+                nameof(envValue));
+        }
+
+        foreach (Match m in s_connRefPattern.Matches(envValue))
+        {
+            var depName = m.Groups[1].Value;
+            var part = m.Groups[2].Success ? m.Groups[2].Value : null;
+
+            if (!dependencies.TryGetValue(depName, out var depSpec))
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' references unknown dependency " +
+                    $"'{depName}' via '{m.Value}'. Declared dependencies: " +
+                    (dependencies.Count == 0
+                        ? "(none)."
+                        : string.Join(", ", dependencies.Keys.OrderBy(k => k, StringComparer.Ordinal)) + "."),
+                    nameof(envValue));
+            }
+
+            if (string.Equals(depSpec.Type, "azureservicebus", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' references dependency " +
+                    $"'{depName}' of type 'azureservicebus', which env: references do not support " +
+                    "in v1 (the emulator has no stable container-native connection-string " +
+                    "resolution path yet). Wire the SUT's Service Bus connection another way.",
+                    nameof(envValue));
+            }
+
+            if (part is not null && !GetSupportedEnvParts(depSpec.Type).Contains(part))
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' references unsupported part " +
+                    $"'{part}' of dependency '{depName}' (type '{depSpec.Type}'). Supported parts: " +
+                    $"{string.Join(", ", GetSupportedEnvParts(depSpec.Type).OrderBy(p => p, StringComparer.Ordinal))}.",
+                    nameof(envValue));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Per-dependency container-native accessor table entry consumed by
+    /// <see cref="BuildEnvExpression"/>.  Every non-null member is either a <see cref="string"/>
+    /// literal or an Aspire value-provider object (implementing both <c>IValueProvider</c> and
+    /// <c>IManifestExpressionProvider</c> — <see cref="EndpointReferenceExpression"/>,
+    /// <see cref="ReferenceExpression"/>, or <see cref="ParameterResource"/>); a
+    /// <see langword="null"/> member means that accessor is unsupported for this dependency's
+    /// kind (already rejected by <see cref="ValidateEnvValue"/>, so a null is never actually
+    /// dereferenced at build time).
+    /// </summary>
+    private sealed record DependencyEnvAccess(
+        ReferenceExpression FullConnection,
+        object? Host,
+        object? Port,
+        object? Username,
+        object? Password,
+        object? Database);
+
+    /// <summary>
+    /// Builds the <see cref="DependencyEnvAccess"/> accessor table entry for dependency
+    /// <paramref name="name"/>, reading whichever Aspire resource type <paramref name="retained"/>
+    /// wraps.  See the per-kind semantics table in the sprint notes; summary:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     postgres/mysql/sqlserver/mongodb — <paramref name="retained"/> IS the DATABASE
+    ///     resource (§4 invariant: retain the database, not the server); host/port/username/
+    ///     password parts read the SERVER (<c>.Parent</c>) — mysql has no username parameter at
+    ///     all (the container always provisions the fixed 'root' superuser), so its Username is
+    ///     a plain literal.
+    ///   </description></item>
+    ///   <item><description>
+    ///     kafka — the full form and host/port parts read <c>KafkaServerResource.InternalEndpoint</c>
+    ///     (never <c>ConnectionStringExpression</c>, which resolves the EXTERNAL/host-published
+    ///     endpoint) — mirrors the schema-registry sidecar pattern above.
+    ///   </description></item>
+    ///   <item><description>
+    ///     mailpit — a plain <c>ContainerResource</c> with no <c>IResourceWithConnectionString</c>;
+    ///     host/port and the full form read the SMTP <see cref="EndpointReference"/> the
+    ///     registration's Build lambda already staged into <paramref name="serviceEndpoints"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     redis/rabbitmq/nats/elasticsearch — <paramref name="retained"/> IS the server
+    ///     resource; database is unsupported (not a database kind).
+    ///   </description></item>
+    /// </list>
+    /// </summary>
+    private static DependencyEnvAccess ResolveDependencyEnvAccess(
+        string name,
+        string dependencyType,
+        IResourceBuilder<IResource> retained,
+        IReadOnlyDictionary<string, EndpointReference> serviceEndpoints)
+    {
+        if (string.Equals(dependencyType, "mailpit", StringComparison.OrdinalIgnoreCase))
+        {
+            var smtp = serviceEndpoints[name + "-smtp"];
+            return new DependencyEnvAccess(
+                FullConnection: BuildHostPortExpression(smtp),
+                Host: smtp.Property(EndpointProperty.Host),
+                Port: smtp.Property(EndpointProperty.Port),
+                Username: null,
+                Password: null,
+                Database: null);
+        }
+
+        if (retained.Resource is KafkaServerResource kafka)
+        {
+            var internalEndpoint = kafka.InternalEndpoint;
+            return new DependencyEnvAccess(
+                FullConnection: BuildHostPortExpression(internalEndpoint),
+                Host: internalEndpoint.Property(EndpointProperty.Host),
+                Port: internalEndpoint.Property(EndpointProperty.Port),
+                Username: null,
+                Password: null,
+                Database: null);
+        }
+
+        if (retained.Resource is PostgresDatabaseResource pgDb)
+        {
+            var server = pgDb.Parent;
+            return new DependencyEnvAccess(
+                pgDb.ConnectionStringExpression, server.Host, server.Port,
+                server.UserNameReference, server.PasswordParameter, pgDb.DatabaseName);
+        }
+
+        if (retained.Resource is MySqlDatabaseResource mySqlDb)
+        {
+            var server = mySqlDb.Parent;
+            return new DependencyEnvAccess(
+                mySqlDb.ConnectionStringExpression, server.Host, server.Port,
+                // MySqlServerResource exposes no UserNameParameter/Reference: the container
+                // always provisions the fixed 'root' superuser (verified against
+                // Aspire.Hosting.MySql 13.4.2 — no username override is possible).
+                "root", server.PasswordParameter, mySqlDb.DatabaseName);
+        }
+
+        if (retained.Resource is SqlServerDatabaseResource sqlDb)
+        {
+            var server = sqlDb.Parent;
+            return new DependencyEnvAccess(
+                sqlDb.ConnectionStringExpression, server.Host, server.Port,
+                server.UserNameReference, server.PasswordParameter, sqlDb.DatabaseName);
+        }
+
+        if (retained.Resource is MongoDBDatabaseResource mongoDb)
+        {
+            var server = mongoDb.Parent;
+            return new DependencyEnvAccess(
+                mongoDb.ConnectionStringExpression, server.Host, server.Port,
+                server.UserNameReference, server.PasswordParameter, mongoDb.DatabaseName);
+        }
+
+        if (retained.Resource is RabbitMQServerResource rabbitmq)
+        {
+            return new DependencyEnvAccess(
+                rabbitmq.ConnectionStringExpression, rabbitmq.Host, rabbitmq.Port,
+                rabbitmq.UserNameReference, rabbitmq.PasswordParameter, null);
+        }
+
+        if (retained.Resource is RedisResource redis)
+        {
+            return new DependencyEnvAccess(
+                redis.ConnectionStringExpression, redis.Host, redis.Port, null, null, null);
+        }
+
+        if (retained.Resource is NatsServerResource nats)
+        {
+            return new DependencyEnvAccess(
+                nats.ConnectionStringExpression, nats.Host, nats.Port, null, null, null);
+        }
+
+        if (retained.Resource is ElasticsearchResource elasticsearch)
+        {
+            return new DependencyEnvAccess(
+                elasticsearch.ConnectionStringExpression,
+                elasticsearch.PrimaryEndpoint.Property(EndpointProperty.Host),
+                elasticsearch.PrimaryEndpoint.Property(EndpointProperty.Port),
+                null, null, null);
+        }
+
+        // Unreachable for any type accepted by s_dependencyRegistry other than
+        // azureservicebus (rejected in ValidateEnvValue before this method is ever reached for
+        // that kind) — defensive fallback only, e.g. if a future dependency kind is registered
+        // without a matching case here.
+        throw new ArgumentException(
+            $"Internal error: dependency '{name}' of type '{dependencyType}' has no env: " +
+            "resolution path in ResolveDependencyEnvAccess.",
+            nameof(dependencyType));
+    }
+
+    /// <summary>
+    /// Builds a <c>{host}:{port}</c> <see cref="ReferenceExpression"/> from an
+    /// <see cref="EndpointReference"/> — the literal shape mq clients / TCP dial targets expect,
+    /// with no URI scheme prefix.
+    /// </summary>
+    private static ReferenceExpression BuildHostPortExpression(EndpointReference endpoint)
+    {
+        var builder = new ReferenceExpressionBuilder();
+        builder.AppendValueProvider(endpoint.Property(EndpointProperty.Host), null);
+        builder.AppendLiteral(":");
+        builder.AppendValueProvider(endpoint.Property(EndpointProperty.Port), null);
+        return builder.Build();
+    }
+
+    /// <summary>A single literal-text or <c>${conn:...}</c>-reference span of an env value.</summary>
+    private readonly record struct EnvValueToken(bool IsReference, string Literal, string? DependencyName, string? Part);
+
+    /// <summary>
+    /// Splits an env value into literal-text and <c>${conn:name[.part]}</c>-reference tokens,
+    /// left to right.  Shared by <see cref="BuildEnvExpression"/> (validation already ran in
+    /// <see cref="ValidateEnvValue"/>, which uses the same <see cref="s_connRefPattern"/>).
+    /// </summary>
+    private static IEnumerable<EnvValueToken> TokeniseEnvValue(string value)
+    {
+        var pos = 0;
+        foreach (Match m in s_connRefPattern.Matches(value))
+        {
+            if (m.Index > pos)
+                yield return new EnvValueToken(false, value[pos..m.Index], null, null);
+
+            yield return new EnvValueToken(
+                true, string.Empty, m.Groups[1].Value, m.Groups[2].Success ? m.Groups[2].Value : null);
+            pos = m.Index + m.Length;
+        }
+
+        if (pos < value.Length)
+            yield return new EnvValueToken(false, value[pos..], null, null);
+    }
+
+    /// <summary>
+    /// Builds the Aspire <see cref="ReferenceExpression"/> for a single <c>env:</c> value,
+    /// splicing literal spans and dependency parts (or the whole connection, for a bare
+    /// <c>${conn:name}</c> reference) via <see cref="ReferenceExpressionBuilder"/>.
+    /// </summary>
+    private static ReferenceExpression BuildEnvExpression(
+        string value,
+        IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
+    {
+        var builder = new ReferenceExpressionBuilder();
+        foreach (var token in TokeniseEnvValue(value))
+        {
+            if (!token.IsReference)
+            {
+                if (token.Literal.Length > 0)
+                    builder.AppendLiteral(token.Literal);
+                continue;
+            }
+
+            var access = envAccessByDependency[token.DependencyName!];
+            var part = token.Part switch
+            {
+                null => (object)access.FullConnection,
+                "host" => access.Host!,
+                "port" => access.Port!,
+                "username" => access.Username!,
+                "password" => access.Password!,
+                "database" => access.Database!,
+                // Unreachable: ValidateEnvValue already rejected any other part name.
+                _ => throw new ArgumentException($"Unsupported env: part '{token.Part}'.", nameof(value)),
+            };
+            AppendPart(builder, part);
+        }
+
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// Appends a resolved dependency part to <paramref name="builder"/>: a plain literal for a
+    /// <see cref="string"/> (e.g. mysql's fixed 'root' username, or a database name), or an
+    /// Aspire value provider for anything else (late-bound via
+    /// <see cref="ReferenceExpressionBuilder.AppendValueProvider"/> so this helper stays
+    /// agnostic to which concrete provider type — <see cref="EndpointReferenceExpression"/>,
+    /// <see cref="ReferenceExpression"/>, or <see cref="ParameterResource"/> — was supplied).
+    /// </summary>
+    private static void AppendPart(ReferenceExpressionBuilder builder, object part)
+    {
+        if (part is string literal)
+            builder.AppendLiteral(literal);
+        else
+            builder.AppendValueProvider(part, null);
+    }
+
+    /// <summary>
+    /// Applies a service's <c>env:</c> mapping (if any) to <paramref name="builder"/> via
+    /// <c>WithEnvironment(name, ReferenceExpression)</c> — works identically for image-form
+    /// (<see cref="ContainerResource"/>) and project-form (<c>ProjectResource</c>) services,
+    /// both of which implement <see cref="IResourceWithEnvironment"/>.
+    /// </summary>
+    private static void ApplyEnv<T>(
+        IResourceBuilder<T> builder,
+        IReadOnlyDictionary<string, string>? env,
+        IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
+        where T : IResourceWithEnvironment
+    {
+        if (env is null)
+            return;
+
+        foreach (var (key, value) in env)
+        {
+            var expression = BuildEnvExpression(value, envAccessByDependency);
+            builder.WithEnvironment(key, expression);
+        }
     }
 
     // -----------------------------------------------------------------------

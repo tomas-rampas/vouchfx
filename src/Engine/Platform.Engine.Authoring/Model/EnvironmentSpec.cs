@@ -65,11 +65,21 @@ public sealed record EnvironmentSpec(
 /// <param name="HttpPort">
 /// Optional explicit HTTP port when the image does not expose a well-known port.
 /// </param>
+/// <param name="Env">
+/// Optional environment-variable mapping applied to the service's container/project
+/// (SUT configuration surface).  Each value is a literal string that may embed zero or
+/// more <c>${conn:name}</c> / <c>${conn:name.part}</c> references to a dependency declared
+/// under <see cref="EnvironmentSpec.Dependencies"/>; the orchestration-layer mapper resolves these to
+/// Aspire-native, container-network values (never the host-published endpoint) via a
+/// <c>ReferenceExpression</c>.  <see langword="null"/> when the service declares no
+/// <c>env:</c> block.
+/// </param>
 public sealed record ServiceSpec(
     string? Image,
     string? Project,
     string? ImagePullPolicy,
-    int? HttpPort);
+    int? HttpPort,
+    IReadOnlyDictionary<string, string>? Env);
 
 /// <summary>
 /// Specification for a managed Aspire dependency (§3.2).
