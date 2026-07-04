@@ -1420,6 +1420,94 @@ public sealed class EnvironmentMapperTests
         Assert.Contains("password", ValueExpressionOf(envVars["MQ_PASSWORD"]), StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// AddRedis unconditionally starts the container as
+    /// <c>redis-server --requirepass $REDIS_PASSWORD</c> (confirmed live: a redis-py client
+    /// failed with "Authentication required" against a SUT wired only with host/port). Redis has
+    /// no username concept at all, so only the <c>password</c> part is supported.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_PasswordPart_Redis()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["CACHE_PASSWORD"] = "${conn:cache.password}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — a live Aspire parameter (unresolvable pre-start), so only the manifest
+        // placeholder is checked.
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Contains("password", ValueExpressionOf(envVars["CACHE_PASSWORD"]), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// <c>AddNats(name).WithJetStream()</c> (the exact call this mapper makes) unconditionally
+    /// starts the container with <c>--user &lt;name&gt; --pass &lt;password&gt;</c> (confirmed
+    /// live: the engine's own NATS health-check connection logs
+    /// <c>nats://nats:***@localhost:&lt;port&gt;</c>) — both username and password are real,
+    /// enforced credentials.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_UsernamePasswordParts_Nats()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["NATS_USER"] = "${conn:broker.username}",
+                        ["NATS_PASSWORD"] = "${conn:broker.password}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["broker"] = new DependencySpec(Type: "nats", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — NATS's default fixed username is "nats"; password is a live Aspire
+        // parameter (unresolvable pre-start, so only its manifest placeholder is checked).
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("nats", ValueExpressionOf(envVars["NATS_USER"]));
+        Assert.Contains("password", ValueExpressionOf(envVars["NATS_PASSWORD"]), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Map_ServiceEnv_MixedLiteralAndMultipleReferences_SqlServerJdbcUrl()
     {

@@ -712,8 +712,27 @@ public static class EnvironmentMapper
     private static readonly string[] s_rabbitmqParts = { "host", "port", "username", "password" };
 
     /// <summary>
+    /// The <c>${conn:name.part}</c> accessors supported by the <c>nats</c> kind.  NATS
+    /// (<c>AddNats(name).WithJetStream()</c>, the exact call this mapper makes) unconditionally
+    /// starts the container with <c>--user &lt;name&gt; --pass &lt;password&gt;</c> — a real,
+    /// enforced credential, verified by inspecting the resource's actual container startup args
+    /// (not just whether a <c>ParameterResource</c> object exists).
+    /// </summary>
+    private static readonly string[] s_natsParts = { "host", "port", "username", "password" };
+
+    /// <summary>
+    /// The <c>${conn:name.part}</c> accessors supported by the <c>redis</c> kind.  <c>AddRedis</c>
+    /// unconditionally starts the container as <c>redis-server --requirepass $REDIS_PASSWORD</c>
+    /// — a real, enforced credential; redis has no username concept at all, so only
+    /// <c>password</c> (plus host/port) is exposed.
+    /// </summary>
+    private static readonly string[] s_redisParts = { "host", "port", "password" };
+
+    /// <summary>
     /// The <c>${conn:name.part}</c> accessors supported by single-endpoint kinds that carry no
-    /// author-facing credential (redis/nats/kafka/elasticsearch/mailpit).
+    /// ENFORCED author-facing credential: kafka has no credential mechanism at all; mailpit is a
+    /// plain container with none; elasticsearch provisions a password but this registration
+    /// disables security (<c>xpack.security.enabled=false</c>), so it is never enforced.
     /// </summary>
     private static readonly string[] s_hostPortOnlyParts = { "host", "port" };
 
@@ -728,7 +747,9 @@ public static class EnvironmentMapper
         {
             "postgres" or "mysql" or "sqlserver" or "mongodb" => s_dbKindParts,
             "rabbitmq" => s_rabbitmqParts,
-            "redis" or "nats" or "kafka" or "elasticsearch" or "mailpit" => s_hostPortOnlyParts,
+            "nats" => s_natsParts,
+            "redis" => s_redisParts,
+            "kafka" or "elasticsearch" or "mailpit" => s_hostPortOnlyParts,
             _ => Array.Empty<string>(),
         };
 
@@ -840,7 +861,22 @@ public static class EnvironmentMapper
     ///   </description></item>
     ///   <item><description>
     ///     redis/rabbitmq/nats/elasticsearch — <paramref name="retained"/> IS the server
-    ///     resource; database is unsupported (not a database kind).
+    ///     resource; database is unsupported (not a database kind). Credential parts are
+    ///     included only where the Aspire integration ACTUALLY enforces one by default —
+    ///     verified by inspecting each resource's <c>CommandLineArgsCallbackAnnotation</c>
+    ///     (the real container startup args), not just whether a <c>ParameterResource</c>
+    ///     object exists: <c>AddRedis</c> unconditionally passes
+    ///     <c>redis-server --requirepass $REDIS_PASSWORD</c> and <c>AddNats(...).WithJetStream()</c>
+    ///     (the exact call this mapper makes) unconditionally passes <c>--user &lt;name&gt; --pass
+    ///     &lt;password&gt;</c> — both real, SUT-breaking credentials — so both get a
+    ///     <c>password</c> part (nats additionally gets <c>username</c>, whose fixed default is
+    ///     the literal "nats"; redis has no username concept at all). Elasticsearch's own
+    ///     <c>PasswordParameter</c> is likewise real, but THIS registration's Build lambda
+    ///     unconditionally sets <c>xpack.security.enabled=false</c>, so the password is
+    ///     provisioned but never enforced — no part is exposed for it. Kafka carries no
+    ///     credential mechanism at all (no PasswordParameter/UserNameParameter on
+    ///     <see cref="KafkaServerResource"/>) — plaintext, matching the schema-registry
+    ///     sidecar's own PLAINTEXT bootstrap assumption.
     ///   </description></item>
     /// </list>
     /// </summary>
@@ -918,18 +954,31 @@ public static class EnvironmentMapper
 
         if (retained.Resource is RedisResource redis)
         {
+            // AddRedis unconditionally starts the container as
+            // 'redis-server --requirepass $REDIS_PASSWORD' (verified via the resource's
+            // CommandLineArgsCallbackAnnotation against the exact 'builder.AddRedis(name)' call
+            // this mapper makes) — a real, enforced credential a SUT must supply. Redis has no
+            // username concept at all, so only 'password' is exposed.
             return new DependencyEnvAccess(
-                redis.ConnectionStringExpression, redis.Host, redis.Port, null, null, null);
+                redis.ConnectionStringExpression, redis.Host, redis.Port,
+                null, RequirePasswordParameter(name, "redis", redis.PasswordParameter), null);
         }
 
         if (retained.Resource is NatsServerResource nats)
         {
+            // AddNats(name).WithJetStream() (the exact call this mapper makes) unconditionally
+            // starts the container with '--user <name> --pass <password>' (verified the same
+            // way as redis above) — both are real, enforced credentials.
             return new DependencyEnvAccess(
-                nats.ConnectionStringExpression, nats.Host, nats.Port, null, null, null);
+                nats.ConnectionStringExpression, nats.Host, nats.Port,
+                nats.UserNameReference, RequirePasswordParameter(name, "nats", nats.PasswordParameter), null);
         }
 
         if (retained.Resource is ElasticsearchResource elasticsearch)
         {
+            // ElasticsearchResource.PasswordParameter is real, but this registration's Build
+            // lambda unconditionally sets 'xpack.security.enabled=false' above — the password
+            // is provisioned but never enforced, so no credential part is exposed here.
             return new DependencyEnvAccess(
                 elasticsearch.ConnectionStringExpression,
                 elasticsearch.PrimaryEndpoint.Property(EndpointProperty.Host),
@@ -945,6 +994,35 @@ public static class EnvironmentMapper
             $"Internal error: dependency '{name}' of type '{dependencyType}' has no env: " +
             "resolution path in ResolveDependencyEnvAccess.",
             nameof(dependencyType));
+    }
+
+    /// <summary>
+    /// Returns <paramref name="password"/> or throws when it is <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Both callers (redis, nats) rely on the CURRENT <c>Aspire.Hosting.Redis</c>/
+    /// <c>Aspire.Hosting.Nats</c> 13.4.2 behaviour of unconditionally provisioning a
+    /// <see cref="ParameterResource"/> for <c>PasswordParameter</c> — verified by reflection
+    /// (see the sprint notes). Should a future Aspire version ever make either optional, this
+    /// fails fast with the same "unsupported part" shape <see cref="ValidateEnvValue"/> already
+    /// uses, rather than propagating a <see cref="NullReferenceException"/> from deep inside
+    /// <see cref="BuildEnvExpression"/> — so behaviour stays deterministic either way.
+    /// </remarks>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="password"/> is <see langword="null"/>.</exception>
+    private static ParameterResource RequirePasswordParameter(
+        string dependencyName, string dependencyType, ParameterResource? password)
+    {
+        if (password is not null)
+        {
+            return password;
+        }
+
+        throw new ArgumentException(
+            $"Dependency '{dependencyName}' (type '{dependencyType}') has no password parameter " +
+            "at build time, so the 'password' part is unsupported for this instance. The current " +
+            "Aspire.Hosting integration always provisions one for this kind; this fails fast " +
+            "instead of embedding a null reference, so behaviour stays deterministic.",
+            nameof(password));
     }
 
     /// <summary>
