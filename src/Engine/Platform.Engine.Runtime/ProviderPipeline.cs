@@ -262,6 +262,12 @@ internal static class ProviderPipeline
         // own VarName; without this guard the two Vars writes would race (whichever staged last
         // silently wins) and one listener's real callback URL would be replaced by an unrelated
         // listener's container-rewritten alias.
+        // Scope: this guard is listener-VarName-vs-listener-VarName ONLY. It deliberately does
+        // NOT check author `variables:` block entries or step `capture:` names against the
+        // "<VarName>_container" alias — those follow the existing forward-only Vars threading
+        // idiom (a later write legitimately overrides an earlier one; see the "deliberately
+        // overrides it" comment where ScenarioRunner stages the plain <VarName> key), which is a
+        // different, already-accepted collision model from the one this guard closes.
         var distinctListenerVarNames = hostResourcePlan
             .Where(e => string.Equals(e.Requirement.Kind, ScenarioRunner.WebhookListenerKind, StringComparison.Ordinal))
             .Select(e => e.Requirement.VarName)

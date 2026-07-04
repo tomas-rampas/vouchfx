@@ -31,6 +31,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Authoring.Model;
 using YamlDotNet.RepresentationModel;
 
@@ -583,9 +584,26 @@ public static class EnvironmentMapper
             // table ONCE, now that every dependency resource exists, so every service's `env:`
             // mapping can resolve `${conn:name}` / `${conn:name.part}` references below without
             // re-deriving the same server/database resource repeatedly.
+            //
+            // Resolve ONLY for dependencies actually REFERENCED by some service's env: value —
+            // NEVER unconditionally for every declared dependency (BUG FIX: a dependency kind
+            // with no env: resolution path, currently only azureservicebus, has no matching
+            // case in ResolveDependencyEnvAccess; calling it unconditionally meant merely
+            // DECLARING an azureservicebus dependency — with or without any env: block —
+            // tripped the method's defensive fallback throw on EVERY run, breaking
+            // examples/mq-azureservicebus.e2e.yaml outright). ValidateEnvValue has already
+            // rejected, eagerly, any env: value that actually references an azureservicebus
+            // dependency, so restricting resolution to referenced dependencies is always safe
+            // — and it also avoids wasted resolution work for unreferenced dependencies.
+            var referencedDependencyNames = CollectReferencedDependencyNames(services);
             var envAccessByDependency = new Dictionary<string, DependencyEnvAccess>(StringComparer.Ordinal);
             foreach (var (name, spec) in dependencies)
             {
+                if (!referencedDependencyNames.Contains(name))
+                {
+                    continue;
+                }
+
                 envAccessByDependency[name] = ResolveDependencyEnvAccess(
                     name, spec.Type, dependencyBuilders[name], serviceEndpoints);
             }
@@ -697,14 +715,6 @@ public static class EnvironmentMapper
         @"\$\{conn:([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?\}",
         RegexOptions.Compiled);
 
-    /// <summary>
-    /// Matches a <c>${secret:source/path}</c> reference — mirrors the grammar in
-    /// <see cref="Platform.Sdk.SecretHelper"/> exactly so the two stay in lock-step.
-    /// </summary>
-    private static readonly Regex s_secretRefPattern = new(
-        @"\$\{secret:[A-Za-z0-9_-]+/[^}]+\}",
-        RegexOptions.Compiled);
-
     /// <summary>The <c>${conn:name.part}</c> accessors supported by database-backed kinds.</summary>
     private static readonly string[] s_dbKindParts = { "host", "port", "username", "password", "database" };
 
@@ -771,7 +781,12 @@ public static class EnvironmentMapper
         string envValue,
         IReadOnlyDictionary<string, DependencySpec> dependencies)
     {
-        if (s_secretRefPattern.IsMatch(envValue))
+        // Sigil-PRESENCE check (mirrors SecretReference.ValidateField, §17), not a well-formed-
+        // token regex match: env: supports NO secret references at all, not even well-formed
+        // ones, so a malformed token such as '${secret:env}' (missing '/path') must be rejected
+        // too — it would otherwise silently pass through as opaque literal text instead of
+        // surfacing the author's mistake.
+        if (envValue.Contains(SecretReference.Sigil, StringComparison.Ordinal))
         {
             throw new ArgumentException(
                 $"Service '{serviceName}' env entry '{envKey}' references a ${{secret:...}} value. " +
@@ -817,6 +832,42 @@ public static class EnvironmentMapper
                     nameof(envValue));
             }
         }
+    }
+
+    /// <summary>
+    /// Collects the set of dependency names referenced by ANY service's <c>env:</c> value
+    /// (via <c>${conn:name}</c> or <c>${conn:name.part}</c>), across every service.
+    /// </summary>
+    /// <remarks>
+    /// Used so <see cref="Map"/>'s <c>configure</c> closure resolves a
+    /// <see cref="DependencyEnvAccess"/> ONLY for dependencies actually referenced — never
+    /// unconditionally for every declared dependency. A dependency kind with no env:
+    /// resolution path (currently only <c>azureservicebus</c>) has no matching case in
+    /// <see cref="ResolveDependencyEnvAccess"/>; resolving unconditionally meant merely
+    /// DECLARING such a dependency tripped that method's defensive fallback throw on every
+    /// run, regardless of whether any service actually referenced it.
+    /// </remarks>
+    private static HashSet<string> CollectReferencedDependencyNames(
+        IReadOnlyDictionary<string, ServiceSpec> services)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (_, spec) in services)
+        {
+            if (spec.Env is null)
+            {
+                continue;
+            }
+
+            foreach (var (_, envValue) in spec.Env)
+            {
+                foreach (Match m in s_connRefPattern.Matches(envValue))
+                {
+                    names.Add(m.Groups[1].Value);
+                }
+            }
+        }
+
+        return names;
     }
 
     /// <summary>

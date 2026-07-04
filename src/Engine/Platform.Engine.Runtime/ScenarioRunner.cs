@@ -448,6 +448,38 @@ public static class ScenarioRunner
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (ArgumentException aex)
+        {
+            // A Map()-time authoring error (malformed env: reference, unknown dependency,
+            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
+            // schema-invalid / parse-AST / pipeline-compile / secret-reference failures handled
+            // above (Steps 2–5c): the scenario never ran, so this is Inconclusive (§12.1) — NOT
+            // EnvironmentError, which the taxonomy reserves for genuine infrastructure faults
+            // (container/image/network) an author cannot fix by editing the YAML; misclassifying
+            // a permanent typo as an infra fault could drive auto-retry/alerting that will never
+            // self-heal. EnvironmentMapper.Map is pure (no I/O) and documented to throw only
+            // ArgumentException for its own eager validation (see SuiteTopology.StartAsync's
+            // Step 1 comment), so this catch can never mask a real infra failure — those surface
+            // as OrchestrationException below.
+            var now = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(
+                $"Environment configuration error: {aex.Message}").ConfigureAwait(false);
+            return (Verdict.Inconclusive, buffer);
+        }
         catch (OrchestrationException oex)
         {
             var now = DateTimeOffset.UtcNow;
@@ -689,6 +721,25 @@ public static class ScenarioRunner
                 seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (ArgumentException aex)
+        {
+            // Mirrors RunAsync's classification above: a Map()-time authoring error (malformed
+            // env: reference, unknown dependency, secret-in-env, unsupported .part, etc.) is the
+            // SAME class of problem as the per-scenario secret-reference / pipeline-compile
+            // failures already handled as Inconclusive elsewhere in this loop (via earlyVerdict)
+            // — the suite never ran, so every scenario is Inconclusive, NOT EnvironmentError
+            // (reserved for genuine infrastructure faults an author cannot fix by editing the
+            // YAML). EnvironmentMapper.Map is pure (no I/O) and documented to throw only
+            // ArgumentException for its own eager validation.
+            await output.WriteLineAsync(
+                $"RunSuiteAsync: environment configuration error — {aex.Message}")
+                .ConfigureAwait(false);
+
+            var inconclusiveVerdicts = compilations
+                .Select(c => (c.ScenarioName, Verdict.Inconclusive))
+                .ToList();
+            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts);
         }
         catch (OrchestrationException oex)
         {

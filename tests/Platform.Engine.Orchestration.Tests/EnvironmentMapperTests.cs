@@ -1634,6 +1634,98 @@ public sealed class EnvironmentMapperTests
         Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// A MALFORMED secret sigil (missing the '/path' segment) must ALSO be rejected — not
+    /// just a well-formed '${secret:source/path}' reference. Regression guard (code-review
+    /// MINOR): the previous check used a well-formed-token regex
+    /// (<c>\$\{secret:[A-Za-z0-9_-]+/[^}]+\}</c>), which a malformed token such as
+    /// '${secret:env}' does not match, so it silently passed through as opaque literal text
+    /// instead of surfacing the author's mistake. The fix checks for SIGIL PRESENCE
+    /// (<see cref="Platform.Engine.Abstractions.Secrets.SecretReference.Sigil"/>) — mirroring
+    /// <see cref="Platform.Engine.Abstractions.Secrets.SecretReference.ValidateField"/> — so
+    /// env: rejects the sigil outright regardless of whether the token is well-formed (env:
+    /// supports NO secret references at all, unlike step fields, which accept well-formed ones).
+    /// </summary>
+    [Fact]
+    public void Map_ServiceEnv_MalformedSecretSigil_ThrowsArgumentException_CitingSecrets()
+    {
+        // Arrange — '${secret:env}' is missing the required '/path' segment.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["API_KEY"] = "${secret:env}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("secret", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Regression guard (B1, BLOCKER, code-review-gatekeeper): an azureservicebus dependency
+    /// has no <c>env:</c> resolution path in <c>ResolveDependencyEnvAccess</c>. Before this
+    /// fix, <c>Configure()</c> called that method UNCONDITIONALLY for every declared
+    /// dependency, so merely DECLARING an azureservicebus dependency — regardless of whether
+    /// any service's <c>env:</c> block referenced it — tripped the method's internal-error
+    /// fallback throw on every single run (this broke
+    /// examples/mq-azureservicebus.e2e.yaml outright: <c>vouchfx run</c> failed at topology
+    /// start every time). <c>Map()</c> and <c>Configure()</c> must both succeed cleanly for a
+    /// topology with an azureservicebus dependency alongside a service with NO env: block and
+    /// another service whose env: references a DIFFERENT dependency.
+    /// </summary>
+    [Fact]
+    public void Map_AzureServiceBusDependency_DeclaredButUnreferencedByAnyEnv_ConfiguresCleanly()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["plain"] = new ServiceSpec(
+                    Image: "myorg/plain:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null),
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["ORDERS_CONN"] = "${conn:orders}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "azureservicebus", Version: null, Extra: null),
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act — Map() must succeed (no env: value references 'bus'), and Configure() must run
+        // to completion without throwing (the azureservicebus dependency is never dereferenced
+        // for env: resolution because nothing references it).
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        var exception = Record.Exception(() => mapped.Configure(builder));
+
+        // Assert
+        Assert.Null(exception);
+        Assert.NotNull(builder.Resources.SingleOrDefault(r => r.Name == "bus"));
+        Assert.NotNull(builder.Resources.OfType<ContainerResource>().SingleOrDefault(r => r.Name == "plain"));
+        Assert.NotNull(builder.Resources.OfType<ContainerResource>().SingleOrDefault(r => r.Name == "api"));
+    }
+
     [Fact]
     public void Map_ServiceEnv_AzureServiceBusFullForm_ThrowsArgumentException()
     {

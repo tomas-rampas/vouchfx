@@ -800,4 +800,68 @@ public sealed class YamlDocumentParserTests
         Assert.NotNull(env);
         Assert.Equal("Development", env!["ASPNETCORE_ENVIRONMENT"]);
     }
+
+    /// <summary>
+    /// A dedicated lock-in for the YAML-scalar-coercion gotcha this parser is elsewhere
+    /// careful about (code-review MINOR): YamlDotNet coerces a bare numeric/boolean scalar to
+    /// its literal text form, and the parser must NOT further coerce it to int/bool anywhere
+    /// in this pipeline — a container environment variable IS a string.
+    /// </summary>
+    [Fact]
+    public void Parse_ServiceEnv_BareScalarCoercion_PreservesRawStringForm()
+    {
+        // Arrange
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    PORT: 8080
+                    DEBUG: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var env = doc.Environment!.Services!["api"].Env;
+        Assert.NotNull(env);
+        Assert.Equal("8080", env!["PORT"]);
+        Assert.Equal("true", env["DEBUG"]);
+    }
+
+    /// <summary>
+    /// A duplicate <c>env:</c> mapping key locks in YamlDotNet's ACTUAL representation-model
+    /// behaviour explicitly (code-review MINOR): it rejects a duplicate key outright
+    /// (<c>YamlException</c> "Duplicate key") at the <c>YamlStream.Load</c> stage — there is
+    /// no silent last-wins overwrite, for <c>env:</c> or any other mapping in the document.
+    /// The existing top-level <c>catch (YamlException)</c> in <see cref="YamlDocumentParser.Parse"/>
+    /// converts this to a <see cref="YamlParseException"/> with a located message, exactly like
+    /// any other malformed-YAML input.
+    /// </summary>
+    [Fact]
+    public void Parse_ServiceEnv_DuplicateKey_ThrowsYamlParseException()
+    {
+        // Arrange
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: first
+                    FOO: second
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }
