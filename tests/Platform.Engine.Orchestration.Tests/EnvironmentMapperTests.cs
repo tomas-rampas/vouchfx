@@ -1548,6 +1548,164 @@ public sealed class EnvironmentMapperTests
             ValueExpressionOf(envVars["SPRING_DATASOURCE_URL"]));
     }
 
+    // -----------------------------------------------------------------------
+    // BLOCKER regression (peer-review-critic): literal-brace escaping in env: values.
+    //
+    // ReferenceExpressionBuilder.AppendLiteral appends literal text VERBATIM into the internal
+    // composite-format string that ReferenceExpression.ValueExpression later materialises via
+    // string.Format — it does NOT escape braces itself. Confirmed empirically (runtime-probed
+    // against the pinned Aspire 13.4.2 DLL) before the fix:
+    //   • "a{0}b-${conn:pg.host}" -> Format "a{0}b-{0}" -> string.Format substitutes the SAME
+    //     resolved host into BOTH the placeholder AND the author's literal "{0}" -> silent
+    //     corruption, no exception.
+    //   • A pure literal containing braces (a JSON value, or the "${VAR}" self-expansion idiom)
+    //     -> FormatException at materialisation time (StartAsync) -> OrchestrationException ->
+    //     EnvironmentError — the exact §12.1 misclassification the M2 fix targeted, one layer
+    //     further downstream, since it happens AFTER Map() returns successfully.
+    // These tests assert the MATERIALISED value (ValueExpressionOf calls .ValueExpression,
+    // which invokes string.Format) so they actually exercise the bug, not just the Format string.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Map_ServiceEnv_LiteralBraceAdjacentToReference_RoundTripsLiteralBraces()
+    {
+        // Arrange — a literal span containing '{raw}' immediately beside a real ${conn:...}
+        // reference. Before the fix, 'raw' is not numeric so this would throw FormatException
+        // (an unbalanced/non-index brace) rather than silently corrupt — either way, wrong.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["X"] = "prefix-{raw}-${conn:pg.host}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["pg"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — the literal '{raw}' text survives verbatim, and the reference resolves.
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("prefix-{raw}-{pg.bindings.tcp.host}", ValueExpressionOf(envVars["X"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_PureLiteralJsonValue_DeliveredVerbatim()
+    {
+        // Arrange — a pure-literal JSON value, no ${conn:...} reference at all. Before the
+        // fix this threw FormatException when Aspire materialised the env var at StartAsync.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["CONFIG"] = """{"a":1}""" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("""{"a":1}""", ValueExpressionOf(envVars["CONFIG"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_NonConnDollarBraceSigil_DeliveredVerbatim()
+    {
+        // Arrange — "${DB_PASSWORD}" is the shell/Make self-expansion idiom, NOT a
+        // ${conn:...}/${secret:...} reference — env: has no opinion on it and must deliver it
+        // as a plain literal. Before the fix this threw FormatException at materialisation time.
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["P"] = "${DB_PASSWORD}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("${DB_PASSWORD}", ValueExpressionOf(envVars["P"]));
+    }
+
+    [Fact]
+    public async Task Map_ServiceEnv_LiteralNumericBraceCollidingWithFormatIndex_DoesNotCorruptReference()
+    {
+        // Arrange — "{0}" is EXACTLY the format-string placeholder index Aspire's own
+        // ReferenceExpression machinery would assign the first (and, here, only) value
+        // provider. Before the fix, string.Format silently substituted the resolved host into
+        // BOTH the intended slot and this literal "{0}" — the specific silent-corruption case
+        // (not merely a thrown exception).
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["X"] = "a{0}b-${conn:pg.host}" }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["pg"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+
+        // Act
+        mapped.Configure(builder);
+
+        // Assert — the literal "{0}" text is untouched; only the ${conn:pg.host} reference
+        // resolved to the (single) host placeholder.
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("a{0}b-{pg.bindings.tcp.host}", ValueExpressionOf(envVars["X"]));
+    }
+
     [Fact]
     public void Map_ServiceEnv_UnknownDependency_ThrowsArgumentException()
     {

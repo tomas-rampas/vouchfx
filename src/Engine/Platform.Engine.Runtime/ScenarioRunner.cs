@@ -457,10 +457,21 @@ public static class ScenarioRunner
             // EnvironmentError, which the taxonomy reserves for genuine infrastructure faults
             // (container/image/network) an author cannot fix by editing the YAML; misclassifying
             // a permanent typo as an infra fault could drive auto-retry/alerting that will never
-            // self-heal. EnvironmentMapper.Map is pure (no I/O) and documented to throw only
-            // ArgumentException for its own eager validation (see SuiteTopology.StartAsync's
-            // Step 1 comment), so this catch can never mask a real infra failure — those surface
-            // as OrchestrationException below.
+            // self-heal.
+            //
+            // Scope note: this catches ONLY EnvironmentMapper.Map's OWN eager, PRE-Configure
+            // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
+            // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
+            // ... let them propagate as-is"). Map()'s Configure CLOSURE also carries a few
+            // defensive ArgumentException throws of its own (e.g. ResolveDependencyEnvAccess's
+            // internal-error fallback, RequirePasswordParameter) — those run LATER, inside
+            // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
+            // ANY exception as OrchestrationException before it ever reaches this method; they
+            // are therefore unreachable by construction here (ValidateEnvValue's eager checks,
+            // and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of always provisioning a
+            // password parameter, already prevent them from firing in practice) and would
+            // correctly surface as EnvironmentError via the OrchestrationException catch below,
+            // not this one — a genuine, if never-yet-observed, infrastructure/engine fault.
             var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
@@ -724,14 +735,16 @@ public static class ScenarioRunner
         }
         catch (ArgumentException aex)
         {
-            // Mirrors RunAsync's classification above: a Map()-time authoring error (malformed
-            // env: reference, unknown dependency, secret-in-env, unsupported .part, etc.) is the
-            // SAME class of problem as the per-scenario secret-reference / pipeline-compile
-            // failures already handled as Inconclusive elsewhere in this loop (via earlyVerdict)
-            // — the suite never ran, so every scenario is Inconclusive, NOT EnvironmentError
-            // (reserved for genuine infrastructure faults an author cannot fix by editing the
-            // YAML). EnvironmentMapper.Map is pure (no I/O) and documented to throw only
-            // ArgumentException for its own eager validation.
+            // Mirrors RunAsync's classification above (see that catch block's full scope note):
+            // a Map()-time authoring error (malformed env: reference, unknown dependency,
+            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
+            // per-scenario secret-reference / pipeline-compile failures already handled as
+            // Inconclusive elsewhere in this loop (via earlyVerdict) — the suite never ran, so
+            // every scenario is Inconclusive, NOT EnvironmentError (reserved for genuine
+            // infrastructure faults an author cannot fix by editing the YAML). This catches ONLY
+            // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
+            // (unreachable by construction given that same eager validation) would surface as
+            // OrchestrationException instead, via the catch below.
             await output.WriteLineAsync(
                 $"RunSuiteAsync: environment configuration error — {aex.Message}")
                 .ConfigureAwait(false);

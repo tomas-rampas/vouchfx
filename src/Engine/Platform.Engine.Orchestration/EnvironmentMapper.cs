@@ -1116,6 +1116,48 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
+    /// Escapes <c>{</c>/<c>}</c> in a literal span before it is passed to
+    /// <see cref="ReferenceExpressionBuilder.AppendLiteral"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>BLOCKER fix (peer review, runtime-probed against the pinned Aspire 13.4.2 DLL):</b>
+    /// <c>ReferenceExpressionBuilder.AppendLiteral</c> appends the literal text VERBATIM into
+    /// the internal composite-format string that <see cref="ReferenceExpression.Build"/>later
+    /// materialises via <c>string.Format</c> — it does NOT escape braces itself (unlike the
+    /// compiler-generated interpolated-handler path used elsewhere in this file, e.g. the
+    /// kafka schema-registry sidecar's <c>ReferenceExpression.Create($"...")</c>, which the C#
+    /// compiler itself escapes via <c>EscapeUnescapedBraces</c>). Left un-escaped, an author's
+    /// literal brace corrupts the result in one of two ways, both confirmed empirically:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     A literal that happens to look like a format placeholder — e.g.
+    ///     <c>env: { X: "a{0}b-${conn:pg.host}" }</c> — collides with the SAME placeholder
+    ///     index <c>${conn:pg.host}</c> compiles to, so <c>string.Format</c> silently
+    ///     substitutes the resolved host into BOTH the intended slot and the author's literal
+    ///     text (<c>a{pg.bindings.tcp.host}b-{pg.bindings.tcp.host}</c>) — silent corruption,
+    ///     no exception.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Any other unbalanced/non-index brace — e.g. a literal JSON value
+    ///     <c>env: { CONFIG: '{"level":"debug"}' }</c>, or the shell/Make self-expansion idiom
+    ///     <c>env: { P: "${DB_PASSWORD}" }</c> (not a <c>${conn:...}</c> reference at all) —
+    ///     throws <c>FormatException</c> when Aspire materialises the env var during
+    ///     <c>StartAsync</c>, which <c>SuiteTopology.StartAsync</c> wraps as
+    ///     <see cref="Platform.Engine.Orchestration.OrchestrationException"/> →
+    ///     <c>Verdict.EnvironmentError</c> — the exact §12.1 misclassification the M2 fix
+    ///     (ArgumentException → Inconclusive) targeted, just one layer further downstream.
+    ///   </description></item>
+    /// </list>
+    /// Both failure modes pass <see cref="ValidateEnvValue"/> unchanged — it validates
+    /// <c>${conn:...}</c>/<c>${secret:...}</c> shape, not brace balance in the surrounding
+    /// literal text — so this is the only place the corruption can be prevented.
+    /// </para>
+    /// </remarks>
+    private static string EscapeLiteralBraces(string literal) =>
+        literal.Replace("{", "{{", StringComparison.Ordinal).Replace("}", "}}", StringComparison.Ordinal);
+
+    /// <summary>
     /// Builds the Aspire <see cref="ReferenceExpression"/> for a single <c>env:</c> value,
     /// splicing literal spans and dependency parts (or the whole connection, for a bare
     /// <c>${conn:name}</c> reference) via <see cref="ReferenceExpressionBuilder"/>.
@@ -1130,7 +1172,7 @@ public static class EnvironmentMapper
             if (!token.IsReference)
             {
                 if (token.Literal.Length > 0)
-                    builder.AppendLiteral(token.Literal);
+                    builder.AppendLiteral(EscapeLiteralBraces(token.Literal));
                 continue;
             }
 
@@ -1160,10 +1202,17 @@ public static class EnvironmentMapper
     /// agnostic to which concrete provider type — <see cref="EndpointReferenceExpression"/>,
     /// <see cref="ReferenceExpression"/>, or <see cref="ParameterResource"/> — was supplied).
     /// </summary>
+    /// <remarks>
+    /// The string-literal branch escapes braces via <see cref="EscapeLiteralBraces"/> too
+    /// (defensive: today's literals — mysql's fixed 'root' username, a database resource
+    /// name — never contain braces, but this stays correct if that ever changes, and it keeps
+    /// every <c>AppendLiteral</c> call site in this file consistent — see
+    /// <see cref="EscapeLiteralBraces"/> for why an un-escaped literal corrupts the result).
+    /// </remarks>
     private static void AppendPart(ReferenceExpressionBuilder builder, object part)
     {
         if (part is string literal)
-            builder.AppendLiteral(literal);
+            builder.AppendLiteral(EscapeLiteralBraces(literal));
         else
             builder.AppendValueProvider(part, null);
     }
