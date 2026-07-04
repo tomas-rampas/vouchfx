@@ -38,7 +38,7 @@ You should see version and runtime information. On Windows, this typically means
 
 ## Building vouchfx from source
 
-vouchfx ships as a `dotnet global tool` (packaged in Sprint 11). For now, build it from source. Clone the repository if you haven't already:
+vouchfx is packaged as a `dotnet` global tool (Sprint 11); until the v1.0 NuGet publish, build it from source. Clone the repository if you haven't already:
 
 ```bash
 git clone https://github.com/tomas-rampas/vouchfx.git
