@@ -25,7 +25,7 @@
 
 | # | Action | Reference |
 |---|--------|-----------|
-| 5 | ☐ **Reserve `vouchfx` and `Platform.Sdk` package IDs on NuGet.org** and set up the Platform.Sdk publish channel. Trusted Publishing policy created 2026-07-05 — the `NUGET_API_KEY` secret is no longer needed. Residual: claim the package IDs (first push claims "vouchfx"); if >7 days pass before first publish, restart the policy activation window on NuGet.org. | GTM-02 · [#84](https://github.com/tomas-rampas/vouchfx/issues/84) |
+| 5 | ☐ **Reserve `vouchfx` and `Platform.Sdk` package IDs on NuGet.org** and set up the Platform.Sdk publish channel. Trusted Publishing policy created 2026-07-05 — the `NUGET_API_KEY` secret is no longer needed. Residual: claim the package IDs (first push claims "vouchfx"); verify the Trusted Publishing policy's active state on NuGet.org; restart the activation window if it has lapsed. | GTM-02 · [#84](https://github.com/tomas-rampas/vouchfx/issues/84) |
 | 6 | ☐ **Register the Visual Studio Marketplace publisher** ("vouchfx") for the VSIX. | GTM-04 |
 | 7 | ☐ **Provision Azure for the telemetry backend** — subscription, OIDC federated identity, ACR, resource group; populate the three placeholder secrets (`TELEMETRY_INGEST_TOKENS`, `DB_ADMIN_PASSWORD`, `DB_CONNECTION_STRING`); run its `deploy.yml`; smoke `/healthz`. **Must be live before the six-week measurement window opens** — it measures GA Gate 1. | GTM-36 · [#152](https://github.com/tomas-rampas/vouchfx/issues/152) |
 
@@ -41,7 +41,7 @@
 
 | # | Action | Reference |
 |---|--------|-----------|
-| 11 | ☐ **Cut the `v1.0.0` tag.** The 2026-07-05 smoke run proved the pipeline end-to-end (all build/sign jobs green); needs items 4 and 5 first — and formally item 8. **Before tagging,** verify the Trusted Publishing policy's active state on NuGet.org (RELEASING.md "pending-activation caveat"); restart the activation window if needed. | GTM-01/05 · [#121](https://github.com/tomas-rampas/vouchfx/issues/121) |
+| 11 | ☐ **Cut the `v1.0.0` tag.** The 2026-07-05 smoke run proved the pipeline end-to-end (all build/sign jobs green); needs items 4 and 5 first — and formally item 8. **Before tagging,** verify the Trusted Publishing policy's active state on NuGet.org (RELEASING.md "pending-activation caveat"); restart the activation window if it shows as lapsed. | GTM-01/05 · [#121](https://github.com/tomas-rampas/vouchfx/issues/121) |
 | 12 | ☐ **Approve and publish the launch governance artefacts** — trademark policy, open-source/commercial feature boundary, public roadmap. Drafts can be produced on request; the policy positions are yours. | GTM-24 · [#115](https://github.com/tomas-rampas/vouchfx/issues/115) |
 | 13 | ☐ **Launch communications** — Show HN, /r/dotnet, the long-form blog post, and *naming the 30-day support-SLA rota* (a person commitment: issues < 1 business day, external PRs < 5 days). | GTM-34 · [#122](https://github.com/tomas-rampas/vouchfx/issues/122) |
 | 14 | ☐ **Run the pricing pre-commitment conversations and take deposits** during the week-3 pilot retrospectives — needs the entity's bank account (item 3). | GTM-33 |

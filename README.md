@@ -483,7 +483,7 @@ engine internals.
 
 For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
 
-Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations; no long-lived keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline (`.github/workflows/release.yml`) produces every release.
+Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations, and the nupkg is published to NuGet.org via Trusted Publishing (OIDC); no long-lived signing or publishing keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing and publishing pipeline (`.github/workflows/release.yml`) produces every release.
 
 ### Verifying a release
 

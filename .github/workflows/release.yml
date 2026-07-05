@@ -24,9 +24,10 @@
 #                   '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
 #                 --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
-#   3. NuGet Trusted Publishing (NuGet/login@v1)
-#      GitHub OIDC token → nuget.org token exchange → short-lived,
-#      single-use API key (valid ~1 hour, minted immediately before push).
+#   3. NuGet Trusted Publishing (NuGet/login, SHA-pinned)
+#      single-use GitHub OIDC token → nuget.org token exchange → short-lived
+#      API key (valid ~1 hour, reusable within that window, minted
+#      immediately before push).
 #      Gated by a Trusted Publishing policy on nuget.org (Package Owner
 #      "Tomas.R"): Repository tomas-rampas/vouchfx, Workflow File
 #      release.yml, no Environment. No NUGET_API_KEY secret is stored.
@@ -813,6 +814,10 @@ jobs:
     permissions:
       contents: write   # attach files to the GitHub Release
       id-token: write   # mint GitHub OIDC token for NuGet Trusted Publishing
+      # id-token is necessarily job-scoped (Actions has no step-level
+      # permissions), so every step in this job could technically mint an
+      # OIDC token; accepted — splitting a minimal publish job was judged
+      # riskier than this residual surface.
 
     env:
       VERSION: ${{ needs.build-dotnet.outputs.version }}
@@ -914,9 +919,9 @@ jobs:
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Done."
 
-      # Exchange the GitHub OIDC token for a short-lived (~1 hour),
-      # single-use NuGet.org API key via the Trusted Publishing policy
-      # configured on nuget.org (Package Owner "Tomas.R"): Repository
+      # Exchange the single-use GitHub OIDC token for a short-lived
+      # (~1 hour), reusable NuGet.org API key via the Trusted Publishing
+      # policy configured on nuget.org (Package Owner "Tomas.R"): Repository
       # tomas-rampas/vouchfx, Workflow File release.yml, no Environment.
       # Repository-gated: forks have no matching policy, so the token
       # exchange would fail there anyway — the explicit condition just
@@ -926,7 +931,7 @@ jobs:
       - name: NuGet login (OIDC → short-lived API key)
         id: nuget-login
         if: ${{ github.repository == 'tomas-rampas/vouchfx' && github.event_name != 'workflow_dispatch' }}
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: Tomas.R
 

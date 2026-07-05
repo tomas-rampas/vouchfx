@@ -228,7 +228,7 @@ weeks); GTM-28 issue close-out; GTM-37 calendar re-baseline. Everything else han
    (enables the GA Gate 2 deposit mechanics, GTM-33) and → EUIPO filing (GTM-31). Enterprise
    pilot onboarding waits on the Pilot/Beta Programme Agreement from this chain; SMB/OSS pilots
    do not — hence the channel prioritisation in GTM-35.
-3. **The release chain**: GTM-01 smoke run (now) → fix what it surfaces → GTM-02 IDs/key →
+3. **The release chain**: GTM-01 smoke run (now) → fix what it surfaces → GTM-02 IDs →
    GTM-03 certs land → formal M4 via GTM-32 (steering review; GTM-06 run or formal deferral per
    plan/m4-phase-exit.md §5) → **S12-D-01 v1.0 release**, whose acceptance additionally requires
    GTM-04 (Marketplace) and GTM-05 (verified installs on all three OSes). GTM-24 governance
@@ -247,7 +247,7 @@ weeks); GTM-28 issue close-out; GTM-37 calendar re-baseline. Everything else han
    week-3 retrospectives.
 
 ```
-GTM-29 naming ──┬─► GTM-02 NuGet IDs/key ──┐
+GTM-29 naming ──┬─► GTM-02 NuGet IDs    ──┐
                 ├─► GTM-04 Marketplace      ├─► GTM-01 smoke ─► S12-D-01 v1.0 ─► GTM-34 comms ─► LAUNCH
                 └─► GTM-31 trademark ◄── GTM-30 entity                 ▲
 GTM-30 entity ──┬─► pilot agreement ─► enterprise pilots     GTM-24 governance artefacts

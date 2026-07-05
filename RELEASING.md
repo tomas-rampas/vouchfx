@@ -1,9 +1,9 @@
 # Releasing vouchfx
 
 This document covers how to cut a release, how consumers verify the artifacts,
-the irreducible human steps that require provisioned credentials, and the
-distinction between the primary (nupkg) and secondary (self-contained exe)
-distribution channels.
+the human provisioning steps (signing credentials and the NuGet Trusted
+Publishing policy), and the distinction between the primary (nupkg) and
+secondary (self-contained exe) distribution channels.
 
 ## How to trigger a release
 
@@ -289,9 +289,9 @@ gpg --export --armor <key-id> > docs/vouchfx-gpg-public.asc
 
 The publish step uses NuGet.org's Trusted Publishing feature, which eliminates
 the need for long-lived API keys.  The workflow carries `id-token: write`
-permission and exchanges the GitHub OIDC token for a short-lived (~1 hour,
-single-use) NuGet.org API key via the `NuGet/login` action.  The `dotnet nuget
-push` command then uses that ephemeral key.
+permission and exchanges the GitHub OIDC token (single-use) for a short-lived
+(~1 hour, reusable for multiple pushes) NuGet.org API key via the `NuGet/login`
+action.  The `dotnet nuget push` command then uses that ephemeral key.
 
 A Trusted Publishing policy was created on NuGet.org on 2026-07-05 with the
 following settings:
@@ -313,17 +313,18 @@ names this repository.
 
 **Pending-activation caveat:**
 
-A newly created Trusted Publishing policy starts as "temporarily active" for
-7 days.  It becomes permanently active on the first successful publish, which
-locks the GitHub repository and owner IDs in place.  If no publish occurs
-within 7 days, the policy becomes inactive; the 7-day activation window can be
-restarted at any time from the NuGet.org Trusted Publishing management page.
+A newly created Trusted Publishing policy may start as "temporarily active" for
+up to 7 days (this usually applies to private repositories); check the actual
+state shown on the NuGet.org Trusted Publishing page.  It becomes permanently
+active on the first successful publish, which locks the GitHub repository and
+owner IDs in place.  If the policy shows as inactive and no publish has yet
+occurred, the activation window can be restarted at any time from the
+NuGet.org Trusted Publishing management page.
 
 **Before cutting the `v1.0.0` tag,** log in to NuGet.org, navigate to the
-Trusted Publishing settings, and verify the policy still shows as active.  If
-it has expired and no publish has succeeded, restart the activation window
-immediately.  After the first successful publish, the policy will remain active
-permanently.
+Trusted Publishing settings, and verify the policy's state.  If it has lapsed
+and no publish has succeeded, restart the activation window immediately.
+After the first successful publish, the policy will remain active permanently.
 
 ---
 
