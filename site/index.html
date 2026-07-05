@@ -4,14 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>vouchfx — End-to-end testing for distributed systems, authored in YAML</title>
-<meta name="description" content="vouchfx compiles declarative .e2e.yaml specs into memory-safe C#, orchestrates the full container topology with .NET Aspire + Testcontainers, and proves your distributed system works end-to-end — across REST, Kafka, Postgres and webhooks." />
+<meta name="description" content="vouchfx compiles declarative .e2e.yaml specs into memory-safe C#, orchestrates the full container topology with .NET Aspire + Testcontainers, and proves your distributed system works end-to-end across REST, databases, message brokers, caches, webhooks and scripts." />
 <meta name="theme-color" content="#0b0f1a" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 
 <!-- Open Graph / social -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="vouchfx — End-to-end testing for distributed systems, authored in YAML" />
-<meta property="og:description" content="Declarative .e2e.yaml → compiled C# → real container topology via .NET Aspire. End-to-end testing for distributed systems, whatever the stack under test." />
+<meta property="og:description" content="End-to-end testing for distributed .NET systems. Declarative .e2e.yaml → compiled C# → orchestrated container topology via Aspire. Tests REST, databases, message brokers, caches, webhooks and scripts end-to-end." />
 
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -44,7 +44,7 @@
 <section class="hero">
   <div class="hero__glow" aria-hidden="true"></div>
   <div class="container hero__inner">
-    <span class="badge"><span class="badge__dot"></span> Pre-release · Sprints 1–10 delivered · M4 (Tooling &amp; hardening) in progress</span>
+    <span class="badge"><span class="badge__dot"></span> Pre-release · Sprints 1–11 delivered · Sprint 12 (M5 pilot &amp; launch) in progress</span>
     <h1 class="hero__title">
       End-to-end testing for<br />distributed systems,<br /><span class="grad">authored in YAML.</span>
     </h1>
@@ -56,7 +56,7 @@
     </p>
     <div class="hero__cta">
       <a class="btn btn--primary" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Explore the repo</a>
-      <a class="btn btn--ghost" href="#dsl">See a test &darr;</a>
+      <a class="btn btn--ghost" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Run a real sample &rarr;</a>
     </div>
 
     <div class="pipeline" role="img" aria-label="Pipeline: author, validate, compile once, orchestrate, execute, verdict, unload">
@@ -272,17 +272,19 @@ alc.<span class="t">Unload</span>();</code></pre>
       <code>Dictionary&lt;string,object&gt;</code>.
     </p>
     <div class="providers">
-      <span class="prov">http.rest</span>
-      <span class="prov">mq-publish.kafka</span>
-      <span class="prov">mq-expect.kafka</span>
-      <span class="prov">db-assert.postgres</span>
+      <span class="prov" title="REST/HTTP"><strong>http</strong></span>
+      <span class="prov" title="PostgreSQL, MySQL, SQL Server, MongoDB"><strong>db-assert</strong>: postgres, mysql, sqlserver, mongodb</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus"><strong>mq-publish</strong>: kafka, rabbitmq, nats, asb</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus"><strong>mq-expect</strong>: kafka, rabbitmq, nats, asb</span>
+      <span class="prov" title="Redis, Elasticsearch"><strong>cache-assert</strong>: redis, elasticsearch</span>
+      <span class="prov">mail-expect.smtp</span>
       <span class="prov">webhook-listen.http</span>
       <span class="prov">script.csharp</span>
     </div>
     <div class="grid grid--3">
       <article class="card">
         <h3>Three governance tiers</h3>
-        <p><strong>Core</strong> · <strong>Verified</strong> · <strong>Community</strong> — all Apache-2.0, so providers move tiers without IP friction.</p>
+        <p><strong>Core</strong> · <strong>Verified</strong> · <strong>Community</strong> — all Apache-2.0, so providers move tiers without IP friction. Explore the <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">community provider hub</a>.</p>
       </article>
       <article class="card">
         <h3>Frozen v1 contract</h3>
@@ -339,19 +341,19 @@ alc.<span class="t">Unload</span>();</code></pre>
         <p>The YAML→AST→CSX compiler runs three providers end-to-end with seed, env secrets, capture, the reflective registry and the terminal renderer. Closed in Sprint 5.</p>
       </li>
       <li class="timeline__item">
-        <span class="timeline__badge">M3 · engineering complete</span>
+        <span class="timeline__badge">M3 · engineering complete, exit-gated</span>
         <h4>Full step set &amp; SDK</h4>
-        <p>All six Core providers plus RETRY; v1 schema, contract and event-wire frozen; the Provider SDK published and outside-validated; runner selection and polling timeline. Engineering complete (Sprint 8); in exit review on three human sign-off items.</p>
+        <p>All eighteen Core providers across eight families plus RETRY; v1 schema, contract and event-wire frozen; the Provider SDK packaged and clean-room-validated; runner selection and polling timeline. Engineering complete (Sprint 8); awaiting human sign-off items (outside-contributor SDK validation, steering review, contract-freeze sign-off).</p>
       </li>
       <li class="timeline__item">
-        <span class="timeline__badge">M4 · in progress</span>
+        <span class="timeline__badge">M4 · engineering complete, exit-gated</span>
         <h4>Tooling &amp; hardening</h4>
-        <p>VSCode extension, CLI, and HTML/JUnit reporting delivered (Sprints 9–10), with CI templates, the documentation set and the accessibility review. Stabilisation and the green reference scenario land in Sprint 11.</p>
+        <p>VSCode extension, CLI, and HTML/JUnit reporting delivered (Sprints 9–10), with CI templates, the documentation set and the accessibility review. Stabilisation and the green reference scenario landed in Sprint 11. Exit-gated on cert provisioning, GitLab live run, and steering review.</p>
       </li>
       <li class="timeline__item">
-        <span class="timeline__badge">M5</span>
+        <span class="timeline__badge">M5 · in progress</span>
         <h4>Pilot &amp; v1.0 release</h4>
-        <p>Onboard the pilot cohort, instrument the success criteria, ship v1.0, run the go/no-go assessment, and open the community repository. Sprint 12.</p>
+        <p>Community provider hub, telemetry backend, and sample applications published (Sprint 12). Remaining: final pilot cohort validation and v1.0 release.</p>
       </li>
     </ol>
   </div>
@@ -383,6 +385,9 @@ alc.<span class="t">Unload</span>();</code></pre>
       <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Repository</a>
       <a href="docs.html">Documentation</a>
       <a href="plan/README.html">Delivery plan</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">Community Provider Hub</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Sample Applications</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer">Telemetry Backend</a>
       <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
     </div>
   </div>

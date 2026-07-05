@@ -72,7 +72,7 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 
 Files use the `.e2e.yaml` extension. Four top-level sections, only `steps` is mandatory:
 - `metadata` — `name`/`owner`/`tags`/`description`; drives runner selection (by tag/owner/path/change-set/prior-verdict, §16) and reporting. No execution effect.
-- `environment` — `services` (system under test: `image:` preferred, or `project:` csproj), `dependencies` (managed Aspire resources: postgres, kafka, …), optional `seed` (SQL/fixtures/warm-up applied after the topology is healthy), `imageRegistry`/`imagePullPolicy` overrides.
+- `environment` — `services` (system under test: `image:` preferred, or `project:` csproj, with optional `env` map for container environment variables using `${conn:<dependency>}` connection references resolved at topology-build time in the consumer's network context), `dependencies` (managed Aspire resources: postgres, kafka, …), optional `seed` (SQL/fixtures/warm-up applied after the topology is healthy), `imageRegistry`/`imagePullPolicy` overrides.
 - `variables` — constants pre-loaded into the shared context.
 - `steps` — ordered; each has `id`, `type`, optional `capture` (JSONPath/XPath → vars), `verifyMode` (`IMMEDIATE` default / `RETRY` for engine-owned polling with backoff — authors never write `Thread.Sleep`), `timeout`, `continueOnFailure`.
 
@@ -80,4 +80,4 @@ Steps share one mutable dictionary (`ScriptGlobalVariables`); state threads forw
 
 ## Planned repository structure (partially built)
 
-Six **Core providers** at `src/Providers/Core`: all delivered (`http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`, `mq-expect.kafka`, `webhook-listen.http`). Community-reviewed providers under `src/Providers/Verified`. Three governance tiers (Core / Verified / Community), all Apache-2.0 so providers move tiers without IP friction. `db-assert` has **no** default provider (no sensible lowest common denominator); other single-provider families accept the bare family name as an alias.
+Eighteen **Core providers** across eight families at `src/Providers/Core`: all delivered (`http.rest`; `db-assert.postgres`, `db-assert.mysql`, `db-assert.sqlserver`, `db-assert.mongodb`; `mq-publish.kafka`, `mq-publish.rabbitmq`, `mq-publish.nats`, `mq-publish.azureservicebus`; `mq-expect.kafka`, `mq-expect.rabbitmq`, `mq-expect.nats`, `mq-expect.azureservicebus`; `cache-assert.redis`, `cache-assert.elasticsearch`; `mail-expect.smtp`; `webhook-listen.http`; `script.csharp`). Community-reviewed providers under `src/Providers/Verified`. Three governance tiers (Core / Verified / Community), all Apache-2.0 so providers move tiers without IP friction. `db-assert` has **no** default provider (no sensible lowest common denominator); other single-provider families accept the bare family name as an alias.

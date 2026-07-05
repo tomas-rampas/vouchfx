@@ -28,10 +28,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all eighteen Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus), HTTP, webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK is published as a NuGet package (`Platform.Sdk`) with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated. Remaining phase-exit items are human-gated: the steering review, the GitLab live-pipeline run (#153), and certificate provisioning.
-> Still to come: community provider tiers (Verified and Community governance) and the v1.0 release in Sprint 12 — see
-> the [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md). The engine targets **.NET 8 LTS**,
-> shipped as a `dotnet` global tool plus a VSCode extension.
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Platform.Sdk`) is packable with developer guidance and worked-example providers (published to NuGet.org with v1.0), and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated. Remaining phase-exit items are human-gated: the steering review, the GitLab live-pipeline run (#153), and certificate provisioning.
+> Sprint 12 (M5 — pilot and launch) is in progress. The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is now live with Verified and Community tiers; the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites; and the [vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) is implemented and pending deployment. Remaining for v1.0: final integration testing with the pilot cohort and the v1.0 release (see [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -122,6 +120,8 @@ The repository includes worked scenarios demonstrating core features:
 - **[`examples/ci-reference/smoke.e2e.yaml`](examples/ci-reference/smoke.e2e.yaml)** — A minimal happy-path scenario used in CI integration tests.
 - **[`examples/getting-started/hello-world.e2e.yaml`](examples/getting-started/hello-world.e2e.yaml)** — A first-time introductory scenario from the Getting Started guide.
 
+**For real-world sample applications and comprehensive end-to-end test suites**, see the **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** repository, which includes working microservices in C#, Python, and Java with corresponding test suites demonstrating provider usage across multiple technologies.
+
 ### CI integration with GitHub Actions
 
 vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`) that runs a vouchfx `.e2e.yaml` suite end-to-end against an orchestrated container topology and publishes JUnit and HTML artefacts. Any repository can call this workflow to integrate vouchfx tests into its CI pipeline.
@@ -131,7 +131,7 @@ vouchfx ships a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx
 ```yaml
 jobs:
   vouchfx-e2e:
-    uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
     with:
       scenario-path: ./tests/e2e
       fail-on-env-error: false
@@ -172,7 +172,7 @@ The distinction lets CI systems handle each outcome independently: fail the buil
 
 1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
    ```yaml
-   uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
    ```
    A branch/tag ref lets the workflow definition change underneath you; a SHA is immutable.
 
@@ -199,7 +199,7 @@ vouchfx ships an **`include`-able GitLab CI/CD template** (`ci/gitlab/vouchfx-ru
 
 ```yaml
 include:
-  - project: vouchfx-org/vouchfx
+  - project: tomas-rampas/vouchfx
     ref: <40-char-commit-sha>
     file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
 
@@ -368,12 +368,14 @@ For complete information — the exact allowlist, where data is stored, the inst
 **New to vouchfx?** Here is a recommended reading order:
 
 1. **[Getting Started](docs/getting-started.md)** — Your first test in 60 minutes.
-2. **[Recipes](docs/recipes.md)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
-3. **[Common Patterns](docs/common-patterns.md)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows.
-4. **[Troubleshooting](docs/troubleshooting.md)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
-5. **[Language Reference](docs/language-reference.md)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
-6. **[Technical Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
-7. **[YAML DSL Specification](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The complete `.e2e.yaml` grammar and JSON Schema.
+2. **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications and complete end-to-end test suites demonstrating common patterns across multiple languages.
+3. **[Recipes](docs/recipes.md)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
+4. **[Common Patterns](docs/common-patterns.md)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
+5. **[Troubleshooting](docs/troubleshooting.md)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
+6. **[Language Reference](docs/language-reference.md)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
+7. **[Technical Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+8. **[YAML DSL Specification](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The complete `.e2e.yaml` grammar and JSON Schema.
+9. **[Community Provider Hub](https://github.com/tomas-rampas/vouchfx-providers)** — Verified and Community tier providers, with examples and the provider authoring rubric.
 
 ### Report formats
 
@@ -422,7 +424,14 @@ src/
   Sdk/
     Platform.Sdk                      the frozen v1.x provider contract
   Providers/Core/
-    Platform.Steps.Core.HttpRest      reference HTTP provider (stub; built out in Sprint 2)
+    Platform.Steps.*.HttpRest         REST/HTTP family
+    Platform.Steps.*.DbAssert.*       database assertions (Postgres, MySQL, SQL Server, MongoDB)
+    Platform.Steps.*.MqPublish.*      message publishing (Kafka, RabbitMQ, NATS, Azure Service Bus)
+    Platform.Steps.*.MqExpect.*       message consumption & assertions (same 4 brokers)
+    Platform.Steps.*.CacheAssert.*    cache/search assertions (Redis, Elasticsearch)
+    Platform.Steps.*.MailExpect       email assertions (SMTP)
+    Platform.Steps.*.WebhookListen    webhook listening (HTTP)
+    Platform.Steps.*.Script           embedded code (C#)
 tests/                                4 xUnit projects + the memory-leak measurement harness
 docs/                                 the authoritative design — single source of truth (see below)
 plan/                                 MVP delivery plan: 5 milestones, 12 sprints, 108 tasks
@@ -457,6 +466,12 @@ than at runtime:
 
 `Platform.Sdk` is the public provider-authoring contract — consumed by providers, not part of the
 engine internals.
+
+## Related repositories
+
+- **[vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers)** — The community provider hub. Hosts Verified and Community tier providers, with PR-gated conformance testing and the publisher rubric.
+- **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications (C#, Python, Java) and complete end-to-end test suites demonstrating common patterns and provider usage.
+- **[vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend)** — The optional open-source telemetry backend. Implements the frozen `/v1/telemetry` contract with PostgreSQL storage, retention policies, and deletion support.
 
 ## Contributing
 

@@ -10,7 +10,7 @@
 # reference below is the LOCAL form `./.github/workflows/vouchfx-run.yml` and the
 # vouchfx source defaults to this repo at this ref — no cross-repo pin is needed here.
 # A REAL consumer in ANOTHER repository should instead pin to a full commit SHA, e.g.
-#   uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
+#   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
 # (see the supply-chain notes in the reusable workflow's header).
 #
 # The runner is ubuntu-latest, which ships Docker — required for the Aspire topology

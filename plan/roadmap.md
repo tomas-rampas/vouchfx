@@ -8,19 +8,7 @@ A sprint- and milestone-level view of the [delivery plan](README.md). Rendered n
 > MVP §7.2 the calendar sizes the effort; **milestones, not dates, are the measure of progress**.
 > Sprint 11 is a 1-week stabilisation sprint; Sprint 12 is a 3-week pilot/release sprint.
 >
-> **Progress (2026-06-28):** Sprints **01–10 are delivered and merged to `main`** (PR #126/#127, #128, #131,
-> #134, #135, #136, #137, #138, #140, #145/#146/#147, #148/#149/#150, #151 (chunk-2), #155 (Phase A)).
-> **Sprint 11 (M4 stabilisation) is delivered and merged.** Milestones **M1 (closed S02) and M2 (closed S05)
-> are reached**. **M3 (Full step set & SDK, closes S08) is engineering-complete** — all six Core providers,
-> v1 schema/contract/event-wire frozen, Provider SDK published and outside-validated, runner selection/parallelism/Vault,
-> polling timeline and captured-variable rendering. M3 is **exit-gated on three human items** (steering review,
-> contract sign-off, outside-contributor social gate; see `plan/m3-phase-exit.md`). **M4 (Tooling & hardening,
-> closes S11) is engineering-complete and exit-gated:** VSCode feature-complete; CLI/HTML/JUnit/--events from
-> v1 event stream; CI templates (GitHub Actions live, GitLab validated; #153 deferred); four-technology reference
-> scenario green from editor and CLI; memory-leak gate continuously verified; secret-redaction penetration-tested
-> with raw+JSON-escaped scrubbing; environment-error classification robust; signed release (SBOM, SLSA, keyless cosign,
-> OS-installers) ready and certificate-gated. **Three human-gated items remain for M4** (steering review, GitLab live
-> run #153, certificate provisioning; see `plan/m4-phase-exit.md`). Phase 5 (Pilot & v1.0, Sprint 12 / M5) is next.
+> **Progress (2026-07-04):** Sprints **01–11 delivered and merged to `main`**. **M1 (closed S02) and M2 (closed S05) are reached; M3 (S08) and M4 (S11) are engineering-complete and exit-gated.** M3 is engineering-complete with all eighteen Core providers across eight families, v1 schema/contract/event-wire frozen, Provider SDK packaged and clean-room-validated, runner selection/parallelism/Vault, polling timeline and captured-variable rendering — exit-gated on three human items (outside-contributor SDK validation sign-off, steering review, contract-freeze sign-off; see `plan/m3-phase-exit.md`). M4 is engineering-complete with VSCode + CLI features, HTML/JUnit/--events reporting, CI templates, four-technology reference scenario green, memory-leak CI gate, secret-redaction penetration-tested, signed release — exit-gated on three human items (certificate provisioning, GitLab live run #153, steering review; see `plan/m4-phase-exit.md`). **M5 (Pilot & v1.0, Sprint 12) is in progress:** community provider hub (`vouchfx-providers`) live with Verified/Community tiers (PR #157, docs merged), `vouchfx-samples` repository published (real C#/Python/Java sample apps + suites), telemetry backend (`vouchfx-telemetry-backend`) implemented and deploy-ready (Phase A merged #155; Phase B engineering-complete). Remaining for v1.0: pilot cohort final integration testing and the release.
 
 ```mermaid
 gantt
@@ -63,9 +51,9 @@ gantt
 |---|---|---|---|
 | **M1** Foundations proven | S02 | 4 | Memory model gated over the full Core provider closure; health-gated stub topology; provider contract exercised; event-stream schema drafted. |
 | **M2** Core compiler runs | S05 | 10 | Three providers run end-to-end with seed, env secrets, capture, reflective registry, terminal renderer. |
-| **M3** Full step set & SDK | S08 | 16 | Six providers + RETRY; v1 schema/contract frozen; Provider SDK published & outside-validated; runner + polling timeline. |
-| **M4** Tooling & hardening | S11 | 21 | VSCode + CLI feature-complete; reference scenario green; memory-leak CI gate; HTML/JUnit; CI templates; docs; signed release. |
-| **M5** Pilot & v1.0 release | S12 | 24 | Cohort onboarded; criteria instrumented; v1.0 released; go/no-go assessment; community repo open. |
+| **M3** Full step set & SDK | S08 | 16 | Eighteen Core providers across eight families + RETRY; v1 schema/contract frozen; Provider SDK packaged & clean-room-validated; runner + polling timeline. Exit-gated on outside-contributor sign-off, steering review, contract-freeze sign-off. |
+| **M4** Tooling & hardening | S11 | 21 | VSCode + CLI feature-complete; reference scenario green; memory-leak CI gate; HTML/JUnit; CI templates; docs; signed release. Exit-gated on steering review, GitLab live run, certificate provisioning. |
+| **M5** Pilot & v1.0 release | S12 | 24 | Community provider hub (Verified/Community tiers), sample applications, and telemetry backend published. Pilot cohort onboarded; v1.0 released; go/no-go assessment. |
 
 ## Critical-path note
 

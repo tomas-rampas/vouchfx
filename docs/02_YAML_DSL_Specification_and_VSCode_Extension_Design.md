@@ -129,6 +129,8 @@ environment:
 
 An image-pull failure — registry unreachable, authentication failed, image not found — is classified as an environment error per the verdict taxonomy, not a test failure. The report names the registry hostname and the authentication status alongside the runtime's underlying error, so an engineer can act on it without spelunking. This is the most common cause of early-pilot frustration in Docker-based testing tools, and the architecture handles it explicitly rather than letting it manifest as a generic timeout.
 
+> **Note on `imagePullPolicy` enforcement:** The `imagePullPolicy` field is currently accepted by the validator but **not enforced** by the runtime; the underlying Docker/container default applies (pull if image is missing locally). This field is reserved for future enforcement. Authors should not rely on it to prevent unexpected image pulls; use explicit `@sha256:…` digest pinning if reproducibility is critical.
+
 ### 3.2.2 Schema registries for message brokers
 
 A Kafka broker can optionally be paired with a Confluent Schema Registry to provide schema governance and Avro serialisation. When Avro steps in the test need to publish or consume from a schema registry, declare the flag `schemaRegistry: true` on the Kafka dependency. The engine provisions the registry as a sidecar container and wires it to the broker; steps then reference the Kafka dependency by name to access the registry.
@@ -166,7 +168,44 @@ Declarative fixtures are the recommended default because they live in source con
 
 > **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. This limitation is tracked in the post-v1 backlog as PB-02.
 
-### 3.2.4 Test doubles
+### 3.2.4 Configuring the system under test
+
+Services declared under `environment.services` may carry an optional `env` map to configure the service container with environment variables. Each variable name maps to a value that may be a literal string, zero or more `${conn:<dependency>}` references to a dependency declared under `environment.dependencies`, or both interleaved. The engine resolves connection references at topology-build time in the consumer service's network context — that is, containerised services receive the container-internal hostnames and ports, not the host-published ones.
+
+```yaml
+environment:
+  services:
+    orders-api:
+      image: myorg/orders-api:latest
+      env:
+        DATABASE_URL: "postgresql://orders-db:5432/orders"
+        MESSAGE_BROKER: "${conn:events}"
+        CACHE_ENDPOINT: "${conn:cache.host}:${conn:cache.port}"
+        DB_USERNAME: "${conn:orders-db.username}"
+        WEBHOOK_CALLBACK: "https://webhook-service/callbacks"
+  dependencies:
+    orders-db:  { type: postgres, version: "16" }
+    events:     { type: kafka }
+    cache:      { type: redis }
+```
+
+Supported dependency kinds and their available parts are:
+
+| Kind | Supported parts |
+|---|---|
+| `postgres`, `mysql`, `sqlserver`, `mongodb` | `host`, `port`, `username`, `password`, `database` |
+| `kafka` | `host`, `port` (internal bootstrap; scheme not included) |
+| `rabbitmq` | `host`, `port`, `username`, `password` |
+| `redis` | `host`, `port`, `password` |
+| `nats` | `host`, `port`, `username`, `password` |
+| `elasticsearch` | `host`, `port` |
+| `mailpit` | `host`, `port` (SMTP endpoint) |
+
+Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}` or `${secret:…}` references — are passed through to the container verbatim.
+
+Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias.
+
+### 3.2.5 Test doubles
 
 When a dependency cannot be exercised for real — a payment gateway that costs money, a third-party API with no sandbox, a service that does not yet exist — the platform's position is that a test double is provisioned like any other dependency: as a container running a stubbing tool such as WireMock or Mountebank, declared in this same section and addressed through the same logical name. The platform ships no built-in mocking; a double is a deliberate, visible entry in the environment rather than a hidden behaviour. Because the double speaks the real protocol, the steps that call it are written identically to steps that call the real service, and swapping one for the other later requires no change to the test logic — only to this declaration.
 
@@ -412,7 +451,7 @@ The example below uses `db-assert.postgres`, the Core provider that ships with t
 
 A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the cloud topology, the architecture's reverse SSH port forwarding ensures that a webhook fired by a cloud-hosted service still reaches this listener on the developer's machine. The step is inherently asynchronous and is therefore always combined with `verifyMode: RETRY`.
 
-The Core provider is `webhook-listen.http`. The engine stands up an ephemeral host-owned HTTP listener for each declared `listener` name, stages its bound URL at both `svc::<listener>` and the plain `Vars[<listener>]` key (so authors can interpolate `{<listener>}` into callback registration calls in earlier steps), and at execution time asserts that at least one captured inbound HTTP request satisfies all declared match criteria.
+The Core provider is `webhook-listen.http`. The engine stands up an ephemeral host-owned HTTP listener for each declared `listener` name and stages its bound URL in two forms: `{<listener>}` (loopback, for host-local steps) and `{<listener>_container}` (host-gateway form, for containerised SUTs to use as a callback URL). Both are available in `Vars` so authors can interpolate them into callback registration calls in earlier steps. At execution time the step asserts that at least one captured inbound HTTP request satisfies all declared match criteria.
 
 | Field | Meaning |
 |---|---|
