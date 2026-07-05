@@ -521,6 +521,463 @@ Common causes:
 
 ---
 
+## RabbitMQ: message not in queue (ownership, durability, publish-after-declare)
+
+**Symptom:**
+An `mq-expect.rabbitmq` step asserts on a queue but the message is not found, even though the publish step ran first.
+
+**What it means:**
+Common causes:
+
+1. **Queue does not exist.** RabbitMQ routing requires the queue to exist before a message can be routed to it.
+2. **Durability mismatch.** The queue was declared as transient (auto-delete) in a previous test and was deleted when emptied.
+3. **Wrong routing key.** The routing key used in the publish step does not match the queue name or binding.
+4. **Message was already consumed.** Another consumer drained the queue before the assertion ran.
+
+**Fix:**
+
+1. **Declare the queue explicitly in the environment.** If your SUT declares the queue at startup, ensure the HTTP trigger step runs before the assertion:
+   ```yaml
+   steps:
+     # Step 1: Trigger SUT to declare the queue
+     - id: initialize-service
+       type: http.rest
+       target: rabbitmq-service
+       method: POST
+       path: /init
+       expect:
+         status: 200
+
+     # Step 2: Now the queue exists; publish a message
+     - id: publish-message
+       type: mq-publish.rabbitmq
+       target: events-rmq
+       routingKey: orders-notifications
+       payload: '{"orderId":"123"}'
+
+     # Step 3: Assert the message is in the queue
+     - id: assert-message
+       type: mq-expect.rabbitmq
+       target: events-rmq
+       queue: orders-notifications
+       match:
+         payloadContains: "123"
+       verifyMode: RETRY
+       timeout: 10s
+   ```
+
+2. **Use durable queues.** In your SUT or topology setup, declare queues with the durable flag set to `true`:
+   ```csharp
+   // Example: declaring a durable queue in RabbitMQ client
+   channel.QueueDeclare(
+       queue: "orders-notifications",
+       durable: true,
+       exclusive: false,
+       autoDelete: false
+   );
+   ```
+
+3. **Match the routing key to the queue name.** When using the default exchange, the routing key must match the queue name exactly:
+   ```yaml
+   - id: publish
+     type: mq-publish.rabbitmq
+     routingKey: orders-notifications  # Routes to this queue name
+
+   - id: assert
+     type: mq-expect.rabbitmq
+     queue: orders-notifications  # Same as routing key
+   ```
+
+4. **Use `verifyMode: RETRY`** to wait for eventual consistency:
+   ```yaml
+   - id: assert-with-retry
+     type: mq-expect.rabbitmq
+     target: events-rmq
+     queue: orders-notifications
+     match:
+       payloadContains: "123"
+     verifyMode: RETRY
+     timeout: 15s
+   ```
+
+---
+
+## NATS: Inconclusive verdict on mq-expect.nats (stream created after publish — lost message)
+
+**Symptom:**
+An `mq-expect.nats` step times out with an `Inconclusive` verdict, but the message was published in a preceding step.
+
+**What it means:**
+NATS JetStream messages are **only retained if the stream exists before they are published.** If you publish to a subject before the stream is created, the message is lost and cannot be recovered. The step then polls indefinitely and times out.
+
+**Common scenario:**
+1. Publish step runs and tries to publish to `orders.created`.
+2. The provider creates the stream on first use (lazy initialisation).
+3. But if there is a race or ordering issue, the stream might not exist yet → message is lost.
+4. Expect step runs later, creates the stream, and polls — but the message is gone.
+
+**Fix:**
+
+1. **Ensure the stream exists before publishing.** The simplest approach is to have an expect step run *before* the publish to warm up the stream:
+   ```yaml
+   steps:
+     # Step 1: Warm up the stream (ensures it exists)
+     - id: ensure-stream-exists
+       type: mq-expect.nats
+       target: nats-broker
+       subject: orders.created
+       match:
+         payloadContains: "dummy"  # A dummy criterion that will fail
+       continueOnFailure: true  # We expect this to fail; we just want the stream created
+
+     # Step 2: Now publish (stream is guaranteed to exist)
+     - id: publish-order-event
+       type: mq-publish.nats
+       target: nats-broker
+       subject: orders.created
+       payload: '{"orderId":"123"}'
+
+     # Step 3: Assert (stream exists and message is retained)
+     - id: assert-order-event
+       type: mq-expect.nats
+       target: nats-broker
+       subject: orders.created
+       match:
+         payloadContains: "123"
+       verifyMode: RETRY
+       timeout: 10s
+   ```
+
+2. **Use explicit stream names to avoid derivation ambiguity.** When two subjects might derive to the same stream name, use explicit names:
+   ```yaml
+   - id: publish
+     type: mq-publish.nats
+     target: nats-broker
+     subject: orders.created
+     stream: ORDERS_CREATED  # Explicit name prevents collisions
+
+   - id: assert
+     type: mq-expect.nats
+     target: nats-broker
+     subject: orders.created
+     stream: ORDERS_CREATED  # Must match the publish step
+   ```
+
+3. **Understand stream name derivation.** Subject names are converted to stream names by uppercasing and replacing non-alphanumeric characters (except `-`) with underscores. For example:
+   - `orders.created` → `ORDERS_CREATED`
+   - `orders_created` → `ORDERS_CREATED` (collision!)
+   - `orders-created` → `ORDERS-CREATED` (different from `orders.created`)
+
+   When in doubt, use explicit `stream` names in both publish and expect steps.
+
+4. **Use separate NATS dependencies per scenario.** If you have multiple scenarios asserting on the same subject, give each scenario its own `nats` dependency to avoid cross-scenario message bleed:
+   ```yaml
+   # Scenario 1
+   environment:
+     dependencies:
+       nats-scenario-1:  # Separate instance
+         type: nats
+
+   # Scenario 2
+   environment:
+     dependencies:
+       nats-scenario-2:  # Separate instance
+         type: nats
+   ```
+
+---
+
+## Azure Service Bus: entity not declared in dependency config → EnvironmentError
+
+**Symptom:**
+```
+EnvironmentError: Failed to start topology — queue 'my-queue' not found on service-bus dependency
+```
+
+**What it means:**
+Azure Service Bus Emulator (and real Azure Service Bus) requires queue and topic declarations to be made explicit in the test's `environment.dependencies` section. Queues and topics that are not declared will not be created, and messages sent to them will fail with an EnvironmentError.
+
+**Fix:**
+
+1. **Declare all queues and topics in the environment.** List them explicitly under the `azureservicebus` dependency:
+   ```yaml
+   environment:
+     dependencies:
+       service-bus:
+         type: azureservicebus
+         queues:
+           - order-commands
+           - order-notifications
+         topics:
+           - name: order-events
+             subscriptions:
+               - fulfillment-sub
+               - billing-sub
+           - name: shipment-events
+             subscriptions:
+               - tracking-sub
+   ```
+
+2. **Match queue and topic names exactly.** Ensure the `mq-publish` and `mq-expect` steps reference the declared names:
+   ```yaml
+   steps:
+     - id: publish
+       type: mq-publish.azureservicebus
+       target: service-bus
+       queue: order-commands  # Must be declared above
+
+     - id: assert
+       type: mq-expect.azureservicebus
+       target: service-bus
+       queue: order-commands  # Same name
+   ```
+
+3. **For topic subscriptions, declare both the topic and subscription.** A subscription cannot be created without its parent topic:
+   ```yaml
+   environment:
+     dependencies:
+       service-bus:
+         type: azureservicebus
+         topics:
+           - name: order-events
+             subscriptions:
+               - fulfillment-sub  # This subscription must have a parent topic
+   ```
+
+4. **Understand the entity declaration syntax.**
+   - **Queues** are simple strings: `queues: [queue1, queue2, ...]`
+   - **Topics** are objects with a `name` and optional `subscriptions` array: `topics: [{name: topic1, subscriptions: [sub1, sub2]}]`
+
+---
+
+## Redis: AuthenticationError from the SUT (missing password credential)
+
+**Symptom:**
+Your system under test fails with an authentication error when connecting to Redis:
+```
+AuthenticationError: WRONGPASS invalid username-password pair
+```
+
+or
+
+```
+ERR invalid password
+```
+
+**What it means:**
+The managed Redis dependency (provided by Aspire/Testcontainers) has authentication enabled, and your SUT is either:
+1. Not providing the password at all.
+2. Using the wrong password or username.
+
+**Fix:**
+
+1. **Inject the Redis password via environment variable.** The engine stages the Redis connection string (including password) as `conn::<target>`. Inject it into your SUT:
+   ```yaml
+   environment:
+     services:
+       my-service:
+         image: myco/my-service:latest
+         env:
+           REDIS_CONNECTION_STRING: ${conn:cache}
+   ```
+
+   Your SUT should then parse this connection string and use it to connect.
+
+2. **If your SUT requires host, port, and password separately,** extract them:
+   ```yaml
+   environment:
+     services:
+       my-service:
+         image: myco/my-service:latest
+         env:
+           REDIS_HOST: ${conn:cache.host}
+           REDIS_PORT: ${conn:cache.port}
+           REDIS_PASSWORD: ${conn:cache.password}
+   ```
+
+3. **For .NET applications using StackExchange.Redis,** construct the connection options from the credentials:
+   ```csharp
+   string connString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING");
+   var options = ConfigurationOptions.Parse(connString);
+   var redis = ConnectionMultiplexer.Connect(options);
+   ```
+
+4. **If the error persists,** verify the Redis container is healthy:
+   ```bash
+   docker logs <redis-container-id>
+   redis-cli -h localhost -p 6379 -a <password> ping
+   ```
+
+---
+
+## SQL Server: slow cold start; EnvironmentError on first pull
+
+**Symptom:**
+```
+EnvironmentError: Failed to start topology — HealthGate timeout of 00:00:20 on resource 'sqlserver'
+```
+
+The SQL Server container takes a long time to start for the first time.
+
+**What it means:**
+SQL Server is a large image (multiple gigabytes) and has a lengthy initialisation sequence. On the first run, Docker must pull the image from the registry, which can exceed the Aspire/DCP 20-second health check window.
+
+**Fix:**
+
+1. **Pre-warm the SQL Server image locally before running the suite** (most effective):
+   ```bash
+   docker pull mcr.microsoft.com/mssql/server:2022-latest
+   ```
+   Once the image is in the local cache, subsequent container startups are much faster.
+
+2. **In CI, use the `prewarm-images` workflow input** (GitHub Actions):
+   ```yaml
+   vouchfx-e2e:
+     uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+     with:
+       scenario-path: ./tests/e2e
+       prewarm-images: |
+         mcr.microsoft.com/mssql/server:2022-latest
+   ```
+
+3. **Ensure sufficient disk space and memory.** SQL Server requires at least 2 GB RAM and adequate disk space. If your Docker daemon is resource-constrained, increase limits.
+
+4. **Understand the startup sequence.** SQL Server's health check waits for the database engine to be ready, which involves filesystem initialisation. This is non-configurable; the 20-second Aspire window is a hard limit.
+
+---
+
+## SMTP/Mailpit: mail not found (wrong target key — HTTP API vs. SMTP endpoint)
+
+**Symptom:**
+Your system sends an email via SMTP, but the `mail-expect.smtp` step finds no messages.
+
+**What it means:**
+Common causes:
+
+1. **Your SUT is not connecting to Mailpit.** The SMTP endpoint is not injected or the SUT is ignoring it.
+2. **Wrong environment variable names.** The SUT expects different variable names than what the test provides.
+3. **Mailpit HTTP API is not reachable.** The step is querying the wrong endpoint.
+
+**Fix:**
+
+1. **Inject both the SMTP host and port separately.** Mailpit exposes two endpoints:
+   - HTTP API for querying: `conn::mailpit` (e.g., `http://localhost:8025`)
+   - SMTP server for sending: `svc::mailpit-smtp` with separate host and port
+
+   Ensure your SUT gets both:
+   ```yaml
+   environment:
+     services:
+       my-app:
+         image: myco/my-app:latest
+         env:
+           SMTP_HOST: ${conn:mail.host}
+           SMTP_PORT: ${conn:mail.port}
+   ```
+
+2. **Verify the SUT is sending email.** Add a debug HTTP step before the mail assertion to confirm the SUT is processing the request:
+   ```yaml
+   - id: send-email-request
+     type: http.rest
+     target: my-app
+     method: POST
+     path: /send-welcome
+     body:
+       to: alice@example.com
+       subject: "Welcome"
+     expect:
+       status: 202
+   ```
+
+3. **Use `verifyMode: RETRY`** to wait for SMTP delivery:
+   ```yaml
+   - id: assert-email
+     type: mail-expect.smtp
+     target: mail
+     expect:
+       count: 1
+       match:
+         to: alice@example.com
+         subject-contains: "Welcome"
+     verifyMode: RETRY
+     timeout: 30s
+   ```
+
+4. **Check Mailpit is running.** Verify the container is healthy:
+   ```bash
+   curl http://localhost:8025/api/v1/messages  # Should return JSON
+   ```
+
+5. **Understand match semantics.** All criteria (to, subject-contains, body-contains) are AND-conjunctive:
+   ```yaml
+   match:
+     to: alice@example.com
+     subject-contains: "Welcome"
+     body-contains: "Thank you"
+   # Message must match ALL three criteria
+   ```
+
+   If you are not finding a message, relax the criteria one by one to isolate the mismatch:
+   ```yaml
+   # First, check if ANY email exists to this address
+   match:
+     to: alice@example.com
+
+   # Then add subject filtering
+   match:
+     to: alice@example.com
+     subject-contains: "Welcome"
+
+   # Finally, add body filtering
+   match:
+     to: alice@example.com
+     subject-contains: "Welcome"
+     body-contains: "Thank you"
+   ```
+
+---
+
+## Cross-scenario state bleed (sequential suites on non-Postgres stores)
+
+**Symptom:**
+When you run multiple scenarios sequentially on the same topology, data from one scenario is visible in the next scenario. This happens with datastores other than PostgreSQL (MySQL, SQL Server, MongoDB, Redis, Elasticsearch, etc.).
+
+**What it means:**
+In v1, only PostgreSQL is automatically reset between scenarios via the Respawn library. Other datastores accumulate data across scenarios, causing test isolation failures:
+
+1. **Scenario A** writes data to Redis or MongoDB.
+2. **Scenario B** runs and expects clean state — but sees data from Scenario A.
+3. Test fails unexpectedly or produces false passes.
+
+**Workaround:**
+
+1. **Run scenarios in parallel (preferred).** Parallel execution isolates each scenario in its own topology, avoiding any cross-scenario state:
+   ```bash
+   # Run all scenarios in parallel (each gets its own containers); N must be >= 1
+   vouchfx run tests/e2e --parallel 4
+   ```
+
+2. **Add explicit cleanup steps.** As the first step of each scenario, explicitly clean the datastore:
+   ```yaml
+   steps:
+     # Scenario 2: start fresh
+     - id: cleanup-redis
+       type: script.csharp
+       description: Flush all data from Redis for this scenario.
+       code: |
+         var connStr = (string)Vars[VarKeys.Connection("cache")];
+         var options = StackExchange.Redis.ConfigurationOptions.Parse(connStr);
+         options.AllowAdmin = true;  // FlushDatabase is an admin command
+         var redis = StackExchange.Redis.ConnectionMultiplexer.Connect(options);
+         try {
+           redis.GetServer(redis.GetEndPoints().First()).FlushDatabase();
+         } finally { redis.Dispose(); }
+   ```
+
+3. **Understand the per-store reset status.** The engine plans to add automatic reset for non-Postgres stores in a future release (v2). Until then, parallel isolation or manual cleanup is the solution. See `plan/post-v1-backlog.md` § PB-02 for details.
+
+---
+
 ## See also
 
 - **[Recipes](recipes.md)** — Task-oriented examples for common scenarios.

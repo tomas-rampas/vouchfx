@@ -70,7 +70,7 @@ eight other stateful stores added in the provider batch:
 - **Redis** — `FLUSHDB` on the connection; straightforward.
 - **Elasticsearch** — delete-by-query or index-wipe per the declared dependency name.
 
-The **parallel path** (topology-per-scenario, enabled by `--parallel` or `parallelism:` in the suite
+The **parallel path** (topology-per-scenario, enabled by the CLI's `--parallel <n>` flag
 manifest) is already isolated by construction: each scenario gets its own topology and its own
 fresh containers, so no cross-scenario state leaks. The limitation only applies to sequential
 scenarios sharing one topology.
