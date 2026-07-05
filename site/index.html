@@ -28,6 +28,7 @@
       <a href="#how">How it works</a>
       <a href="#architecture">Architecture</a>
       <a href="#dsl">The DSL</a>
+      <a href="#samples">Samples</a>
       <a href="#memory">Memory model</a>
       <a href="#verdicts">Verdicts</a>
       <a href="#roadmap">Roadmap</a>
@@ -221,6 +222,37 @@
       and redacted in every report. Test doubles (WireMock/Mountebank) are ordinary containers in <code>environment</code>,
       not a bolted-on mocking feature.
     </p>
+  </div>
+</section>
+
+<!-- ===================== SAMPLES ===================== -->
+<section class="section section--alt" id="samples">
+  <div class="container">
+    <p class="eyebrow">Real-world samples</p>
+    <h2 class="section__title">Clone, run one command, see a complete end-to-end suite.</h2>
+    <p class="section__lede">
+      The <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">vouchfx-samples</a> repository contains three production-grade sample applications (in three stacks) with complete test suites demonstrating patterns across multiple providers and technologies.
+    </p>
+    <div class="grid grid--3">
+      <article class="card">
+        <h3>Orders · C# + ASP.NET</h3>
+        <p><strong>Stack:</strong> ASP.NET Core, PostgreSQL, Kafka, Webhook.</p>
+        <p><strong>Demonstrates:</strong> REST, database assertions, message publishing/consumption, webhook listening, RETRY polling.</p>
+        <a href="https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet" target="_blank" rel="noopener noreferrer">View →</a>
+      </article>
+      <article class="card">
+        <h3>Inventory · Python + FastAPI</h3>
+        <p><strong>Stack:</strong> FastAPI, MySQL, RabbitMQ, Redis.</p>
+        <p><strong>Demonstrates:</strong> HTTP, MySQL assertions, RabbitMQ publish/expect, Redis cache assertions, multi-step state threading.</p>
+        <a href="https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python" target="_blank" rel="noopener noreferrer">View →</a>
+      </article>
+      <article class="card">
+        <h3>Payments · Java + Spring Boot</h3>
+        <p><strong>Stack:</strong> Spring Boot, SQL Server, NATS JetStream, Mailpit.</p>
+        <p><strong>Demonstrates:</strong> REST, SQL Server assertions, NATS publish/expect with JetStream, email capture, connection-string injection.</p>
+        <a href="https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/payments-java" target="_blank" rel="noopener noreferrer">View →</a>
+      </article>
+    </div>
   </div>
 </section>
 
