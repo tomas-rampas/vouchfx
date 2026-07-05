@@ -32,9 +32,11 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
@@ -86,6 +88,8 @@ public sealed class LanguageReferenceGoldenTests
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
         typeof(MqPublishNatsProvider).Assembly,        // mq-publish.nats
         typeof(MqExpectNatsProvider).Assembly,         // mq-expect.nats
+        typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
+        typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
     };
 
     /// <summary>
@@ -153,9 +157,12 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("### `mq-expect.rabbitmq`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-publish.nats`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.nats`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-publish.azureservicebus`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-expect.azureservicebus`", generated, StringComparison.Ordinal);
         Assert.Contains("### `webhook-listen.http`", generated, StringComparison.Ordinal);
         Assert.Contains("### `cache-assert.redis`", generated, StringComparison.Ordinal);
         Assert.Contains("### `cache-assert.elasticsearch`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mail-expect.smtp`", generated, StringComparison.Ordinal);
 
         // The common step fields, documented once.
         Assert.Contains("## Common step fields", generated, StringComparison.Ordinal);
