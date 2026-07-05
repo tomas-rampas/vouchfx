@@ -547,7 +547,7 @@ on: [push, pull_request]
 
 jobs:
   vouchfx-e2e:
-    uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@<40-char-commit-sha>
     with:
       scenario-path: ./tests/e2e
       fail-on-env-error: false
@@ -594,7 +594,7 @@ In your project's `.gitlab-ci.yml`:
 
 ```yaml
 include:
-  - project: vouchfx-org/vouchfx
+  - project: tomas-rampas/vouchfx
     ref: <40-char-commit-sha>
     file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
 
@@ -635,6 +635,7 @@ For the full reference, see [`README.md` § CI integration with GitLab CI](../RE
 ## See also
 
 - **[Getting Started](getting-started.md)** — Your first vouchfx test in 60 minutes.
+- **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications and complete test suites demonstrating patterns across multiple providers and technologies.
 - **[Language Reference](language-reference.md)** — Complete per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema.
 - **[Common Patterns](common-patterns.md)** — Authoring patterns: the file structure, state threading, filtering, and scenario selection.
 - **[Troubleshooting](troubleshooting.md)** — Real failure modes and how to fix them.

@@ -92,7 +92,7 @@ This is **NOT a vouchfx configuration knob** (there is no `--health-check-timeou
 2. **In CI, use the `prewarm-images` workflow input** (GitHub Actions):
    ```yaml
    vouchfx-e2e:
-     uses: vouchfx-org/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
+     uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@<commit-sha>
      with:
        scenario-path: ./tests/e2e
        prewarm-images: |
@@ -524,6 +524,7 @@ Common causes:
 ## See also
 
 - **[Recipes](recipes.md)** — Task-oriented examples for common scenarios.
+- **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications and test suites demonstrating patterns.
 - **[Common Patterns](common-patterns.md)** — Authoring patterns and step structure.
 - **[Language Reference](language-reference.md)** — Complete field reference for every step type.
 - **[Technical Architecture Blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (Aspire, Roslyn, memory model, verdict taxonomy, secrets).

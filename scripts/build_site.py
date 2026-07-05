@@ -57,6 +57,9 @@ DOCS: list[tuple[str, str, str]] = [
     ("plan/sprint-11.md", "Delivery plan", "Sprint 11 — Stabilisation (M4)"),
     ("plan/sprint-12.md", "Delivery plan", "Sprint 12 — Pilot & release (M5)"),
     ("plan/post-v1-backlog.md", "Delivery plan", "Post-v1 / v2 backlog"),
+    ("plan/go-to-market-gap-analysis.md", "Delivery plan", "Go-to-market gap analysis"),
+    ("plan/m3-phase-exit.md", "Delivery plan", "M3 phase exit"),
+    ("plan/m4-phase-exit.md", "Delivery plan", "M4 phase exit"),
     ("README.md", "Project", "Project README"),
     ("CLAUDE.md", "Project", "Engineering guide (CLAUDE.md)"),
 ]
@@ -313,6 +316,16 @@ PORTAL = """<!DOCTYPE html>
   </section>
 
   <section class="portal__group">
+    <h2>Ecosystem</h2>
+    <p>Community providers, sample applications, and related projects.</p>
+    <div class="doc-cards">
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>Verified and Community tier providers with conformance testing, examples, and the provider authoring rubric.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Real-world microservices in C#, Python, and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">TELEMETRY</span><h3>Telemetry Backend</h3><p>The open-source, self-hostable telemetry backend with PostgreSQL storage, retention policies, and opt-in client instrumentation.</p></a>
+    </div>
+  </section>
+
+  <section class="portal__group">
     <h2>Project</h2>
     <p>Repository orientation and the operating rules for contributors.</p>
     <div class="doc-cards">
@@ -331,6 +344,9 @@ PORTAL = """<!DOCTYPE html>
     <div class="footer__links">
       <a href="index.html">Home</a>
       <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Repository</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">Community Provider Hub</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Sample Applications</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer">Telemetry Backend</a>
       <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
     </div>
   </div>
