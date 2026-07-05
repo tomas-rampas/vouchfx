@@ -26,7 +26,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (16):
+Registered step types (18):
 
 - [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
@@ -36,9 +36,11 @@ Registered step types (16):
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
 - [`mail-expect.smtp`](#mail-expectsmtp)
+- [`mq-expect.azureservicebus`](#mq-expectazureservicebus)
 - [`mq-expect.kafka`](#mq-expectkafka)
 - [`mq-expect.nats`](#mq-expectnats)
 - [`mq-expect.rabbitmq`](#mq-expectrabbitmq)
+- [`mq-publish.azureservicebus`](#mq-publishazureservicebus)
 - [`mq-publish.kafka`](#mq-publishkafka)
 - [`mq-publish.nats`](#mq-publishnats)
 - [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
@@ -180,6 +182,28 @@ Set `type: mail-expect.smtp` to use this step.
 | `expect` | `object` | The expectation block: how many messages must match the criteria. |
 | `target` | `string` | Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries. |
 
+### `mq-expect.azureservicebus`
+
+Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations. Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached. Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.
+
+Set `type: mq-expect.azureservicebus` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `target` | `string` | Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expectPayloadContains` | `string` | Optional substring the message body must contain for a match. May contain {placeholder} and ${secret:source/path} tokens. |
+| `expectProperties` | `object` | Optional application-property key=value pairs all of which must be present on the matched message. Values may contain {placeholder} and ${secret:source/path} tokens. |
+| `queue` | `string` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. |
+| `subscription` | `string` | The subscription on the topic to peek. Required when 'topic' is set. May contain {placeholder} substitution tokens. |
+| `topic` | `string` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. |
+
 ### `mq-expect.kafka`
 
 Set `type: mq-expect.kafka` to use this step.
@@ -229,6 +253,27 @@ Set `type: mq-expect.rabbitmq` to use this step.
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
 | `queue` | `string` | The AMQP queue to consume messages from. |
 | `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
+
+### `mq-publish.azureservicebus`
+
+Publishes one UTF-8 message to an Azure Service Bus queue or topic. A Pass verdict confirms the send was accepted by the broker. Verify with a following mq-expect.azureservicebus step.
+
+Set `type: mq-publish.azureservicebus` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message body sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `properties` | `object` | Optional application properties to attach to the message (string key=value pairs). Values may contain {placeholder} and ${secret:source/path} tokens. |
+| `queue` | `string` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
+| `topic` | `string` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
 
 ### `mq-publish.kafka`
 
