@@ -11,7 +11,9 @@
 
 using System.IO;
 using Platform.Engine.Abstractions;
+using Platform.Engine.Authoring;
 using Platform.Engine.Runtime;
+using Platform.Sdk;
 using Platform.Steps.HttpRest;
 using Xunit;
 
@@ -185,5 +187,71 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.Inconclusive, verdict);
         Assert.False(string.IsNullOrWhiteSpace(sw.ToString()),
             "Expected non-empty output containing the validation error.");
+    }
+
+    // ── RunSuiteAsync regression — env: authoring error classification (M2) ──────
+
+    /// <summary>
+    /// A service's <c>env:</c> reference to an unknown dependency (<c>${conn:typo}</c>) must be
+    /// classified as <see cref="Verdict.Inconclusive"/> through the sequential
+    /// <see cref="ScenarioRunner.RunSuiteAsync"/> path — NOT an unhandled exception, and NOT
+    /// <see cref="Verdict.EnvironmentError"/>. No Docker is required: the shared topology's
+    /// <c>EnvironmentMapper.Map</c> call throws before <c>HeadlessTopology.StartAsync</c> (and
+    /// therefore DCP) is ever reached.
+    /// </summary>
+    /// <remarks>
+    /// Regression guard (M2, MAJOR, code-review-gatekeeper): before this fix,
+    /// <see cref="ScenarioRunner.RunSuiteAsync"/> caught only <c>OrchestrationException</c>
+    /// around its shared-topology-build <c>SuiteTopology.StartAsync</c> call, so a Map()-time
+    /// <see cref="System.ArgumentException"/> propagated as a raw, unhandled exception instead
+    /// of a clean §12.1 verdict for every scenario in the suite.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_EnvConfigReferencesUnknownDependency_ReturnsInconclusive_NoTopology()
+    {
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: "${conn:typo}"
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, registry);
+
+        var sw = new StringWriter();
+
+        // Local arrays avoid CA1861 (constant-element array arguments in repeated call-sites).
+        var oneScenario = new[] { ast };
+        var oneName = new[] { "env-config-typo" };
+        var oneYaml = new[] { yaml };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: oneScenario,
+            scenarioNames: oneName,
+            yamlTexts: oneYaml,
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+        Assert.NotEqual(Verdict.EnvironmentError, result.Verdict);
+        var scenarioVerdict = Assert.Single(result.ScenarioVerdicts);
+        Assert.Equal("env-config-typo", scenarioVerdict.ScenarioName);
+        Assert.Equal(Verdict.Inconclusive, scenarioVerdict.Verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("typo", rendered, StringComparison.Ordinal);
     }
 }

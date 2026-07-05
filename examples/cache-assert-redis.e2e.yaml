@@ -25,10 +25,9 @@ steps:
       Trigger the system under test to write the user's session into Redis.
       The SUT should SET user:42 = "active" (with a TTL) and populate a profile hash.
     target: app
-    request:
-      method: POST
-      path: /sessions
-      body: '{"userId":"42","status":"active"}'
+    method: POST
+    path: /sessions
+    body: '{"userId":"42","status":"active"}'
     expect:
       status: 201
     capture:
@@ -44,7 +43,7 @@ steps:
     expect:
       value: active
     verifyMode: RETRY           # poll until the SUT has written the value
-    timeout: PT10S
+    timeout: 10s
 
   # ── Key presence assertion ──────────────────────────────────────────────────
   - id: assert-session-present

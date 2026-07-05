@@ -448,6 +448,49 @@ public static class ScenarioRunner
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (ArgumentException aex)
+        {
+            // A Map()-time authoring error (malformed env: reference, unknown dependency,
+            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
+            // schema-invalid / parse-AST / pipeline-compile / secret-reference failures handled
+            // above (Steps 2–5c): the scenario never ran, so this is Inconclusive (§12.1) — NOT
+            // EnvironmentError, which the taxonomy reserves for genuine infrastructure faults
+            // (container/image/network) an author cannot fix by editing the YAML; misclassifying
+            // a permanent typo as an infra fault could drive auto-retry/alerting that will never
+            // self-heal.
+            //
+            // Scope note: this catches ONLY EnvironmentMapper.Map's OWN eager, PRE-Configure
+            // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
+            // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
+            // ... let them propagate as-is"). Map()'s Configure CLOSURE also carries a few
+            // defensive ArgumentException throws of its own (e.g. ResolveDependencyEnvAccess's
+            // internal-error fallback, RequirePasswordParameter) — those run LATER, inside
+            // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
+            // ANY exception as OrchestrationException before it ever reaches this method; they
+            // are therefore unreachable by construction here (ValidateEnvValue's eager checks,
+            // and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of always provisioning a
+            // password parameter, already prevent them from firing in practice) and would
+            // correctly surface as EnvironmentError via the OrchestrationException catch below,
+            // not this one — a genuine, if never-yet-observed, infrastructure/engine fault.
+            var now = DateTimeOffset.UtcNow;
+            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+            }));
+            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = runId,
+                Timestamp = now,
+                ScenarioId = scenarioName,
+                Verdict = Verdict.Inconclusive,
+                Counts = new VerdictCounts { Inconclusive = 1 },
+            }));
+            await output.WriteLineAsync(
+                $"Environment configuration error: {aex.Message}").ConfigureAwait(false);
+            return (Verdict.Inconclusive, buffer);
+        }
         catch (OrchestrationException oex)
         {
             var now = DateTimeOffset.UtcNow;
@@ -689,6 +732,27 @@ public static class ScenarioRunner
                 seedBaseDirectory: seedBaseDirectory,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (ArgumentException aex)
+        {
+            // Mirrors RunAsync's classification above (see that catch block's full scope note):
+            // a Map()-time authoring error (malformed env: reference, unknown dependency,
+            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
+            // per-scenario secret-reference / pipeline-compile failures already handled as
+            // Inconclusive elsewhere in this loop (via earlyVerdict) — the suite never ran, so
+            // every scenario is Inconclusive, NOT EnvironmentError (reserved for genuine
+            // infrastructure faults an author cannot fix by editing the YAML). This catches ONLY
+            // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
+            // (unreachable by construction given that same eager validation) would surface as
+            // OrchestrationException instead, via the catch below.
+            await output.WriteLineAsync(
+                $"RunSuiteAsync: environment configuration error — {aex.Message}")
+                .ConfigureAwait(false);
+
+            var inconclusiveVerdicts = compilations
+                .Select(c => (c.ScenarioName, Verdict.Inconclusive))
+                .ToList();
+            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts);
         }
         catch (OrchestrationException oex)
         {
@@ -1213,6 +1277,20 @@ public static class ScenarioRunner
                     // same name (rare) deliberately overrides it (forward-only Vars threading).
                     vars[VarKeys.Service(req.VarName)] = listener.Url;
                     vars[req.VarName] = listener.Url;
+
+                    // SUT configuration surface (point 3): ALSO stage a container-reachable
+                    // form of the SAME callback URL, with the loopback host rewritten to
+                    // host.docker.internal, so a suite author can hand {<listener>_container} to
+                    // a containerised SUT in a request body. The listener binds 0.0.0.0 (see the
+                    // WebhookListener remarks), so host.docker.internal:<port> reaches it from
+                    // inside the Aspire-managed Docker network on both Docker Desktop and (via
+                    // the '--add-host' runtime arg EnvironmentMapper adds to every image-form
+                    // service) plain Linux Docker Engine CI runners. A VarName that would
+                    // collide with this synthesised suffix (an author names one listener "x"
+                    // and another "x_container") is rejected earlier, in
+                    // ProviderPipeline.Compile, before the topology is even built — so this
+                    // assignment can never silently overwrite an unrelated listener's URL.
+                    vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(listener.Url);
                 }
 
                 if (buffers.Count > 0)
@@ -1255,7 +1333,29 @@ public static class ScenarioRunner
     }
 
     // The single host-resource kind handled by this sprint's runner (S07-F-01a).
-    private const string WebhookListenerKind = "webhook-listener";
+    // internal (not private): ProviderPipeline.Compile references this constant to detect a
+    // listener VarName collision (see ContainerVarSuffix below) before the topology is built.
+    internal const string WebhookListenerKind = "webhook-listener";
+
+    /// <summary>
+    /// The suffix appended to a webhook listener's <c>VarName</c> to stage the
+    /// container-reachable form of its callback URL (SUT configuration surface, point 3).
+    /// <see cref="ProviderPipeline"/> rejects any suite whose listener <c>VarName</c>s would
+    /// make two DISTINCT listeners collide on this suffix before the topology is built.
+    /// </summary>
+    internal const string ContainerVarSuffix = "_container";
+
+    /// <summary>
+    /// Rewrites the host of a loopback webhook listener URL (<c>127.0.0.1</c>/<c>localhost</c>)
+    /// to <c>host.docker.internal</c>, leaving the port and the unguessable token path segment
+    /// untouched, so a containerised SUT can reach the host-owned listener from inside the
+    /// Aspire-managed Docker network.
+    /// </summary>
+    private static string RewriteHostForContainer(string url)
+    {
+        var builder = new UriBuilder(url) { Host = "host.docker.internal" };
+        return builder.Uri.ToString();
+    }
 
     /// <summary>
     /// Executes the per-scenario compilation + isolated Roslyn run against an already-started
