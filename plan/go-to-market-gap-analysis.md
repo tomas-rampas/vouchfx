@@ -247,7 +247,7 @@ weeks); GTM-28 issue close-out; GTM-37 calendar re-baseline. Everything else han
    week-3 retrospectives.
 
 ```
-GTM-29 naming ──┬─► GTM-02 NuGet IDs    ──┐
+GTM-29 naming ──┬─► GTM-02 NuGet IDs      ──┐
                 ├─► GTM-04 Marketplace      ├─► GTM-01 smoke ─► S12-D-01 v1.0 ─► GTM-34 comms ─► LAUNCH
                 └─► GTM-31 trademark ◄── GTM-30 entity                 ▲
 GTM-30 entity ──┬─► pilot agreement ─► enterprise pilots     GTM-24 governance artefacts
