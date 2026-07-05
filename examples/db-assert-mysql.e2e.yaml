@@ -15,11 +15,12 @@ environment:
 steps:
   - id: create-order
     type: http.rest
+    target: orders-api
     method: POST
-    url: "http://orders-api/orders"
+    path: /orders
     body: '{"item":"widget","qty":3}'
     expect:
-      statusCode: 201
+      status: 201
     capture:
       orderId: "$.id"
 

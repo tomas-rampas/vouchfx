@@ -33,13 +33,12 @@ environment:
     # also be declared here:
     asb:
       type: azureservicebus
-      extra:
-        queues:
-          - orders
-        topics:
-          - name: orders-topic
-            subscriptions:
-              - orders-sub
+      queues:
+        - orders
+      topics:
+        - name: orders-topic
+          subscriptions:
+            - orders-sub
 
 steps:
   - id: trigger-order-event
@@ -50,10 +49,9 @@ steps:
       receives as the AZURE_SERVICE_BUS_CONNECTION_STRING environment variable
       (injected by Aspire when wired with a WithReference binding).
     target: app
-    request:
-      method: POST
-      path: /orders
-      body: '{"customerId":"cust-1","amount":49.99}'
+    method: POST
+    path: /orders
+    body: '{"customerId":"cust-1","amount":49.99}'
     expect:
       status: 202
 
@@ -87,17 +85,17 @@ steps:
     expectProperties:
       eventType: order-created
     verifyMode: RETRY
-    timeout: PT30S
+    timeout: 30s
 
   - id: assert-order-topic-event
     type: mq-expect.azureservicebus
     description: >
       Topic + subscription variant: peeks from a topic subscription.
-      Remove this step (or the topic declarations in extra.topics) if you are
-      only using queues.
+      Remove this step (or the 'topics' declaration under the 'asb' dependency
+      above) if you are only using queues.
     target: asb
     topic: orders-topic
     subscription: orders-sub
     expectPayloadContains: "order-shipped"
     verifyMode: RETRY
-    timeout: PT30S
+    timeout: 30s

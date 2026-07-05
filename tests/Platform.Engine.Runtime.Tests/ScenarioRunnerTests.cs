@@ -235,6 +235,64 @@ public sealed class ScenarioRunnerTests
     }
 
     /// <summary>
+    /// A service's <c>env:</c> reference to an unknown dependency (<c>${conn:typo}</c>) must be
+    /// classified as <see cref="Verdict.Inconclusive"/> through the sequential/single-scenario
+    /// <see cref="ScenarioRunner.RunAsync"/> path — NOT an unhandled exception escaping to the
+    /// caller, and NOT <see cref="Verdict.EnvironmentError"/> (an authoring typo is not an
+    /// infrastructure fault; conflating the two could drive infra-retry/alerting for a mistake
+    /// that will never self-heal). No Docker is required: <c>EnvironmentMapper.Map</c> throws
+    /// before <c>HeadlessTopology.StartAsync</c> (and therefore DCP) is ever reached.
+    /// </summary>
+    /// <remarks>
+    /// Regression guard (M2, MAJOR, code-review-gatekeeper): before this fix,
+    /// <c>SuiteTopology.StartAsync</c> called <c>EnvironmentMapper.Map</c> outside any
+    /// try/catch, and <see cref="ScenarioRunner.RunAsync"/> caught only
+    /// <c>OrchestrationException</c> around the topology-start call — so a Map()-time
+    /// <see cref="ArgumentException"/> (malformed <c>env:</c> reference, unknown dependency,
+    /// secret-in-env, unsupported <c>.part</c>, etc.) propagated as a raw, unhandled exception
+    /// instead of a clean §12.1 verdict. The fix classifies it the SAME way as the
+    /// schema-invalid / parse-AST / pipeline-compile / secret-reference failures already
+    /// handled above in this file: Inconclusive, with the helpful message text preserved in
+    /// the rendered output.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_EnvConfigReferencesUnknownDependency_ReturnsInconclusive_NoTopology()
+    {
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: "${conn:typo}"
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "env-config-unknown-dependency",
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+        Assert.NotEqual(Verdict.EnvironmentError, verdict);
+        Assert.NotEqual(Verdict.Fail, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains("typo", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A <c>db-assert.postgres</c> step whose <c>expect.row</c> value references an
     /// unknown secret source must be rejected by the central secret-validation pass
     /// before the topology is started, returning <see cref="Verdict.Inconclusive"/>.

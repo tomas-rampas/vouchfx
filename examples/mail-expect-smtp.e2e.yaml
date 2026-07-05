@@ -26,10 +26,9 @@ steps:
       Trigger the system under test to send a welcome email.
       The SUT should send email through mailpit's SMTP port 1025.
     target: app
-    request:
-      method: POST
-      path: /send-welcome
-      body: '{"to":"alice@example.com","name":"Alice"}'
+    method: POST
+    path: /send-welcome
+    body: '{"to":"alice@example.com","name":"Alice"}'
     expect:
       status: 202
 
@@ -46,4 +45,4 @@ steps:
         subject-contains: "Welcome"
         body-contains: "Hello, Alice"
     verifyMode: RETRY
-    timeout: PT30S
+    timeout: 30s

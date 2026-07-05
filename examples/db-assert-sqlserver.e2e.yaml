@@ -26,7 +26,7 @@ environment:
 steps:
   - id: seed-order
     type: script.csharp
-    script: |
+    code: |
       var connStr = (string)Vars["conn::ordersdb"];
       var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
       try
