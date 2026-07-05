@@ -776,6 +776,21 @@ Each step threads state forward via captures and placeholders. The verdict is **
 
 ---
 
+## State isolation per store
+
+Between **sequential** scenarios that share a single topology, the engine automatically resets only Postgres; every other store keeps whatever state earlier scenarios wrote. **Parallel** scenarios are unaffected — each receives its own topology and fresh containers, so isolation holds by construction.
+
+| Dependency kind | Reset between sequential scenarios | What to do instead |
+|---|---|---|
+| `postgres` | **Automatic** — Respawn flushes tables after each scenario | Nothing; rely on it |
+| `sqlserver`, `mysql`, `mongodb` | None in v1 | Run scenarios in parallel, or begin each scenario with an explicit cleanup step (`script.csharp` or a targeted DELETE) |
+| `redis`, `elasticsearch` | None in v1 | As above; for Redis, key-prefix your test data per scenario so cleanup is a single pattern delete |
+| Brokers (`kafka`, `rabbitmq`, `nats`, `azureservicebus`) | Not applicable — messages are consumed/scanned per step | Scope topics/queues/subjects per suite; `mq-expect` matching on captured values tolerates residual traffic |
+
+The symptom of missing isolation is a **second or later scenario failing on data the first one wrote** — nondeterministic if scenario order varies. This is a documented v1 limitation tracked as PB-02 in [the post-v1 backlog](../plan/post-v1-backlog.md); the [troubleshooting guide](troubleshooting.md) has the failure-mode entry.
+
+---
+
 ## See also
 
 - **[Getting Started](getting-started.md)** — Your first vouchfx test in 60 minutes.
