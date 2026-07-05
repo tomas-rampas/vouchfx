@@ -796,6 +796,12 @@ jobs:
     name: Publish artifacts to GitHub Release and NuGet
     runs-on: ubuntu-latest
     needs: [build-dotnet, sign-and-attest]
+    # Smoke-test: dispatch runs never publish (every step below is
+    # tag/release-gated), but the artifact downloads used to run
+    # unconditionally and failed hard because the cosign/GPG steps skip on
+    # dispatch, so no signing-material artifact exists (first-smoke finding,
+    # 2026-07-05).  Skip the whole job on dispatch — it has nothing to do.
+    if: github.event_name != 'workflow_dispatch'
 
     permissions:
       contents: write   # attach files to the GitHub Release
@@ -832,6 +838,12 @@ jobs:
 
       - name: Download signing material (cosign bundles, GPG signatures)
         uses: actions/download-artifact@v4
+        # The sign job uploads this artifact with if-no-files-found: warn, so
+        # it legitimately does not exist when every signing step was skipped
+        # (no secrets provisioned).  A release without detached signatures is
+        # still a valid release (SLSA attestations are stored server-side);
+        # never hard-fail the publish on its absence.
+        continue-on-error: true
         with:
           name: signing-material
           path: release-upload/
