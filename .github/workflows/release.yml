@@ -10,8 +10,8 @@
 #   push: tags: v*         A version tag (e.g. v1.2.3) is pushed directly.
 # NEVER fires on push to a branch or pull_request.
 #
-# Keyless signing model — no long-lived private key stored as a secret
-# --------------------------------------------------------------------
+# Keyless signing and publishing model — no long-lived private key or API key stored as a secret
+# --------------------------------------------------------------------------------------------------
 #   1. SLSA provenance (actions/attest-build-provenance@v2)
 #      GitHub OIDC token → signed attestation stored with the repo.
 #      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
@@ -24,12 +24,18 @@
 #                   '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
 #                 --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
+#   3. NuGet Trusted Publishing (NuGet/login@v1)
+#      GitHub OIDC token → nuget.org token exchange → short-lived,
+#      single-use API key (valid ~1 hour, minted immediately before push).
+#      Gated by a Trusted Publishing policy on nuget.org (Package Owner
+#      "Tomas.R"): Repository tomas-rampas/vouchfx, Workflow File
+#      release.yml, no Environment. No NUGET_API_KEY secret is stored.
+#
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
 # -------------------------------------------------------------------------
 #   Authenticode (Windows)  CODESIGN_PFX_BASE64 + CODESIGN_PFX_PASSWORD
 #   GPG signing (nupkg)     GPG_SIGNING_KEY + GPG_PASSPHRASE
 #   Apple notarisation      APPLE_ID + APPLE_TEAM_ID + APPLE_APP_SPECIFIC_PASSWORD
-#   NuGet publish           NUGET_API_KEY
 #
 # DCP portability caveat — read before expecting self-contained exes to work
 # --------------------------------------------------------------------------
@@ -790,7 +796,8 @@ jobs:
   # ===========================================================================
   # publish-release
   # Assembles all artifacts and attaches them to the GitHub Release.
-  # Publishes the nupkg to NuGet.org (secret-gated: NUGET_API_KEY).
+  # Publishes the nupkg to NuGet.org via Trusted Publishing (GitHub OIDC,
+  # no long-lived secret; repo-gated).
   # ===========================================================================
   publish-release:
     name: Publish artifacts to GitHub Release and NuGet
@@ -805,11 +812,11 @@ jobs:
 
     permissions:
       contents: write   # attach files to the GitHub Release
+      id-token: write   # mint GitHub OIDC token for NuGet Trusted Publishing
 
     env:
       VERSION: ${{ needs.build-dotnet.outputs.version }}
       TAG:     ${{ needs.build-dotnet.outputs.tag }}
-      HAS_NUGET: ${{ secrets.NUGET_API_KEY != '' }}
 
     steps:
       - name: Download nupkg
@@ -907,14 +914,30 @@ jobs:
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Done."
 
-      # Publish the nupkg to NuGet.org — SECRET-GATED.
+      # Exchange the GitHub OIDC token for a short-lived (~1 hour),
+      # single-use NuGet.org API key via the Trusted Publishing policy
+      # configured on nuget.org (Package Owner "Tomas.R"): Repository
+      # tomas-rampas/vouchfx, Workflow File release.yml, no Environment.
+      # Repository-gated: forks have no matching policy, so the token
+      # exchange would fail there anyway — the explicit condition just
+      # fails fast/skips instead of erroring mid-job. The workflow_dispatch
+      # guard is redundant with the job-level `if` above but kept as
+      # defence in depth, matching the neighbouring steps.
+      - name: NuGet login (OIDC → short-lived API key)
+        id: nuget-login
+        if: ${{ github.repository == 'tomas-rampas/vouchfx' && github.event_name != 'workflow_dispatch' }}
+        uses: NuGet/login@v1
+        with:
+          user: Tomas.R
+
+      # Publish the nupkg to NuGet.org — TRUSTED-PUBLISHING-GATED.
       # Install: dotnet tool install -g vouchfx
       # Package: https://www.nuget.org/packages/vouchfx/
       # Also skipped on workflow_dispatch smoke-test runs.
-      - name: Publish nupkg to NuGet.org — secret-gated
-        if: ${{ env.HAS_NUGET == 'true' && github.event_name != 'workflow_dispatch' }}
+      - name: Publish nupkg to NuGet.org — Trusted Publishing
+        if: ${{ github.repository == 'tomas-rampas/vouchfx' && github.event_name != 'workflow_dispatch' }}
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
           for nupkg in release-upload/*.nupkg; do

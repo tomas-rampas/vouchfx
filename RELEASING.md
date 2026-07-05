@@ -186,12 +186,12 @@ invariant (see CLAUDE.md).
 
 ---
 
-## Irreducible human and certificate steps
+## Human provisioning: certificate signing and trusted publishing
 
-The following steps require provisioned credentials and cannot be automated
-without those credentials.  The pipeline gates on them (steps are SKIPPED,
-not failed, when the secret is absent) so releases still complete without
-them.
+The following steps require provisioned credentials or human action on external
+services.  The pipeline gates on them — signing steps are SKIPPED, not failed,
+when the secret is absent, so releases still complete without them; NuGet
+publishing succeeds via Trusted Publishing without any GitHub secret.
 
 **Fail-closed behaviour — read before provisioning.**
 When a signing secret is absent, the step is silently skipped and the release
@@ -278,20 +278,52 @@ gpg --export-secret-keys --armor <key-id> | base64 -w 0 > signing-key.b64
 gpg --export --armor <key-id> > docs/vouchfx-gpg-public.asc
 ```
 
-### NuGet.org publish
+### NuGet.org publish (Trusted Publishing)
 
 **What:** Pushes the nupkg to NuGet.org so users can install via
 `dotnet tool install -g vouchfx`.
 
-**Secret required:**
-- `NUGET_API_KEY` — a NuGet.org API key scoped to the `vouchfx` package ID.
+**Secret required:** None — uses NuGet.org Trusted Publishing.
 
-**How to provision:**
-- Log in to https://www.nuget.org with the account that owns the `vouchfx`
-  package ID.
-- Go to Account Settings > API Keys > Create.
-- Scope the key to Push for the `vouchfx` package only.
-- Add to GitHub repository secrets: `NUGET_API_KEY`.
+**How it works:**
+
+The publish step uses NuGet.org's Trusted Publishing feature, which eliminates
+the need for long-lived API keys.  The workflow carries `id-token: write`
+permission and exchanges the GitHub OIDC token for a short-lived (~1 hour,
+single-use) NuGet.org API key via the `NuGet/login` action.  The `dotnet nuget
+push` command then uses that ephemeral key.
+
+A Trusted Publishing policy was created on NuGet.org on 2026-07-05 with the
+following settings:
+
+| Field | Value |
+|-------|-------|
+| Package Owner | Tomas.R |
+| Repository Owner | tomas-rampas |
+| Repository | vouchfx |
+| Workflow File | release.yml |
+| Environment | (none) |
+
+The workflow gates the login and push steps to the canonical repository
+(`github.repository == 'tomas-rampas/vouchfx'`) and skips them on `workflow_dispatch`
+smoke runs; the policy itself would accept any matching run of release.yml in this
+repository regardless of trigger, so this workflow-side guard is what keeps smoke runs
+from publishing. Forks would in any case fail the token exchange since the policy
+names this repository.
+
+**Pending-activation caveat:**
+
+A newly created Trusted Publishing policy starts as "temporarily active" for
+7 days.  It becomes permanently active on the first successful publish, which
+locks the GitHub repository and owner IDs in place.  If no publish occurs
+within 7 days, the policy becomes inactive; the 7-day activation window can be
+restarted at any time from the NuGet.org Trusted Publishing management page.
+
+**Before cutting the `v1.0.0` tag,** log in to NuGet.org, navigate to the
+Trusted Publishing settings, and verify the policy still shows as active.  If
+it has expired and no publish has succeeded, restart the activation window
+immediately.  After the first successful publish, the policy will remain active
+permanently.
 
 ---
 
