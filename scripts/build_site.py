@@ -67,11 +67,7 @@ def rel_root(target: Path) -> str:
     return "" if rp == "." else rp + "/"
 
 
-GITHUB_URL = "https://github.com/tomas-rampas/vouchfx/"
-
-# Every repo-relative path that will exist as a rendered page. Populated by
-# main() before rendering starts; rewrite_links() sends links to anything
-# outside this set to the repository on GitHub instead of a 404 on the site.
+GITHUB_URL = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'tomas-rampas/vouchfx')}/"
 PUBLISHED: set[str] = set()
 
 
