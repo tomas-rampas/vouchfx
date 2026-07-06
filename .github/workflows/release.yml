@@ -12,7 +12,7 @@
 #
 # Keyless signing and publishing model — no long-lived private key or API key stored as a secret
 # --------------------------------------------------------------------------------------------------
-#   1. SLSA provenance (actions/attest-build-provenance@v2)
+#   1. SLSA provenance (actions/attest-build-provenance@v4)
 #      GitHub OIDC token → signed attestation stored with the repo.
 #      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
 #
@@ -111,12 +111,12 @@ jobs:
 
     steps:
       - name: Checkout (full history for version embedding)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up .NET 8 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
 
@@ -241,7 +241,7 @@ jobs:
           ls -lh artifacts/sbom/
 
       - name: Upload nupkg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nuget-package
           path: artifacts/nuget/*.nupkg
@@ -249,7 +249,7 @@ jobs:
           retention-days: 30
 
       - name: Upload publish archives (all RIDs)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publish-archives
           path: artifacts/archives/*.tar.gz
@@ -261,7 +261,7 @@ jobs:
       # natively on windows-latest so the embedded DCP path is a Windows absolute
       # path rather than the Linux runner's NuGet cache path.
       - name: Upload linux-x64 publish dir (for .deb)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publish-linux-x64-dir
           path: artifacts/publish/linux-x64/
@@ -269,7 +269,7 @@ jobs:
           retention-days: 7
 
       - name: Upload osx-arm64 publish dir (for .pkg)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publish-osx-arm64-dir
           path: artifacts/publish/osx-arm64/
@@ -277,7 +277,7 @@ jobs:
           retention-days: 7
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: artifacts/sbom/*.bom.json
@@ -299,10 +299,10 @@ jobs:
         working-directory: tools/vscode-vouchfx
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js (LTS 22)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -318,7 +318,7 @@ jobs:
         run: npm run package
 
       - name: Upload .vsix
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: tools/vscode-vouchfx/*.vsix
@@ -346,43 +346,43 @@ jobs:
 
     steps:
       - name: Download nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: nuget-package
           path: artifacts/nuget/
 
       - name: Download publish archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: publish-archives
           path: artifacts/
 
       - name: Download SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sbom
           path: artifacts/sbom/
 
       - name: Download .vsix
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vsix
           path: artifacts/vsix/
 
       - name: Download MSI installer (for attestation)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: msi-installer
           path: artifacts/installers/
 
       - name: Download .deb package (for attestation)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: deb-package
           path: artifacts/installers/
 
       - name: Download .pkg installer (for attestation)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pkg-installer
           path: artifacts/installers/
@@ -390,27 +390,27 @@ jobs:
       # SLSA provenance attestations — one per artifact group.
       # Verification: gh attestation verify <file> --repo tomas-rampas/vouchfx
       - name: Attest nupkg (SLSA build provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/nuget/*.nupkg
 
       - name: Attest publish archives (SLSA build provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/vouchfx-*.tar.gz
 
       - name: Attest SBOM (SLSA build provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/sbom/*.bom.json
 
       - name: Attest .vsix (SLSA build provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/vsix/*.vsix
 
       - name: Attest installers (SLSA build provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/installers/*
 
@@ -471,7 +471,7 @@ jobs:
           done
 
       - name: Upload cosign bundles + GPG signatures
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signing-material
           path: |
@@ -504,10 +504,10 @@ jobs:
       HAS_CODESIGN: ${{ secrets.CODESIGN_PFX_BASE64 != '' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up .NET 8 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
 
@@ -616,7 +616,7 @@ jobs:
           Remove-Item $pfxPath -Force
 
       - name: Upload MSI installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: msi-installer
           path: artifacts/installer/*.msi
@@ -641,7 +641,7 @@ jobs:
 
     steps:
       - name: Download linux-x64 publish dir
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: publish-linux-x64-dir
           path: publish/linux-x64/
@@ -711,7 +711,7 @@ jobs:
           echo "Signed: ${deb}.asc"
 
       - name: Upload .deb package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-package
           path: artifacts/installer/*.deb*
@@ -736,7 +736,7 @@ jobs:
 
     steps:
       - name: Download osx-arm64 publish dir
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: publish-osx-arm64-dir
           path: publish/osx-arm64/
@@ -787,7 +787,7 @@ jobs:
           echo "Notarisation complete."
 
       - name: Upload .pkg installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pkg-installer
           path: artifacts/installer/*.pkg
@@ -825,31 +825,31 @@ jobs:
 
     steps:
       - name: Download nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: nuget-package
           path: release-upload/
 
       - name: Download publish archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: publish-archives
           path: release-upload/
 
       - name: Download SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sbom
           path: release-upload/
 
       - name: Download .vsix
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vsix
           path: release-upload/
 
       - name: Download signing material (cosign bundles, GPG signatures)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         # The sign job uploads this artifact with if-no-files-found: warn, so
         # it legitimately does not exist when every signing step was skipped
         # (no secrets provisioned).  A release without detached signatures is
@@ -861,19 +861,19 @@ jobs:
           path: release-upload/
 
       - name: Download MSI installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: msi-installer
           path: release-upload/
 
       - name: Download .deb package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: deb-package
           path: release-upload/
 
       - name: Download .pkg installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pkg-installer
           path: release-upload/
