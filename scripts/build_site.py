@@ -61,12 +61,13 @@ def out_path(rel: str) -> Path:
 
 
 def rel_root(target: Path) -> str:
-    """Relative path from a generated file back to OUT root, e.g. '../'."""
-    rp = os.path.relpath(OUT, target.parent)
+    """Relative path from a generated file back to OUT root, e.g. '../'.
+    Forward slashes always, so Windows and CI builds emit identical HTML."""
+    rp = os.path.relpath(OUT, target.parent).replace(os.sep, "/")
     return "" if rp == "." else rp + "/"
 
 
-GITHUB_BLOB = "https://github.com/tomas-rampas/vouchfx/blob/main/"
+GITHUB_URL = "https://github.com/tomas-rampas/vouchfx/"
 
 # Every repo-relative path that will exist as a rendered page. Populated by
 # main() before rendering starts; rewrite_links() sends links to anything
@@ -97,7 +98,8 @@ def rewrite_links(body: str, src_rel: str) -> str:
         target = posixpath.normpath(posixpath.join(src_dir, path))
         if path.endswith(".md") and target in PUBLISHED:
             return f'href="{path[:-3] + ".html"}{sep}{frag}"'
-        return f'href="{GITHUB_BLOB}{target}{sep}{frag}"'
+        kind = "tree" if (ROOT / target).is_dir() else "blob"
+        return f'href="{GITHUB_URL}{kind}/main/{target}{sep}{frag}"'
 
     return re.sub(r'href="([^"]+)"', repl, body)
 

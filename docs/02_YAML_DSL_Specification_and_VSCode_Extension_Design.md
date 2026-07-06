@@ -166,7 +166,7 @@ environment:
 
 Declarative fixtures are the recommended default because they live in source control beside the test, are visible in review, and produce the same baseline on every machine. When data must be created through the system's own APIs rather than injected directly — because the creation path is itself part of what is under test — a `script` step early in the scenario is the right tool instead, constructing entities and capturing their identifiers for later steps. A seed that fails to apply produces an environment error, not an assertion failure, so a broken fixture is never mistaken for a broken system. The reproducibility envelope records the content hash of every applied fixture.
 
-> **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. This limitation is tracked in the post-v1 backlog as PB-02.
+> **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. Automatic reset for the remaining stores is a planned improvement on the [public roadmap](roadmap.md).
 
 ### 3.2.4 Configuring the system under test
 
@@ -1124,4 +1124,4 @@ steps:
       body: { userId: "{newUserId}" }
 ```
 
-— End of the YAML DSL Specification & VSCode Extension Design. The companion documents are the Technical Architecture & Engineering Blueprint and the MVP Project Plan.
+— End of the YAML DSL Specification & VSCode Extension Design. The companion document is the Technical Architecture & Engineering Blueprint.

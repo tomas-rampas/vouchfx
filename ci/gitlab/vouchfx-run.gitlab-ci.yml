@@ -1,4 +1,4 @@
-# ci/gitlab/vouchfx-run.gitlab-ci.yml — INCLUDE-able "run a vouchfx suite" template (S10-C-02).
+# ci/gitlab/vouchfx-run.gitlab-ci.yml — INCLUDE-able "run a vouchfx suite" template.
 #
 # The GitLab CI equivalent of the reusable GitHub Actions workflow
 # (.github/workflows/vouchfx-run.yml). It runs a vouchfx `.e2e.yaml` suite end-to-end

@@ -422,7 +422,7 @@ Coordinating thousands of virtual users and the telemetry they generate demands 
 
 ## 9.3 Why the LAB has distinct economics
 
-A functional test verifies a single data flow; a load test simulates thousands of concurrent users and generates large volumes of metrics, traces, and logs. That difference spikes CPU, memory, and network-egress consumption on the cloud backend in a way that fixed seat-based pricing cannot absorb. The architecture therefore meters LAB usage separately, scaling cost with the intensity of the load — typically by Virtual User Hours — so that the heavy computational and storage demands remain sustainable. The engineering point is that the LAB must emit accurate, per-session consumption telemetry; billing correctness is a functional requirement of this subsystem, not a downstream concern.
+A functional test verifies a single data flow; a load test simulates thousands of concurrent users and generates large volumes of metrics, traces, and logs. That difference spikes CPU, memory, and network-egress consumption on the cloud backend far beyond what a functional run consumes. The architecture therefore meters LAB usage separately and precisely, scaling with the intensity of the load, so that the heavy computational and storage demands remain sustainable. The engineering point is that the LAB must emit accurate, per-session consumption telemetry; metering correctness is a functional requirement of this subsystem, not a downstream concern.
 
 # 10. System Resilience and State Management
 
@@ -526,7 +526,7 @@ Each layer emits structured telemetry. The orchestration layer reports container
 
 ## 12.3 Consumption accounting is measured from day one
 
-A specific commitment follows from the telemetry design, and it is worth stating explicitly because it is cheap to honour early and expensive to retrofit. The engine measures per-resource consumption — container-minutes by image, suite wall-clock duration, queue time before a topology becomes ready, peak concurrent resources, and data volume moved through the fabric — from the very first release, regardless of whether any of those figures is ever billed. The business has not yet chosen a pricing model for the cloud tier, and it does not need to: by capturing the raw consumption signal as a functional requirement of the execution fabric, the architecture keeps every plausible model — per-container-minute, per-suite-run, per-test-second, or flat per-seat with a fair-use cap — supportable by data the engine already collects. The alternative, adding consumption measurement once a pricing model is chosen, means discovering that the historical data needed to validate the model was never recorded. Measuring first and pricing later is therefore the deliberate sequence.
+A specific commitment follows from the telemetry design, and it is worth stating explicitly because it is cheap to honour early and expensive to retrofit. The engine measures per-resource consumption — container-minutes by image, suite wall-clock duration, queue time before a topology becomes ready, peak concurrent resources, and data volume moved through the fabric — from the very first release. Capturing the raw consumption signal as a functional requirement of the execution fabric keeps every future capacity and cost analysis supportable by data the engine already collects. The alternative — adding consumption measurement only once it is needed — means discovering that the historical data required to validate any analysis was never recorded. Measuring from day one is therefore the deliberate sequence.
 
 # 13. The Provider Plugin Architecture
 
@@ -929,7 +929,7 @@ The four verdicts are defined authoritatively in Section 12.1 — Pass, Fail, En
 
 Separating defect from environment failure is the most important contribution the reporting layer makes here, and it is the contribution most existing testing tools fail at. A failure that says “your Kafka container did not start” is fundamentally different from “your code is broken,” and a report that conflates the two destroys trust in the tool within days. Inconclusive deserves the same care: a step skipped because an earlier capture was unmet is not a defect in the system under test, and rendering it as a failure would falsely accuse a downstream component of misbehaviour. The conservative behaviour — four verdicts, four colours, four counters — is what keeps each case legible. In the cloud-backed Team and Enterprise tiers, these classifications also drive notification routing into the customer's existing alerting channels; in the local Indie tier they are purely presentational.
 
-## 14.2a Terminal renderer accessibility (S10-G-03a, WCAG 1.4.1)
+## 14.2a Terminal renderer accessibility (WCAG 1.4.1)
 
 The terminal renderer output faces a special accessibility requirement: verdicts must never be distinguished by colour alone. The implementation carries each verdict as a distinct **text token** (`PASS`, `FAIL`, `ENV_ERROR`, `INCONCLUSIVE`) unconditionally in both plain and decorated output — a WCAG 1.4.1 guarantee that survives colour-blindness, screen readers, and terminal limitations. The mapping is:
 
@@ -1015,7 +1015,7 @@ A deliberate architectural decision is encoded in the golden and pinned independ
 
 ## 14.5 Rendering asynchronous flows: the polling timeline
 
-When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently (S08-G-01).
+When a `RETRY` step fails, the developer needs to see what happened, not just that it failed. Most existing integration testing tools report only the final pass-or-fail at the end of a timeout window, leaving the developer to read raw broker logs to understand why. The reporting layer here renders the full polling timeline directly: each attempt, its timestamp relative to step start, the observation made on that attempt, and how the observation differed from the expectation. Because the engine's Polly-backed RETRY machinery has already recorded every attempt in the structured stream, the polling timeline costs the architecture nothing to produce; the commitment is to surface it prominently.
 
 ```
 Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
@@ -1029,7 +1029,7 @@ Step  expect-billing-event  (mq-expect.kafka)        FAIL  (timeout after 30.0s)
       t= 30.0s   attempt 6   timeout fired
 ```
 
-This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full. As a sibling feature, the captured-variable provenance thread (§14.6, S08-G-02) shows where each value in the scenario originated and was threaded through steps, making cross-step state visible in the same spirit.
+This rendering is the single most distinguishing feature of the report against the existing testing tool market. It turns asynchrony from a forensic exercise back into a story the test author wrote, with no agentic component required: every attempt is recorded by the engine's Polly-backed RETRY machinery as a structured event, and the renderer reads them directly. The MVP ships this rendering in full. As a sibling feature, the captured-variable provenance thread (§14.6) shows where each value in the scenario originated and was threaded through steps, making cross-step state visible in the same spirit.
 
 In later tiers, once the agentic Healer is available, the same event stream supports a second class of content layered on top: a hypothesis line in which the agent proposes a likely cause from the attempt pattern. The example below shows what a future-tier rendering might look like; nothing in the timeline above changes, and the hypothesis is clearly marked as agent-generated and reviewable.
 
@@ -1042,7 +1042,7 @@ In later tiers, once the agentic Healer is available, the same event stream supp
 
 ## 14.6 Cross-step state visibility: the captured-variable thread
 
-A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it (S08-G-02).
+A test that fails on step 4 is usually failing because of something that happened in step 2. The reporting layer makes that explicit: for each step it shows what variables were captured (with their values), and for each step it shows what variables were substituted into it (with their sources). The result is a thread of state through the scenario, written in the same vocabulary the author wrote in, collected by the same capture-and-substitute machinery defined in the DSL specification. A reader can trace the lineage of any value backward to the step that produced it.
 
 The terminal renderer emits a `provenance:` section under each step that shows this lineage. For each captured variable it renders `captured '<name>' <- step '<id>' (<path>)` with an optional `(no match)` marker if the JSONPath or XPath matched nothing. For each substitution it renders either `substituted '{placeholder}' (from step '<id>') -> step '<current>'` for ordinary placeholders or `substituted ${secret:<reference>} (redacted) -> step '<current>'` for secret-derived substitutions, never revealing the secret's value. The section is omitted when a step has no captures or substitutions, keeping straightforward runs uncluttered.
 
@@ -1154,7 +1154,7 @@ The axes compose: a CI job can ask for “tagged regression, owned by payments, 
 
 Scenario parallelism is **opt-in** through the `--parallel <n>` CLI flag (§13.5); when omitted, scenarios run sequentially against one shared topology. Independent scenarios can run concurrently when the flag is supplied, bounded by the supplied concurrency degree. Parallelism is across scenarios, not within a scenario: the steps of one scenario remain a strict ordered sequence, because their state dependencies require it. Each concurrent scenario builds, owns, and disposes **its own isolated Aspire topology** — no shared-state reset or database reset between scenarios is required because each scenario starts with a clean topology and its fresh dependencies. The default concurrency when `--parallel` is supplied is `Math.Max(1, Math.Min(ProcessorCount, 4))` — a conservative cap because containers, not CPU, are the scarce resource: a topology of four to six containers multiplied by an unbounded fan-out would exhaust a typical developer laptop's memory and Docker resource limits within seconds. The deterministic single-render model (events concatenated in declaration order) and complete-all cancellation semantics (every topology disposes, never fail-fast) are preserved across all concurrency levels. Timeout or cancellation of one scenario never cancels siblings; an escaping engine exception is mapped to `EnvironmentError` rather than `Fail` (§12.1), so parallelism never manufactures defects from infrastructure faults.
 
-A note on the event stream schema: step events do not carry a `scenarioId` field. Each scenario receives a distinct `runId`, so the reporting layer's `(runId, stepId)` cache key already disambiguates steps across an aggregated multi-scenario stream. The v1.x schema is frozen (§8.3); this decision will be recorded formally in the T2/T3 schema-evolution ADR.
+A note on the event stream schema: step events do not carry a `scenarioId` field. Each scenario receives a distinct `runId`, so the reporting layer's `(runId, stepId)` cache key already disambiguates steps across an aggregated multi-scenario stream. The v1.x schema is frozen (§8.3); a future schema-evolution decision record will formalise this for v2.
 
 ## 16.3 Isolation between scenarios
 
@@ -1319,4 +1319,4 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | ${secret:source/path} reference | Runtime-resolved secret reference; the literal value never enters source control, logs, or reports, and the source (env, file, vault, cloud) is chosen by configuration. |
 | Test doubles (WireMock / Mountebank) | Provisioned as ordinary Testcontainers when a real dependency cannot be used; the platform ships no built-in mocking, keeping doubles a visible, opt-in exception. |
 
-— End of the Technical Architecture & Engineering Blueprint. The companion documents are the YAML DSL Specification & VSCode Extension Design and the MVP Project Plan.
+— End of the Technical Architecture & Engineering Blueprint. The companion document is the YAML DSL Specification & VSCode Extension Design.

@@ -1,16 +1,13 @@
 # .github/workflows/build.yml — vouchfx CI pipeline skeleton
 #
-# Tasks: S01-D-02 — Engineering CI pipeline skeleton
-#        S02-D-01 — Wire the leak test as a permanent CI gate (M1)
-#
 # Jobs
 # ----
 #  build        Blocking gate: restore → build (0-warning) → format → unit tests.
 #               Docker-dependent Aspire integration tests are EXCLUDED via the
-#               `requires!=docker` trait filter; they land in the `integration`
-#               job once Aspire topology is wired (S01-A-*).
+#               `requires!=docker` trait filter; they run in the `integration`
+#               job.
 #
-#  memory-leak  BLOCKING permanent gate (M1, S02-D-01): runs the 5,000-iteration
+#  memory-leak  BLOCKING permanent gate: runs the 5,000-iteration
 #               provider-closure memory-leak harness over the full Core-provider
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
 #               StackExchange.Redis, HttpClient).  Docker-independent — the
@@ -122,7 +119,7 @@ jobs:
           path: TestResults/
           retention-days: 7
 
-  # ── Memory-leak regression — BLOCKING permanent gate (M1, S02-D-01) ──────────
+  # ── Memory-leak regression — BLOCKING permanent gate ─────────────────────────
   # Runs the 5,000-iteration provider-closure harness over the full Core-provider
   # client closure.  Docker-independent; scheduled weekly to catch regressions
   # introduced by dependency upgrades between feature pushes.

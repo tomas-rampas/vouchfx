@@ -1,4 +1,4 @@
-# .github/workflows/vouchfx-run-reference.yml — REFERENCE CALLER (S10-C-01).
+# .github/workflows/vouchfx-run-reference.yml — REFERENCE CALLER.
 #
 # A worked example that CALLS the reusable workflow (.github/workflows/vouchfx-run.yml)
 # against this repository's own minimal reference suite (examples/ci-reference). It

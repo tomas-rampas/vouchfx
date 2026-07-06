@@ -1,4 +1,4 @@
-# .github/workflows/vouchfx-run.yml — REUSABLE "run a vouchfx suite" workflow (S10-C-01).
+# .github/workflows/vouchfx-run.yml — REUSABLE "run a vouchfx suite" workflow.
 #
 # A reusable GitHub Actions workflow (`on: workflow_call`) that runs a vouchfx
 # `.e2e.yaml` suite end-to-end against an orchestrated container topology and
