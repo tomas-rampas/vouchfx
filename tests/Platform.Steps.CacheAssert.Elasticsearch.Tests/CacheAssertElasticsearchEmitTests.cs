@@ -598,12 +598,25 @@ public sealed class CacheAssertElasticsearchEmitTests
                         tcs.TrySetResult(null);
                     }
 
-                    var bytes = Encoding.UTF8.GetBytes(responseBody);
-                    ctx.Response.StatusCode = statusCode;
-                    ctx.Response.ContentType = "application/json";
-                    ctx.Response.ContentLength64 = bytes.Length;
-                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                    ctx.Response.Close();
+                    try
+                    {
+                        var bytes = Encoding.UTF8.GetBytes(responseBody);
+                        ctx.Response.StatusCode = statusCode;
+                        ctx.Response.ContentType = "application/json";
+                        ctx.Response.ContentLength64 = bytes.Length;
+                        ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                        ctx.Response.Close();
+                    }
+                    catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                    {
+                        // Dispose() (below) cancels _cts BEFORE calling _hl.Stop()/Close(), but
+                        // that teardown can still race a response this loop is actively writing
+                        // (see the equivalent raw-Thread guard in
+                        // MailExpectSmtpEmitTests.StartMockMailpit). This loop runs inside a
+                        // fire-and-forget Task, so an unhandled exception here would not itself
+                        // crash the host — contained anyway so teardown stays deterministic
+                        // rather than relying on the TPL's swallow-unobserved-exception behaviour.
+                    }
                 }
             });
 

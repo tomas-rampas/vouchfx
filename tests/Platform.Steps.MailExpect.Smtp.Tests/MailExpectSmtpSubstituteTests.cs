@@ -272,29 +272,45 @@ public sealed class MailExpectSmtpSubstituteTests
                 try { ctx = listener.GetContext(); }
                 catch { break; }
 
-                var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
-                string responseBody;
+                try
+                {
+                    var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+                    string responseBody;
 
-                if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
-                {
-                    responseBody = messagesJson;
-                }
-                else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
-                {
-                    responseBody = """{"ID":"abc","Text":"detail body","HTML":""}""";
-                }
-                else
-                {
-                    ctx.Response.StatusCode = 404;
-                    responseBody = "{}";
-                }
+                    if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
+                    {
+                        responseBody = messagesJson;
+                    }
+                    else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
+                    {
+                        responseBody = """{"ID":"abc","Text":"detail body","HTML":""}""";
+                    }
+                    else
+                    {
+                        ctx.Response.StatusCode = 404;
+                        responseBody = "{}";
+                    }
 
-                ctx.Response.ContentType = "application/json";
-                ctx.Response.StatusCode = 200;
-                var bytes = Encoding.UTF8.GetBytes(responseBody);
-                ctx.Response.ContentLength64 = bytes.Length;
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                ctx.Response.OutputStream.Close();
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.StatusCode = 200;
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.OutputStream.Close();
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                {
+                    // Dispose() (below) cancels cts BEFORE calling listener.Stop()/Close(), but
+                    // that teardown can still race a response this thread is actively writing:
+                    // the client may already have every byte it needs while this thread sits
+                    // between Write and Close (or inside either call) when the listener disposes
+                    // the response's underlying resources out from under it. That surfaces here
+                    // as ObjectDisposedException/HttpListenerException — expected teardown, not a
+                    // handler fault — and must be contained: this loop runs on a raw background
+                    // Thread, where an unhandled exception aborts the whole test host, not just
+                    // this test. (Mirrors the identical fix in
+                    // MailExpectSmtpEmitTests.StartMockMailpit.)
+                }
             }
         })
         { IsBackground = true };
