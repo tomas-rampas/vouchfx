@@ -637,34 +637,49 @@ public sealed class MailExpectSmtpEmitTests
                 try { ctx = listener.GetContext(); }
                 catch { break; }
 
-                var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
-                string responseBody;
+                try
+                {
+                    var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+                    string responseBody;
 
-                if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
-                {
-                    responseBody = messagesJson;
-                }
-                else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
-                {
-                    // Detail endpoint — return minimal message with a text body.
-                    responseBody = """{"ID":"abc","Text":"detail body","HTML":""}""";
-                }
-                else if (path == "/api/v1/info")
-                {
-                    responseBody = """{"Version":"v1.0.0"}""";
-                }
-                else
-                {
-                    ctx.Response.StatusCode = 404;
-                    responseBody = "{}";
-                }
+                    if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
+                    {
+                        responseBody = messagesJson;
+                    }
+                    else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
+                    {
+                        // Detail endpoint — return minimal message with a text body.
+                        responseBody = """{"ID":"abc","Text":"detail body","HTML":""}""";
+                    }
+                    else if (path == "/api/v1/info")
+                    {
+                        responseBody = """{"Version":"v1.0.0"}""";
+                    }
+                    else
+                    {
+                        ctx.Response.StatusCode = 404;
+                        responseBody = "{}";
+                    }
 
-                ctx.Response.ContentType = "application/json";
-                ctx.Response.StatusCode = 200;
-                var bytes = Encoding.UTF8.GetBytes(responseBody);
-                ctx.Response.ContentLength64 = bytes.Length;
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                ctx.Response.OutputStream.Close();
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.StatusCode = 200;
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.OutputStream.Close();
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                {
+                    // Dispose() (below) cancels cts BEFORE calling listener.Stop()/Close(), but
+                    // that teardown can still race a response this thread is actively writing:
+                    // the client may already have every byte it needs while this thread sits
+                    // between Write and Close (or inside either call) when the listener disposes
+                    // the response's underlying resources out from under it. That surfaces here
+                    // as ObjectDisposedException/HttpListenerException — expected teardown, not a
+                    // handler fault — and must be contained: this loop runs on a raw background
+                    // Thread, where an unhandled exception aborts the whole test host, not just
+                    // this test.
+                }
             }
         })
         { IsBackground = true };
@@ -702,29 +717,39 @@ public sealed class MailExpectSmtpEmitTests
                 try { ctx = listener.GetContext(); }
                 catch { break; }
 
-                var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
-                string responseBody;
+                try
+                {
+                    var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+                    string responseBody;
 
-                if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
-                {
-                    responseBody = messagesJson;
-                }
-                else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
-                {
-                    responseBody = detailJson;
-                }
-                else
-                {
-                    ctx.Response.StatusCode = 404;
-                    responseBody = "{}";
-                }
+                    if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
+                    {
+                        responseBody = messagesJson;
+                    }
+                    else if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
+                    {
+                        responseBody = detailJson;
+                    }
+                    else
+                    {
+                        ctx.Response.StatusCode = 404;
+                        responseBody = "{}";
+                    }
 
-                ctx.Response.ContentType = "application/json";
-                ctx.Response.StatusCode = 200;
-                var bytes = Encoding.UTF8.GetBytes(responseBody);
-                ctx.Response.ContentLength64 = bytes.Length;
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                ctx.Response.OutputStream.Close();
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.StatusCode = 200;
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.OutputStream.Close();
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                {
+                    // See StartMockMailpit above: Dispose()'s listener.Stop()/Close() can race an
+                    // in-flight response on this thread; contain the resulting
+                    // ObjectDisposedException/HttpListenerException so it can never crash the
+                    // test host as an unhandled background-thread exception.
+                }
             }
         })
         { IsBackground = true };
@@ -764,34 +789,43 @@ public sealed class MailExpectSmtpEmitTests
                 try { ctx = listener.GetContext(); }
                 catch { break; }
 
-                var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
-                int statusCode;
-                string responseBody;
+                try
+                {
+                    var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+                    int statusCode;
+                    string responseBody;
 
-                // Check the detail path FIRST: "/api/v1/message/…" is more specific than the
-                // list path "/api/v1/messages" (no trailing slash), so the two never collide.
-                if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
-                {
-                    statusCode = 500;
-                    responseBody = """{"error":"internal server error"}""";
-                }
-                else if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
-                {
-                    statusCode = 200;
-                    responseBody = messagesJson;
-                }
-                else
-                {
-                    statusCode = 404;
-                    responseBody = "{}";
-                }
+                    // Check the detail path FIRST: "/api/v1/message/…" is more specific than the
+                    // list path "/api/v1/messages" (no trailing slash), so the two never collide.
+                    if (path.StartsWith("/api/v1/message/", StringComparison.Ordinal))
+                    {
+                        statusCode = 500;
+                        responseBody = """{"error":"internal server error"}""";
+                    }
+                    else if (path.StartsWith("/api/v1/messages", StringComparison.Ordinal))
+                    {
+                        statusCode = 200;
+                        responseBody = messagesJson;
+                    }
+                    else
+                    {
+                        statusCode = 404;
+                        responseBody = "{}";
+                    }
 
-                ctx.Response.ContentType = "application/json";
-                ctx.Response.StatusCode = statusCode;
-                var bytes = Encoding.UTF8.GetBytes(responseBody);
-                ctx.Response.ContentLength64 = bytes.Length;
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                ctx.Response.OutputStream.Close();
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.StatusCode = statusCode;
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.OutputStream.Close();
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                {
+                    // See StartMockMailpit above: contain the Dispose()/in-flight-response
+                    // teardown race so it can never crash the test host as an unhandled
+                    // background-thread exception.
+                }
             }
         })
         { IsBackground = true };
@@ -828,13 +862,22 @@ public sealed class MailExpectSmtpEmitTests
                 try { ctx = listener.GetContext(); }
                 catch { break; }
 
-                const string responseBody = """{"error":"internal server error"}""";
-                ctx.Response.ContentType = "application/json";
-                ctx.Response.StatusCode = 500;
-                var bytes = Encoding.UTF8.GetBytes(responseBody);
-                ctx.Response.ContentLength64 = bytes.Length;
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                ctx.Response.OutputStream.Close();
+                try
+                {
+                    const string responseBody = """{"error":"internal server error"}""";
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.StatusCode = 500;
+                    var bytes = Encoding.UTF8.GetBytes(responseBody);
+                    ctx.Response.ContentLength64 = bytes.Length;
+                    ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                    ctx.Response.OutputStream.Close();
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                {
+                    // See StartMockMailpit above: contain the Dispose()/in-flight-response
+                    // teardown race so it can never crash the test host as an unhandled
+                    // background-thread exception.
+                }
             }
         })
         { IsBackground = true };

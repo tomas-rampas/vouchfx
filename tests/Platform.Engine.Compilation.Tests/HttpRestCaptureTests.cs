@@ -424,11 +424,24 @@ public sealed class HttpRestCaptureTests
 
                     if (hctx is not null)
                     {
-                        hctx.Response.StatusCode = 200;
-                        hctx.Response.ContentType = "application/json";
-                        hctx.Response.ContentLength64 = bodyBytes.Length;
-                        hctx.Response.OutputStream.Write(bodyBytes);
-                        hctx.Response.Close();
+                        try
+                        {
+                            hctx.Response.StatusCode = 200;
+                            hctx.Response.ContentType = "application/json";
+                            hctx.Response.ContentLength64 = bodyBytes.Length;
+                            hctx.Response.OutputStream.Write(bodyBytes);
+                            hctx.Response.Close();
+                        }
+                        catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
+                        {
+                            // The responder's Dispose() cancels cts BEFORE calling listener.Stop()/
+                            // Close(), but that teardown can still race a response this loop is
+                            // actively writing (see the equivalent raw-Thread guard in
+                            // MailExpectSmtpEmitTests.StartMockMailpit). This loop runs inside a
+                            // fire-and-forget Task, so an unhandled exception here would not itself
+                            // crash the host — contained anyway so teardown stays deterministic
+                            // rather than relying on the TPL's swallow-unobserved-exception behaviour.
+                        }
                     }
                 }
             }, cts.Token);
