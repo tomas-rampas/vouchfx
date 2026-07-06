@@ -246,12 +246,12 @@ Refer to:
 
 - **The worked example:** [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete, fully-documented provider with its authoring journey; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal copyable template.
 - **The architecture blueprint:** [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](docs/01_Technical_Architecture_and_Engineering_Blueprint.md) — section 13 covers provider architecture in detail, section 13.3.1 the CsxFragment composition rules, section 5.6 the reserved-namespace hygiene rule.
-- **The MVP plan:** [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — section 9.6 covers the Verified-tier rubric and governance model.
+- **Governance:** [`GOVERNANCE.md`](GOVERNANCE.md) — who decides what enters Core, the Verified-tier promotion rubric, commit rights, and dispute resolution.
 - **This repository's rules:** [`CLAUDE.md`](CLAUDE.md) — the hard invariants every contributor must honour, including the provider contract and memory-model rules.
 
 ## Contributing to the Platform
 
-If you want to contribute to the vouchfx engine itself (rather than writing a provider), see the [delivery plan](plan/README.md), which sequences work by risk and phase. The plan references the architecture and specification documents; start there.
+If you want to contribute to the vouchfx engine itself (rather than writing a provider), start with the [public roadmap](docs/roadmap.md) for where the project is heading, and the architecture and specification documents in [`docs/`](docs/) for how the system is built. [`GOVERNANCE.md`](GOVERNANCE.md) describes how decisions are made.
 
 All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 

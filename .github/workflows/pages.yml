@@ -1,7 +1,7 @@
 # .github/workflows/pages.yml — vouchfx project site (GitHub Pages)
 #
 # Publishes the static landing page in `site/` PLUS the repository's markdown
-# design docs and delivery plan, rendered to styled HTML by
+# design docs and user guides, rendered to styled HTML by
 # `scripts/build_site.py`. The markdown files stay the single source of truth;
 # this regenerates their HTML on every run, so the published docs never drift.
 #
@@ -16,9 +16,9 @@ on:
     paths:
       - 'site/**'
       - 'docs/**'
-      - 'plan/**'
       - 'README.md'
-      - 'CLAUDE.md'
+      - 'CHANGELOG.md'
+      - 'GOVERNANCE.md'
       - 'scripts/build_site.py'
       - '.github/workflows/pages.yml'
   # Manual runs (any branch) for previewing before a change reaches main.

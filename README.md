@@ -23,13 +23,13 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **Milestone M4 — Tooling & hardening — is engineering-complete, phase-exit pending** (see [exit criteria](plan/m4-phase-exit.md)). The engine compiles `.e2e.yaml` declarative integration
+> **vouchfx is pre-release: the engine is feature-complete and the first public release (v1.0) is in preparation.** The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
 > with Aspire and Testcontainers, executes all eighteen Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus), HTTP, webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Platform.Sdk`) is packable with developer guidance and worked-example providers (published to NuGet.org with v1.0), and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated. Remaining phase-exit items are human-gated: the steering review, the GitLab live-pipeline run (#153), and certificate provisioning.
-> Sprint 12 (M5 — pilot and launch) is in progress. The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is now live with Verified and Community tiers; the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites; and the [vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) is implemented and pending deployment. Remaining for v1.0: final integration testing with the pilot cohort and the v1.0 release (see [delivery plan](plan/README.md) and [roadmap](plan/roadmap.md)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Platform.Sdk`) is packable with developer guidance and worked-example providers (published to NuGet.org with v1.0), and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release manifest (signed binaries, CycloneDX SBOMs, SLSA provenance, keyless cosign signatures, and OS-installer skeletons) is ready and verified, with certificate-based signing secret-gated.
+> The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with Verified and Community tiers, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0: validation with pilot teams and the first public release (see the [roadmap](docs/roadmap.md)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -101,9 +101,8 @@ dotnet format --verify-no-changes
 ```
 
 Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a blocking **build** job
-(build + format + unit tests), a **memory-leak** job that runs the heap-measurement harness over
-5,000 load-unload cycles (non-blocking until Sprint 2), and a forward-looking **integration**
-(Docker) job.
+(build + format + unit tests), a blocking **memory-leak** job that runs the heap-measurement harness
+over 5,000 load-unload cycles, and a forward-looking **integration** (Docker) job.
 
 ## Getting started
 
@@ -144,7 +143,7 @@ Replace `<commit-sha>` with a full 40-character commit SHA (not a branch or tag,
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search for `.e2e.yaml` scenarios. Searched recursively. |
-| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or — when binary packaging lands in Sprint 11 — to pin a released version. |
+| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or — once packaged releases are published — to pin a released version. |
 | `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
 | `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
 | `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
@@ -399,7 +398,7 @@ with per-step verdicts and failing-line decoration in the editor. Full in-block 
 (completion/diagnostics) is a documented fast-follow — see
 [`tools/vscode-vouchfx/docs/csharp-intellisense.md`](tools/vscode-vouchfx/docs/csharp-intellisense.md).
 
-## Sprint 1 de-risking results
+## De-risking results
 
 - **Memory model verified** — a trivial script compiles once, runs 5,000 times in a collectible
   `AssemblyLoadContext`, and unloads with only ~1.3 KB net heap delta (2 MB threshold). The central
@@ -434,7 +433,6 @@ src/
     Platform.Steps.*.Script           embedded code (C#)
 tests/                                4 xUnit projects + the memory-leak measurement harness
 docs/                                 the authoritative design — single source of truth (see below)
-plan/                                 MVP delivery plan: 5 milestones, 12 sprints, 108 tasks
 CLAUDE.md                             operating rules and hard invariants for this repository
 ```
 
@@ -448,10 +446,9 @@ CLAUDE.md                             operating rules and hard invariants for th
 - [`docs/language-reference.md`](docs/language-reference.md) — the per-step-type field reference
   (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
   frozen by a golden gate, so it can never drift from what the compiler accepts.
-- [`docs/03_MVP_Project_Plan.md`](docs/03_MVP_Project_Plan.md) — scope, the seven workstreams, phasing,
-  and what is in the MVP versus later.
-- [`plan/README.md`](plan/README.md) — the execution plan that decomposes the MVP into milestones,
-  sprints, and tasks; [`plan/sprint-01.md`](plan/sprint-01.md) is the delivered Foundations sprint.
+- [`docs/roadmap.md`](docs/roadmap.md) — the public roadmap: what has shipped, what v1.0 still
+  needs, what v1.x adds next, and the permanent open-source feature boundary.
+- [`CHANGELOG.md`](CHANGELOG.md) — the delivered-capability record, seeding each release's notes.
 
 ## Reserved namespaces
 
@@ -471,13 +468,12 @@ engine internals.
 
 - **[vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers)** — The community provider hub. Hosts Verified and Community tier providers, with PR-gated conformance testing and the publisher rubric.
 - **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications (C#, Python, Java) and complete end-to-end test suites demonstrating common patterns and provider usage.
-- **[vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend)** — The optional open-source telemetry backend. Implements the frozen `/v1/telemetry` contract with PostgreSQL storage, retention policies, and deletion support.
 
 ## Contributing
 
 **Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract from the `Platform.Sdk` NuGet package, composition rules, and the Verified-tier rubric. The [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template.
 
-**Contributing to the platform engine?** The entry point is the [delivery plan](plan/README.md), which sequences work by risk (memory model and orchestration first). Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
+**Contributing to the platform engine?** Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), [`GOVERNANCE.md`](GOVERNANCE.md), and the [public roadmap](docs/roadmap.md) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
 ## Security
 

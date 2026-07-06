@@ -12,20 +12,21 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 
 ## How to work here — read first
 
-- **This repo contains both the specification docs and an implemented .NET solution.** Present: `docs/` (the design), `plan/` (the delivery plan), `src/`, `tests/`, `vouchfx.sln`, `README.md`, this file.
+- **This repo contains both the specification docs and an implemented .NET solution.** Present: `docs/` (the design), `src/`, `tests/`, `vouchfx.sln`, `README.md`, this file. **Maintainer-local, untracked, never published** (gitignored; present only on the maintainer's machine): `plan/` (the internal delivery plan), `docs/03_MVP_Project_Plan.md`, `docs/reviews/`, `HUMAN_TODO.md` — they hold internal planning/commercial material and must never be committed, linked from published docs, or rendered to the Pages site (`scripts/build_site.py` skips them explicitly). The public planning surface is `docs/roadmap.md`, `CHANGELOG.md`, and `GOVERNANCE.md`.
 - **Use documented commands.** See `README.md` / `.github/workflows/build.yml` for the supported `dotnet build`/`test`/`format` commands; don’t reference tooling that isn’t in the repo yet.
 - **Navigate the docs with Grep by section number.** They are large (blueprint ~1200 lines). Do not read end-to-end.
 - **Distrust illustrative snippets.** The docs mark some code "illustrative" and record corrections from real spikes (§1.2). Verify the actual Aspire/Roslyn API against the pinned version before trusting any snippet.
 - **Honour the hard invariants below.** They span multiple sections, were discovered in real spikes, and are non-negotiable.
-- **Follow the MVP build order (`docs/03`), tracked in `plan/`:** seven workstreams — A orchestration, B compiler/runtime, C tooling, D integration, E pilot, F Provider SDK, G reporting. `plan/` decomposes this into 5 milestones / 12 sprints / 108 tasks; read `plan/README.md` for conventions and the milestone gates, and the relevant `plan/sprint-NN.md` before starting work. The memory-leak regression test is a **Phase 1 (M1)** deliverable and a permanent CI gate, not an afterthought.
+- **Follow the MVP build order (maintainer-local `docs/03`, tracked in maintainer-local `plan/`):** seven workstreams — A orchestration, B compiler/runtime, C tooling, D integration, E pilot, F Provider SDK, G reporting. On the maintainer's machine, read `plan/README.md` for conventions and the milestone gates, and the relevant `plan/sprint-NN.md` before starting work; where those files are absent, `docs/roadmap.md` is the public summary. The memory-leak regression test is a **Phase 1 (M1)** deliverable and a permanent CI gate, not an afterthought.
 - **Documentation prose is British English.** Match it when editing docs.
 
 ## The authoritative documents
 
 - `docs/01_Technical_Architecture_and_Engineering_Blueprint.md` — single source of truth for how the system is built. §3 five layers; §4 Aspire/Testcontainers; §5 Roslyn compiler + memory model; §6 cloud fabric; §11 security; §12 verdict taxonomy; §13 provider architecture; §14 reporting/event stream; §16 test runner; §17 secrets; §18 risks; §19 technology table.
 - `docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md` — the `.e2e.yaml` grammar + VSCode/LSP. §3 document structure; §4 common step fields; §5 step families; §6 capture/placeholder syntax; §7 verifyMode; §8 JSON Schema; §10 extension.
-- `docs/03_MVP_Project_Plan.md` — scope, the seven workstreams, phasing, MVP vs. later.
-- `plan/README.md` — the execution plan that turns `docs/03` into milestones (M1–M5), 12 sprints, and tasks; the conventions, capacity, milestone gates, and the hard-invariant review checklist. Per-sprint task lists live in `plan/sprint-01.md … sprint-12.md`; `plan/roadmap.md` is the Mermaid overview.
+- `docs/03_MVP_Project_Plan.md` (**maintainer-local, untracked**) — scope, the seven workstreams, phasing, MVP vs. later.
+- `plan/README.md` (**maintainer-local, untracked**) — the execution plan that turns `docs/03` into milestones (M1–M5), 12 sprints, and tasks; the conventions, capacity, milestone gates, and the hard-invariant review checklist. Per-sprint task lists live in `plan/sprint-01.md … sprint-12.md`; `plan/roadmap.md` is the Mermaid overview.
+- `docs/roadmap.md`, `CHANGELOG.md`, `GOVERNANCE.md` — the public, tracked counterparts: capability-level roadmap (including the permanent OSS/commercial feature boundary), the delivered-capability changelog, and the community governance model. Keep them in step with the maintainer-local plan when milestones move.
 - Claude Code config (the claude-agentic-framework sub-agents such as `security-specialist`, plus its commands/skills) is **not** vendored in this repository — it lives at the user/machine level under `~/.claude/`. It does not change the engine design — only how Claude Code assists in this repo.
 
 ## Hard invariants (non-negotiable)

@@ -12,7 +12,7 @@
 # So by default this workflow INSTALLS vouchfx by building it from source: it checks
 # out the vouchfx repository at a pinned ref (`vouchfx-repo` / `vouchfx-ref`), runs
 # `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
-#   Real packaging (a published binary / container image) is a LATER (Sprint 11)
+#   Real packaging (a published binary / container image) is a LATER
 #   dependency.  When it lands, a consumer can keep this same workflow contract and
 #   simply override `vouchfx-repo` / `vouchfx-ref` to track the packaged release —
 #   the install step is intentionally the only thing that changes.
@@ -57,7 +57,7 @@ on:
         description: >-
           The `owner/name` of the repository to obtain vouchfx from (build-from-source
           install). Defaults to this repository. Override (with vouchfx-ref) to track a
-          different fork, or — once real packaging ships (Sprint 11) — a packaged release.
+          different fork, or — once real packaging ships — a packaged release.
         type: string
         required: false
         default: ${{ github.repository }}

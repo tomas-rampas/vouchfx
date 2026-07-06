@@ -787,7 +787,7 @@ Between **sequential** scenarios that share a single topology, the engine automa
 | `redis`, `elasticsearch` | None in v1 | As above; for Redis, key-prefix your test data per scenario so cleanup is a single pattern delete |
 | Brokers (`kafka`, `rabbitmq`, `nats`, `azureservicebus`) | Not applicable — messages are consumed/scanned per step | Scope topics/queues/subjects per suite; `mq-expect` matching on captured values tolerates residual traffic |
 
-The symptom of missing isolation is a **second or later scenario failing on data the first one wrote** — nondeterministic if scenario order varies. This is a documented v1 limitation tracked as PB-02 in [the post-v1 backlog](../plan/post-v1-backlog.md); the [troubleshooting guide](troubleshooting.md) has the failure-mode entry.
+The symptom of missing isolation is a **second or later scenario failing on data the first one wrote** — nondeterministic if scenario order varies. This is a documented v1 limitation — automatic reset for the non-Postgres stores is a planned improvement on the [public roadmap](roadmap.md); the [troubleshooting guide](troubleshooting.md) has the failure-mode entry.
 
 ---
 

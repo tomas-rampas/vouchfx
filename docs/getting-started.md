@@ -36,9 +36,29 @@ docker info
 
 You should see version and runtime information. On Windows, this typically means [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the Linux engine running; on macOS, Docker Desktop likewise; on Linux, a running `dockerd`.
 
+## Installing vouchfx
+
+vouchfx is packaged as a `dotnet` global tool. From the v1.0 release onwards, install and upgrade it straight from NuGet.org:
+
+```bash
+# Install (v1.0 onwards)
+dotnet tool install -g vouchfx
+
+# Upgrade later
+dotnet tool update -g vouchfx
+```
+
+**The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator, whose binaries live in the per-user NuGet package cache (`~/.nuget/packages/`). Any machine that has ever built or restored a .NET Aspire project already has them. On a completely fresh machine, install the Aspire workload once before your first run:
+
+```bash
+dotnet workload install aspire
+```
+
+Without it, the first `vouchfx run` fails with an infrastructure error rather than a test verdict.
+
 ## Building vouchfx from source
 
-vouchfx is packaged as a `dotnet` global tool (Sprint 11); until the v1.0 NuGet publish, build it from source. Clone the repository if you haven't already:
+Until the v1.0 NuGet publish — or if you want the latest unreleased engine — build from source. Clone the repository if you haven't already:
 
 ```bash
 git clone https://github.com/tomas-rampas/vouchfx.git

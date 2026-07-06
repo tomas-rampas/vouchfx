@@ -7,7 +7,7 @@ natively in the GitLab pipeline / merge-request UI).
 
 It is the **GitLab equivalent of the reusable GitHub Actions workflow**
 [`.github/workflows/vouchfx-run.yml`](../../.github/workflows/vouchfx-run.yml)
-(Sprint-10 task **S10-C-02**) and is **behaviourally equivalent** to it — same inputs (as
+and is **behaviourally equivalent** to it — same inputs (as
 CI/CD variables), same build-from-source install, same best-effort image pre-warm, same
 `vouchfx run … --junit results.xml --html report.html [--fail-on-*]` invocation, same
 exit-code gating (only a product **Fail** breaks CI by default), and the same
@@ -89,7 +89,7 @@ executable (`src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj`, `OutputType Exe`, `IsAspir
 the template **builds it from source**: it `git clone`s `VOUCHFX_REPO_URL` at `VOUCHFX_REF`
 into `.vouchfx-src`, runs `dotnet build … -c Release`, then invokes the CLI with
 `dotnet run --project … --no-build`. Real packaging (a published binary / container image)
-is a **forward-ready Sprint-11 dependency** — exactly as in the GitHub template. When it
+is a **forward-ready packaged-release dependency** — exactly as in the GitHub template. When it
 lands, a consumer keeps this same template contract and overrides `VOUCHFX_REPO_URL` /
 `VOUCHFX_REF` to track the packaged release; the install step is intentionally the only
 thing that changes.
@@ -145,7 +145,7 @@ supply digests — mirroring the GitHub header guidance.)
 | Injection-safety | inputs bound to `env:`, dereferenced (not `${{ }}`-spliced) | values dereferenced as `"$VAR"` / iterated via env (not spliced) |
 | Artefacts | `if: always()` upload `results.xml`+`report.html`, `retention-days: 7` | `when: always` `paths: [results.xml, report.html]`, `expire_in: 7 days` |
 | Native test report | (consumer wires `dorny/test-reporter` etc.) | `reports: junit: results.xml` (native) |
-| Packaging note | build-from-source; Sprint-11 packaging forward-ready | build-from-source; Sprint-11 packaging forward-ready |
+| Packaging note | build-from-source; packaged-release forward-ready | build-from-source; packaged-release forward-ready |
 
 ## Validation status
 
