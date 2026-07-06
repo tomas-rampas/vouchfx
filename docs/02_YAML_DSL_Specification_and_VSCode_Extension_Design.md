@@ -531,17 +531,23 @@ The community catalogue at platform launch is summarised in the table below. The
 
 | Family | Core (ships with the engine) | Verified (planned) | Community (planned) |
 |---|---|---|---|
-| http | http.rest | http.soap, http.graphql | http.signalr, http.long-polling |
-| rpc | — | rpc.grpc | rpc.thrift, rpc.json-rpc |
-| mq-publish | mq-publish.kafka, mq-publish.rabbitmq | — | — |
-| mq-expect | mq-expect.kafka, mq-expect.rabbitmq | — | — |
-| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | — | — |
-| cache-assert | cache-assert.redis, cache-assert.elasticsearch | — | — |
+| http | http.rest | http.soap, http.graphql | http.long-polling |
+| rpc | — | rpc.grpc | rpc.json-rpc, rpc.thrift |
+| mq-publish | mq-publish.kafka, mq-publish.rabbitmq, mq-publish.nats, mq-publish.azureservicebus | mq-publish.redis, mq-publish.mqtt, mq-publish.sqs, mq-publish.eventhubs | mq-publish.pulsar, mq-publish.activemq-artemis, mq-publish.gcp-pubsub, mq-publish.azurestoragequeue, mq-publish.sns |
+| mq-expect | mq-expect.kafka, mq-expect.rabbitmq, mq-expect.nats, mq-expect.azureservicebus | mq-expect.redis, mq-expect.mqtt, mq-expect.sqs, mq-expect.eventhubs | mq-expect.pulsar, mq-expect.activemq-artemis, mq-expect.gcp-pubsub, mq-expect.azurestoragequeue |
+| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | db-assert.oracle, db-assert.cassandra, db-assert.scylladb, db-assert.cockroachdb, db-assert.clickhouse, db-assert.dynamodb, db-assert.cosmosdb, db-assert.neo4j, db-assert.mariadb | db-assert.ldap, db-assert.qdrant |
+| cache-assert | cache-assert.redis, cache-assert.elasticsearch | cache-assert.opensearch, cache-assert.valkey | cache-assert.memcached |
 | mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
 | script | script.csharp | — | — |
+| realtime-expect *(reserved)* | — | realtime-expect.websocket, realtime-expect.sse, realtime-expect.signalr | realtime-expect.graphql-ws |
+| storage-assert *(reserved)* | — | storage-assert.s3, storage-assert.azblob, storage-assert.sftp | storage-assert.gcs |
+| trace-expect *(reserved)* | — | trace-expect.otlp | trace-expect.jaeger |
+| metrics-assert *(reserved)* | — | — | metrics-assert.prometheus |
 
 *Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. Note: A bare family name (e.g., `type: mq-publish`) is accepted as an alias ONLY when the family has exactly one registered provider. Families with two or more providers require the explicit dotted form (e.g., `type: mq-publish.kafka`).*
+
+Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands. A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect.otlp shapes) have no such prerequisite and can be delivered by the community self-contained. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
 
 ### 5.7.1 How adding a provider feels to a contributor
 
@@ -555,7 +561,7 @@ Two patterns make the choice explicit and reviewable. First, the provider is nam
 >
 > A bare family name (e.g., `type: http`, `type: script`) is accepted as a convenient alias **only when that family has exactly one registered provider**. When a family has two or more providers, the bare form is rejected as ambiguous, and the author must use the explicit dotted form.
 >
-> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), and `mail-expect` (→ mail-expect.smtp). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq), `mq-expect` (kafka, rabbitmq), and `cache-assert` (redis, elasticsearch). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), and `mail-expect` (→ mail-expect.smtp). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq, nats, azureservicebus), `mq-expect` (kafka, rabbitmq, nats, azureservicebus), and `cache-assert` (redis, elasticsearch). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
 
 #### `cache-assert.elasticsearch` — step fields
 
