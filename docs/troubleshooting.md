@@ -974,7 +974,7 @@ In v1, only PostgreSQL is automatically reset between scenarios via the Respawn 
          } finally { redis.Dispose(); }
    ```
 
-3. **Understand the per-store reset status.** The engine plans to add automatic reset for non-Postgres stores in a future release (v2). Until then, parallel isolation or manual cleanup is the solution. See `plan/post-v1-backlog.md` § PB-02 for details.
+3. **Understand the per-store reset status.** The engine plans to add automatic reset for non-Postgres stores in a future release (v2). Until then, parallel isolation or manual cleanup is the solution. See the [public roadmap](roadmap.md) for details.
 
 ---
 

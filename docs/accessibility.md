@@ -6,8 +6,8 @@
 
 This document records the accessibility audit of the two primary report-rendering surfaces in vouchfx:
 
-- **Terminal renderer** (`src/Engine/Platform.Engine.Reporting/TerminalRenderer.cs`, S10-G-03a) — structured JSON Lines event stream rendered to stdout or a file as plain text, with optional accessibility decorations (shape glyphs and ANSI colour).
-- **HTML renderer** (`src/Engine/Platform.Engine.Reporting/HtmlRenderer.cs`, S10-G-03b) — the same event stream rendered as a self-contained HTML5 document with inline stylesheet and no external resource fetches.
+- **Terminal renderer** (`src/Engine/Platform.Engine.Reporting/TerminalRenderer.cs`) — structured JSON Lines event stream rendered to stdout or a file as plain text, with optional accessibility decorations (shape glyphs and ANSI colour).
+- **HTML renderer** (`src/Engine/Platform.Engine.Reporting/HtmlRenderer.cs`) — the same event stream rendered as a self-contained HTML5 document with inline stylesheet and no external resource fetches.
 
 ### Audit method
 
@@ -41,7 +41,7 @@ Each verdict is **always** rendered with its distinct text token, unconditionall
 
 The renderer accepts a `decorate` boolean parameter:
 
-- **Plain mode** (`decorate: false`, the default) — emits only the text token, no ANSI colour or glyphs. Output is byte-identical to the pre-S10-G-03a renderer, suitable for piped/redirected/CI environments.
+- **Plain mode** (`decorate: false`, the default) — emits only the text token, no ANSI colour or glyphs. Output is byte-identical to the renderer before decorations were introduced, suitable for piped/redirected/CI environments.
 - **Decorated mode** (`decorate: true`) — prefixes each verdict line with a per-verdict ASCII shape glyph and wraps the verdict token in ANSI colour:
   - Pass `[+]` green (SGR 32)
   - Fail `[x]` red (SGR 31)
@@ -175,7 +175,7 @@ Every dynamic string (step ids, scenario names, diffs, hashes) is HTML-escaped b
 
 ## 4. Remediation Record
 
-The following remediations were applied in S10-G-03 to achieve the conformance stated above:
+The following remediations were applied to achieve the conformance stated above:
 
 | Remediation | Issue | Solution | WCAG criterion |
 |---|---|---|---|

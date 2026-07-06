@@ -79,7 +79,7 @@ The full rationale and planned approach are in
 
 ## Test Explorer
 
-**Delivered (Sprint 10, S10-G-01):** The extension contributes a Test Controller that discovers `*.e2e.yaml` files and renders their scenarios and steps as a tree in VSCode's Test Explorer.
+**Delivered:** The extension contributes a Test Controller that discovers `*.e2e.yaml` files and renders their scenarios and steps as a tree in VSCode's Test Explorer.
 
 ### Discovery
 

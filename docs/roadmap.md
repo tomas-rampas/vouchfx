@@ -1,0 +1,103 @@
+# vouchfx public roadmap
+
+This is the public, capability-level roadmap for vouchfx. It is updated at every minor release. Work is
+sequenced by **risk, not visibility** — the hardest problems (the dynamic-compilation memory model and
+health-gated container orchestration) were solved and CI-gated first, before any surface features.
+Milestones, not dates, are the measure of progress; where dates appear they are quarters, deliberately.
+
+For what changed when, see the [changelog](../CHANGELOG.md). For how project decisions are made, see
+[`GOVERNANCE.md`](../GOVERNANCE.md).
+
+## Delivered
+
+The engine is feature-complete for v1.0. Everything below is on `main`, CI-gated, and exercised by the
+four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
+
+- **The compile-once memory model** — `.e2e.yaml` compiles through Roslyn exactly once into a collectible
+  `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
+- **Health-gated orchestration** — headless .NET Aspire + Testcontainers topologies, started deterministically
+  and torn down cleanly.
+- **Eighteen Core providers across eight step families** — `http.rest`; `db-assert` for PostgreSQL, MySQL,
+  SQL Server and MongoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS and Azure Service Bus;
+  `cache-assert` for Redis and Elasticsearch; `mail-expect.smtp`; `webhook-listen.http`; `script.csharp`.
+- **Engine-owned asynchronous verification** — `verifyMode: RETRY` with bounded exponential backoff (Polly v8);
+  authors never write `Thread.Sleep`.
+- **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
+  frozen byte-for-byte, each enforced by a golden-file CI gate. Evolution within v1.x is additive only.
+- **The Provider SDK** (`Platform.Sdk`) with worked example providers, a conformance test harness, and the
+  [community provider hub](https://github.com/tomas-rampas/vouchfx-providers).
+- **Secrets as references** — `${secret:env/…}` and `${secret:vault/…}`, resolved at execution time, redacted
+  at the source; the redaction path has passed a penetration test.
+- **Reporting off one event stream** — terminal (WCAG-conscious), self-contained HTML, JUnit XML and a raw
+  JSON Lines `--events` feed, all rendered from the same schema-versioned stream.
+- **A headless CLI** with tag/owner/path/change-set selection, taxonomy-aware exit codes (only `Fail` breaks
+  CI by default), parallel topology-per-scenario runs, and watch mode.
+- **Editor tooling** — a VSCode extension with schema-driven validation and autocomplete, C# highlighting in
+  `script.csharp` blocks, and Test Explorer integration.
+- **CI integration** — a reusable GitHub Actions workflow and an `include`-able GitLab CI template.
+- **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
+  and NuGet.org publication via Trusted Publishing (no long-lived keys).
+
+## v1.0 — the first public release (targeted Q4 2026)
+
+What remains is validation, not construction:
+
+- Validation of the end-to-end experience with pilot teams.
+- The first public release: the `vouchfx` dotnet global tool on NuGet.org, per-OS self-contained archives
+  and installers, all signed and provenance-attested.
+- Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
+  the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
+  artefact from day one, so verification is never blocked on those extras.
+
+## The v1.x series — additive only
+
+The three frozen contracts are a trust commitment for the whole v1.x series: nothing that works today breaks
+within v1.x. Within that constraint, the near-term direction is:
+
+- **Provider breadth through the community pathway** — the Provider SDK is the mechanism by which new
+  technologies arrive (gRPC, SOAP, Oracle, SQS and the long tail) as Verified or Community providers,
+  without engine changes. This is deliberately community-first; the
+  [provider hub](https://github.com/tomas-rampas/vouchfx-providers) is the front door.
+- **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
+  (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
+- **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked
+  against the GitHub workflow; a live-instance run is the outstanding confirmation.
+- **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
+
+## v2 candidates
+
+Two items are explicitly parked for v2, and the reasons are part of the trust story:
+
+- **Per-file telemetry opt-out** (`metadata.telemetry: false`) — deliberately *not* added in v1.x because it
+  would mutate the frozen v1 schema. The v1 suppression surface (global consent, `--no-telemetry`,
+  `VOUCHFX_NO_TELEMETRY`) already covers the privacy requirement; telemetry remains opt-in and off by default.
+- **Per-scenario state reset for non-Postgres stores** — sequential scenarios sharing one topology are
+  auto-reset only for PostgreSQL today. Parallel runs (`--parallel`) are isolated by construction, and the
+  [common patterns guide](common-patterns.md) documents per-store workarounds. Automatic reset for
+  SQL Server, MySQL, MongoDB, Redis and Elasticsearch is planned for v2.
+- **Richer control flow** — the DSL models a single linear sequence by design; conditional and parallel steps
+  are a deliberate post-v1 language decision, taken slowly because language mistakes are forever.
+
+## Deliberately not on the roadmap
+
+Named here so nobody waits for them — build them via the Provider SDK or externally:
+
+- **Automated migration tooling** from Postman, k6, xUnit or SpecFlow. Worked porting examples are the
+  supported path; an automated converter is out of scope.
+- **Mid-suite checkpoint-and-resume** — a crashed suite re-runs from the start.
+- **Single-file executables** — the engine discovers provider assemblies via `Assembly.Location`, which
+  single-file publishing breaks; multi-file self-contained archives are the supported form.
+- **UI/browser testing and unit testing** — vouchfx tests the seams *between* systems; it is not a
+  Playwright or xUnit replacement and will not become one.
+
+## Open source, permanently
+
+vouchfx publishes its feature boundary explicitly, in advance, so nobody discovers it later:
+
+| Surface | Tier |
+|---|---|
+| The engine, the YAML DSL, all eighteen Core providers, the Provider SDK, the VSCode extension, the terminal renderer, the HTML report, the JUnit XML output, the structured event stream, the CLI runner, the secret-reference resolution mechanism, the reproducibility envelope. | **Apache-2.0, free permanently.** |
+| A hosted cross-run dashboard, managed Vault integration, cloud execution fabric (remote provisioning), agentic test planning/generation/healing, performance-testing tooling, run-history retention beyond the local cache, organisational analytics. | Commercial (future), layered *above* the open-source engine — never carved out of it. |
+| SSO/OIDC federation, on-premises Helm deployment, audit logging, SIEM export, data-residency commitments, dedicated support SLAs. | Commercial enterprise (future). |
+
+Nothing in the first row will ever move down the table. The open-source engine is the product, not a demo.

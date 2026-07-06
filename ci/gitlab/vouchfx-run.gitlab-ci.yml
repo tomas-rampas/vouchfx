@@ -1,4 +1,4 @@
-# ci/gitlab/vouchfx-run.gitlab-ci.yml — INCLUDE-able "run a vouchfx suite" template (S10-C-02).
+# ci/gitlab/vouchfx-run.gitlab-ci.yml — INCLUDE-able "run a vouchfx suite" template.
 #
 # The GitLab CI equivalent of the reusable GitHub Actions workflow
 # (.github/workflows/vouchfx-run.yml). It runs a vouchfx `.e2e.yaml` suite end-to-end
@@ -45,7 +45,7 @@
 # So by default this template INSTALLS vouchfx by building it from source: it clones the
 # vouchfx repository at a pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path,
 # runs `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
-#   Real packaging (a published binary / container image) is a LATER (Sprint 11)
+#   Real packaging (a published binary / container image) is a LATER
 #   dependency — exactly as in the GitHub template. When it lands, a consumer keeps this
 #   same template contract and simply overrides VOUCHFX_REPO_URL / VOUCHFX_REF to track
 #   the packaged release; the install step is intentionally the only thing that changes.

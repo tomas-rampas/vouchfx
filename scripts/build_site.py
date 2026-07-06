@@ -2,7 +2,7 @@
 """Build the vouchfx GitHub Pages site.
 
 Copies the static landing page (site/) into the output directory, then renders
-the repository's markdown design docs and delivery plan into styled HTML that
+the repository's markdown design docs and user guides into styled HTML that
 matches the landing page. The markdown files remain the single source of truth;
 this generates their HTML on every run, so a CI deploy keeps the published docs
 current with every push.
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import html
 import os
+import posixpath
 import re
 import shutil
 import sys
@@ -33,7 +34,6 @@ OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "_site"
 DOCS: list[tuple[str, str, str]] = [
     ("docs/01_Technical_Architecture_and_Engineering_Blueprint.md", "Design docs", "01 · Architecture Blueprint"),
     ("docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md", "Design docs", "02 · YAML DSL Specification"),
-    ("docs/03_MVP_Project_Plan.md", "Design docs", "03 · MVP Project Plan"),
     ("docs/getting-started.md", "User guides", "Getting started (60-minute path)"),
     ("docs/recipes.md", "User guides", "Recipes"),
     ("docs/common-patterns.md", "User guides", "Common patterns"),
@@ -41,34 +41,19 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/telemetry.md", "User guides", "Telemetry & privacy"),
     ("docs/language-reference.md", "User guides", "Language reference (generated)"),
     ("docs/accessibility.md", "User guides", "Accessibility"),
-    ("plan/README.md", "Delivery plan", "Delivery Plan (overview)"),
-    ("plan/roadmap.md", "Delivery plan", "Roadmap (Gantt)"),
-    ("plan/pilot-recruitment.md", "Delivery plan", "Pilot recruitment plan"),
-    ("plan/product-naming.md", "Delivery plan", "Product naming"),
-    ("plan/vendor-entity.md", "Delivery plan", "Vendor entity & trademark"),
-    ("plan/sprint-01.md", "Delivery plan", "Sprint 01 — Foundations"),
-    ("plan/sprint-01-implementation.md", "Delivery plan", "Sprint 01 — Implementation"),
-    ("plan/sprint-02.md", "Delivery plan", "Sprint 02 — Close the risk (M1)"),
-    ("plan/sprint-03.md", "Delivery plan", "Sprint 03 — Core compiler"),
-    ("plan/sprint-04.md", "Delivery plan", "Sprint 04 — Provider pipeline"),
-    ("plan/sprint-05.md", "Delivery plan", "Sprint 05 — Seed, secrets (M2)"),
-    ("plan/sprint-06.md", "Delivery plan", "Sprint 06 — Async + RETRY"),
-    ("plan/sprint-07.md", "Delivery plan", "Sprint 07 — Capture + runner"),
-    ("plan/sprint-08.md", "Delivery plan", "Sprint 08 — Freeze & publish (M3)"),
-    ("plan/sprint-09.md", "Delivery plan", "Sprint 09 — Editor & reports"),
-    ("plan/sprint-10.md", "Delivery plan", "Sprint 10 — Contribution path"),
-    ("plan/sprint-11.md", "Delivery plan", "Sprint 11 — Stabilisation (M4)"),
-    ("plan/sprint-12.md", "Delivery plan", "Sprint 12 — Pilot & release (M5)"),
-    ("plan/post-v1-backlog.md", "Delivery plan", "Post-v1 / v2 backlog"),
-    ("plan/go-to-market-gap-analysis.md", "Delivery plan", "Go-to-market gap analysis"),
-    ("plan/m3-phase-exit.md", "Delivery plan", "M3 phase exit"),
-    ("plan/m4-phase-exit.md", "Delivery plan", "M4 phase exit"),
+    ("docs/roadmap.md", "Project", "Roadmap"),
+    ("CHANGELOG.md", "Project", "Changelog"),
+    ("GOVERNANCE.md", "Project", "Governance"),
     ("README.md", "Project", "Project README"),
-    ("CLAUDE.md", "Project", "Engineering guide (CLAUDE.md)"),
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
-EXTRA = ["docs/reviews/m1-exit-evidence.md"]
+EXTRA: list[str] = []
+
+# Markdown that must never be published, even when present on a maintainer's
+# disk (internal planning/review material kept out of the public site).
+SKIP = {"docs/03_MVP_Project_Plan.md"}
+SKIP_PREFIXES = ("docs/reviews/",)
 
 def out_path(rel: str) -> Path:
     """Mirror the repo layout under OUT, with .html extension."""
@@ -76,19 +61,41 @@ def out_path(rel: str) -> Path:
 
 
 def rel_root(target: Path) -> str:
-    """Relative path from a generated file back to OUT root, e.g. '../'."""
-    rp = os.path.relpath(OUT, target.parent)
+    """Relative path from a generated file back to OUT root, e.g. '../'.
+    Forward slashes always, so Windows and CI builds emit identical HTML."""
+    rp = os.path.relpath(OUT, target.parent).replace(os.sep, "/")
     return "" if rp == "." else rp + "/"
 
 
-def rewrite_links(body: str) -> str:
-    """Turn relative .md links into .html; leave absolute URLs alone."""
+GITHUB_URL = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'tomas-rampas/vouchfx')}/"
+PUBLISHED: set[str] = set()
+
+
+def compute_published() -> set[str]:
+    rels = {rel for rel, _group, _label in DOCS} | set(EXTRA)
+    for src in ROOT.glob("docs/**/*.md"):
+        rel = src.relative_to(ROOT).as_posix()
+        if rel not in SKIP and not rel.startswith(SKIP_PREFIXES):
+            rels.add(rel)
+    return rels
+
+
+def rewrite_links(body: str, src_rel: str) -> str:
+    """Rewrite relative links: published .md pages become .html; any other
+    repo-relative target becomes an absolute GitHub URL (it has no page on the
+    site). Absolute URLs, anchors and mailto links pass through untouched."""
+    src_dir = posixpath.dirname(src_rel)
+
     def repl(m: re.Match) -> str:
         href = m.group(1)
         if re.match(r"[a-z]+://", href) or href.startswith("#") or href.startswith("mailto:"):
             return m.group(0)
-        new = re.sub(r"\.md(#|$)", r".html\1", href)
-        return f'href="{new}"'
+        path, sep, frag = href.partition("#")
+        target = posixpath.normpath(posixpath.join(src_dir, path))
+        if path.endswith(".md") and target in PUBLISHED:
+            return f'href="{path[:-3] + ".html"}{sep}{frag}"'
+        kind = "tree" if (ROOT / target).is_dir() else "blob"
+        return f'href="{GITHUB_URL}{kind}/main/{target}{sep}{frag}"'
 
     return re.sub(r'href="([^"]+)"', repl, body)
 
@@ -176,7 +183,7 @@ def render_markdown(rel: str, label: str) -> None:
         ]
     )
     body = md.convert(text)
-    body = rewrite_links(body)
+    body = rewrite_links(body, rel)
 
     # Re-insert mermaid blocks as divs.
     for i, block in enumerate(mermaid):
@@ -218,7 +225,7 @@ PORTAL = """<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Documentation · vouchfx</title>
-<meta name="description" content="vouchfx documentation — the architecture blueprint, the YAML DSL specification, the MVP project plan, and the milestone-driven delivery plan." />
+<meta name="description" content="vouchfx documentation — the architecture blueprint, the YAML DSL specification, and the user guides." />
 <meta name="theme-color" content="#0b0f1a" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="styles.css" />
@@ -260,10 +267,6 @@ PORTAL = """<!DOCTYPE html>
         <span class="doc-card__k">02</span><h3>YAML DSL Specification &amp; VSCode Extension</h3>
         <p>The <code>.e2e.yaml</code> grammar — document structure, step families, capture/placeholder syntax, verification modes, the JSON Schema contract, and the editor tooling.</p>
       </a>
-      <a class="doc-card" href="docs/03_MVP_Project_Plan.html">
-        <span class="doc-card__k">03</span><h3>MVP Project Plan</h3>
-        <p>Scope, the seven workstreams, phasing, and what is in the MVP versus later.</p>
-      </a>
     </div>
   </section>
 
@@ -303,37 +306,24 @@ PORTAL = """<!DOCTYPE html>
   </section>
 
   <section class="portal__group">
-    <h2>Delivery plan</h2>
-    <p>The MVP decomposed into five milestones, twelve sprints, and trackable tasks.</p>
-    <div class="doc-cards" style="margin-bottom:16px">
-      <a class="doc-card" href="plan/README.html">
-        <span class="doc-card__k">PLAN</span><h3>Delivery Plan — overview</h3>
-        <p>Conventions, capacity, milestone gates, the workstreams, and the hard-invariant review checklist.</p>
-      </a>
-      <a class="doc-card" href="plan/roadmap.html">
-        <span class="doc-card__k">GANTT</span><h3>Delivery Roadmap</h3>
-        <p>The milestone &amp; sprint timeline as a Mermaid Gantt overview.</p>
-      </a>
-    </div>
-    <div class="doc-list">{sprint_list}</div>
-  </section>
-
-  <section class="portal__group">
     <h2>Ecosystem</h2>
     <p>Community providers, sample applications, and related projects.</p>
     <div class="doc-cards">
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>Verified and Community tier providers with conformance testing, examples, and the provider authoring rubric.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Real-world microservices in C#, Python, and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">TELEMETRY</span><h3>Telemetry Backend</h3><p>The open-source, self-hostable telemetry backend with PostgreSQL storage, retention policies, and opt-in client instrumentation.</p></a>
     </div>
   </section>
 
   <section class="portal__group">
     <h2>Project</h2>
-    <p>Repository orientation and the operating rules for contributors.</p>
+    <p>Where the project is heading, what has shipped, and how it is run.</p>
     <div class="doc-cards">
+      <a class="doc-card" href="docs/roadmap.html"><span class="doc-card__k">ROADMAP</span><h3>Roadmap</h3><p>What has shipped, what v1.0 still needs, what v1.x adds next — and what stays free permanently.</p></a>
+      <a class="doc-card" href="CHANGELOG.html"><span class="doc-card__k">CHANGES</span><h3>Changelog</h3><p>The delivered-capability record, in Keep-a-Changelog format, seeding each release's notes.</p></a>
+      <a class="doc-card" href="GOVERNANCE.html"><span class="doc-card__k">GOV</span><h3>Governance</h3><p>Who decides what enters Core, how providers earn the Verified tier, and how disputes are resolved.</p></a>
       <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Project README</h3><p>What vouchfx is, how it works, building &amp; testing, and the repository layout.</p></a>
-      <a class="doc-card" href="CLAUDE.html"><span class="doc-card__k">GUIDE</span><h3>Engineering guide</h3><p>The hard invariants and operating rules every contributor — human or agent — must honour.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SDK</span><h3>Contributing &amp; provider authoring</h3><p>The provider-authoring guide: the frozen v1 contract, CsxFragment rules, testing, and the Verified rubric.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SEC</span><h3>Security policy</h3><p>How to report a vulnerability, the disclosure process, and the supported-versions table.</p></a>
     </div>
   </section>
 </div>
@@ -349,7 +339,6 @@ PORTAL = """<!DOCTYPE html>
       <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Repository</a>
       <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">Community Provider Hub</a>
       <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Sample Applications</a>
-      <a href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer">Telemetry Backend</a>
       <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
     </div>
   </div>
@@ -360,15 +349,7 @@ PORTAL = """<!DOCTYPE html>
 
 
 def build_portal() -> None:
-    sprints = [d for d in DOCS if d[0].startswith("plan/sprint-")]
-    items = []
-    for rel, _group, label in sprints:
-        href = rel[:-3] + ".html"
-        num = re.search(r"sprint-(\d+)", rel)
-        tag = f"S{num.group(1)}" if num else "·"
-        short = label.split("—", 1)[-1].strip() if "—" in label else label
-        items.append(f'<a href="{href}"><b>{tag}</b><span>{html.escape(short)}</span></a>')
-    (OUT / "docs.html").write_text(PORTAL.format(sprint_list="\n".join(items)), encoding="utf-8")
+    (OUT / "docs.html").write_text(PORTAL, encoding="utf-8")
     print("  built docs.html portal")
 
 
@@ -396,6 +377,8 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    PUBLISHED.update(compute_published())
+
     rendered: set[str] = set()
     for rel, _group, label in DOCS:
         render_markdown(rel, label)
@@ -405,14 +388,17 @@ def main() -> None:
             render_markdown(rel, derive_label(ROOT / rel))
             rendered.add(rel)
 
-    # Auto-render any markdown under docs/ or plan/ not explicitly listed, so a
-    # newly added file is published (linkable) rather than silently omitted.
-    for src in sorted([*ROOT.glob("docs/**/*.md"), *ROOT.glob("plan/**/*.md")]):
+    # Auto-render any markdown under docs/ not explicitly listed, so a newly
+    # added file is published (linkable) rather than silently omitted. SKIP and
+    # SKIP_PREFIXES hold internal material that must never reach the site, even
+    # when the files exist on a maintainer's disk.
+    for src in sorted(ROOT.glob("docs/**/*.md")):
         rel = src.relative_to(ROOT).as_posix()
-        if rel not in rendered:
-            print(f"  (auto) {rel} not in DOCS — rendering with derived label")
-            render_markdown(rel, derive_label(src))
-            rendered.add(rel)
+        if rel in rendered or rel in SKIP or rel.startswith(SKIP_PREFIXES):
+            continue
+        print(f"  (auto) {rel} not in DOCS — rendering with derived label")
+        render_markdown(rel, derive_label(src))
+        rendered.add(rel)
 
     build_portal()
     print(f"done -> {OUT}")

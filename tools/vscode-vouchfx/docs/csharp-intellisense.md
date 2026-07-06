@@ -2,7 +2,7 @@
 
 This note records the v1 scope decision for editor support of the C# that
 authors write inside a `script.csharp` step's `code:` block. It is the
-**documented fallback** required by the S09-C-02 acceptance criterion ("C#
+**documented fallback** required by the v1 acceptance criterion ("C#
 completion/diagnostics work … **or** the documented fallback is invoked and
 recorded").
 

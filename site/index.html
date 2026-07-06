@@ -45,7 +45,7 @@
 <section class="hero">
   <div class="hero__glow" aria-hidden="true"></div>
   <div class="container hero__inner">
-    <span class="badge"><span class="badge__dot"></span> Pre-release · Sprints 1–11 delivered · Sprint 12 (M5 pilot &amp; launch) in progress</span>
+    <span class="badge"><span class="badge__dot"></span> Pre-release · Engine feature-complete · v1.0 in preparation</span>
     <h1 class="hero__title">
       End-to-end testing for<br />distributed systems,<br /><span class="grad">authored in YAML.</span>
     </h1>
@@ -288,7 +288,7 @@ alc.<span class="t">Unload</span>();</code></pre>
       <div class="stat"><span class="stat__num">~1.3&nbsp;KB</span><span class="stat__label">net heap delta (2&nbsp;MB threshold)</span></div>
       <div class="stat"><span class="stat__num">20 / 20</span><span class="stat__label">health-gated topology starts</span></div>
     </div>
-    <p class="note note--center">Sprint&nbsp;1 results — the two defining risks empirically retired, guarded in CI.</p>
+    <p class="note note--center">The two defining risks empirically retired, guarded permanently in CI.</p>
   </div>
 </section>
 
@@ -356,36 +356,37 @@ alc.<span class="t">Unload</span>();</code></pre>
 <section class="section section--alt" id="roadmap">
   <div class="container">
     <p class="eyebrow">Status &amp; roadmap</p>
-    <h2 class="section__title">Risk-ordered delivery — five milestones, twelve sprints.</h2>
+    <h2 class="section__title">Risk-ordered delivery — the hard problems first.</h2>
     <p class="section__lede">
-      The plan sequences work by <em>risk</em>, not visibility: the memory model and orchestration are de-risked first,
-      and the memory-leak regression test is a Phase 1 deliverable and a permanent CI gate.
+      Work is sequenced by <em>risk</em>, not visibility: the memory model and orchestration were de-risked first,
+      and the memory-leak regression test has been a permanent CI gate from the start. The full picture —
+      including what stays free permanently — is on the <a href="docs/roadmap.html">public roadmap</a>.
     </p>
     <ol class="timeline">
       <li class="timeline__item timeline__item--done">
-        <span class="timeline__badge">M1 · done</span>
+        <span class="timeline__badge">Delivered</span>
         <h4>Foundations proven</h4>
-        <p>Memory-safe dynamic compilation and health-gated Aspire orchestration empirically retired. Buildable .NET 8 solution; frozen provider contract; JSON Lines event envelope. Closed in Sprint 2.</p>
+        <p>Memory-safe dynamic compilation and health-gated Aspire orchestration empirically validated. Buildable .NET 8 solution; frozen provider contract; JSON Lines event envelope.</p>
       </li>
       <li class="timeline__item timeline__item--done">
-        <span class="timeline__badge">M2 · done</span>
-        <h4>Core compiler runs</h4>
-        <p>The YAML→AST→CSX compiler runs three providers end-to-end with seed, env secrets, capture, the reflective registry and the terminal renderer. Closed in Sprint 5.</p>
+        <span class="timeline__badge">Delivered</span>
+        <h4>Core compiler end-to-end</h4>
+        <p>The YAML→AST→CSX compiler runs real scenarios end-to-end with declarative seeding, secret references, capture, the reflective provider registry and the terminal renderer.</p>
       </li>
-      <li class="timeline__item">
-        <span class="timeline__badge">M3 · engineering complete, exit-gated</span>
+      <li class="timeline__item timeline__item--done">
+        <span class="timeline__badge">Delivered</span>
         <h4>Full step set &amp; SDK</h4>
-        <p>All eighteen Core providers across eight families plus RETRY; v1 schema, contract and event-wire frozen; the Provider SDK packaged and clean-room-validated; runner selection and polling timeline. Engineering complete (Sprint 8); awaiting human sign-off items (outside-contributor SDK validation, steering review, contract-freeze sign-off).</p>
+        <p>All eighteen Core providers across eight families plus engine-owned RETRY; the v1 schema, provider contract and event-wire contract frozen; the Provider SDK packaged with worked examples; runner selection and the polling timeline.</p>
       </li>
-      <li class="timeline__item">
-        <span class="timeline__badge">M4 · engineering complete, exit-gated</span>
+      <li class="timeline__item timeline__item--done">
+        <span class="timeline__badge">Delivered</span>
         <h4>Tooling &amp; hardening</h4>
-        <p>VSCode extension, CLI, and HTML/JUnit reporting delivered (Sprints 9–10), with CI templates, the documentation set and the accessibility review. Stabilisation and the green reference scenario landed in Sprint 11. Exit-gated on cert provisioning, GitLab live run, and steering review.</p>
+        <p>VSCode extension, CLI, HTML/JUnit reporting, CI templates for GitHub and GitLab, the documentation set, the accessibility review, and a signed, provenance-attested release pipeline — with the four-technology reference scenario green.</p>
       </li>
       <li class="timeline__item">
-        <span class="timeline__badge">M5 · in progress</span>
+        <span class="timeline__badge">In progress</span>
         <h4>Pilot &amp; v1.0 release</h4>
-        <p>Community provider hub, telemetry backend, and sample applications published (Sprint 12). Remaining: final pilot cohort validation and v1.0 release.</p>
+        <p>The community provider hub and sample applications are live. Remaining: validation with pilot teams and the first public release to NuGet.org.</p>
       </li>
     </ol>
   </div>
@@ -395,7 +396,7 @@ alc.<span class="t">Unload</span>();</code></pre>
 <section class="cta">
   <div class="container cta__inner">
     <h2>Read the design. It's the source of truth.</h2>
-    <p>vouchfx is a fully-specified system: an architecture blueprint, a DSL specification, and a milestone-driven delivery plan — all in the open.</p>
+    <p>vouchfx is a fully-specified system: an architecture blueprint, a DSL specification, and a public roadmap — all in the open.</p>
     <div class="hero__cta">
       <a class="btn btn--primary" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">View on GitHub</a>
       <a class="btn btn--ghost" href="docs.html">Browse the docs</a>
@@ -416,10 +417,9 @@ alc.<span class="t">Unload</span>();</code></pre>
     <div class="footer__links">
       <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Repository</a>
       <a href="docs.html">Documentation</a>
-      <a href="plan/README.html">Delivery plan</a>
+      <a href="docs/roadmap.html">Roadmap</a>
       <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">Community Provider Hub</a>
       <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Sample Applications</a>
-      <a href="https://github.com/tomas-rampas/vouchfx-telemetry-backend" target="_blank" rel="noopener noreferrer">Telemetry Backend</a>
       <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
     </div>
   </div>

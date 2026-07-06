@@ -121,3 +121,10 @@ desktop.ini
 
 # Generated GitHub Pages output (built by scripts/build_site.py)
 _site/
+
+# Maintainer-local delivery/planning material — deliberately not published
+# (internal: sprint plans, commercial planning, human-only checklists, review evidence)
+/plan/
+/HUMAN_TODO.md
+/docs/03_MVP_Project_Plan.md
+/docs/reviews/
