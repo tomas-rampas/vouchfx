@@ -1,6 +1,6 @@
-# S11-D-03: dotnet tool Packaging for the vouchfx CLI
+# Decision record: dotnet tool packaging for the vouchfx CLI
 
-**Status:** Decided (Sprint 11)  
+**Status:** Decided  
 **Date:** 2026-06-25
 
 ## Context

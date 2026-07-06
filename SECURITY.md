@@ -110,8 +110,8 @@ Security issues in the parts of this repository the project maintains:
   `mq-expect.kafka`, `webhook-listen.http`.
 - **The Provider SDK** (`src/Sdk`) — the frozen v1 interface contract.
 - **The CI templates and release workflow** we publish for consumers
-  (`.github/workflows/`, `ci/`) — a software-supply-chain surface (the reason
-  S10-D-01 exists). Examples: template injection via untrusted input, secret/
+  (`.github/workflows/`, `ci/`) — a software-supply-chain surface reviewed as
+  such. Examples: template injection via untrusted input, secret/
   token exfiltration, or tampering with signed-release provenance.
 - The **secrets-handling posture** and the **verdict taxonomy** insofar as a
   defect could leak a secret value or misclassify a security-relevant outcome.

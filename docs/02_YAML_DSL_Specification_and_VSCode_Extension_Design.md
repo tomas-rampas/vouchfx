@@ -166,7 +166,7 @@ environment:
 
 Declarative fixtures are the recommended default because they live in source control beside the test, are visible in review, and produce the same baseline on every machine. When data must be created through the system's own APIs rather than injected directly — because the creation path is itself part of what is under test — a `script` step early in the scenario is the right tool instead, constructing entities and capturing their identifiers for later steps. A seed that fails to apply produces an environment error, not an assertion failure, so a broken fixture is never mistaken for a broken system. The reproducibility envelope records the content hash of every applied fixture.
 
-> **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. This limitation is tracked in the post-v1 backlog as PB-02.
+> **Known limitation (v1):** Between sequential scenarios that share a single topology, only Postgres dependencies are automatically reset. The engine applies Respawn after each scenario to flush Postgres tables; no equivalent reset is wired for SQL Server, MySQL, MongoDB, Redis, or Elasticsearch in v1. Authors who need clean state between sequential scenarios with those stores should either run scenarios in parallel (each scenario receives its own topology and fresh containers, which is already isolated by construction) or include explicit cleanup steps at the start of each scenario. Automatic reset for the remaining stores is a planned improvement on the [public roadmap](roadmap.md).
 
 ### 3.2.4 Configuring the system under test
 
@@ -782,11 +782,11 @@ With the binding in place, the editor behaves as it would for any well-supported
 
 ## 10.3 Schema hosting and resolution
 
-**Delivered (Sprint 9, S09-C-01):** The frozen v1 JSON Schema is bundled with the extension and bound declaratively via the `yamlValidation` contribution point, served by the Red Hat YAML language server dependency. The schema is a byte-for-byte copy of the engine's canonical v1 schema, and a CI test (`VsCodeShippedSchemaSyncTests`) enforces that the shipped copy remains in sync. For enterprise deployments, the `vouchfx.schemaPath` configuration setting allows pointing at an alternative copy of the same v1 schema (e.g., offline or internal hosting); this setting relocates the schema only and does not diverge from the frozen v1 contract.
+**Delivered:** The frozen v1 JSON Schema is bundled with the extension and bound declaratively via the `yamlValidation` contribution point, served by the Red Hat YAML language server dependency. The schema is a byte-for-byte copy of the engine's canonical v1 schema, and a CI test (`VsCodeShippedSchemaSyncTests`) enforces that the shipped copy remains in sync. For enterprise deployments, the `vouchfx.schemaPath` configuration setting allows pointing at an alternative copy of the same v1 schema (e.g., offline or internal hosting); this setting relocates the schema only and does not diverge from the frozen v1 contract.
 
 ## 10.4 Test Explorer integration
 
-**Delivered (Sprint 10, S10-G-01):** The extension contributes a VSCode Test Controller that discovers `*.e2e.yaml` files in the workspace and renders a tree of scenarios and steps in the Test Explorer view. Running tests from the Test Explorer invokes the `vouchfx` CLI and surfaces per-step verdicts with line-level error decoration in the editor. The live end-to-end acceptance (verdicts reflected and Fail-decorated lines shown) is contingent on the companion CLI release (Sprint-10 .NET PR #148, which delivers the `--events` and `--no-decorations` flags); until that merge, the Test Explorer run handler fails soft with items marked `errored` and a `vouchfx.cliPath` configuration notice.
+**Delivered:** The extension contributes a VSCode Test Controller that discovers `*.e2e.yaml` files in the workspace and renders a tree of scenarios and steps in the Test Explorer view. Running tests from the Test Explorer invokes the `vouchfx` CLI and surfaces per-step verdicts with line-level error decoration in the editor. The live end-to-end acceptance (verdicts reflected and Fail-decorated lines shown) is contingent on the companion CLI release (PR #148, which delivered the `--events` and `--no-decorations` flags); until that merge, the Test Explorer run handler fails soft with items marked `errored` and a `vouchfx.cliPath` configuration notice.
 
 ### Discovery and tree structure
 
@@ -800,7 +800,7 @@ The extension registers a Run profile that, when invoked, spawns the `vouchfx` C
 <cliPath> run <file> --events <tmpEventsFile> --no-decorations
 ```
 
-The `<cliPath>` is resolved from the `vouchfx.cliPath` configuration setting (default: bare `"vouchfx"` command); the `<file>` is the absolute path to the `.e2e.yaml` file; and `<tmpEventsFile>` is a unique temp-directory path where the CLI writes its JSON Lines event stream. The `--no-decorations` flag suppresses the engine's ANSI colour and formatting codes, as the Test Explorer surface handles visual styling. **This CLI contract is the interface between the VSCode extension (consumer, delivered in S10) and the reporting/CLI work (producer, delivered in Sprint-10 .NET PR #148).** Until #148 merges, the two flags are unavailable; the run handler detects this and degrades gracefully (see Fail-soft error handling below).
+The `<cliPath>` is resolved from the `vouchfx.cliPath` configuration setting (default: bare `"vouchfx"` command); the `<file>` is the absolute path to the `.e2e.yaml` file; and `<tmpEventsFile>` is a unique temp-directory path where the CLI writes its JSON Lines event stream. The `--no-decorations` flag suppresses the engine's ANSI colour and formatting codes, as the Test Explorer surface handles visual styling. **This CLI contract is the interface between the VSCode extension (consumer) and the reporting/CLI work (producer, delivered in PR #148).** Until #148 merges, the two flags are unavailable; the run handler detects this and degrades gracefully (see Fail-soft error handling below).
 
 ### Verdict mapping to editor state
 
@@ -836,11 +836,11 @@ Schema validation makes the declarative YAML safe, but it stops at the boundary 
 
 ## 11.1 C# syntax highlighting (delivered)
 
-**Delivered (Sprint 9, S09-C-02):** A TextMate injection grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar into the block scalar that follows a `code:` key in a `script.csharp` step. This provides syntax highlighting (colours for keywords, strings, member access, etc.) while the surrounding YAML remains YAML-coloured. The highlighting runs entirely inside the TextMate tokeniser and requires no language service, project, or network access. It does not provide completion, type checking, or diagnostics — those features are recorded as a documented fast-follow (see section 11.3).
+**Delivered:** A TextMate injection grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar into the block scalar that follows a `code:` key in a `script.csharp` step. This provides syntax highlighting (colours for keywords, strings, member access, etc.) while the surrounding YAML remains YAML-coloured. The highlighting runs entirely inside the TextMate tokeniser and requires no language service, project, or network access. It does not provide completion, type checking, or diagnostics — those features are recorded as a documented fast-follow (see section 11.3).
 
 ## 11.2 C# IntelliSense (documented fast-follow)
 
-**Deferred (Sprint 10 or later):** Full embedded C# IntelliSense — completion, type checking, diagnostics, and go-to-definition on members of `Vars`, `Services`, `Secrets`, and `Webhooks` — is a documented fast-follow, not delivered in v1. The intended approach and concrete technical reasons for the deferral are recorded in `tools/vscode-vouchfx/docs/csharp-intellisense.md`. The barrier is not scope but technology: the modern C# Dev Kit / Roslyn LSP does not cleanly support virtual-document completion forwarding for in-memory `.cs` files not bound to an MSBuild project, and YAML ↔ virtual-document position mapping is non-trivial; the robust long-term solution is a custom Roslyn language-server host, a multi-sprint effort. Until then, syntax highlighting plus YAML schema validation is the supported v1 authoring experience.
+**Deferred (documented fast-follow):** Full embedded C# IntelliSense — completion, type checking, diagnostics, and go-to-definition on members of `Vars`, `Services`, `Secrets`, and `Webhooks` — is a documented fast-follow, not delivered in v1. The intended approach and concrete technical reasons for the deferral are recorded in `tools/vscode-vouchfx/docs/csharp-intellisense.md`. The barrier is not scope but technology: the modern C# Dev Kit / Roslyn LSP does not cleanly support virtual-document completion forwarding for in-memory `.cs` files not bound to an MSBuild project, and YAML ↔ virtual-document position mapping is non-trivial; the robust long-term solution is a custom Roslyn language-server host, a substantial multi-release effort. Until then, syntax highlighting plus YAML schema validation is the supported v1 authoring experience.
 
 ## 11.3 Planned approach for C# IntelliSense
 
@@ -914,7 +914,7 @@ The positional `<path>` argument specifies the directory to search for scenarios
 | `--parallel <n>` | Run up to N scenarios concurrently, each owning its own container topology. Opt-in parallelism: each concurrent scenario multiplies container cost, so omitting this flag runs scenarios sequentially against one shared topology (the default). Must be 1 or greater. Cannot be combined with `--watch`. |
 | `--watch` | Run once, then watch the `.e2e.yaml` file and re-run automatically on save. Re-uses the already-built container topology while the `environment` block is unchanged; rebuilds the topology only when the environment changes. Useful for fast local iteration on a single file. Press Ctrl-C to stop. Cannot be combined with `--parallel`. |
 
-**Delivered (Sprint 9, S09-C-03):** Exit codes follow the verdict taxonomy, with opt-in flags to gate CI on infrastructure errors and timeouts:
+**Delivered:** Exit codes follow the verdict taxonomy, with opt-in flags to gate CI on infrastructure errors and timeouts:
 
 | Exit code | Meaning | How to trigger |
 |---|---|---|
@@ -1124,4 +1124,4 @@ steps:
       body: { userId: "{newUserId}" }
 ```
 
-— End of the YAML DSL Specification & VSCode Extension Design. The companion documents are the Technical Architecture & Engineering Blueprint and the MVP Project Plan.
+— End of the YAML DSL Specification & VSCode Extension Design. The companion document is the Technical Architecture & Engineering Blueprint.
