@@ -26,6 +26,12 @@
 //     --filter "FullyQualifiedName~SchemaFreezeTests"
 //   This rewrites Golden/composed-schema.v1.json from the freshly-composed schema.
 //   Review the diff (must be additive only), then commit.
+//
+//   RECORDED EXCEPTION (2026-07-07, pre-release): a single SUBTRACTIVE regen was
+//   authorised while no version had been published — the step `type` field gained
+//   the dotted-form pattern when bare family aliases were retired from the
+//   language. This is NOT precedent: once v1.0 ships, the additive-only rule is
+//   absolute for the v1.x series.
 using System;
 using System.IO;
 using System.Reflection;

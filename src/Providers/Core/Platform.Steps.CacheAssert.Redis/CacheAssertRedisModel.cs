@@ -2,9 +2,9 @@
 //
 // Strongly-typed records; Dictionary<string,object> is explicitly prohibited (§13).
 //
-// cache-assert is a NEW single-provider family (redis is its only Core provider), so the
-// bare family alias `cache-assert` resolves to `cache-assert.redis` via the AstBuilder's
-// count-based bare-alias rule (exactly one provider in the family → resolved).
+// cache-assert began as a single-provider family (redis was its first Core provider).
+// Steps always name the dotted form (`cache-assert.redis`) — bare family names are not
+// part of the language.
 using Platform.Sdk;
 
 namespace Platform.Steps.CacheAssert.Redis;

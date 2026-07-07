@@ -8,8 +8,8 @@ namespace Platform.Engine.Authoring;
 
 /// <summary>
 /// Thrown when <see cref="AstBuilder.Build"/> is unable to normalise a step
-/// into the typed AST, for example when the step type is unknown, ambiguous,
-/// or uses an illegal bare-family alias.
+/// into the typed AST, for example when the step type is unknown or is not
+/// in the required dotted <c>family.provider</c> form.
 /// </summary>
 /// <remarks>
 /// <para>

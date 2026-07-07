@@ -1,10 +1,9 @@
 // Platform.Steps.CacheAssert.Elasticsearch — cache-assert.elasticsearch step provider
 // (DSL §5, §13).
 //
-// The FOURTEENTH Core provider and the SECOND member of the cache-assert family.
-// With two providers now in cache-assert, the bare alias "cache-assert" is AMBIGUOUS
-// and the AstBuilder will require the fully-qualified form (cache-assert.redis or
-// cache-assert.elasticsearch).
+// The FOURTEENTH Core provider and the SECOND member of the cache-assert family
+// (cache-assert.redis and cache-assert.elasticsearch; steps always name the dotted
+// form — bare family names are not part of the language).
 //
 // One [StepProvider] class implements seven provider interfaces:
 //   IStepProvider, IStepBinder<T>, IStepValidator<T>, IStepCompiler<T>,

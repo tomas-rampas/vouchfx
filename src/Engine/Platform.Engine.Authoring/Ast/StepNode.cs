@@ -35,8 +35,9 @@ namespace Platform.Engine.Authoring.Ast;
 /// </param>
 /// <param name="Kind">
 /// The resolved step kind composed of family and provider, e.g.
-/// <c>Family="http", Provider="rest"</c>.  Bare-family aliases are expanded
-/// by <see cref="AstBuilder"/> before this node is created.
+/// <c>Family="http", Provider="rest"</c>.  <see cref="AstBuilder"/> accepts
+/// only the dotted <c>family.provider</c> form; bare family names are
+/// rejected before this node is created.
 /// </param>
 /// <param name="CanonicalType">
 /// The dotted string representation of the resolved kind,
