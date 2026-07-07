@@ -31,8 +31,8 @@ namespace Platform.Engine.Authoring.Model;
 /// </param>
 /// <param name="Type">
 /// Step type in dotted <c>family.provider</c> form, e.g. <c>http.rest</c> or
-/// <c>db-assert.postgres</c>.  The bare family name is also accepted for families
-/// with a single registered provider.  Required (§4, §5.7).
+/// <c>db-assert.postgres</c>.  The dotted form is the only accepted form — bare
+/// family names are rejected by <c>AstBuilder</c>.  Required (§4, §5.7).
 /// </param>
 /// <param name="Description">
 /// Optional short human-readable explanation shown in test output (§4).

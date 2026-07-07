@@ -1,9 +1,8 @@
 // Platform.Steps.CacheAssert.Redis — cache-assert.redis step provider (DSL §5, §13).
 //
-// A NEW single-provider family: cache-assert.  `cache-assert.redis` is its only Core
-// provider, so the bare family alias `cache-assert` resolves to it via the AstBuilder's
-// count-based bare-alias rule (exactly one provider in the family → resolved).  This is
-// the same new-family precedent mail-expect.smtp established.
+// The first member of the cache-assert family (the same new-family precedent
+// mail-expect.smtp established).  Steps always name the dotted form
+// (`cache-assert.redis`) — bare family names are not part of the language.
 //
 // One [StepProvider] class implements the six provider interfaces plus two optional
 // extension interfaces (ICompileReferenceContributor, IStepDiffRenderer):

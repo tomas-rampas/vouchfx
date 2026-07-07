@@ -17,7 +17,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `id` | yes | `string` | A unique identifier for the step within the file; used in reporting and failure messages. Must start with a letter or underscore and contain only letters, digits, underscores, and hyphens. |
-| `type` | yes | `string` | The kind of step in dotted family.provider notation, e.g. http.rest or db-assert.postgres. |
+| `type` | yes | `string` | The kind of step. Must be in dotted family.provider notation, e.g. http.rest or db-assert.postgres; a bare family name (e.g. http) is not accepted. |
 | `description` | no | `string` | A short human-readable explanation shown in test output. |
 | `capture` | no | `object` | A map of variable names to extractor expressions that write values from this step's result into the shared context. |
 | `verifyMode` | no | `string` | Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff. |

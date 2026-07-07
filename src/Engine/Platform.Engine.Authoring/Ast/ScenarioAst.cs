@@ -14,9 +14,9 @@ namespace Platform.Engine.Authoring.Ast;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Normalisation resolves bare-family step-type aliases, parses duration
-/// strings, applies per-field defaults, and rejects ambiguous or unknown
-/// step types.  Once a <see cref="ScenarioAst"/> is in hand, all step-level
+/// Normalisation parses duration strings, applies per-field defaults, and
+/// rejects unknown step types and bare (non-dotted) type names.  Once a
+/// <see cref="ScenarioAst"/> is in hand, all step-level
 /// fields are fully typed and require no further null-coalescing or parsing.
 /// </para>
 /// <para>

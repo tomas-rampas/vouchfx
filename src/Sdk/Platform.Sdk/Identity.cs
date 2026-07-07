@@ -38,9 +38,14 @@ public sealed record StepKindId
     /// </summary>
     /// <param name="family">
     /// The step family.  Must not be <see langword="null"/> or whitespace.
+    /// By convention (blueprint §13) family and provider names are lowercase
+    /// alphanumeric with single hyphens; the language schema constrains the
+    /// step <c>type</c> field to <c>^[a-z0-9-]+\.[a-z0-9-]+$</c>, so a kind
+    /// outside that charset would register but never be reachable from YAML.
     /// </param>
     /// <param name="provider">
     /// The technology provider.  Must not be <see langword="null"/> or whitespace.
+    /// The same lowercase charset convention as <paramref name="family"/> applies.
     /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="family"/> or <paramref name="provider"/> is
