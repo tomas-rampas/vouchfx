@@ -231,7 +231,7 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 | Field | Required | Meaning |
 |---|---|---|
 | **id** | Yes | A unique identifier for the step within the file. Used in reporting and as the anchor for any failure message. |
-| **type** | Yes | The kind of step: http, mq-publish, mq-expect, db-assert, webhook-listen, or script. Determines which additional fields are valid. Each can be a bare family name (if the family has one provider) or a dotted family.provider name. |
+| **type** | Yes | The kind of step, in dotted `family.provider` form, e.g. `http.rest` or `db-assert.postgres`. Determines which additional fields are valid. A bare family name (with no provider) is not accepted. |
 | **description** | No | A short human-readable explanation shown in test output. |
 | **capture** | No | A map of variable names to extractor expressions; writes values from this step's result into the shared context (see section 6). |
 | **verifyMode** | No | Either IMMEDIATE (the default) or RETRY. RETRY instructs the engine to poll until the step's assertions hold or a timeout expires (see section 7). |
@@ -244,7 +244,7 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 
 This section defines the language's step types. The first six subsections describe the families the platform actually ships in the MVP, with worked YAML examples. A seventh family — rpc — is recognised by the language and reserved in the schema but has no Core provider in the MVP; it is covered alongside the others in subsection 5.7, where the provider model is introduced and the full community catalogue is tabulated. The dotted naming convention used throughout this section is best understood once that model is on the table.
 
-The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author writes the dotted form — `type: db-assert.postgres` — except when a family has only one registered provider, in which case the bare family name is accepted as a convenience. The canonical form is always the dotted name, and the editor and error messages render it that way. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
+The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author always writes the dotted form — `type: db-assert.postgres` — there is no bare-family shorthand, even for a family with only one registered provider today: a family gaining a second provider later must never change the meaning of a step type an existing file already uses. The editor and error messages likewise only ever render the dotted name. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
 
 Together the eight shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
 
@@ -263,7 +263,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 ```yaml
 - id: create-user
-  type: http
+  type: http.rest
   description: "Register a new user"
   target: orders-api
   method: POST
@@ -281,7 +281,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-publish` is an ambiguous-family error.
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. The dotted form is always required; a bare `type: mq-publish` is not a valid step type.
 
 ### 5.2.1 mq-publish.kafka: plain payload
 
@@ -354,7 +354,7 @@ The `mq-publish.kafka` provider auto-registers the supplied inline schema under 
 
 ## 5.3 The mq-expect family
 
-An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. Because the family has more than one registered provider, the dotted form is required; a bare `type: mq-expect` is an ambiguous-family error.
+An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. The dotted form is always required; a bare `type: mq-expect` is not a valid step type.
 
 ### 5.3.1 mq-expect.kafka: plain payload
 
@@ -418,7 +418,7 @@ Example (Avro expect with RETRY):
 
 ## 5.4 The db-assert family
 
-A `db-assert` step queries a data store and asserts properties of the result. This is the family where the value of the provider model is most visible: PostgreSQL, SQL Server, Oracle, MySQL, MongoDB, Elasticsearch, and Redis all have genuinely different query languages and assertion semantics, and each is implemented by its own provider with its own schema fragment. The bare `type: db-assert` form is not accepted, because there is no sensible default; the author must choose a provider — `db-assert.postgres`, `db-assert.mongodb`, and so on. Like `mq-expect`, db-assert steps are commonly run with `verifyMode: RETRY` because a materialised view may take a moment to update.
+A `db-assert` step queries a data store and asserts properties of the result. This is the family where the value of the provider model is most visible: PostgreSQL, SQL Server, Oracle, MySQL, MongoDB, Elasticsearch, and Redis all have genuinely different query languages and assertion semantics, and each is implemented by its own provider with its own schema fragment. Like every family, the bare `type: db-assert` form is not accepted; the author must always choose a provider — `db-assert.postgres`, `db-assert.mongodb`, and so on. Like `mq-expect`, db-assert steps are commonly run with `verifyMode: RETRY` because a materialised view may take a moment to update.
 
 The example below uses `db-assert.postgres`, the Core provider that ships with the MVP. It takes a SQL string with a parameter dictionary; the equivalent `db-assert.sqlserver` step would look almost identical, `db-assert.mongodb` would supply a collection name and a filter document instead, `db-assert.elasticsearch` would carry a query-DSL body, and `db-assert.redis` a key pattern. Each provider's reference documentation describes its precise field set; the common fields below are shared by every provider in the family.
 
@@ -499,7 +499,7 @@ Example: A service publishes a webhook callback URL to a third-party system, whi
 
 ## 5.6 The script family
 
-A `script` step is the escape hatch. It contains a block of code in a chosen language — the Core provider is `script.csharp`, the embedded CSX described in the architecture document — with full access to the shared variable context, the discovered service endpoints, and any referenced customer libraries. It is used when declarative steps cannot express the required logic: conditional branching, iteration, a non-trivial transformation of captured data, or an assertion that depends on a proprietary object model. The script reads and writes the same variables that declarative steps use, so it composes seamlessly with the rest of the file. Because C# is at the moment the only registered script provider, the bare `type: script` form is accepted as an alias for `type: script.csharp`.
+A `script` step is the escape hatch. It contains a block of code in a chosen language — the Core provider is `script.csharp`, the embedded CSX described in the architecture document — with full access to the shared variable context, the discovered service endpoints, and any referenced customer libraries. It is used when declarative steps cannot express the required logic: conditional branching, iteration, a non-trivial transformation of captured data, or an assertion that depends on a proprietary object model. The script reads and writes the same variables that declarative steps use, so it composes seamlessly with the rest of the file. The step type is always written as the dotted `type: script.csharp`.
 
 ```yaml
 - id: derive-and-check
@@ -525,7 +525,7 @@ A `script` step is the escape hatch. It contains a block of code in a chosen lan
 
 The sections above introduced each family with the provider used in its example, and noted in passing that other providers exist. This subsection collects the model into one place from the DSL author's perspective. The engineering view of the same model — interfaces, registry, compilation lifecycle — lives in section 13 of the Technical Architecture & Engineering Blueprint.
 
-Every step type in the language is the combination of a **family** and a **provider**. The family names the abstract operation; the provider names the concrete technology that performs it. The author writes the dotted form — `type: db-assert.postgres`, `type: mq-publish.rabbitmq` — and the engine resolves the dotted name to a registered implementation. When a family has exactly one registered provider, or when an installation has configured a default for the family, the bare family name resolves to that default; the editor still renders the canonical dotted form in suggestions and errors.
+Every step type in the language is the combination of a **family** and a **provider**. The family names the abstract operation; the provider names the concrete technology that performs it. The author always writes the dotted form — `type: db-assert.postgres`, `type: mq-publish.rabbitmq` — and the engine resolves it to a registered implementation; the editor renders the same canonical dotted form in suggestions and errors.
 
 The community catalogue at platform launch is summarised in the table below. The Core column lists what ships under Apache 2.0 with the engine; the Verified column lists planned providers that will have passed community review and ship in the same repository; the Community column lists planned providers to be maintained outside the main repository by their authors.
 
@@ -545,7 +545,7 @@ The community catalogue at platform launch is summarised in the table below. The
 | trace-expect *(reserved)* | — | trace-expect.otlp | trace-expect.jaeger |
 | metrics-assert *(reserved)* | — | — | metrics-assert.prometheus |
 
-*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. Note: A bare family name (e.g., `type: mq-publish`) is accepted as an alias ONLY when the family has exactly one registered provider. Families with two or more providers require the explicit dotted form (e.g., `type: mq-publish.kafka`).*
+*Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. The dotted `family.provider` form (e.g., `type: mq-publish.kafka`) is the only accepted form for every family, regardless of how many providers it has registered.*
 
 Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands. A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect.otlp shapes) have no such prerequisite and can be delivered by the community self-contained. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
 
@@ -557,11 +557,9 @@ A contributor adding a new provider — say `db-assert.scylladb` — submits it 
 
 Two patterns make the choice explicit and reviewable. First, the provider is named in every step — reading the file makes it immediately clear that a test is running against Postgres rather than Oracle. Second, the file's `environment.dependencies` section declares the technology of every store and broker, and the validator refuses a step whose provider does not match the dependency's declared type. A `db-assert.postgres` step pointed at a MongoDB dependency is therefore a static error caught before any container starts, not a runtime exception buried in a test log.
 
-> **Bare-family aliases**
+> **The dotted form is the only accepted form**
 >
-> A bare family name (e.g., `type: http`, `type: script`) is accepted as a convenient alias **only when that family has exactly one registered provider**. When a family has two or more providers, the bare form is rejected as ambiguous, and the author must use the explicit dotted form.
->
-> Currently, single-provider families that accept bare aliases are: `http` (→ http.rest), `script` (→ script.csharp), `webhook-listen` (→ webhook-listen.http), and `mail-expect` (→ mail-expect.smtp). Multi-provider families that require the dotted form are: `db-assert` (postgres, sqlserver, mysql, mongodb), `mq-publish` (kafka, rabbitmq, nats, azureservicebus), `mq-expect` (kafka, rabbitmq, nats, azureservicebus), and `cache-assert` (redis, elasticsearch). The canonical dotted form is always valid and is preferred in new test files. As providers are added to existing families, a bare reference may transition from valid to ambiguous; the validation error names the available providers. New step families introduced after launch do not get bare aliases unless they have exactly one registered provider.
+> A bare family name (e.g., `type: http`, `type: script`) is **not** a valid step type, even for a family that currently has exactly one registered provider. This was changed pre-v1.0 (while the schema was still unpublished) precisely so that a family gaining a second provider can never silently change — or break — the meaning of a step type an existing test file already uses. Every step always names its provider explicitly: `type: http.rest`, `type: script.csharp`, `type: db-assert.postgres`, and so on. If an author mistypes a family name as a bare word, the validation error names the registered providers of the matching family (e.g. mistyping `type: cache-assert` reports that `cache-assert.redis` and `cache-assert.elasticsearch` are the registered options), so the fix is immediate.
 
 #### `cache-assert.elasticsearch` — step fields
 

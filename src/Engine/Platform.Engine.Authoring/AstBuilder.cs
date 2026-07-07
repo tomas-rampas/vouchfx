@@ -1,8 +1,12 @@
 // Platform.Engine.Authoring — AstBuilder (S03-B-02).
 //
 // Normalises a parsed E2eDocument into a fully-resolved ScenarioAst:
-//   - Resolves dotted or bare-family step types to a StepKindId via the
-//     StepKindRegistry, applying the db-assert guard and ambiguity rules.
+//   - Resolves a dotted "family.provider" step type to a StepKindId via the
+//     StepKindRegistry. Bare family aliases are NOT supported (Phase 0,
+//     retire-bare-aliases): the dotted form is the only accepted step type.
+//     This is a subtractive schema change made pre-v1.0, while the DSL schema
+//     is still unpublished, so a family gaining a second provider can never
+//     silently change — or break — the meaning of an existing suite file.
 //   - Parses VerifyMode and Timeout strings into typed values with defaults.
 //   - Defaults Capture to an empty dict and ContinueOnFailure to false.
 //   - Attaches the YamlMappingNode for downstream provider binders.
@@ -32,10 +36,6 @@ namespace Platform.Engine.Authoring;
 /// </remarks>
 public static class AstBuilder
 {
-    // The family name that is permanently forbidden from the bare-alias path,
-    // regardless of how many db-assert.* providers are registered.
-    private const string DbAssertFamily = "db-assert";
-
     /// <summary>
     /// All engine-reserved <c>Vars</c> key prefixes that authors must not use for
     /// capture variable names or <c>variables:</c> block entries (M-A security fix).
@@ -62,17 +62,17 @@ public static class AstBuilder
     /// The parsed document produced by <see cref="YamlDocumentParser.Parse"/>.
     /// </param>
     /// <param name="registry">
-    /// The frozen registry of known step providers.  Used to resolve
-    /// bare-family aliases and to validate dotted step types.
+    /// The frozen registry of known step providers.  Used to validate the
+    /// dotted <c>family.provider</c> step type.
     /// </param>
     /// <returns>
     /// A fully normalised <see cref="ScenarioAst"/> whose steps have resolved
     /// kinds, parsed timeouts, and applied defaults.
     /// </returns>
     /// <exception cref="AstBuildException">
-    /// Thrown for any step that has an unknown, ambiguous, or invalid type
-    /// string, an unrecognised <c>verifyMode</c> token, or an unparseable
-    /// <c>timeout</c> value.
+    /// Thrown for any step that has an unknown, bare (non-dotted), or
+    /// otherwise invalid type string, an unrecognised <c>verifyMode</c> token,
+    /// or an unparseable <c>timeout</c> value.
     /// </exception>
     public static ScenarioAst Build(E2eDocument doc, StepKindRegistry registry)
     {
@@ -180,24 +180,13 @@ public static class AstBuilder
     ///   </item>
     ///   <item>
     ///     <description>
-    ///       Otherwise the value is a bare family alias.  The
-    ///       <c>db-assert</c> family is rejected unconditionally before the
-    ///       count-based rules so the error message is deterministic.
-    ///     </description>
-    ///   </item>
-    ///   <item>
-    ///     <description>
-    ///       Zero matching providers → unknown family error.
-    ///     </description>
-    ///   </item>
-    ///   <item>
-    ///     <description>
-    ///       Exactly one matching provider → resolved alias.
-    ///     </description>
-    ///   </item>
-    ///   <item>
-    ///     <description>
-    ///       More than one matching provider → ambiguous alias error.
+    ///       Otherwise <c>type</c> is a bare family name, which is not a valid
+    ///       step type (Phase 0, retire-bare-aliases — this is a deliberate
+    ///       subtractive change made pre-v1.0, while the schema is still
+    ///       unpublished). If the bare name matches a registered family, the
+    ///       error lists that family's registered dotted forms so the author
+    ///       can pick the right one; otherwise it falls back to the same
+    ///       "unknown step type" message used for an unrecognised dotted type.
     ///     </description>
     ///   </item>
     /// </list>
@@ -227,38 +216,33 @@ public static class AstBuilder
             return new StepKindId(family, provider);
         }
 
-        // ── Bare-family form ─────────────────────────────────────────────────
+        // ── Bare (non-dotted) form is not supported ──────────────────────────
+        // There is no alias resolution for a bare family name — not even when
+        // the family currently has exactly one registered provider. A second
+        // provider landing for that family must never silently change (or
+        // break) the meaning of a step type an existing suite file already uses.
+        var dottedFormsForFamily = registry.All
+            .Where(p => string.Equals(p.Kind.Family, raw, StringComparison.Ordinal))
+            .Select(p => $"{p.Kind.Family}.{p.Kind.Provider}")
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
 
-        // db-assert is permanently excluded from bare-alias resolution.
-        if (string.Equals(raw, DbAssertFamily, StringComparison.Ordinal))
+        if (dottedFormsForFamily.Count > 0)
         {
             throw new AstBuildException(
                 step.Id,
                 line,
                 col,
-                "'db-assert' requires an explicit provider, e.g. db-assert.postgres; it has no default.");
+                $"bare family names are not supported; step type must use the " +
+                $"'<family>.<provider>' form. '{raw}' is a registered family; " +
+                $"its registered providers are: {string.Join(", ", dottedFormsForFamily)}");
         }
 
-        var matches = registry.All
-            .Where(p => string.Equals(p.Kind.Family, raw, StringComparison.Ordinal))
-            .ToList();
-
-        return matches.Count switch
-        {
-            0 => throw new AstBuildException(
-                    step.Id,
-                    line,
-                    col,
-                    $"unknown step family '{raw}' — no registered provider"),
-
-            1 => matches[0].Kind,
-
-            _ => throw new AstBuildException(
-                    step.Id,
-                    line,
-                    col,
-                    $"ambiguous step family '{raw}'; registered providers: {string.Join(", ", matches.Select(m => m.Kind.Provider).OrderBy(p => p, StringComparer.Ordinal))}; specify a provider, e.g. {raw}.{matches.Select(m => m.Kind.Provider).OrderBy(p => p, StringComparer.Ordinal).First()}"),
-        };
+        throw new AstBuildException(
+            step.Id,
+            line,
+            col,
+            $"unknown step type '{raw}' — no registered provider");
     }
 
     // -------------------------------------------------------------------------

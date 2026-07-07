@@ -330,4 +330,51 @@ public sealed class RootSchemaTests
             $"Expected id '_internal_step' to be accepted; errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
         Assert.Empty(result.Errors);
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 0 (retire-bare-aliases): step 'type' pattern constraint
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A bare (non-dotted) step type must be rejected by the schema's
+    /// <c>pattern</c> constraint on <c>type</c>. Bare family aliases were
+    /// retired pre-v1.0 (schema still unpublished): the dotted
+    /// <c>family.provider</c> form is the only accepted step type.
+    /// </summary>
+    [Fact]
+    public void Validate_BareTypeWithoutDot_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "Expected schema validation to reject a bare (non-dotted) step type.");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    /// <summary>
+    /// The dotted <c>family.provider</c> form must continue to pass schema
+    /// validation (the pattern requires, and this satisfies, exactly one dot
+    /// separating two lowercase-alphanumeric-hyphen segments).
+    /// </summary>
+    [Fact]
+    public void Validate_DottedType_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: http.rest
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+        Assert.Empty(result.Errors);
+    }
 }

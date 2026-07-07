@@ -105,8 +105,9 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
         },
         "type": {
-          "description": "The kind of step in dotted family.provider notation, e.g. http.rest or db-assert.postgres.",
-          "type": "string"
+          "description": "The kind of step. Must be in dotted family.provider notation, e.g. http.rest or db-assert.postgres; a bare family name (e.g. http) is not accepted.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.[a-z0-9-]+$"
         },
         "description": {
           "description": "A short human-readable explanation shown in test output.",

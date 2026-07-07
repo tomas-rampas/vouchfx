@@ -44,67 +44,59 @@ public sealed class AstBuilderTests
     }
 
     // =========================================================================
-    // Step-type resolution — bare family alias (single provider)
+    // Step-type resolution — bare family name is not supported (single provider)
     // =========================================================================
 
     [Fact]
-    public void Build_BareFamily_SingleProvider_ResolvesAlias()
+    public void Build_BareFamily_SingleProvider_Throws()
     {
-        // Arrange — registry only has http.rest; bare "http" should resolve to it.
+        // Arrange — registry only has http.rest; bare "http" is not a valid step
+        // type even though the family has exactly one registered provider — bare
+        // aliases were retired pre-v1.0 (Phase 0, retire-bare-aliases).
         var registry = RegistryWith(new StubProvider("http", "rest"));
         var doc = DocWithStep(StepSpecWith(id: "ping", type: "http"));
 
-        // Act
-        var ast = AstBuilder.Build(doc, registry);
-
-        // Assert
-        var node = ast.Steps[0];
-        Assert.Equal("http", node.Kind.Family);
-        Assert.Equal("rest", node.Kind.Provider);
-        Assert.Equal("http.rest", node.CanonicalType);
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("http.rest", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================
-    // Step-type resolution — bare mail-expect alias (single provider)
+    // Step-type resolution — bare mail-expect name is not supported
     // =========================================================================
 
     [Fact]
-    public void Build_BareMailExpect_SingleProvider_ResolvesAlias()
+    public void Build_BareMailExpect_SingleProvider_Throws()
     {
-        // Arrange — registry only has mail-expect.smtp; bare "mail-expect" should resolve to it.
+        // Arrange — registry only has mail-expect.smtp; bare "mail-expect" is not
+        // a valid step type.
         var registry = RegistryWith(new StubProvider("mail-expect", "smtp"));
         var doc = DocWithStep(StepSpecWith(id: "check-mail", type: "mail-expect"));
 
-        // Act
-        var ast = AstBuilder.Build(doc, registry);
-
-        // Assert
-        var node = ast.Steps[0];
-        Assert.Equal("mail-expect", node.Kind.Family);
-        Assert.Equal("smtp", node.Kind.Provider);
-        Assert.Equal("mail-expect.smtp", node.CanonicalType);
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mail-expect.smtp", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================
-    // Step-type resolution — bare cache-assert alias (single provider) + dotted
+    // Step-type resolution — bare cache-assert name is not supported + dotted
     // =========================================================================
 
     [Fact]
-    public void Build_BareCacheAssert_SingleProvider_ResolvesAlias()
+    public void Build_BareCacheAssert_SingleProvider_Throws()
     {
-        // Arrange — registry only has cache-assert.redis; the bare "cache-assert" alias
-        // must resolve to it (cache-assert is a single-provider family, like mail-expect).
+        // Arrange — registry only has cache-assert.redis; the bare "cache-assert"
+        // name is not a valid step type (cache-assert is a single-provider family,
+        // like mail-expect, but bare names are never accepted regardless of count).
         var registry = RegistryWith(new StubProvider("cache-assert", "redis"));
         var doc = DocWithStep(StepSpecWith(id: "check-cache", type: "cache-assert"));
 
-        // Act
-        var ast = AstBuilder.Build(doc, registry);
-
-        // Assert
-        var node = ast.Steps[0];
-        Assert.Equal("cache-assert", node.Kind.Family);
-        Assert.Equal("redis", node.Kind.Provider);
-        Assert.Equal("cache-assert.redis", node.CanonicalType);
+        // Act & Assert
+        var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cache-assert.redis", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -125,10 +117,10 @@ public sealed class AstBuilderTests
     }
 
     [Fact]
-    public void Build_BareCacheAssert_MultiProvider_ThrowsAmbiguous()
+    public void Build_BareCacheAssert_MultiProvider_Throws()
     {
-        // Arrange — cache-assert now has BOTH redis AND elasticsearch providers.
-        // The bare alias "cache-assert" is ambiguous and must throw.
+        // Arrange — cache-assert has BOTH redis AND elasticsearch providers.
+        // The bare name "cache-assert" is never valid regardless of provider count.
         var registry = RegistryWith(
             new StubProvider("cache-assert", "redis"),
             new StubProvider("cache-assert", "elasticsearch"));
@@ -136,17 +128,17 @@ public sealed class AstBuilderTests
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
-        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("redis", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("elasticsearch", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cache-assert.redis", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("cache-assert.elasticsearch", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================
-    // Step-type resolution — ambiguous bare family
+    // Step-type resolution — bare family name with multiple providers
     // =========================================================================
 
     [Fact]
-    public void Build_BareFamily_Ambiguous_Throws()
+    public void Build_BareFamily_MultiProvider_Throws()
     {
         // Arrange — two providers in the same family.
         var registry = RegistryWith(
@@ -156,11 +148,11 @@ public sealed class AstBuilderTests
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
-        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Build_BareMqPublish_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    public void Build_BareMqPublish_Throws_WhenKafkaAndRabbitmqRegistered()
     {
         // Arrange — mq-publish has both kafka and rabbitmq providers registered.
         var registry = RegistryWith(
@@ -170,14 +162,14 @@ public sealed class AstBuilderTests
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
-        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
         // Both providers must be named in the error so the author knows ALL candidates.
-        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("mq-publish.kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("mq-publish.rabbitmq", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Build_BareMqExpect_Ambiguous_WhenKafkaAndRabbitmqRegistered()
+    public void Build_BareMqExpect_Throws_WhenKafkaAndRabbitmqRegistered()
     {
         // Arrange — mq-expect has both kafka and rabbitmq providers registered.
         var registry = RegistryWith(
@@ -187,41 +179,46 @@ public sealed class AstBuilderTests
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
-        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
         // Both providers must be named in the error so the author knows ALL candidates.
-        Assert.Contains("kafka", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("rabbitmq", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("mq-expect.kafka", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("mq-expect.rabbitmq", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================
-    // Step-type resolution — db-assert bare-family guard
+    // Step-type resolution — bare db-assert (no special-cased guard any more;
+    // it now goes through the same unified bare-form rejection as every other
+    // family)
     // =========================================================================
 
     [Fact]
     public void Build_BareDbAssert_Throws_WithClearMessage_NoProviders()
     {
-        // Arrange — registry has no db-assert.* provider at all.
+        // Arrange — registry has no db-assert.* provider at all, so the bare name
+        // does not even match a registered family; falls back to the generic
+        // "unknown step type" message.
         var registry = RegistryWith(new StubProvider("http", "rest"));
         var doc = DocWithStep(StepSpecWith(id: "assert-x", type: "db-assert"));
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
         Assert.Contains("db-assert", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("explicit provider", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Build_BareDbAssert_Throws_WithClearMessage_WithProviders()
     {
-        // Arrange — registry has a db-assert.postgres provider; the bare alias
-        // must still be refused (the guard fires before the count-based rules).
+        // Arrange — registry has a db-assert.postgres provider; the bare name
+        // must still be refused — bare forms are never valid, regardless of how
+        // many providers are registered for the family.
         var registry = RegistryWith(new StubProvider("db-assert", "postgres"));
         var doc = DocWithStep(StepSpecWith(id: "assert-y", type: "db-assert"));
 
         // Act & Assert
         var ex = Assert.Throws<AstBuildException>(() => AstBuilder.Build(doc, registry));
-        Assert.Contains("db-assert", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("explicit provider", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("db-assert.postgres", ex.Message, StringComparison.Ordinal);
     }
 
     // =========================================================================

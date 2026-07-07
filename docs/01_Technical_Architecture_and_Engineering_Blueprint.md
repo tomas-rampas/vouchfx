@@ -564,7 +564,7 @@ The DSL's `type` field carries two pieces of information in one dotted name: the
 
 *Table 13.1 — Families, the operation each one names, and providers that implement them. The Indie open-source layer ships an initial set; the community is expected to grow the right-hand column over time.*
 
-When a family has exactly one registered provider, or when an installation has configured a default for a family, the author may write the bare family name as a convenience. `type: http` then resolves to whichever provider is the default for the http family — ordinarily `http.rest`. The canonical form is always the dotted name, and tooling renders it that way in suggestions and error messages even when the author wrote the alias, so a file remains unambiguous when shared between teams whose defaults may differ.
+There is no bare-family shorthand: the author always writes the dotted name — `type: http.rest`, never a bare `type: http` — even for a family with only one registered provider today. This was a deliberate subtractive change made pre-v1.0, while the schema was still unpublished: a family gaining a second provider later must never silently change, or invalidate, the meaning of a step type an existing file already uses. Tooling renders the same canonical dotted name in suggestions and error messages, so a file is always unambiguous regardless of which team wrote it or reads it back.
 
 ## 13.3 The provider contract
 
@@ -698,7 +698,7 @@ With the contract in hand, the engine's existing compilation pipeline (section 5
 
 | Stage | What happens | Provider role |
 |---|---|---|
-| Resolve | The compiler reads the step's type field, splits it into family and provider, and looks the result up in the registry. A bare family name is resolved to the registered default provider for that family. | Identified by StepKindId. |
+| Resolve | The compiler reads the step's type field, splits it on the dot into family and provider, and looks the result up in the registry. There is no bare-family resolution: a non-dotted type is rejected at AST-build time, even for a family with a single registered provider (Phase 0, retire-bare-aliases). | Identified by StepKindId. |
 | Bind | The provider's binder converts the YAML node into a typed model and validates it structurally against the provider's JSON Schema fragment. | IStepBinder<TModel>. |
 | Validate | The provider's validator checks semantic correctness against the wider project: the target dependency exists, captured variables are referenced consistently, the verification mode is permitted for this kind. | IStepValidator<TModel>. |
 | Plan resources | The compiler aggregates each step's resource requirements into the orchestration plan, so that every container, port, and environment variable needed by the suite is known before Aspire starts. | IResourceContributor<TModel>. |
