@@ -50,10 +50,11 @@ delivered-capability record that will seed the v1.0.0 release notes.
 - Provider-catalogue expansion: the DSL specification now names planned Verified and Community tier providers
   in the launch catalogue (§5.7, Table 5.1), and reserves four additional step families (realtime-expect,
   storage-assert, trace-expect, metrics-assert) with their intent fixed ahead of their first providers.
-- The community provider hub (`vouchfx-providers`) ships its first real sample provider — `rpc.json-rpc` — a
-  complete JSON-RPC 2.0 protocol implementation over HTTP with substitution, capture, negative testing and the
-  four-verdict mapping, plus a Docker-free conformance test harness pattern (21 tests, no infrastructure
-  dependencies); new conformance CI lane for community samples.
+- The community provider hub (`vouchfx-providers`) ships the first Community-tier provider — `rpc.json-rpc`,
+  hosted in the hub under `community/` and listed in the provider registry — a complete JSON-RPC 2.0 protocol
+  implementation over HTTP with substitution, capture, negative testing and the four-verdict mapping, plus a
+  Docker-free conformance test harness pattern (21 tests, no infrastructure dependencies); it doubles as the
+  reference implementation for the hub's provider-implementation guide, with its own conformance CI lane.
 
 **Verdicts and reporting**
 
