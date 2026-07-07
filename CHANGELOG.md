@@ -47,6 +47,13 @@ delivered-capability record that will seed the v1.0.0 release notes.
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,
   and an SDK dry-run validation path.
+- Provider-catalogue expansion: the DSL specification now names planned Verified and Community tier providers
+  in the launch catalogue (§5.7, Table 5.1), and reserves four additional step families (realtime-expect,
+  storage-assert, trace-expect, metrics-assert) with their intent fixed ahead of their first providers.
+- The community provider hub (`vouchfx-providers`) ships its first real sample provider — `rpc.json-rpc` — a
+  complete JSON-RPC 2.0 protocol implementation over HTTP with substitution, capture, negative testing and the
+  four-verdict mapping, plus a Docker-free conformance test harness pattern (21 tests, no infrastructure
+  dependencies); new conformance CI lane for community samples.
 
 **Verdicts and reporting**
 
