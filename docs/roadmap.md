@@ -58,7 +58,7 @@ within v1.x. Within that constraint, the near-term direction is:
   technologies arrive (gRPC, SOAP, Oracle, SQS and the long tail) as Verified or Community providers,
   without engine changes. This is deliberately community-first; the
   [provider hub](https://github.com/tomas-rampas/vouchfx-providers) is the front door. The launch catalogue
-  (§5.1 of the DSL specification) now names the planned Verified and Community tier providers and reserves four
+  (§5.7 of the DSL specification) now names the planned Verified and Community tier providers and reserves four
   additional step families (realtime-expect, storage-assert, trace-expect, metrics-assert) for future growth. A
   worked sample provider (`rpc.json-rpc`) and comprehensive
   [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) are
