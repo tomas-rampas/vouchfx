@@ -76,6 +76,10 @@
 }
 .prose hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 .prose code { font-family: var(--mono); font-size: .86em; background: rgba(129,140,248,.12); border: 1px solid rgba(129,140,248,.2); padding: .08em .4em; border-radius: 6px; color: #c7d0ff; }
+/* Long inline-code identifiers (dotted step types, file paths, …) must wrap
+   rather than force horizontal scrolling on narrow screens; fenced code
+   blocks (pre > code) keep their own overflow-x handling untouched below. */
+.prose :not(pre) > code { white-space: normal; overflow-wrap: break-word; }
 .prose pre { margin: 1.3em 0; padding: 18px 20px; background: #0a0e18; border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
 .prose pre code { background: none; border: none; padding: 0; color: #c9d2e8; font-size: .85rem; line-height: 1.6; }
 .prose table { width: 100%; border-collapse: collapse; margin: 1.3em 0; font-size: .92rem; display: block; overflow-x: auto; }

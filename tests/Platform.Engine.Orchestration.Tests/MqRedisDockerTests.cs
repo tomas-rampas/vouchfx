@@ -5,8 +5,8 @@
 // providers with a live Redis container started via SuiteTopology (the AppHost
 // fixture with Aspire.AppHost.Sdk), mirroring MqNatsDockerTests.cs exactly with Redis
 // Streams (XADD/XRANGE) in place of NATS JetStream.
-// Tests carry [Trait("requires","docker")] and are excluded from the no-docker
-// CI filter.
+// Tests that start a topology carry [Trait("requires","docker")] and are excluded from the
+// no-docker CI filter; the one test with no topology (step 6 below) omits the trait.
 //
 // Test flow:
 //   1. Start a SuiteTopology with a single "redis" dependency ("cache").
@@ -42,8 +42,10 @@ namespace Platform.Engine.Orchestration.Tests;
 /// Requires a running Docker daemon with a Redis image available.
 /// </summary>
 /// <remarks>
-/// This test class carries <c>[Trait("requires","docker")]</c> on every method so it is
-/// excluded from the non-Docker CI filter (<c>dotnet test --filter "requires!=docker"</c>).
+/// This test class carries <c>[Trait("requires","docker")]</c> on every method that starts a
+/// <see cref="SuiteTopology"/>, so those are excluded from the non-Docker CI filter
+/// (<c>dotnet test --filter "requires!=docker"</c>); the one method that never touches Docker
+/// (the absent-conn-key fail-fast check) deliberately omits the trait so it still runs there.
 /// The test assembly already carries <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c>
 /// and <c>Aspire.AppHost.Sdk</c>, which embed the <c>dcpclipath</c> metadata required by
 /// <see cref="SuiteTopology.StartAsync"/>.
@@ -372,8 +374,11 @@ public sealed class MqRedisDockerTests
     /// <see cref="Verdict.EnvironmentError"/> (§12.1: infrastructure failure, never
     /// conflated with a test failure).  No topology needed — this is a unit-level check.
     /// </summary>
+    // No [Trait("requires","docker")] here — unlike its siblings above, this test
+    // never calls SuiteTopology.StartAsync (no container, no Docker daemon touch);
+    // it only exercises the emitted fragment's fail-fast path when the `conn::` key
+    // is absent from Vars, so it belongs in the default (non-Docker) CI filter.
     [Fact]
-    [Trait("requires", "docker")]
     public async Task MqPublishRedis_AbsentConnKey_ReturnsEnvironmentError()
     {
         var model = new MqPublishRedisModel(
