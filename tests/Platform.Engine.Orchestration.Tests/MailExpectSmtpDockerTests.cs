@@ -233,7 +233,8 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
         string host, int port, string from, string to, string subject, string body)
     {
         // The whole conversation is bounded: a stuck/silent server surfaces as a visible
-        // OperationCanceledException with the transcript so far, never a hung test.
+        // failure carrying the transcript so far, never a hung test (the catch below wraps
+        // the raw cancellation, which by itself would carry no transcript).
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var transcript = new List<string>();
 
@@ -327,6 +328,13 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
                 writer.Dispose();
                 reader.Dispose();
             }
+        }
+        catch (OperationCanceledException oce) when (cts.IsCancellationRequested)
+        {
+            // The raw cancellation carries no context — wrap it so the CI log shows how
+            // far the conversation got before the server went silent.
+            throw new InvalidOperationException(
+                $"SMTP conversation timed out (60 s bound). Transcript: {string.Join(" | ", transcript)}", oce);
         }
         finally
         {
