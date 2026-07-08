@@ -1,0 +1,69 @@
+metadata:
+  name: metrics-assert-prometheus-example
+  description: >
+    Example showing how to scrape a Prometheus text-exposition endpoint (the SUT's
+    own /metrics, exposed under environment.services like any http.rest target) and
+    assert on one metric's numeric value.  This is how a suite proves a business
+    transaction moved a counter or gauge the SUT exposes — evidence a bare 2xx HTTP
+    response cannot provide.  metrics-assert is a brand-new family; the dotted form
+    metrics-assert.prometheus is required (there is no bare metrics-assert alias).
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    # metrics-assert.prometheus scrapes a SERVICE (like http.rest), not a managed
+    # dependency — it adds no new infrastructure kind to environment.dependencies.
+    app:
+      image: traefik/whoami:latest
+
+steps:
+  - id: capture-baseline
+    type: metrics-assert.prometheus
+    description: >
+      Capture the counter's value BEFORE the transaction, so a later step can prove
+      the transaction moved it (the delta idiom).  min: "0" is a trivially-true
+      bound — its only purpose here is to satisfy the "at least one of
+      value/min/max" requirement while the interesting side effect is the capture.
+    target: app
+    path: /metrics
+    metric: orders_processed_total
+    labels:
+      status: success
+    expect:
+      min: "0"
+    capture:
+      ordersBefore: $.value
+
+  - id: trigger-order
+    type: http.rest
+    description: Drive the business transaction the metric is expected to reflect.
+    target: app
+    method: POST
+    path: /orders
+    body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 202
+
+  - id: assert-orders-processed
+    type: metrics-assert.prometheus
+    description: >
+      Assert the SAME counter did not fall below its pre-transaction value — the
+      delta idiom's assert-after half.  (The DSL does not evaluate arithmetic over
+      placeholders, so proving a STRICT increase of exactly +1 requires an
+      intermediate script.csharp step that computes {ordersBefore + 1} into a new
+      variable; min: "{ordersBefore}" is the non-decrease check expressible directly.)
+      Exactly one sample must match the declared metric name plus every declared
+      label — an ambiguous (multiple-match) or absent selection is a Fail, never a
+      silently-resolved "first match wins" pick.
+      RETRY is this family's canonical verifyMode: the counter update may lag the
+      HTTP response that triggered it (post-stimulus convergence, same rationale as
+      mq-expect / db-assert).
+    target: app
+    path: /metrics
+    metric: orders_processed_total
+    labels:
+      status: success
+    expect:
+      min: "{ordersBefore}"
+    verifyMode: RETRY
+    timeout: 15s

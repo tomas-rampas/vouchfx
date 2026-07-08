@@ -635,6 +635,77 @@
           "if": {
             "properties": {
               "type": {
+                "const": "metrics-assert.prometheus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Scrapes a Prometheus text-exposition endpoint (normally the SUT's own /metrics) and asserts on one metric's numeric value, optionally scoped by a label subset.  Exactly one sample must match the declared metric name plus every declared label; zero or more than one match is a Fail (an under-specified label set is an authoring error, never silently resolved).",
+            "type": "object",
+            "required": [
+              "target",
+              "metric",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the service to scrape, as declared under environment.services — normally the system under test.",
+                "type": "string"
+              },
+              "path": {
+                "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted.",
+                "type": "string"
+              },
+              "metric": {
+                "description": "The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "labels": {
+                "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "expect": {
+                "description": "The value assertion block.  At least one of value, min, or max must be declared; all three may combine.  Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time.",
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "description": "Expected exact value.  Compared with a 1e-9 relative tolerance (see the provider's ScrapeAsync helper).",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "min": {
+                    "description": "Inclusive lower bound for the matched sample's value.",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "max": {
+                    "description": "Inclusive upper bound for the matched sample's value.",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-expect.azureservicebus"
               }
             },
@@ -876,6 +947,56 @@
           "if": {
             "properties": {
               "type": {
+                "const": "mq-expect.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "stream",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to consume from, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "stream": {
+                "description": "The Redis Stream key to scan via XRANGE.",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
+                "type": "object",
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mq-publish.azureservicebus"
               }
             },
@@ -1078,6 +1199,42 @@
                 "additionalProperties": {
                   "type": "string"
                 }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to a Redis Stream via XADD, carried under the canonical 'payload' stream field.  A Pass verdict confirms the entry was appended to the stream; delivery to a consumer is NOT further confirmed.  Verify delivery with a following mq-expect.redis step.",
+            "type": "object",
+            "required": [
+              "target",
+              "stream",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to publish to, as declared under environment.dependencies.",
+                "type": "string"
+              },
+              "stream": {
+                "description": "The Redis Stream key to XADD to.  May contain {placeholder} and ${secret:source/path} tokens.  XADD creates the stream automatically when it does not yet exist.",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
               }
             },
             "additionalProperties": true

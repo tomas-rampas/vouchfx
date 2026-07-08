@@ -95,6 +95,14 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Core batch A (18→21): mq-publish.redis + mq-expect.redis providers: used by MqRedisDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Redis\Platform.Steps.MqPublish.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Redis\Platform.Steps.MqExpect.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- metrics-assert.prometheus provider (new family): used by MetricsAssertPrometheusDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup>

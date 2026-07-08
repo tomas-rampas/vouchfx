@@ -38,11 +38,15 @@ delivered-capability record that will seed the v1.0.0 release notes.
 
 **Providers**
 
-- Eighteen Core providers across eight step families: `http.rest`; `db-assert.postgres`, `db-assert.mysql`,
+- Twenty-one Core providers across nine step families: `http.rest`; `db-assert.postgres`, `db-assert.mysql`,
   `db-assert.sqlserver`, `db-assert.mongodb`; `mq-publish.kafka`, `mq-publish.rabbitmq`, `mq-publish.nats`,
-  `mq-publish.azureservicebus`; `mq-expect.kafka`, `mq-expect.rabbitmq`, `mq-expect.nats`,
-  `mq-expect.azureservicebus`; `cache-assert.redis`, `cache-assert.elasticsearch`; `mail-expect.smtp`;
-  `webhook-listen.http`; `script.csharp`. Kafka steps support Avro with Confluent Schema Registry.
+  `mq-publish.azureservicebus`, `mq-publish.redis`; `mq-expect.kafka`, `mq-expect.rabbitmq`, `mq-expect.nats`,
+  `mq-expect.azureservicebus`, `mq-expect.redis`; `cache-assert.redis`, `cache-assert.elasticsearch`;
+  `mail-expect.smtp`; `webhook-listen.http`; `metrics-assert.prometheus`; `script.csharp`. Kafka steps support
+  Avro with Confluent Schema Registry. `mq-publish.redis`/`mq-expect.redis` use Redis Streams (`XADD`/`XRANGE`).
+  `metrics-assert.prometheus` is the first member of the new `metrics-assert` family: it scrapes a Prometheus
+  text-exposition endpoint (typically the SUT's own `/metrics`) and asserts on one metric's numeric value,
+  optionally scoped by a label subset, with `capture:` support for the matched value.
 - The Provider SDK (`Platform.Sdk`): the frozen v1 contract (`IStepProvider`, `IStepBinder<T>`,
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,

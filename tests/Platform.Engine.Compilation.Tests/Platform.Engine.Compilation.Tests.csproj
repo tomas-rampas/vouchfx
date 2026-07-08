@@ -92,6 +92,15 @@
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj" />
+    <!--
+      Core batch A (18→21): mq-publish.redis + mq-expect.redis (Redis Streams) and the
+      new metrics-assert.prometheus family — needed by SchemaFreezeTests,
+      VsCodeShippedSchemaSyncTests, and ClosureProbeCoverageGuardTests, which build the
+      FULL Core-provider registry.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Redis\Platform.Steps.MqPublish.Redis.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Redis\Platform.Steps.MqExpect.Redis.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj" />
   </ItemGroup>
 
 </Project>

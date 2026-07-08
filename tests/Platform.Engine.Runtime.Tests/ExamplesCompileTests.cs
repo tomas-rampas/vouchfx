@@ -41,14 +41,17 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MetricsAssert.Prometheus;
 using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqExpect.Redis;
 using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
+using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -82,6 +85,9 @@ public sealed class ExamplesCompileTests
         typeof(MqExpectNatsProvider).Assembly,
         typeof(MqPublishAzureServiceBusProvider).Assembly,
         typeof(MqExpectAzureServiceBusProvider).Assembly,
+        typeof(MqPublishRedisProvider).Assembly,
+        typeof(MqExpectRedisProvider).Assembly,
+        typeof(MetricsAssertPrometheusProvider).Assembly,
         typeof(WebhookListenHttpProvider).Assembly,
     };
 

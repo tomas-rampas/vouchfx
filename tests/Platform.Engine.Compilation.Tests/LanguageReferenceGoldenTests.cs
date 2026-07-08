@@ -32,14 +32,17 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MetricsAssert.Prometheus;
 using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqExpect.Redis;
 using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
+using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -90,6 +93,9 @@ public sealed class LanguageReferenceGoldenTests
         typeof(MqExpectNatsProvider).Assembly,         // mq-expect.nats
         typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
         typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
+        typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
+        typeof(MqExpectRedisProvider).Assembly,        // mq-expect.redis
+        typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
     };
 
     /// <summary>
@@ -163,6 +169,9 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("### `cache-assert.redis`", generated, StringComparison.Ordinal);
         Assert.Contains("### `cache-assert.elasticsearch`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mail-expect.smtp`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-publish.redis`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `mq-expect.redis`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `metrics-assert.prometheus`", generated, StringComparison.Ordinal);
 
         // The common step fields, documented once.
         Assert.Contains("## Common step fields", generated, StringComparison.Ordinal);

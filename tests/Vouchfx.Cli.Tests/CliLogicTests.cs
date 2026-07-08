@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 18 Core provider assemblies; the registry freezes
-//     with the 18 expected step kinds.
+//   • ProviderRegistryFactory — names the 21 Core provider assemblies; the registry freezes
+//     with the 21 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsEighteenDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsTwentyOneDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(18, assemblies.Length);
-        // Eighteen *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(18, assemblies.Distinct().Count());
+        Assert.Equal(21, assemblies.Length);
+        // Twenty-one *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(21, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheEighteenCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheTwentyOneCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -52,10 +52,13 @@ public sealed class ProviderRegistryFactoryTests
                      "mq-expect.nats",
                      "mq-publish.azureservicebus",
                      "mq-expect.azureservicebus",
+                     "mq-publish.redis",
+                     "mq-expect.redis",
                      "webhook-listen.http",
                      "mail-expect.smtp",
                      "cache-assert.redis",
                      "cache-assert.elasticsearch",
+                     "metrics-assert.prometheus",
                  })
         {
             Assert.True(

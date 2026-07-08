@@ -26,7 +26,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (18):
+Registered step types (21):
 
 - [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
@@ -36,14 +36,17 @@ Registered step types (18):
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
 - [`mail-expect.smtp`](#mail-expectsmtp)
+- [`metrics-assert.prometheus`](#metrics-assertprometheus)
 - [`mq-expect.azureservicebus`](#mq-expectazureservicebus)
 - [`mq-expect.kafka`](#mq-expectkafka)
 - [`mq-expect.nats`](#mq-expectnats)
 - [`mq-expect.rabbitmq`](#mq-expectrabbitmq)
+- [`mq-expect.redis`](#mq-expectredis)
 - [`mq-publish.azureservicebus`](#mq-publishazureservicebus)
 - [`mq-publish.kafka`](#mq-publishkafka)
 - [`mq-publish.nats`](#mq-publishnats)
 - [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
+- [`mq-publish.redis`](#mq-publishredis)
 - [`script.csharp`](#scriptcsharp)
 - [`webhook-listen.http`](#webhook-listenhttp)
 
@@ -182,6 +185,27 @@ Set `type: mail-expect.smtp` to use this step.
 | `expect` | `object` | The expectation block: how many messages must match the criteria. |
 | `target` | `string` | Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries. |
 
+### `metrics-assert.prometheus`
+
+Scrapes a Prometheus text-exposition endpoint (normally the SUT's own /metrics) and asserts on one metric's numeric value, optionally scoped by a label subset. Exactly one sample must match the declared metric name plus every declared label; zero or more than one match is a Fail (an under-specified label set is an authoring error, never silently resolved).
+
+Set `type: metrics-assert.prometheus` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | The value assertion block. At least one of value, min, or max must be declared; all three may combine. Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time. |
+| `metric` | `string` | The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the service to scrape, as declared under environment.services — normally the system under test. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `labels` | `object` | Optional map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels). Values may contain {placeholder} and ${secret:source/path} tokens. |
+| `path` | `string` | The scrape path. May contain {placeholder} and ${secret:source/path} tokens. Defaults to '/metrics' when omitted. |
+
 ### `mq-expect.azureservicebus`
 
 Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations. Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached. Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.
@@ -253,6 +277,20 @@ Set `type: mq-expect.rabbitmq` to use this step.
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
 | `queue` | `string` | The AMQP queue to consume messages from. |
 | `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
+
+### `mq-expect.redis`
+
+Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.
+
+Set `type: mq-expect.redis` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a fetched message must satisfy. At least one criterion (payloadContains or json) must be declared. |
+| `stream` | `string` | The Redis Stream key to scan via XRANGE. |
+| `target` | `string` | Logical name of the redis dependency to consume from, as declared under environment.dependencies. |
 
 ### `mq-publish.azureservicebus`
 
@@ -335,6 +373,20 @@ Set `type: mq-publish.rabbitmq` to use this step.
 | --- | --- | --- |
 | `exchange` | `string` | Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens. |
 | `headers` | `object` | Optional map of AMQP message header names to their string values. |
+
+### `mq-publish.redis`
+
+Publishes one UTF-8 message to a Redis Stream via XADD, carried under the canonical 'payload' stream field. A Pass verdict confirms the entry was appended to the stream; delivery to a consumer is NOT further confirmed. Verify delivery with a following mq-expect.redis step.
+
+Set `type: mq-publish.redis` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `payload` | `string` | The message payload, written as the UTF-8 string value of the canonical 'payload' stream field. May contain {placeholder} and ${secret:source/path} tokens. |
+| `stream` | `string` | The Redis Stream key to XADD to. May contain {placeholder} and ${secret:source/path} tokens. XADD creates the stream automatically when it does not yet exist. |
+| `target` | `string` | Logical name of the redis dependency to publish to, as declared under environment.dependencies. |
 
 ### `script.csharp`
 
