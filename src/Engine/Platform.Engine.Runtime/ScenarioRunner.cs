@@ -32,6 +32,7 @@ using Platform.Engine.Abstractions.Reproducibility;
 using Platform.Engine.Abstractions.Retry;
 using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Abstractions.Secrets.Vault;
+using Platform.Engine.Abstractions.Traces;
 using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Authoring;
 using Platform.Engine.Authoring.Ast;
@@ -1234,16 +1235,49 @@ public static class ScenarioRunner
         // them at the end, a webhook captured in scenario A can never satisfy an assertion
         // in scenario B within a shared topology (strictly stronger than a buffer clear).
         var listeners = new List<WebhookListener>();
+        var otlpReceivers = new List<OtlpReceiver>();
         IWebhookCaptureAccessor webhookAccessor = NullWebhookCaptureAccessor.Instance;
+        ITraceCaptureAccessor traceAccessor = NullTraceCaptureAccessor.Instance;
         try
         {
             if (hostResourcePlan.Count > 0)
             {
                 var buffers = new Dictionary<string, WebhookCaptureBuffer>(StringComparer.Ordinal);
+                var traceBuffers = new Dictionary<string, TraceCaptureBuffer>(StringComparer.Ordinal);
                 // De-duplicate by VarName: many steps may reference the same logical listener.
                 foreach (var entry in hostResourcePlan)
                 {
                     var req = entry.Requirement;
+
+                    if (string.Equals(req.Kind, OtlpReceiverKind, StringComparison.Ordinal))
+                    {
+                        if (traceBuffers.ContainsKey(req.VarName))
+                        {
+                            continue;
+                        }
+
+                        var traceBuffer = new TraceCaptureBuffer();
+                        var receiver = await OtlpReceiver
+                            .StartAsync(traceBuffer, cancellationToken)
+                            .ConfigureAwait(false);
+                        otlpReceivers.Add(receiver);
+                        traceBuffers[req.VarName] = traceBuffer;
+
+                        // Stage the receiver's base URL under the SAME two keys the webhook
+                        // listener uses below (svc::<VarName> for target:-style resolution and
+                        // the plain <VarName> for {placeholder} substitution), so a suite
+                        // author can hand it straight to environment.services[].env, e.g.
+                        // OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::traces}" (the OTel SDK appends
+                        // "/v1/traces" to this base URL itself — see OtlpReceiver.Url remarks).
+                        vars[VarKeys.Service(req.VarName)] = receiver.Url;
+                        vars[req.VarName] = receiver.Url;
+
+                        // Container-reachable alias, mirroring the webhook listener exactly —
+                        // the receiver binds 0.0.0.0 for the same host.docker.internal reason.
+                        vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(receiver.Url);
+                        continue;
+                    }
+
                     if (!string.Equals(req.Kind, WebhookListenerKind, StringComparison.Ordinal))
                     {
                         // Unknown host-resource kind: ignore tolerantly (a future kind may be
@@ -1297,6 +1331,11 @@ public static class ScenarioRunner
                 {
                     webhookAccessor = new WebhookCaptureAccessor(buffers);
                 }
+
+                if (traceBuffers.Count > 0)
+                {
+                    traceAccessor = new TraceCaptureAccessor(traceBuffers);
+                }
             }
 
             return await RunScenarioCoreAsync(
@@ -1308,6 +1347,7 @@ public static class ScenarioRunner
                 compileReferencePaths,
                 vars,
                 webhookAccessor,
+                traceAccessor,
                 buffer,
                 output,
                 seedBaseDirectory,
@@ -1329,13 +1369,36 @@ public static class ScenarioRunner
                     // Best-effort teardown: a failed listener dispose must not mask the verdict.
                 }
             }
+
+            // Same best-effort per-scenario teardown for every started OTLP receiver (Phase C).
+            foreach (var receiver in otlpReceivers)
+            {
+                try
+                {
+                    await receiver.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort teardown: a failed receiver dispose must not mask the verdict.
+                }
+            }
         }
     }
 
-    // The single host-resource kind handled by this sprint's runner (S07-F-01a).
-    // internal (not private): ProviderPipeline.Compile references this constant to detect a
-    // listener VarName collision (see ContainerVarSuffix below) before the topology is built.
+    // The host-resource kinds handled by this runner (S07-F-01a; otlp-receiver added Phase C).
+    // internal (not private): ProviderPipeline.Compile references these constants to detect a
+    // listener/receiver VarName collision (see ContainerVarSuffix below) before the topology is
+    // built.
     internal const string WebhookListenerKind = "webhook-listener";
+
+    /// <summary>
+    /// The host-resource kind for the ephemeral OTLP/HTTP receiver backing
+    /// <c>trace-expect.otlp</c> (Phase C). Mirrors <see cref="WebhookListenerKind"/> exactly:
+    /// staged at <c>svc::&lt;VarName&gt;</c> / <c>Vars[&lt;VarName&gt;]</c> /
+    /// <c>Vars[&lt;VarName&gt;_container]</c> before step 1, started in the Default ALC, and
+    /// disposed per-scenario in the <c>finally</c> above.
+    /// </summary>
+    internal const string OtlpReceiverKind = "otlp-receiver";
 
     /// <summary>
     /// The suffix appended to a webhook listener's <c>VarName</c> to stage the
@@ -1374,6 +1437,7 @@ public static class ScenarioRunner
         IReadOnlyList<string> compileReferencePaths,
         Dictionary<string, object?> vars,
         IWebhookCaptureAccessor webhookAccessor,
+        ITraceCaptureAccessor traceAccessor,
         List<string> buffer,
         TextWriter output,
         string? seedBaseDirectory,
@@ -1406,14 +1470,15 @@ public static class ScenarioRunner
         try
         {
 
-            // ── §5 boundary construction (S07-F-01a) ──────────────────────────────
-            // Both the secret accessor and the webhook-capture accessor are instances built
-            // in the Default ALC and passed by-reference into the sole host↔script boundary.
-            // The webhook listener + buffers they project live in the Default ALC (owned by
-            // this runner); the emitted script reaches captures ONLY via globals.Webhooks —
-            // no static handle bridges the collectible boundary, preserving the memory model.
+            // ── §5 boundary construction (S07-F-01a; traceAccessor added Phase C) ─────────
+            // The secret accessor, the webhook-capture accessor, and the OTLP trace-capture
+            // accessor are all instances built in the Default ALC and passed by-reference into
+            // the sole host↔script boundary.  The webhook listener / OTLP receiver + buffers
+            // they project live in the Default ALC (owned by this runner); the emitted script
+            // reaches captures ONLY via globals.Webhooks / globals.Traces — no static handle
+            // bridges the collectible boundary, preserving the memory model.
             var globals = new ScriptGlobalVariables(
-                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor);
+                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor, traceAccessor);
 
             // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
             var tpaPaths = BclReferencePaths()

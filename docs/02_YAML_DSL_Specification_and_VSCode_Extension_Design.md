@@ -252,7 +252,7 @@ Together the eight shipped families are sufficient to express the platform's ref
 
 ## 5.1 The http family
 
-An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The Core provider is `http.rest`, which is what the example below uses. Additional providers such as `http.soap` and `http.graphql` may be added to the provider catalogue in future releases (section 5.7).
+An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The family now has two Core providers: `http.rest` (the example below) and `http.soap` (§5.1's second subsection, below). `http.graphql` remains a planned future addition (section 5.7). Like every family, the dotted form is always required — this was already true before `http.soap` existed and remains unchanged now that it does.
 
 | Field | Meaning |
 |---|---|
@@ -279,6 +279,71 @@ An `http` step issues an HTTP request to one of the services declared in the env
       id: { exists: true }
   capture:
     newUserId: "$.id"        # JSONPath into the response body
+```
+
+#### `http.soap` — step fields
+
+`http.soap` calls a SOAP 1.1 service. It is the RAW-ENVELOPE provider (a deliberate v1 design choice): the author supplies the complete SOAP envelope XML themselves — there is no auto-wrapping of a bare payload into a `<soap:Envelope>` skeleton. This keeps the provider's contract small and unambiguous (no guessing at namespace prefixes, SOAP version, or header placement) at the cost of a little authoring verbosity.
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the service to call, as declared under environment.services. Identical addressing to http.rest. |
+| path | Yes | The request path; may contain `{placeholder}` and `${secret:...}` tokens. |
+| action | No | The SOAPAction header value (the SOAP 1.1 convention). Sent quoted per the SOAP 1.1 specification (`SOAPAction: "value"`). May contain `{placeholder}` and `${secret:source/path}` tokens. Omitted entirely when not declared. |
+| envelope | Yes | The full SOAP request envelope XML, as a raw template string. Sent as `Content-Type: text/xml; charset=utf-8` (SOAP 1.1). SOAP 1.2's `application/soap+xml` (with the action folded into the Content-Type rather than a separate header) is a documented v1 limitation, not supported. May contain `{placeholder}` and `${secret:...}` tokens, resolved at step-execution time exactly like http.rest's body. |
+| expect.status | No | Expected HTTP status code. Defaults to `200` when omitted. |
+| expect.fault | No | Whether the response is expected to contain a SOAP Fault element (matched by `local-name()='Fault'`, recognising both the SOAP 1.1 and SOAP 1.2 envelope namespaces). Defaults to `false`. |
+| expect.xpath | No | A list of `{path, value}` assertions evaluated against the response envelope, after the status and fault-expectation checks both pass. |
+
+**Fault/status precedence.** A SOAP Fault is a first-class, expected outcome, not merely a transport failure: fault-expectation is checked *first* (a mismatch — either an unexpected Fault present, or an expected Fault absent — is an immediate Fail); only once fault-expectation is satisfied does the step check the HTTP status; only once both pass are any declared `expect.xpath` assertions evaluated. On an unexpected fault the observation carries only the `faultcode` (a fixed QName-shaped token, e.g. `soap:Server` — safe to report verbatim) and never the `faultstring`, which may embed SUT-originated data.
+
+**XPath namespace handling.** No namespace manager is registered — exactly like `http.rest`'s own XPath capture, for consistency. Write namespace-agnostic expressions using `local-name()` (e.g. `//*[local-name()='Body']/*[local-name()='GetUserResponse']`); a prefixed expression (`//soap:Body`) is not guaranteed to resolve.
+
+**Capture.** `capture:` supports XPath expressions only (there is no JSON body to JSONPath over) — declare the explicit `{ xpath: … }` form; a bare (JSONPath-default) capture entry against a SOAP response is always unmet.
+
+Example (a successful call with an XPath assertion and capture, and a SOAP Fault treated as an expected outcome):
+
+```yaml
+- id: get-user
+  type: http.soap
+  target: app
+  path: /soap/users
+  action: "http://example.com/GetUser"
+  envelope: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body>
+        <GetUser xmlns="http://example.com/users">
+          <UserId>{userId}</UserId>
+        </GetUser>
+      </soap:Body>
+    </soap:Envelope>
+  expect:
+    status: 200
+    xpath:
+      - path: //*[local-name()='Body']/*[local-name()='GetUserResponse']/*[local-name()='Status']
+        value: "OK"
+  capture:
+    userName:
+      xpath: //*[local-name()='Body']/*[local-name()='GetUserResponse']/*[local-name()='Name']
+
+- id: get-missing-user
+  type: http.soap
+  target: app
+  path: /soap/users
+  action: "http://example.com/GetUser"
+  envelope: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body>
+        <GetUser xmlns="http://example.com/users">
+          <UserId>does-not-exist</UserId>
+        </GetUser>
+      </soap:Body>
+    </soap:Envelope>
+  expect:
+    status: 500
+    fault: true
 ```
 
 ## 5.2 The mq-publish family
@@ -618,7 +683,7 @@ The community catalogue at platform launch is summarised in the table below. The
 
 | Family | Core (ships with the engine) | Verified (planned) | Community (planned) |
 |---|---|---|---|
-| http | http.rest | http.soap, http.graphql | http.long-polling |
+| http | http.rest, http.soap | http.graphql | http.long-polling |
 | rpc | — | rpc.grpc | rpc.json-rpc *(available — the hub's first community provider)*, rpc.thrift |
 | mq-publish | mq-publish.kafka, mq-publish.rabbitmq, mq-publish.nats, mq-publish.azureservicebus, mq-publish.redis | mq-publish.mqtt, mq-publish.sqs, mq-publish.eventhubs | mq-publish.pulsar, mq-publish.activemq-artemis, mq-publish.gcp-pubsub, mq-publish.azurestoragequeue, mq-publish.sns |
 | mq-expect | mq-expect.kafka, mq-expect.rabbitmq, mq-expect.nats, mq-expect.azureservicebus, mq-expect.redis | mq-expect.mqtt, mq-expect.sqs, mq-expect.eventhubs | mq-expect.pulsar, mq-expect.activemq-artemis, mq-expect.gcp-pubsub, mq-expect.azurestoragequeue |
@@ -629,12 +694,12 @@ The community catalogue at platform launch is summarised in the table below. The
 | metrics-assert | metrics-assert.prometheus | — | — |
 | storage-assert | storage-assert.s3 | storage-assert.azblob, storage-assert.sftp | storage-assert.gcs |
 | script | script.csharp | — | — |
+| trace-expect | trace-expect.otlp | — | trace-expect.jaeger |
 | realtime-expect *(reserved)* | — | realtime-expect.websocket, realtime-expect.sse, realtime-expect.signalr | realtime-expect.graphql-ws |
-| trace-expect *(reserved)* | — | trace-expect.otlp | trace-expect.jaeger |
 
 *Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. The dotted `family.provider` form (e.g., `type: mq-publish.kafka`) is the only accepted form for every family, regardless of how many providers it has registered.*
 
-Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands. A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect.otlp shapes) have no such prerequisite and can be delivered by the community self-contained — `metrics-assert.prometheus` is the shipped proof: it scrapes a service declared under `environment.services` exactly like `http.rest`, with no new dependency kind. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
+Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands (`trace-expect` has now graduated out of this state, with `trace-expect.otlp` shipping as its Core provider). A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect shapes) have no such prerequisite and can be delivered by the community self-contained — `metrics-assert.prometheus` and `trace-expect.otlp` are the shipped proof: the former scrapes a service declared under `environment.services` exactly like `http.rest`, and the latter's receiver is an in-process host resource exactly like `webhook-listen.http`'s listener — neither adds a new dependency kind. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
 
 ### 5.7.1 How adding a provider feels to a contributor
 
@@ -667,7 +732,7 @@ Use `verifyMode: RETRY` with a `timeout` when the index may lag behind the write
 
 A `metrics-assert` step scrapes a Prometheus text-exposition endpoint — normally the system under test's own `/metrics` — and asserts on one metric's numeric value, optionally scoped by a label subset. This is the family that proves a business transaction actually *moved a counter or gauge the SUT exposes*: a 2xx HTTP response tells you the SUT accepted a request, but only the metric tells you it did the work. `metrics-assert` is a brand-new family; its Core provider is `metrics-assert.prometheus`. Like every family, the bare `type: metrics-assert` form is not accepted — the dotted form is always required.
 
-Unlike `mq-publish`/`mq-expect`/`cache-assert`, this family adds **no new infrastructure kind**: it scrapes a *service* declared under `environment.services` — exactly the mechanism `http.rest` already uses — rather than a managed dependency under `environment.dependencies`. A community contributor can therefore ship a `metrics-assert` provider self-contained, with no engine-side dependency-type work (§5.7's table already lists this family among the self-contained shapes, alongside http, rpc, realtime-expect and trace-expect.otlp).
+Unlike `mq-publish`/`mq-expect`/`cache-assert`, this family adds **no new infrastructure kind**: it scrapes a *service* declared under `environment.services` — exactly the mechanism `http.rest` already uses — rather than a managed dependency under `environment.dependencies`. A community contributor can therefore ship a `metrics-assert` provider self-contained, with no engine-side dependency-type work (§5.7's table already lists this family among the self-contained shapes, alongside http, rpc, realtime-expect and trace-expect).
 
 **Ambiguous-selection policy.** Exactly one sample must match the declared `metric` name plus every declared `labels` entry (a label *subset* match — the real sample may carry additional labels the author did not mention). Zero matches is a Fail (`"found":false`); more than one match is *also* a Fail (`"ambiguous":true`), never a silently-resolved "first match wins" pick — an under-specified label set is an authoring error the author must fix, not a decision the engine makes on their behalf.
 
@@ -780,6 +845,104 @@ Example (the eventually-consumed idiom: trigger, then RETRY until the export lan
     reportEtag: $.etag
 ```
 
+## 5.10 The trace-expect family
+
+A `trace-expect` step scans the spans exported over OTLP/HTTP by the system under test's own OpenTelemetry SDK and asserts that one matches a declared shape. This is the platform's **flagship distributed assertion**: it proves the *causal chain* of a business transaction — that a request into one service genuinely produced downstream work, correlated by a single trace — a proof no single-service assertion (an HTTP 2xx, a database row, a queue message) can give on its own. `trace-expect` is a brand-new family; its Core provider is `trace-expect.otlp`. Like every family, the bare `type: trace-expect` form is not accepted — the dotted form is always required.
+
+**How it works.** The engine stands up an ephemeral, host-owned OTLP/HTTP receiver for each declared `receiver` name and stages its base URL at `svc::<receiver>` and the plain `Vars[<receiver>]` key — exactly the `webhook-listen.http` host-resource pattern (§5.5). In principle the system under test's OpenTelemetry SDK is pointed at it via the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable (with `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` — see the JSON-only limitation below), so the SDK's own export path does the rest with no test-only shim in the SUT.
+
+**Known limitation (v1): host resources cannot yet be wired into `environment.services[].env`.** The receiver is a *per-scenario* host resource started only once the topology (and therefore the SUT container) is already running (§5.5's `env:` support — §3.2.4 — resolves only `${conn:<dependency>}` references at container-configure time, before the receiver exists). A containerised SUT therefore cannot yet be pointed at the per-scenario receiver via its own startup configuration; it would need to target a *standing* OTel collector whose address is stable for the whole suite run, which then forwards to wherever the engine happens to be listening — outside this family's v1 scope. Until that gap closes, the honest, self-contained way to exercise `trace-expect.otlp` is to SIMULATE the export with a `script.csharp` step that posts a synthetic OTLP/HTTP JSON payload directly to the receiver's staged URL (`Vars["<receiver>"]`), exactly as the worked example below does — the same "HONEST disclosure" pattern the engine's own webhook capstone test uses for `webhook-listen.http`. This still exercises the full receiver + staging + RETRY + assertion path end-to-end; only the "real instrumented SUT container" half is simulated.
+
+**The traceparent idiom.** An earlier `http.rest` step injects a W3C `traceparent` header on its outbound request (a suite typically threads a fresh one forward via `capture`/`{placeholder}`, or generates one with a `script.csharp` step). The SUT's auto-instrumented OpenTelemetry SDK continues that same trace, so the `trace-expect.otlp` step's `traceId` criterion can simply reuse the identical `traceparent` value — the provider extracts the 32-hex trace-id segment from a full `traceparent` automatically.
+
+**`verifyMode: RETRY` is this family's canonical mode — more so than any other family.** A real OpenTelemetry SDK batches and exports spans on a periodic timer (commonly around five seconds), so the very next step will almost always run before the export has landed. Every `trace-expect.otlp` step should be written with `verifyMode: RETRY` and a `timeout` generous enough to span at least one export cycle.
+
+**The honest caveat.** `trace-expect.otlp` proves that a trace with the expected shape was *emitted* — it is telemetry, not a state assertion. It cannot, on its own, prove the transaction's business effect (that a row was written, a message was published, a counter moved). Pair it with a `db-assert`, `mq-expect`, `metrics-assert`, or `storage-assert` step for that proof; use `trace-expect.otlp` for the causal-chain proof those families cannot give.
+
+#### `trace-expect.otlp` — step fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| receiver | Yes | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at `svc::<receiver>` (and the plain `Vars[<receiver>]` key), ready to be handed to the SUT's OTel SDK configuration, e.g. `OTEL_EXPORTER_OTLP_ENDPOINT: "{traces}"`. |
+| match.traceId | No\* | Expected trace id. Accepts either a bare 32-hex trace id or a full W3C `traceparent` value (`00-<32hex>-<16hex>-<2hex>`) — the 32-hex segment is extracted automatically. Matched case-insensitively. May contain `{placeholder}` / `${secret:...}` tokens. |
+| match.service | No\* | Expected exporting-resource service name (the span's resource-level `service.name` attribute). Matched by ordinal equality. |
+| match.spanName | No\* | Expected span name (operation name). Matched by ordinal equality. |
+| match.attributes | No\* | Map of expected span-attribute key to expected string value (a subset match — the real span may carry additional attributes not mentioned here). |
+
+\* At least one `match` criterion must be declared; all declared criteria are conjunctive (every one must hold for a span to match).
+
+**OTLP encoding: JSON only in v1.** The receiver accepts OTLP/HTTP's JSON encoding (`Content-Type: application/json`) only — the far more common protobuf wire encoding (`application/x-protobuf`) is rejected `415` with a message naming the limitation. Configure your OTel exporter with `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`; every major OpenTelemetry SDK supports this.
+
+**Capture.** The matched span's fields (`traceId`, `spanId`, `parentSpanId`, `name`, `serviceName`, `statusCode`, and `attributes.<key>`) are exposed to `capture:` via simple dotted-path expressions (`$.spanId`, `$.attributes.orderId`) — mirroring the synthesised-observation idiom `metrics-assert.prometheus`/`storage-assert.s3` already use, though only simple field access is supported (no array indexing, wildcards, or recursive descent).
+
+**No forged-match risk despite no listener-token gate.** Unlike `webhook-listen.http`'s receiver, the OTLP receiver does not add an unguessable path-token segment to its URL — because the standard `OTEL_EXPORTER_OTLP_ENDPOINT` convention must remain a plain, unmodified base URL for a real OpenTelemetry SDK to work against it unmodified. This is safe because a `trace-expect.otlp` assertion always requires a *specific* trace id drawn from the current scenario's own transaction; an off-network onlooker who cannot observe that id cannot manufacture a matching span.
+
+Example (the traceparent idiom; the OTLP export is SIMULATED per the known limitation above — see `examples/trace-expect-otlp.e2e.yaml` for the fully worked, runnable version):
+
+```yaml
+environment:
+  services:
+    app:
+      image: myorg/orders-api:latest
+
+variables:
+  traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+steps:
+  - id: trigger-order
+    type: http.rest
+    target: app
+    method: POST
+    path: /orders
+    headers:
+      traceparent: "{traceparent}"
+    body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 200
+
+  - id: simulate-otlp-export
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's OpenTelemetry SDK exporting the span it recorded for the request
+      above (see the known limitation above). A real, instrumented SUT would export this
+      itself; this step exists only because environment.services[].env cannot yet reference
+      a per-scenario host resource's URL.
+    code: |
+      var receiverUrl = (string)Vars["traces"];
+      var payload = "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"app\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"00f067aa0ba902b7\",\"parentSpanId\":\"\",\"name\":\"POST /orders\"}]}]}]}";
+      var client = new System.Net.Http.HttpClient();
+      try {
+        var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        await client.PostAsync(receiverUrl + "/v1/traces", content);
+      } finally { client.Dispose(); }
+
+  - id: assert-order-span
+    type: trace-expect.otlp
+    receiver: traces
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      traceId: "{traceparent}"
+      service: app
+      spanName: "POST /orders"
+    capture:
+      spanId: "$.spanId"
+
+  - id: assert-order-persisted
+    type: db-assert.postgres
+    description: >
+      The state assertion trace-expect.otlp's honest caveat calls for: the trace proves the
+      transaction was CAUSALLY handled; this proves it had the expected EFFECT.
+    target: orders-db
+    verifyMode: RETRY
+    timeout: 15s
+    query: SELECT status FROM orders WHERE customer_id = 'cust-1'
+    expect:
+      rowCount: 1
+      row:
+        status: "created"
+```
+
 # 6. Variable Capture and Substitution
 
 A meaningful end-to-end test is stateful: a value produced by one step is consumed by another. This section defines the two halves of that mechanism — how a value is captured out of a step's result, and how a captured value is substituted back into a later step.
@@ -789,7 +952,7 @@ A meaningful end-to-end test is stateful: a value produced by one step is consum
 The `capture` field, available on any step, is a map from a variable name to a capture expression. After the step completes, each expression is evaluated against the step's result and the value is written into the shared context under the given name. An author may specify a capture entry in two forms:
 
 - **Bare scalar (JSONPath, backward-compatible):** `id: "$.id"` — the expression defaults to JSONPath and is evaluated against the step result as JSON. A bare scalar is the recommended concise form.
-- **Explicit single-key mapping (JSONPath or XPath):** `id: { jsonpath: "$.id" }` or `id: { xpath: "//order/id" }` — the mapping's single key specifies the query language. Use the XPath form to extract values from XML response bodies (e.g. from `http.rest` calls to SOAP or XML-returning services).
+- **Explicit single-key mapping (JSONPath or XPath):** `id: { jsonpath: "$.id" }` or `id: { xpath: "//order/id" }` — the mapping's single key specifies the query language. Use the XPath form to extract values from XML response bodies — `http.rest` calls to XML-returning services, or `http.soap` calls, whose response is always XML (§5.1).
 
 JSONPath uses JsonPath.Net (§5.7 libraries) and evaluates `$.id` to read a top-level field, `$.payload.accountId` to reach nested fields. XPath evaluates against the XML body; a non-XML response, invalid XPath expression, or no matching element results in a capture miss, which counts as an inconclusive outcome (timeout/unmet precondition) rather than a test failure.
 
@@ -902,7 +1065,7 @@ Each provider's schema fragment contributes the fields specific to that step typ
 
 ### The v1 schema is frozen
 
-The composed v1 JSON Schema — the root language schema plus the fragments from all twenty-three Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+The composed v1 JSON Schema — the root language schema plus the fragments from all twenty-five Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {

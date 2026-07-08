@@ -3,6 +3,7 @@
 // Rule: no static members — the boundary must stay clean so the collectible AssemblyLoadContext
 // has nothing rooting the emitted assembly back into the Default context.
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Traces;
 using Platform.Engine.Abstractions.Webhooks;
 
 namespace Platform.Engine.Abstractions;
@@ -70,8 +71,71 @@ public sealed class ScriptGlobalVariables
     public IWebhookCaptureAccessor Webhooks { get; }
 
     /// <summary>
+    /// The execution-time OTLP span-capture accessor (Phase C, §5, <c>trace-expect.otlp</c>).
+    /// A later assertion step reads the spans exported over OTLP/HTTP to a host-owned
+    /// ephemeral receiver through this member, keyed by the receiver's logical name — never
+    /// through any static handle.
+    /// </summary>
+    /// <remarks>
+    /// This is an <em>instance</em> property by design, exactly like <see cref="Webhooks"/>
+    /// and <see cref="Secrets"/>: the OTLP receiver and its capture buffer are owned by the
+    /// topology/runner in the <strong>Default</strong>
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/>, and the emitted script observes
+    /// their captured spans only by-reference through this accessor. Exposing the receiver,
+    /// the buffer, or this accessor as a static would root the collectible
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> back into the Default context
+    /// and defeat the memory model (§5) — so it must remain an instance passed in at
+    /// construction. The accessor is read-only: the script can observe captured spans but can
+    /// never start, stop, or mutate a receiver. Legacy constructors populate this with a
+    /// <see cref="NullTraceCaptureAccessor"/> that returns an empty list, so a run with no
+    /// <c>trace-expect.otlp</c> step never pays for a receiver and every existing call site
+    /// keeps compiling unchanged.
+    /// </remarks>
+    public ITraceCaptureAccessor Traces { get; }
+
+    /// <summary>
     /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
-    /// and webhook-capture accessor (the full host↔script boundary, S07-F-01a).
+    /// webhook-capture accessor, and OTLP trace-capture accessor (the full host↔script
+    /// boundary, Phase C).
+    /// </summary>
+    /// <param name="vars">
+    /// Mutable state map; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="services">
+    /// Read-only typed-client surface; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="secrets">
+    /// The execution-time secret accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="webhooks">
+    /// The execution-time webhook-capture accessor; must not be <see langword="null"/>.
+    /// Pass <see cref="NullWebhookCaptureAccessor.Instance"/> when the run declares no
+    /// webhook listener.
+    /// </param>
+    /// <param name="traces">
+    /// The execution-time OTLP trace-capture accessor; must not be <see langword="null"/>.
+    /// Pass <see cref="NullTraceCaptureAccessor.Instance"/> when the run declares no
+    /// <c>trace-expect.otlp</c> step.
+    /// </param>
+    public ScriptGlobalVariables(
+        IDictionary<string, object?> vars,
+        IReadOnlyDictionary<string, object> services,
+        ISecretAccessor secrets,
+        IWebhookCaptureAccessor webhooks,
+        ITraceCaptureAccessor traces)
+    {
+        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
+        Traces = traces ?? throw new ArgumentNullException(nameof(traces));
+    }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
+    /// and webhook-capture accessor (the full host↔script boundary, S07-F-01a), and no
+    /// configured OTLP receivers. <see cref="Traces"/> is a <see cref="NullTraceCaptureAccessor"/>
+    /// that returns an empty list.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
@@ -92,11 +156,8 @@ public sealed class ScriptGlobalVariables
         IReadOnlyDictionary<string, object> services,
         ISecretAccessor secrets,
         IWebhookCaptureAccessor webhooks)
+        : this(vars, services, secrets, webhooks, NullTraceCaptureAccessor.Instance)
     {
-        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
-        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
-        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
     }
 
     /// <summary>

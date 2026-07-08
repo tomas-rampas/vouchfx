@@ -42,12 +42,12 @@ delivered-capability record that will seed the v1.0.0 release notes.
 
 **Providers**
 
-- Twenty-three Core providers across ten step families: `http.rest`; `db-assert.postgres`, `db-assert.mysql`,
+- Twenty-five Core providers across eleven step families: `http.rest`, `http.soap`; `db-assert.postgres`, `db-assert.mysql`,
   `db-assert.sqlserver`, `db-assert.mongodb`, `db-assert.dynamodb`; `mq-publish.kafka`, `mq-publish.rabbitmq`,
   `mq-publish.nats`, `mq-publish.azureservicebus`, `mq-publish.redis`; `mq-expect.kafka`, `mq-expect.rabbitmq`,
   `mq-expect.nats`, `mq-expect.azureservicebus`, `mq-expect.redis`; `cache-assert.redis`,
   `cache-assert.elasticsearch`; `mail-expect.smtp`; `webhook-listen.http`; `metrics-assert.prometheus`;
-  `storage-assert.s3`; `script.csharp`. Kafka steps support Avro with Confluent Schema Registry.
+  `storage-assert.s3`; `trace-expect.otlp`; `script.csharp`. Kafka steps support Avro with Confluent Schema Registry.
   `mq-publish.redis`/`mq-expect.redis` use Redis Streams (`XADD`/`XRANGE`). `metrics-assert.prometheus` is the
   first member of the `metrics-assert` family: it scrapes a Prometheus text-exposition endpoint (typically the
   SUT's own `/metrics`) and asserts on one metric's numeric value, optionally scoped by a label subset, with
@@ -56,13 +56,22 @@ delivered-capability record that will seed the v1.0.0 release notes.
   `storage-assert` family: it HEADs (and, only when a body digest/substring is declared, bounded-GETs) an
   object in an S3-compatible store (a real MinIO container per suite) and asserts on existence, size, content
   type, metadata, SHA-256 digest, or a body substring, with `capture:` support for `etag`/`versionId`/`size`.
+  `http.soap` is the second `http`-family provider: a raw-envelope SOAP 1.1 client with fault detection
+  (fault-expectation checked ahead of status), XPath assertions and captures over the response envelope, and
+  the same hardened-XML-reader / SSRF-guarded-path discipline `http.rest` established. `trace-expect.otlp` is
+  the first member of the new `trace-expect` family and the platform's flagship distributed assertion: an
+  engine-hosted OTLP/HTTP JSON receiver (mirroring `webhook-listen.http`'s host-resource model) captures the
+  spans a real, unmodified OpenTelemetry SDK exports for the transaction under test, matched by trace id
+  (accepting either a bare id or a full W3C `traceparent`, with automatic extraction), service name, span
+  name, and/or attributes — proving the causal chain a single-service assertion cannot.
 - The Provider SDK (`Platform.Sdk`): the frozen v1 contract (`IStepProvider`, `IStepBinder<T>`,
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,
   and an SDK dry-run validation path.
 - Provider-catalogue expansion: the DSL specification now names planned Verified and Community tier providers
-  in the launch catalogue (§5.7, Table 5.1), and reserves two additional step families (realtime-expect,
-  trace-expect) with their intent fixed ahead of their first providers.
+  in the launch catalogue (§5.7, Table 5.1). `trace-expect` has graduated out of its reserved-family state now
+  that `trace-expect.otlp` ships as its Core provider; `realtime-expect` remains the sole reserved family with
+  its intent fixed ahead of its first provider.
 - The community provider hub (`vouchfx-providers`) ships the first Community-tier provider — `rpc.json-rpc`,
   hosted in the hub under `community/` and listed in the provider registry — a complete JSON-RPC 2.0 protocol
   implementation over HTTP with substitution, capture, negative testing and the four-verdict mapping, plus a

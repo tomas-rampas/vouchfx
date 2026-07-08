@@ -17,10 +17,10 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
 - **Health-gated orchestration** — headless .NET Aspire + Testcontainers topologies, started deterministically
   and torn down cleanly.
-- **Twenty-three Core providers across ten step families** — `http.rest`; `db-assert` for PostgreSQL, MySQL,
+- **Twenty-five Core providers across eleven step families** — `http.rest`, `http.soap`; `db-assert` for PostgreSQL, MySQL,
   SQL Server, MongoDB and DynamoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS, Azure Service Bus and
   Redis Streams; `cache-assert` for Redis and Elasticsearch; `mail-expect.smtp`; `webhook-listen.http`;
-  `metrics-assert.prometheus`; `storage-assert.s3`; `script.csharp`.
+  `metrics-assert.prometheus`; `storage-assert.s3`; `trace-expect.otlp`; `script.csharp`.
 - **Engine-owned asynchronous verification** — `verifyMode: RETRY` with bounded exponential backoff (Polly v8);
   authors never write `Thread.Sleep`.
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
@@ -56,11 +56,13 @@ The three frozen contracts are a trust commitment for the whole v1.x series: not
 within v1.x. Within that constraint, the near-term direction is:
 
 - **Provider breadth through the community pathway** — the Provider SDK is the mechanism by which new
-  technologies arrive (gRPC, SOAP, Oracle, SQS and the long tail) as Verified or Community providers,
+  technologies arrive (gRPC, Oracle, SQS and the long tail) as Verified or Community providers,
   without engine changes. This is deliberately community-first; the
   [provider hub](https://github.com/tomas-rampas/vouchfx-providers) is the front door. The launch catalogue
-  (§5.7 of the DSL specification) now names the planned Verified and Community tier providers and reserves two
-  additional step families (realtime-expect, trace-expect) for future growth. The
+  (§5.7 of the DSL specification) now names the planned Verified and Community tier providers and reserves one
+  additional step family (realtime-expect) for future growth — `trace-expect` graduated out of that reserved
+  state with `trace-expect.otlp` shipping as its Core provider, and `http.soap` joined `http.rest` as the
+  `http` family's second Core provider. The
   first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted reference implementation) and a comprehensive
   [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) are
   live on the hub.
@@ -102,7 +104,7 @@ vouchfx publishes its feature boundary explicitly, in advance, so nobody discove
 
 | Surface | Tier |
 |---|---|
-| The engine, the YAML DSL, all twenty-three Core providers, the Provider SDK, the VSCode extension, the terminal renderer, the HTML report, the JUnit XML output, the structured event stream, the CLI runner, the secret-reference resolution mechanism, the reproducibility envelope. | **Apache-2.0, free permanently.** |
+| The engine, the YAML DSL, all twenty-five Core providers, the Provider SDK, the VSCode extension, the terminal renderer, the HTML report, the JUnit XML output, the structured event stream, the CLI runner, the secret-reference resolution mechanism, the reproducibility envelope. | **Apache-2.0, free permanently.** |
 | A hosted cross-run dashboard, managed Vault integration, cloud execution fabric (remote provisioning), agentic test planning/generation/healing, performance-testing tooling, run-history retention beyond the local cache, organisational analytics. | Commercial (future), layered *above* the open-source engine — never carved out of it. |
 | SSO/OIDC federation, on-premises Helm deployment, audit logging, SIEM export, data-residency commitments, dedicated support SLAs. | Commercial enterprise (future). |
 

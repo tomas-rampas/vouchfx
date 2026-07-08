@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 23 Core provider assemblies; the registry freezes
-//     with the 23 expected step kinds.
+//   • ProviderRegistryFactory — names the 25 Core provider assemblies; the registry freezes
+//     with the 25 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,23 +22,24 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsTwentyThreeDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsTwentyFiveDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(23, assemblies.Length);
-        // Twenty-three *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(23, assemblies.Distinct().Count());
+        Assert.Equal(25, assemblies.Length);
+        // Twenty-five *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(25, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheTwentyThreeCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheTwentyFiveCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
         foreach (var kind in new[]
                  {
                      "http.rest",
+                     "http.soap",
                      "db-assert.postgres",
                      "db-assert.sqlserver",
                      "db-assert.mongodb",
@@ -61,6 +62,7 @@ public sealed class ProviderRegistryFactoryTests
                      "metrics-assert.prometheus",
                      "db-assert.dynamodb",
                      "storage-assert.s3",
+                     "trace-expect.otlp",
                  })
         {
             Assert.True(

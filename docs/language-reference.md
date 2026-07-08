@@ -26,7 +26,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (23):
+Registered step types (25):
 
 - [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
@@ -36,6 +36,7 @@ Registered step types (23):
 - [`db-assert.postgres`](#db-assertpostgres)
 - [`db-assert.sqlserver`](#db-assertsqlserver)
 - [`http.rest`](#httprest)
+- [`http.soap`](#httpsoap)
 - [`mail-expect.smtp`](#mail-expectsmtp)
 - [`metrics-assert.prometheus`](#metrics-assertprometheus)
 - [`mq-expect.azureservicebus`](#mq-expectazureservicebus)
@@ -50,6 +51,7 @@ Registered step types (23):
 - [`mq-publish.redis`](#mq-publishredis)
 - [`script.csharp`](#scriptcsharp)
 - [`storage-assert.s3`](#storage-asserts3)
+- [`trace-expect.otlp`](#trace-expectotlp)
 - [`webhook-listen.http`](#webhook-listenhttp)
 
 ### `cache-assert.elasticsearch`
@@ -188,6 +190,25 @@ Set `type: http.rest` to use this step.
 | `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. |
 | `expect` | `object` | Optional assertion block applied to the HTTP response. |
 | `headers` | `object` | Optional map of request header names to values. |
+
+### `http.soap`
+
+Set `type: http.soap` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `envelope` | `string` | The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens. |
+| `path` | `string` | The request path; may contain {placeholder} and ${secret:...} tokens. |
+| `target` | `string` | Logical name of the service to call, as declared under environment.services. |
+
+**Optional fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `action` | `string` | Optional SOAPAction header value (SOAP 1.1 convention), sent quoted per spec. May contain {placeholder} and ${secret:source/path} tokens. |
+| `expect` | `object` | Optional assertion block applied to the SOAP response. |
 
 ### `mail-expect.smtp`
 
@@ -427,6 +448,17 @@ Set `type: storage-assert.s3` to use this step.
 | `expect` | `object` | The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive. |
 | `key` | `string` | The S3 object key. May contain {placeholder} and ${secret:source/path} tokens. |
 | `target` | `string` | Logical name of the minio dependency to query, as declared under environment.dependencies. |
+
+### `trace-expect.otlp`
+
+Set `type: trace-expect.otlp` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `match` | `object` | The criteria a captured span must satisfy. At least one criterion (traceId, service, spanName, or attributes) must be declared. |
+| `receiver` | `string` | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::<receiver>}"). |
 
 ### `webhook-listen.http`
 

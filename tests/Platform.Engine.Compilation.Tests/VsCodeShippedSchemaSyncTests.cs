@@ -33,6 +33,7 @@ using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
+using Platform.Steps.Http.Soap;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MetricsAssert.Prometheus;
@@ -48,6 +49,7 @@ using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.StorageAssert.S3;
+using Platform.Steps.TraceExpect.Otlp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
 
@@ -99,6 +101,8 @@ public sealed class VsCodeShippedSchemaSyncTests
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
         typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
         typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
+        typeof(TraceExpectOtlpProvider).Assembly,     // trace-expect.otlp
+        typeof(HttpSoapProvider).Assembly,             // http.soap
     };
 
     /// <summary>

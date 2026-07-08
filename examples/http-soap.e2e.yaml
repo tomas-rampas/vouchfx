@@ -1,0 +1,69 @@
+metadata:
+  name: http-soap-example
+  description: >
+    Example showing how to call a SOAP 1.1 service and assert on its response — the second
+    provider in the http family alongside http.rest. http.soap is the RAW-ENVELOPE provider
+    (v1 decision): you supply the FULL SOAP envelope yourself; there is no auto-wrapping of a
+    bare payload. The http family is now multi-provider; the dotted form is required either
+    way (http.rest / http.soap), exactly like every other family.
+
+environment:
+  services:
+    # The system under test's SOAP endpoint. Replace with your own image or project
+    # reference — any server that accepts a SOAP 1.1 POST at the declared path works
+    # unchanged, exactly like http.rest's target addressing.
+    app:
+      image: traefik/whoami:latest
+
+steps:
+  - id: get-user
+    type: http.soap
+    description: >
+      A successful SOAP 1.1 call: status defaults to 200 when expect.status is omitted, no
+      fault is expected by default, and the xpath assertion is evaluated against the response
+      envelope. No namespace manager is registered (consistent with http.rest's own XPath
+      capture) — write namespace-agnostic expressions using local-name().
+    target: app
+    path: /soap/users
+    action: "http://example.com/GetUser"
+    envelope: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <GetUser xmlns="http://example.com/users">
+            <UserId>{userId}</UserId>
+          </GetUser>
+        </soap:Body>
+      </soap:Envelope>
+    expect:
+      status: 200
+      xpath:
+        - path: //*[local-name()='Body']/*[local-name()='GetUserResponse']/*[local-name()='Status']
+          value: "OK"
+    capture:
+      userName:
+        xpath: //*[local-name()='Body']/*[local-name()='GetUserResponse']/*[local-name()='Name']
+
+  - id: get-missing-user
+    type: http.soap
+    description: >
+      A SOAP Fault is a first-class, expected outcome — declare expect.fault: true (and,
+      since a SOAP 1.1 fault is conventionally served with HTTP 500, expect.status: 500 to
+      match your SUT's convention exactly). The observation on an unexpected fault carries
+      only the faultcode (a fixed QName-shaped token, safe to report) — never the faultstring,
+      which may embed SUT-originated data.
+    target: app
+    path: /soap/users
+    action: "http://example.com/GetUser"
+    envelope: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <GetUser xmlns="http://example.com/users">
+            <UserId>does-not-exist</UserId>
+          </GetUser>
+        </soap:Body>
+      </soap:Envelope>
+    expect:
+      status: 500
+      fault: true
