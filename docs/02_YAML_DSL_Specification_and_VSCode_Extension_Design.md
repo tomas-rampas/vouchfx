@@ -514,6 +514,10 @@ Asserts against a DynamoDB item via a single `GetItem` call. The engine provisio
 | `expect.exists` | No | Whether the item is expected to exist. Defaults to `true` when omitted. |
 | `expect.item` | No | Map of flat (top-level) attribute name to expected string value, compared against the `GetItem` result (`S` as-is, `N` as the raw stored number string, `BOOL` as `"true"`/`"false"`). Nested attributes are not supported in v1. Mutually exclusive with `expect.exists: false` — an absent item has no fields to assert on. |
 
+> **Number canonicalisation caveat.** DynamoDB canonicalises `N` values — it trims trailing zeros, so an item written as `1.0` is stored (and compared) as `1`. Declare the canonical form in `expect.item` (`"1"`, not `"1.0"`), or the comparison fails on a value that looks identical.
+
+> **Substitution scope.** `db-assert.dynamodb` fields resolve `{placeholder}` tokens only; `${secret:…}` references are not resolved by this provider and pass through literally. This differs from `storage-assert.s3`, which resolves both.
+
 Use `verifyMode: RETRY` when the item may lag the transaction that writes it (the same post-stimulus convergence gap `db-assert.postgres`/`db-assert.mongodb` already accommodate) — `GetItem` is read-only and idempotent, so every RETRY poll attempt is safe to repeat.
 
 ```yaml

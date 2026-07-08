@@ -633,6 +633,13 @@ public sealed class DbAssertDynamodbProvider
         get
         {
             yield return typeof(Amazon.DynamoDBv2.AmazonDynamoDBClient).Assembly;
+
+            // AWSSDK.Core — the emitted helper names Amazon.Runtime.BasicAWSCredentials
+            // and ClientConfig-inherited members (ServiceURL/MaxErrorRetry/Timeout)
+            // directly, so the contract requires declaring it even though it also
+            // arrives transitively on the CLI's trusted-platform-assembly list
+            // (the azureservicebus → Azure.Core precedent).
+            yield return typeof(Amazon.Runtime.BasicAWSCredentials).Assembly;
         }
     }
 

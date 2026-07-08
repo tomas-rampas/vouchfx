@@ -562,8 +562,28 @@ public sealed class StorageAssertS3Provider
                                     var mem = new System.IO.MemoryStream();
                                     try
                                     {
-                                        await getResp.ResponseStream.CopyToAsync(mem).ConfigureAwait(false);
-                                        bodyBytes = mem.ToArray();
+                                        // Bounded read: never buffer beyond the cap even if the
+                                        // pre-flight HEAD size was stale or understated (defence in
+                                        // depth — the size check above already refused known-oversize
+                                        // objects). Mirrors the hard read ceilings http.rest and
+                                        // metrics-assert apply to their own bodies.
+                                        var copyBuffer = new byte[81920];
+                                        long totalRead = 0;
+                                        while (true)
+                                        {
+                                            var read = await getResp.ResponseStream.ReadAsync(copyBuffer, 0, copyBuffer.Length).ConfigureAwait(false);
+                                            if (read <= 0) { break; }
+                                            totalRead += read;
+                                            if (totalRead > BodyCapBytes)
+                                            {
+                                                failObservation = "{\"field\":\"bodyCap\",\"capBytes\":" +
+                                                    BodyCapBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                                                    ",\"actualBytesAtLeast\":" + totalRead.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
+                                                break;
+                                            }
+                                            mem.Write(copyBuffer, 0, read);
+                                        }
+                                        bodyBytes = failObservation is null ? mem.ToArray() : System.Array.Empty<byte>();
                                     }
                                     finally
                                     {
@@ -840,6 +860,12 @@ public sealed class StorageAssertS3Provider
         {
             yield return typeof(Amazon.S3.AmazonS3Client).Assembly;
             yield return typeof(Json.Path.JsonPath).Assembly;
+
+            // AWSSDK.Core — the emitted helper names Amazon.Runtime.BasicAWSCredentials
+            // and ClientConfig-inherited members directly; declared per the
+            // ICompileReferenceContributor contract (azureservicebus → Azure.Core
+            // precedent) rather than relying on transitive TPA presence.
+            yield return typeof(Amazon.Runtime.BasicAWSCredentials).Assembly;
         }
     }
 

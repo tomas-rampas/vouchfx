@@ -49,12 +49,12 @@ The contract that makes a suite run unchanged across local / SaaS / CI: the comp
 Steps are typed `<family>.<provider>` — *family* is intent, *provider* is technology
 (`db-assert.postgres`, `mq-publish.kafka`). Providers are **compile-time, source-level plugins**: add
 a project, implement the contract, and a reflective registry discovers it at startup — no runtime
-loader, no sandbox. Twenty-one **Core** providers are now delivered across nine step families:
-`http.rest`; `db-assert.postgres`, `db-assert.sqlserver`, `db-assert.mysql`, `db-assert.mongodb`;
-`cache-assert.redis`, `cache-assert.elasticsearch`; `mq-publish.kafka`, `mq-publish.rabbitmq`,
+loader, no sandbox. Twenty-three **Core** providers are now delivered across ten step families:
+`http.rest`; `db-assert.postgres`, `db-assert.sqlserver`, `db-assert.mysql`, `db-assert.mongodb`,
+`db-assert.dynamodb`; `cache-assert.redis`, `cache-assert.elasticsearch`; `mq-publish.kafka`, `mq-publish.rabbitmq`,
 `mq-publish.nats`, `mq-publish.azureservicebus`, `mq-publish.redis`; `mq-expect.kafka`, `mq-expect.rabbitmq`,
 `mq-expect.nats`, `mq-expect.azureservicebus`, `mq-expect.redis`; `webhook-listen.http`; `mail-expect.smtp`;
-`metrics-assert.prometheus`; and `script.csharp`. All are governed across three tiers (Core / Verified / Community), all Apache-2.0.
+`metrics-assert.prometheus`; `storage-assert.s3`; and `script.csharp`. All are governed across three tiers (Core / Verified / Community), all Apache-2.0.
 
 ## A test, in shape
 

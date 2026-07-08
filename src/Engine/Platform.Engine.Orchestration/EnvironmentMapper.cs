@@ -478,8 +478,11 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             // ---- minio: an S3-API-compatible object store, plain container ----
-            // MinIO ships a documented liveness path (/minio/health/live), so — unlike
-            // dynamodb-local — the default 200-status WithHttpHealthCheck applies unchanged.
+            // MinIO ships documented health paths; the cluster readiness path
+            // (/minio/health/cluster) returns 200 only once the object layer can serve
+            // requests, whereas /minio/health/live merely proves the process started —
+            // so readiness is the correct gate here, and — unlike dynamodb-local — the
+            // default 200-status WithHttpHealthCheck applies unchanged.
             // WithArgs (reflection-verified against the pinned Aspire.Hosting 13.4.2 DLL:
             // ResourceBuilderExtensions.WithArgs(IResourceBuilder<T>, string[])) supplies the
             // 'server /data' command MinIO requires to start in server mode.
@@ -505,7 +508,7 @@ public static class EnvironmentMapper
                         .WithEnvironment("MINIO_ROOT_USER", accessKey)
                         .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
                         .WithHttpEndpoint(targetPort: 9000, name: "http")
-                        .WithHttpHealthCheck(path: "/minio/health/live", endpointName: "http");
+                        .WithHttpHealthCheck(path: "/minio/health/cluster", endpointName: "http");
 
                     var httpEndpoint = containerBuilder.GetEndpoint("http");
                     serviceEndpoints[name] = httpEndpoint;
