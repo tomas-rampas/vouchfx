@@ -62,6 +62,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -240,8 +241,14 @@ public sealed class OtlpReceiver : IAsyncDisposable
         }
 
         // ── Encoding gate: OTLP/HTTP JSON only in v1 (see the file header) ─────────────────
-        var contentType = request.ContentType ?? string.Empty;
-        if (!contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase))
+        // A strict media-type parse, not a substring match: Contains("application/json") would
+        // wrongly accept an unrelated media type that merely contains the substring (e.g. the
+        // vendor type "application/jsonp") as well as any type with "application/json" trailing
+        // elsewhere in an adversarial header. MediaTypeHeaderValue.TryParse splits the header on
+        // its ';' parameters and exposes only the media type itself for comparison, so a
+        // legitimate "application/json; charset=utf-8" still matches while charset/other
+        // parameters are ignored.
+        if (!IsJsonContentType(request.ContentType))
         {
             context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
             context.Response.ContentType = "application/json";
@@ -309,6 +316,25 @@ public sealed class OtlpReceiver : IAsyncDisposable
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(
             "{\"partialSuccess\":{}}", context.RequestAborted).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Strictly determines whether an incoming <c>Content-Type</c> header names the
+    /// <c>application/json</c> media type — the only OTLP/HTTP wire encoding this v1 receiver
+    /// accepts (see the file header). Uses <see cref="MediaTypeHeaderValue.TryParse"/> rather
+    /// than a substring check so that a media type merely CONTAINING the text
+    /// "application/json" (e.g. the unrelated "application/jsonp") is rejected, while
+    /// legitimate parameters such as "; charset=utf-8" are ignored for the comparison.
+    /// </summary>
+    private static bool IsJsonContentType(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return false;
+        }
+
+        return MediaTypeHeaderValue.TryParse(contentType, out var parsed)
+            && string.Equals(parsed.MediaType, "application/json", StringComparison.OrdinalIgnoreCase);
     }
 
     // ── OTLP/HTTP JSON parsing ────────────────────────────────────────────────────────────────

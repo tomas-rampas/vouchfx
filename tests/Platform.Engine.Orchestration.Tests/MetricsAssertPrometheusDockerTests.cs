@@ -55,9 +55,11 @@ namespace Platform.Engine.Orchestration.Tests;
 /// <c>quay.io/prometheus/node-exporter</c> image available.
 /// </summary>
 /// <remarks>
-/// This test class carries <c>[Trait("requires","docker")]</c> on every method so it is
-/// excluded from the non-Docker CI filter (<c>dotnet test --filter "requires!=docker"</c>).
-/// The test assembly already carries <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c>
+/// This test class carries <c>[Trait("requires","docker")]</c> on every method that starts a
+/// <see cref="SuiteTopology"/>, so those are excluded from the non-Docker CI filter
+/// (<c>dotnet test --filter "requires!=docker"</c>); the one method that never touches Docker
+/// (the absent-service-key fail-fast check) deliberately omits the trait so it still runs
+/// there. The test assembly already carries <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c>
 /// and <c>Aspire.AppHost.Sdk</c>, which embed the <c>dcpclipath</c> metadata required by
 /// <see cref="SuiteTopology.StartAsync"/>.
 /// </remarks>
@@ -336,8 +338,11 @@ public sealed class MetricsAssertPrometheusDockerTests
     /// When the <c>svc::</c> key is absent from <c>Vars</c>, the step outcome must be
     /// <see cref="Verdict.EnvironmentError"/> (§12.1).  No topology needed.
     /// </summary>
+    // No [Trait("requires","docker")] here — unlike its siblings above, this test
+    // never calls SuiteTopology.StartAsync (no container, no Docker daemon touch);
+    // it only exercises the emitted fragment's fail-fast path when the `svc::` key
+    // is absent from Vars, so it belongs in the default (non-Docker) CI filter.
     [Fact]
-    [Trait("requires", "docker")]
     public async Task MetricsAssertPrometheus_AbsentServiceKey_ReturnsEnvironmentError()
     {
         var model = new MetricsAssertPrometheusModel(

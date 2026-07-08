@@ -351,6 +351,60 @@ public sealed class OtlpReceiverTests
         Assert.Empty(buffer.Snapshot());
     }
 
+    /// <summary>
+    /// The Content-Type gate is a strict media-type parse, not a substring match: a media type
+    /// that merely CONTAINS the text "application/json" — e.g. the unrelated
+    /// <c>application/jsonp</c> vendor type — must still be rejected 415, exactly like
+    /// <c>application/x-protobuf</c> above.
+    /// </summary>
+    [Fact]
+    public async Task Receiver_JsonpContentType_Returns415AndCapturesNothing()
+    {
+        var buffer = new TraceCaptureBuffer();
+        await using var receiver = await OtlpReceiver.StartAsync(buffer);
+
+        using var client = new HttpClient();
+        using var content = new StringContent("{}", Encoding.UTF8, "application/jsonp");
+        var response = await client.PostAsync(receiver.Url + "/v1/traces", content);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("JSON", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(buffer.Snapshot());
+    }
+
+    /// <summary>
+    /// A legitimate <c>application/json; charset=utf-8</c> Content-Type — the media type plus a
+    /// charset parameter, as many real OTel SDKs/HTTP stacks send — must still be accepted: the
+    /// strict media-type parse compares only the media type itself and ignores parameters.
+    /// </summary>
+    [Fact]
+    public async Task Receiver_JsonContentTypeWithCharset_Returns200AndCapturesSpan()
+    {
+        var buffer = new TraceCaptureBuffer();
+        await using var receiver = await OtlpReceiver.StartAsync(buffer);
+
+        using var client = new HttpClient();
+        var payload = BuildExportPayload(
+            traceId: "dd000000000000000000000000000001",
+            spanId: "dd00000000000001",
+            parentSpanId: "",
+            name: "with-charset",
+            serviceName: "svc",
+            extraAttributes: string.Empty,
+            statusCode: string.Empty);
+
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")
+        {
+            CharSet = "utf-8",
+        };
+        var response = await client.PostAsync(receiver.Url + "/v1/traces", content);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(buffer.Snapshot());
+    }
+
     [Fact]
     public async Task Receiver_OversizeBody_Returns413AndCapturesNothing()
     {

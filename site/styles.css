@@ -350,7 +350,11 @@ code { font-family: var(--mono); font-size: .9em; }
   .flow { grid-template-columns: 1fr 1fr; }
   .split { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
-  .nav__links { display: none; }
+  /* Keep primary navigation reachable on narrow screens instead of hiding it
+     outright (there is no alternate menu) — let it drop to its own row and
+     wrap, with a tighter gap/font-size so it still fits comfortably. */
+  .nav__inner { flex-wrap: wrap; row-gap: 10px; }
+  .nav__links { flex-wrap: wrap; width: 100%; margin-left: 0; gap: 10px 16px; font-size: .86rem; }
 }
 @media (max-width: 560px) {
   .grid--3, .grid--4, .flow { grid-template-columns: 1fr; }

@@ -37,7 +37,7 @@ delivered-capability record that will seed the v1.0.0 release notes.
   `${conn:<dependency>}` connection references resolved in the consumer's network context.
 - Two additional managed-dependency types: `dynamodb` (`amazon/dynamodb-local`, health-gated on its
   documented liveness signal — a `400` response on `/`, not `200`) and `minio` (`minio/minio`, health-gated on
-  its documented `/minio/health/live` path), both plain containers whose connection string is synthesised
+  its documented `/minio/health/cluster` readiness path), both plain containers whose connection string is synthesised
   post-startup (`ServiceURL=…;AccessKey=…;SecretKey=…`), mirroring the `azureservicebus` pattern.
 
 **Providers**

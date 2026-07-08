@@ -505,11 +505,11 @@ public sealed class StorageAssertS3Provider
 
                         if (failObservation is null && metadataFieldNames.Length > 0)
                         {
-                            // AmazonS3Config.Metadata.Keys enumerates the RAW header names, which
-                            // carry the "x-amz-meta-" prefix (verified empirically against a live
-                            // MinIO container); the indexer itself accepts either the bare or
-                            // prefixed form. Normalise to the bare key so expect.metadata field
-                            // names (as authored, without the prefix) match.
+                            // GetObjectMetadataResponse.Metadata.Keys enumerates the RAW header
+                            // names, which carry the "x-amz-meta-" prefix (verified empirically
+                            // against a live MinIO container); the indexer itself accepts either
+                            // the bare or prefixed form. Normalise to the bare key so
+                            // expect.metadata field names (as authored, without the prefix) match.
                             const string metaPrefix = "x-amz-meta-";
                             var actualMetadata = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
                             foreach (var metaKey in head.Metadata.Keys)

@@ -355,6 +355,16 @@ public sealed class RootSchemaTests
         Assert.False(result.IsValid,
             "Expected schema validation to reject a bare (non-dotted) step type.");
         Assert.NotEmpty(result.Errors);
+
+        // At least one error must be located at the step's 'type' property and
+        // reference the 'pattern' keyword, so this test cannot pass on some
+        // unrelated schema failure (e.g. a missing 'id').
+        var pointsAtTypePattern = result.Errors.Any(e =>
+            e.InstanceLocation.EndsWith("/type", System.StringComparison.Ordinal) &&
+            e.Message.Contains("[pattern]", System.StringComparison.Ordinal));
+
+        Assert.True(pointsAtTypePattern,
+            $"Expected an error at .../type referencing the 'pattern' keyword, got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
     }
 
     /// <summary>
