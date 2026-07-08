@@ -255,21 +255,59 @@ internal static class ProviderPipeline
                 PollIntervalMs: null));
         }
 
+        // Cross-kind VarName collision guard: reject a VarName claimed by host resources of
+        // MORE THAN ONE kind (e.g. a webhook-listen.http listener named "shared" alongside a
+        // trace-expect.otlp receiver ALSO named "shared"). ScenarioRunner stages EVERY kind's
+        // resource into the SAME three Vars keys (svc::<VarName> / <VarName> / <VarName>
+        // + ContainerVarSuffix), keyed ONLY by VarName — it has no way to know the two
+        // requirements came from different kinds — so two DISTINCT resources sharing one
+        // VarName would silently last-write-wins collide (whichever host resource the runner
+        // starts last overwrites the other's staged URL), exactly the class of bug the
+        // "_container" alias guard below closes from the other direction. Checked BEFORE that
+        // alias guard so the more direct collision is reported first.
+        var varNamesByKind = hostResourcePlan
+            .GroupBy(e => e.Requirement.VarName, StringComparer.Ordinal)
+            .Where(g => g.Select(e => e.Requirement.Kind).Distinct(StringComparer.Ordinal).Count() > 1)
+            .ToList();
+
+        foreach (var group in varNamesByKind)
+        {
+            var kinds = group
+                .Select(e => e.Requirement.Kind)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(k => k, StringComparer.Ordinal);
+
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: new ValidationFailure(
+                    $"host resource '{group.Key}' is declared by more than one kind " +
+                    $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
+                    "by exactly one kind — a webhook listener and an OTLP receiver (or any two " +
+                    "distinct host-resource kinds) cannot share the same name. Rename one of them."));
+        }
+
         // SUT configuration surface (point 3): ScenarioRunner ALSO stages a container-reachable
-        // alias of every webhook listener's callback URL under "<VarName>_container" (see
-        // ScenarioRunner.ContainerVarSuffix). Reject — HERE, before the topology is even built —
-        // a suite where that engine-synthesised alias collides with another, DISTINCT listener's
-        // own VarName; without this guard the two Vars writes would race (whichever staged last
-        // silently wins) and one listener's real callback URL would be replaced by an unrelated
-        // listener's container-rewritten alias.
-        // Scope: this guard is listener-VarName-vs-listener-VarName ONLY. It deliberately does
-        // NOT check author `variables:` block entries or step `capture:` names against the
-        // "<VarName>_container" alias — those follow the existing forward-only Vars threading
-        // idiom (a later write legitimately overrides an earlier one; see the "deliberately
-        // overrides it" comment where ScenarioRunner stages the plain <VarName> key), which is a
-        // different, already-accepted collision model from the one this guard closes.
+        // alias of every webhook listener's / OTLP receiver's URL under "<VarName>_container"
+        // (see ScenarioRunner.ContainerVarSuffix — the OTLP receiver added in Phase C stages the
+        // SAME alias for the SAME host.docker.internal reason). Reject — HERE, before the
+        // topology is even built — a suite where that engine-synthesised alias collides with
+        // another, DISTINCT host resource's own VarName (of EITHER kind); without this guard the
+        // two Vars writes would race (whichever staged last silently wins) and one resource's
+        // real URL would be replaced by an unrelated resource's container-rewritten alias.
+        // Scope: this guard is host-resource-VarName-vs-host-resource-VarName ONLY, across both
+        // kinds. It deliberately does NOT check author `variables:` block entries or step
+        // `capture:` names against the "<VarName>_container" alias — those follow the existing
+        // forward-only Vars threading idiom (a later write legitimately overrides an earlier
+        // one; see the "deliberately overrides it" comment where ScenarioRunner stages the plain
+        // <VarName> key), which is a different, already-accepted collision model from the one
+        // this guard closes.
         var distinctListenerVarNames = hostResourcePlan
-            .Where(e => string.Equals(e.Requirement.Kind, ScenarioRunner.WebhookListenerKind, StringComparison.Ordinal))
+            .Where(e =>
+                string.Equals(e.Requirement.Kind, ScenarioRunner.WebhookListenerKind, StringComparison.Ordinal)
+                || string.Equals(e.Requirement.Kind, ScenarioRunner.OtlpReceiverKind, StringComparison.Ordinal))
             .Select(e => e.Requirement.VarName)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -285,10 +323,10 @@ internal static class ProviderPipeline
                     CompileReferencePaths: Array.Empty<string>(),
                     HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
                     Failure: new ValidationFailure(
-                        $"webhook-listen listener '{containerVarName}' collides with the engine-" +
-                        $"synthesised container-reachable alias of listener '{varName}' (staged at " +
+                        $"host resource '{containerVarName}' collides with the engine-" +
+                        $"synthesised container-reachable alias of host resource '{varName}' (staged at " +
                         $"'{varName}{ScenarioRunner.ContainerVarSuffix}'). Rename one of the two " +
-                        "listeners so the alias is unambiguous."));
+                        "host resources (webhook listeners / OTLP receivers) so the alias is unambiguous."));
             }
         }
 

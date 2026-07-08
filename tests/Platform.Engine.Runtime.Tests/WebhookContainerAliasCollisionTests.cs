@@ -65,6 +65,52 @@ file sealed class ConfigurableListenerProvider
         new[] { new HostResourceRequirement("webhook-listener", model.VarName) };
 }
 
+// ── File-scoped stub provider — an otlp-receiver host resource, structurally identical to
+//    ConfigurableListenerProvider but a DIFFERENT kind, so tests can construct a cross-kind
+//    VarName collision (a webhook listener and an OTLP receiver sharing one name). ──
+
+file sealed record ConfigurableReceiverModel(string VarName) : IStepModel;
+
+[StepProvider]
+file sealed class ConfigurableReceiverProvider
+    : IStepProvider,
+      IStepBinder<ConfigurableReceiverModel>,
+      IStepValidator<ConfigurableReceiverModel>,
+      IStepCompiler<ConfigurableReceiverModel>,
+      IHostResourceContributor<ConfigurableReceiverModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("hostres2", "receiver");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment => new("""{"type":"object","required":["varName"],"properties":{"varName":{"type":"string"}}}""");
+
+    public ConfigurableReceiverModel Bind(YamlNode node, IBindingContext ctx)
+    {
+        var mapping = (YamlMappingNode)node;
+        var varNameNode = (YamlScalarNode)mapping.Children[new YamlScalarNode("varName")];
+        return new ConfigurableReceiverModel(varNameNode.Value!);
+    }
+
+    public ValidationResult Validate(ConfigurableReceiverModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(ConfigurableReceiverModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: System.Array.Empty<string>(),
+            RequiredHelpers: System.Array.Empty<string>(),
+            StatementBlock: $"{{ /* receiver step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    public IEnumerable<HostResourceRequirement> HostResources(ConfigurableReceiverModel model) =>
+        new[] { new HostResourceRequirement("otlp-receiver", model.VarName) };
+}
+
 // ── Test class ────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -178,5 +224,58 @@ public sealed class WebhookContainerAliasCollisionTests
         // Assert
         Assert.Null(result.Failure);
         Assert.NotNull(result.Assembled);
+    }
+
+    [Fact]
+    public void Compile_CrossKindVarNameCollision_ReturnsValidationFailure()
+    {
+        // Arrange — a webhook-listener host resource and an otlp-receiver host resource
+        // DECLARE THE SAME VarName ("shared"). ScenarioRunner stages every host resource's
+        // URL into the SAME three Vars keys (svc::<VarName> / <VarName> / <VarName>_container)
+        // keyed only by VarName, with no way to tell the two requirements came from different
+        // kinds — so without this guard the two would silently last-write-wins collide.
+        const string yaml = """
+            steps:
+              - id: listen-a
+                type: hostres2.listener
+                varName: shared
+              - id: receive-a
+                type: hostres2.receiver
+                varName: shared
+            """;
+
+        // Act
+        var result = ProviderPipeline.Compile(BuildAst(yaml), s_registry, SuiteNamespace);
+
+        // Assert — a ValidationFailure (never a thrown exception, never a silently-built
+        // Assembled script) naming the shared VarName and both colliding kinds.
+        Assert.NotNull(result.Failure);
+        Assert.Null(result.Assembled);
+        Assert.Contains("shared", result.Failure!.Message, System.StringComparison.Ordinal);
+        Assert.Contains("webhook-listener", result.Failure.Message, System.StringComparison.Ordinal);
+        Assert.Contains("otlp-receiver", result.Failure.Message, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_DifferentKindsDifferentVarNames_Succeeds()
+    {
+        // Arrange — a webhook listener and an otlp receiver with DISTINCT names never collide.
+        const string yaml = """
+            steps:
+              - id: listen-a
+                type: hostres2.listener
+                varName: cb
+              - id: receive-a
+                type: hostres2.receiver
+                varName: traces
+            """;
+
+        // Act
+        var result = ProviderPipeline.Compile(BuildAst(yaml), s_registry, SuiteNamespace);
+
+        // Assert
+        Assert.Null(result.Failure);
+        Assert.NotNull(result.Assembled);
+        Assert.Equal(2, result.HostResourcePlan.Count);
     }
 }

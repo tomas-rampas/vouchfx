@@ -108,6 +108,14 @@
     -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj" />
+    <!--
+      Phase C (23→25): the new trace-expect family's Core provider (trace-expect.otlp) and the
+      second http-family provider (http.soap) — needed by SchemaFreezeTests,
+      VsCodeShippedSchemaSyncTests, LanguageReferenceGoldenTests, and
+      ClosureProbeCoverageGuardTests, which build the FULL Core-provider registry.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.TraceExpect.Otlp\Platform.Steps.TraceExpect.Otlp.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.Http.Soap\Platform.Steps.Http.Soap.csproj" />
   </ItemGroup>
 
 </Project>

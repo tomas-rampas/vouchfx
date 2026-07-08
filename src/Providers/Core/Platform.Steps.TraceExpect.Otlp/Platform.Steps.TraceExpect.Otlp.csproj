@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Steps.TraceExpect.Otlp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- No client-library / no ICompileReferenceContributor: the OTLP receiver is a HOST
+       resource owned by the runner (Default ALC, Platform.Engine.Orchestration). This
+       provider only reads captured spans through the typed ITraceCaptureAccessor on
+       ScriptGlobalVariables.Traces, and its emitted helper needs only BCL types
+       (System.Text.Json, System.Collections.Generic) already resolved from the default
+       TRUSTED_PLATFORM_ASSEMBLIES set ScenarioRunner.BclReferencePaths() supplies (§5). -->
+
+</Project>

@@ -27,7 +27,7 @@ This enables developers with a .NET SDK to install the tool via `dotnet tool ins
 Empirical verification on a Windows machine with .NET 8 SDK:
 
 1. **Packing:**  
-   `dotnet pack` produces `vouchfx.1.0.0.nupkg` (larger with the added client libraries for new providers), bundling the engine, all twenty-three Core provider DLLs, and Aspire/Testcontainers transitive dependencies.
+   `dotnet pack` produces `vouchfx.1.0.0.nupkg` (larger with the added client libraries for new providers), bundling the engine, all twenty-five Core provider DLLs, and Aspire/Testcontainers transitive dependencies.
 
 2. **Installation:**  
    `dotnet tool install --tool-path <dir> --add-source <feed> vouchfx` installs cleanly from the package.

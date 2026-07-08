@@ -34,6 +34,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Secrets;
+using Platform.Engine.Abstractions.Traces;
 using Platform.Engine.Abstractions.Webhooks;
 using Platform.Engine.Compilation;
 
@@ -192,6 +193,19 @@ public static class MemoryProbe
     /// the <see cref="NullWebhookCaptureAccessor"/> (it passes <see langword="null"/> here).
     /// </remarks>
     private static readonly ProbeWebhookAccessor ClosureWebhookAccessor = new();
+
+    /// <summary>
+    /// The shared stub OTLP trace-capture accessor used by the closure probe (Phase C, §5).
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <see cref="ClosureWebhookAccessor"/> exactly: created once and reused across
+    /// every closure iteration, a by-reference Default-ALC instance holding an immutable
+    /// pre-seeded snapshot with no mutable or static state. The closure CSX reads it through
+    /// <c>ScriptGlobalVariables.Traces</c> to prove that read path does not pin the collectible
+    /// context. The trivial probe leaves <see cref="Traces"/> as the
+    /// <see cref="NullTraceCaptureAccessor"/> (it passes <see langword="null"/> here).
+    /// </remarks>
+    private static readonly ProbeTraceAccessor ClosureTraceAccessor = new();
 
     /// <summary>
     /// Runs the trivial memory measurement protocol and returns a structured
@@ -438,7 +452,8 @@ public static class MemoryProbe
         for (var i = 0; i < WarmUpIterations; i++)
         {
             await RunIsolatedNoInlineAsync(
-                    compiled, null, $"warmup-{i}", ct, webhooks: ClosureWebhookAccessor)
+                    compiled, null, $"warmup-{i}", ct,
+                    webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor)
                 .ConfigureAwait(false);
         }
 
@@ -461,10 +476,11 @@ public static class MemoryProbe
             // Pass the iteration index so the closure probe can gate the native
             // librdkafka producer/consumer handle build to HandleBuildEveryN cadence
             // (the cheap Avro / Polly touches still run every iteration), and pass the
-            // stub webhook accessor so the CSX exercises the Webhooks read path (S07-E1).
+            // stub webhook + trace accessors so the CSX exercises the Webhooks (S07-E1) and
+            // Traces (Phase C) read paths.
             await RunIsolatedNoInlineAsync(
                     compiled, null, $"iter-{i}", ct,
-                    iterIndex: i, webhooks: ClosureWebhookAccessor)
+                    iterIndex: i, webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor)
                 .ConfigureAwait(false);
         }
 
@@ -518,10 +534,17 @@ public static class MemoryProbe
     /// </param>
     /// <param name="webhooks">
     /// Optional stub webhook-capture accessor (S07-E1).  When non-<see langword="null"/>
-    /// (the closure path), the globals are built with the 4-arg constructor so the CSX can
+    /// (the closure path), the globals are built with the full constructor so the CSX can
     /// exercise the <c>Webhooks.GetCaptured</c> read path across the collectible ALC; when
     /// <see langword="null"/> (the trivial path), the 1-arg constructor is used and
     /// <c>Webhooks</c> stays a <see cref="NullWebhookCaptureAccessor"/>.
+    /// </param>
+    /// <param name="traces">
+    /// Optional stub OTLP trace-capture accessor (Phase C).  When non-<see langword="null"/>
+    /// (the closure path), the globals are built with the full 5-arg constructor so the CSX
+    /// can exercise the <c>Traces.GetCaptured</c> read path across the collectible ALC; when
+    /// <see langword="null"/> (the trivial path), <c>Traces</c> stays a
+    /// <see cref="NullTraceCaptureAccessor"/>.
     /// </param>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task RunIsolatedNoInlineAsync(
@@ -530,7 +553,8 @@ public static class MemoryProbe
         string label,
         CancellationToken ct,
         int iterIndex = 0,
-        IWebhookCaptureAccessor? webhooks = null)
+        IWebhookCaptureAccessor? webhooks = null,
+        ITraceCaptureAccessor? traces = null)
     {
         var vars = new Dictionary<string, object?>();
 
@@ -541,18 +565,20 @@ public static class MemoryProbe
         // baseline.  The trivial probe ignores this key, so setting it is harmless there.
         vars["__iter"] = (long)iterIndex;
 
-        // Trivial path: the 1-arg ctor (Webhooks → NullWebhookCaptureAccessor).
-        // Closure path: the FULL 4-arg ctor with an empty services map, the throwing
-        // NullSecretAccessor (the probe never resolves a secret), and the stub webhook
-        // accessor — so the CSX reads ScriptGlobalVariables.Webhooks across the
-        // collectible ALC and a pin through that read path would surface (S07-E1, §5).
+        // Trivial path: the 1-arg ctor (Webhooks → NullWebhookCaptureAccessor, Traces →
+        // NullTraceCaptureAccessor). Closure path: the FULL 5-arg ctor with an empty services
+        // map, the throwing NullSecretAccessor (the probe never resolves a secret), and the
+        // stub webhook + trace accessors — so the CSX reads ScriptGlobalVariables.Webhooks /
+        // .Traces across the collectible ALC and a pin through either read path would surface
+        // (S07-E1 / Phase C, §5).
         var globals = webhooks is null
             ? new ScriptGlobalVariables(vars)
             : new ScriptGlobalVariables(
                 vars,
                 new Dictionary<string, object>(StringComparer.Ordinal),
                 NullSecretAccessor.Instance,
-                webhooks);
+                webhooks,
+                traces ?? NullTraceCaptureAccessor.Instance);
         await RoslynScriptCompiler.RunIsolatedAsync(
                 compiled,
                 globals,

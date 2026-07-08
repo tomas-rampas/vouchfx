@@ -97,6 +97,16 @@ public static class ClosureProbeScript
     ///     probe the null accessor returns an empty list and the loop is a no-op.
     ///   </description></item>
     ///   <item><description>
+    ///     <b>Traces read path (Phase C)</b> — reads the host-owned OTLP span-capture
+    ///     snapshot through the NEW <c>ScriptGlobalVariables.Traces</c> accessor
+    ///     (<c>Traces.GetCaptured("probe")</c>, paralleling <c>Webhooks</c>/<c>Secrets</c>)
+    ///     and iterates the returned <c>CapturedSpan</c> records. Proves the accessor +
+    ///     record graph read path does not pin the collectible ALC, backing
+    ///     <c>trace-expect.otlp</c>. Under the closure run the harness stub seeds two spans;
+    ///     under the trivial probe the null accessor returns an empty list and the loop is a
+    ///     no-op.
+    ///   </description></item>
+    ///   <item><description>
     ///     <b>Microsoft.Data.SqlClient real SqlConnection (Phase 1b)</b> — builds a REAL
     ///     <c>SqlConnection</c> (exercises SNI initialisation and connection-string parsing
     ///     static initialisers, the exact state <c>db-assert.sqlserver</c>'s emitted
@@ -470,5 +480,29 @@ public static class ClosureProbeScript
             __whlen += __wh[i].Method.Length + __wh[i].Path.Length + __wh[i].Body.Length;
         }
         Vars["webhook_touch_len"] = __whlen;
+
+        // ── Phase C: ScriptGlobalVariables.Traces read path (cheap — every iter) ─
+        // Read the host-owned OTLP span-capture snapshot through the NEW Traces accessor
+        // (paralleling Webhooks/Secrets) and iterate the returned CapturedSpan records. This
+        // forces the CSX (collectible ALC) to (a) call the ITraceCaptureAccessor instance
+        // handed in via ScriptGlobalVariables.Traces and (b) walk the immutable CapturedSpan
+        // record graph (TraceId/SpanId/Name/ServiceName/StatusCode + the Attributes
+        // dictionary) seeded by the harness stub. If either pinned the collectible context,
+        // the per-cycle heap delta would grow. In the closure run the stub returns two spans
+        // for "probe"; under the trivial probe (and any run with no receiver) Traces is a
+        // NullTraceCaptureAccessor that returns an empty list, so this loop runs zero times
+        // and is harmless. Result via Vars only; fully-qualified types; no 'using var'.
+        var __tr = Traces.GetCaptured("probe");
+        long __trlen = 0;
+        for (int i = 0; i < __tr.Count; i++)
+        {
+            __trlen += __tr[i].TraceId.Length + __tr[i].SpanId.Length + __tr[i].Name.Length +
+                __tr[i].ServiceName.Length + __tr[i].StatusCode.Length;
+            foreach (var kv in __tr[i].Attributes)
+            {
+                __trlen += kv.Key.Length + kv.Value.Length;
+            }
+        }
+        Vars["trace_touch_len"] = __trlen;
         """;
 }

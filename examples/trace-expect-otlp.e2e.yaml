@@ -1,0 +1,99 @@
+metadata:
+  name: trace-expect-otlp-example
+  description: >
+    The flagship distributed assertion: it proves a REAL trace with an expected span shape
+    exists for the business transaction this scenario drove — the causal-chain proof no
+    single-service assertion (an HTTP 2xx, a DB row, a queue message) can give on its own. In
+    production usage, an earlier http.rest step injects a W3C traceparent header on its
+    outbound request, and the system under test's own OpenTelemetry SDK (configured with
+    OTEL_EXPORTER_OTLP_ENDPOINT/OTEL_EXPORTER_OTLP_PROTOCOL=http/json pointed at this
+    receiver's URL) exports the spans it recorded for that request over OTLP/HTTP.
+    trace-expect is a brand-new family; the dotted form trace-expect.otlp is required (there
+    is no bare trace-expect alias).
+
+    KNOWN LIMITATION (v1): the receiver is a per-scenario host resource that starts AFTER the
+    topology (and therefore the SUT container) is already running, so its URL cannot be
+    threaded into environment.services[].env (which is resolved at container-configure time,
+    before the receiver exists) — env: only resolves ${conn:<dependency>} references (§3.2.4).
+    A containerised SUT would need to be pointed at a STANDING OTel collector whose address is
+    stable for the whole suite run, which then forwards to wherever this engine listens — out
+    of scope for a minimal, self-contained example. This example instead SIMULATES the SUT's
+    OTLP export with a script.csharp step that POSTs a synthetic OTLP/HTTP JSON payload
+    directly to the receiver's staged URL, exactly mirroring the same HONEST-disclosure
+    approach the engine's own Sprint 7 webhook capstone test takes for webhook-listen.http
+    (see Sprint07CapstoneTests.cs) — it still exercises the full receiver + staging + RETRY +
+    assertion path end-to-end.
+
+environment:
+  services:
+    # The system under test. Replace with your own instrumented image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+variables:
+  # A fixed, well-formed W3C traceparent (version-traceid-parentid-flags). A real suite
+  # usually generates a fresh one per run; a fixed literal keeps this example deterministic.
+  traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+steps:
+  - id: trigger-order
+    type: http.rest
+    description: >
+      Drive the business transaction. In production this is where an earlier step injects
+      the traceparent header so the SUT's auto-instrumented OTel SDK continues THIS trace
+      rather than starting a new one.
+    target: app
+    method: POST
+    path: /orders
+    headers:
+      traceparent: "{traceparent}"
+    body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 200
+
+  - id: simulate-otlp-export
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's OpenTelemetry SDK exporting the span it recorded for the request
+      above (see the KNOWN LIMITATION note in the metadata description). Posts one
+      OTLP/HTTP JSON resourceSpans payload directly to the receiver's staged URL.
+    code: |
+      var receiverUrl = (string)Vars["traces"];   // staged by trace-expect.otlp below, plain key
+      var traceId = "4bf92f3577b34da6a3ce929d0e0e4736"; // the 32-hex segment of {traceparent}
+      var payload =
+        "{\"resourceSpans\":[{" +
+        "\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"app\"}}]}," +
+        "\"scopeSpans\":[{\"spans\":[{" +
+        "\"traceId\":\"" + traceId + "\"," +
+        "\"spanId\":\"00f067aa0ba902b7\"," +
+        "\"parentSpanId\":\"\"," +
+        "\"name\":\"POST /orders\"," +
+        "\"status\":{\"code\":\"STATUS_CODE_OK\"}" +
+        "}]}]" +
+        "}]}";
+      var client = new System.Net.Http.HttpClient();
+      try {
+        var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync(receiverUrl + "/v1/traces", content);
+        if ((int)resp.StatusCode >= 300)
+          throw new System.Exception("Simulated OTLP export failed: " + (int)resp.StatusCode);
+      } finally { client.Dispose(); }
+
+  - id: assert-order-span
+    type: trace-expect.otlp
+    description: >
+      RETRY is this family's canonical verifyMode: a real OpenTelemetry SDK batches and
+      exports spans on a periodic timer (commonly ~5s), so the very next step would almost
+      always run before the export lands. The traceId criterion accepts the FULL traceparent
+      value — trace-expect.otlp extracts the 32-hex trace-id segment automatically.
+      This assertion only proves the TRACE exists; pair it with a state assertion
+      (db-assert / metrics-assert / storage-assert) for the business-outcome proof.
+    receiver: traces
+    verifyMode: RETRY
+    timeout: 30s
+    match:
+      traceId: "{traceparent}"
+      service: app
+      spanName: "POST /orders"
+    capture:
+      spanId: "$.spanId"

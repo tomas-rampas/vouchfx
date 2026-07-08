@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Platform.Steps.Http.Soap</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- No client-library package: http.soap needs only BCL types (System.Net.Http, System.Xml,
+       System.Text.Json for literal escaping). It DOES implement ICompileReferenceContributor
+       (mirroring Platform.Steps.Core.HttpRest exactly) so the Roslyn compiler can resolve
+       System.Net.Http.HttpClient / System.Xml.XmlDocument / System.Xml.XPath.XPathNavigator
+       even in a standalone-compile context (a unit/docker test that calls
+       RoslynScriptCompiler.CompileOnce directly, bypassing ScenarioRunner's
+       BclReferencePaths() aggregation). Unlike http.rest, this provider needs no JsonPath.Net
+       reference — it supports XPath captures only (there is no JSON body to JSONPath over). -->
+
+</Project>

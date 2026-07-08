@@ -629,6 +629,78 @@
           "if": {
             "properties": {
               "type": {
+                "const": "http.soap"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "target",
+              "path",
+              "envelope"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the service to call, as declared under environment.services.",
+                "type": "string"
+              },
+              "path": {
+                "description": "The request path; may contain {placeholder} and ${secret:...} tokens.",
+                "type": "string"
+              },
+              "action": {
+                "description": "Optional SOAPAction header value (SOAP 1.1 convention), sent quoted per spec. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "envelope": {
+                "description": "The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Optional assertion block applied to the SOAP response.",
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "description": "Expected HTTP status code. Defaults to 200 when omitted.",
+                    "type": "integer"
+                  },
+                  "fault": {
+                    "description": "Whether the response is expected to contain a SOAP Fault element. Defaults to false.",
+                    "type": "boolean"
+                  },
+                  "xpath": {
+                    "description": "List of {path, value} assertions evaluated against the response envelope, after the status and fault-expectation checks both pass.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "path",
+                        "value"
+                      ],
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "mail-expect.smtp"
               }
             },
@@ -1395,6 +1467,61 @@
                   }
                 },
                 "additionalProperties": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "trace-expect.otlp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "required": [
+              "receiver",
+              "match"
+            ],
+            "properties": {
+              "receiver": {
+                "description": "Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: \"{svc::<receiver>}\").",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
+                "type": "object",
+                "required": [
+                  "traceId"
+                ],
+                "properties": {
+                  "traceId": {
+                    "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "service": {
+                    "description": "Optional expected exporting-resource service name (the span's resource-level service.name attribute). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "spanName": {
+                    "description": "Optional expected span name (operation name). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "attributes": {
+                    "description": "Optional map of expected span-attribute key to expected string value (subset match — the real span may carry additional attributes not mentioned here). Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
               }
             },
             "additionalProperties": true

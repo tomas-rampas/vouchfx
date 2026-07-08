@@ -15,6 +15,7 @@ using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
+using Platform.Steps.Http.Soap;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MetricsAssert.Prometheus;
@@ -30,6 +31,7 @@ using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.StorageAssert.S3;
+using Platform.Steps.TraceExpect.Otlp;
 using Platform.Steps.WebhookListen.Http;
 
 namespace Vouchfx.Cli;
@@ -51,20 +53,21 @@ internal static class ProviderRegistryFactory
     /// </summary>
     /// <remarks>
     /// One anchor type per Core provider assembly.  The Core providers wired into the
-    /// CLI are <c>http.rest</c>, <c>db-assert.postgres</c>, <c>db-assert.sqlserver</c>,
-    /// <c>db-assert.mongodb</c>, <c>db-assert.mysql</c>, <c>script.csharp</c>,
-    /// <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c>, <c>mq-publish.rabbitmq</c>,
-    /// <c>mq-expect.rabbitmq</c>, <c>mq-publish.nats</c>, <c>mq-expect.nats</c>,
-    /// <c>mq-publish.azureservicebus</c>, <c>mq-expect.azureservicebus</c>,
-    /// <c>mq-publish.redis</c>, <c>mq-expect.redis</c>,
+    /// CLI are <c>http.rest</c>, <c>http.soap</c>, <c>db-assert.postgres</c>,
+    /// <c>db-assert.sqlserver</c>, <c>db-assert.mongodb</c>, <c>db-assert.mysql</c>,
+    /// <c>script.csharp</c>, <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c>,
+    /// <c>mq-publish.rabbitmq</c>, <c>mq-expect.rabbitmq</c>, <c>mq-publish.nats</c>,
+    /// <c>mq-expect.nats</c>, <c>mq-publish.azureservicebus</c>,
+    /// <c>mq-expect.azureservicebus</c>, <c>mq-publish.redis</c>, <c>mq-expect.redis</c>,
     /// <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
     /// <c>cache-assert.redis</c>, <c>cache-assert.elasticsearch</c>,
-    /// <c>metrics-assert.prometheus</c>, <c>db-assert.dynamodb</c> and
-    /// <c>storage-assert.s3</c>.
+    /// <c>metrics-assert.prometheus</c>, <c>db-assert.dynamodb</c>,
+    /// <c>storage-assert.s3</c> and <c>trace-expect.otlp</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
         typeof(HttpRestProvider).Assembly,            // http.rest
+        typeof(HttpSoapProvider).Assembly,            // http.soap
         typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
         typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
         typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
@@ -87,6 +90,7 @@ internal static class ProviderRegistryFactory
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
         typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
         typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
+        typeof(TraceExpectOtlpProvider).Assembly,     // trace-expect.otlp
     };
 
     /// <summary>

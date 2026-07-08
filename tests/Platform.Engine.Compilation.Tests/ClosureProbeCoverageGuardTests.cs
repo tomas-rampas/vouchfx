@@ -41,6 +41,7 @@ using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
+using Platform.Steps.Http.Soap;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
 using Platform.Steps.MetricsAssert.Prometheus;
@@ -56,6 +57,7 @@ using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.StorageAssert.S3;
+using Platform.Steps.TraceExpect.Otlp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
 
@@ -175,6 +177,18 @@ public sealed class ClosureProbeCoverageGuardTests
     ///     an S3-compatible (MinIO) object via the AWS SDK; the probe builds a real client and
     ///     disposes it in <c>finally</c>.
     ///   </description></item>
+    ///   <item><description>
+    ///     <c>trace-expect.otlp</c> → <c>ScriptGlobalVariables.Traces</c> captured-span read
+    ///     path: the provider reads spans captured by the host-owned OTLP/HTTP receiver
+    ///     through the NEW <c>Traces</c> accessor; the probe walks that exact read path +
+    ///     record graph across the collectible ALC (Phase C, mirrors the
+    ///     <c>webhook-listen.http</c> row exactly).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>http.soap</c> → <c>System.Net.Http.HttpClient</c> (BCL — closure subsumed by the
+    ///     http.rest probe; http.soap issues its SOAP request through the same
+    ///     <c>HttpClient</c>/<c>SocketsHttpHandler</c> pool).
+    ///   </description></item>
     /// </list>
     /// </remarks>
     private static readonly IReadOnlyList<CoreProviderCoverage> EnumeratedCoverage = new[]
@@ -271,6 +285,14 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "storage-assert.s3",
             CanonicalClient: "Amazon.S3.AmazonS3Client (S3-compatible / MinIO client)",
             ProbeMarker: "Amazon.S3.AmazonS3Client"),
+        new CoreProviderCoverage(
+            StepKind: "trace-expect.otlp",
+            CanonicalClient: "ScriptGlobalVariables.Traces captured-span read path (host-owned OTLP/HTTP receiver)",
+            ProbeMarker: "Traces.GetCaptured("),
+        new CoreProviderCoverage(
+            StepKind: "http.soap",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by the http.rest probe; http.soap issues its SOAP request via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
     };
 
     /// <summary>
@@ -306,6 +328,8 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
         typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
         typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
+        typeof(TraceExpectOtlpProvider).Assembly,     // trace-expect.otlp
+        typeof(HttpSoapProvider).Assembly,             // http.soap
     };
 
     // -------------------------------------------------------------------------
@@ -333,8 +357,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Twenty-three Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus + mq-publish.redis + mq-expect.redis + metrics-assert.prometheus + db-assert.dynamodb + storage-assert.s3).
-        Assert.Equal(23, actualKinds.Count);
+        // Twenty-five Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus + mq-publish.redis + mq-expect.redis + metrics-assert.prometheus + db-assert.dynamodb + storage-assert.s3 + trace-expect.otlp + http.soap).
+        Assert.Equal(25, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -361,8 +385,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (twenty-three distinct rows).
-        Assert.Equal(23, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (twenty-five distinct rows).
+        Assert.Equal(25, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------
