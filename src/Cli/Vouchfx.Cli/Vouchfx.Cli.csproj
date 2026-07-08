@@ -46,7 +46,8 @@
     <Version>1.0.0</Version>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>vouchfx — compile and run declarative .e2e.yaml integration tests end-to-end against distributed .NET systems. Compiles YAML→C# (Roslyn), orchestrates the required container topology via .NET Aspire + Testcontainers, and executes steps covering REST, PostgreSQL, Kafka, webhooks, and custom scripting.</Description>
+    <Description>End-to-end integration testing for distributed .NET systems, authored in declarative .e2e.yaml. vouchfx compiles YAML to memory-safe C# via Roslyn, orchestrates the required container topology with .NET Aspire + Testcontainers, and verifies one business transaction across HTTP (REST/SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message brokers (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), cache/search (Redis, Elasticsearch), S3 object storage, Prometheus metrics, OTLP distributed traces, SMTP capture, webhooks and inline C# — twenty-five providers across eleven step families, with engine-owned RETRY polling, execution-time secret resolution with at-source redaction, and a four-verdict taxonomy where only Fail breaks CI by default.</Description>
+    <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -56,6 +57,13 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <!-- NuGet package README — rendered as the package page body on nuget.org
+       (PackageReadmeFile above). Kept package-focused and separate from the
+       repository README, which targets contributors. -->
+  <ItemGroup>
+    <None Include="PACKAGE_README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <!-- Expose the internal testable seams (ScenarioDiscovery, ExitCodes, RunCommand
        helpers) to the no-docker CLI test project. -->
