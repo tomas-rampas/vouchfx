@@ -10,6 +10,7 @@ using System.Reflection;
 using Platform.Sdk;
 using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Dynamodb;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -28,6 +29,7 @@ using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
+using Platform.Steps.StorageAssert.S3;
 using Platform.Steps.WebhookListen.Http;
 
 namespace Vouchfx.Cli;
@@ -56,8 +58,9 @@ internal static class ProviderRegistryFactory
     /// <c>mq-publish.azureservicebus</c>, <c>mq-expect.azureservicebus</c>,
     /// <c>mq-publish.redis</c>, <c>mq-expect.redis</c>,
     /// <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
-    /// <c>cache-assert.redis</c>, <c>cache-assert.elasticsearch</c> and
-    /// <c>metrics-assert.prometheus</c>.
+    /// <c>cache-assert.redis</c>, <c>cache-assert.elasticsearch</c>,
+    /// <c>metrics-assert.prometheus</c>, <c>db-assert.dynamodb</c> and
+    /// <c>storage-assert.s3</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
@@ -82,6 +85,8 @@ internal static class ProviderRegistryFactory
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
+        typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
+        typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
     };
 
     /// <summary>

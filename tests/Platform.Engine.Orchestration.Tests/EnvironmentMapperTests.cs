@@ -1001,6 +1001,87 @@ public sealed class EnvironmentMapperTests
     }
 
     // -----------------------------------------------------------------------
+    // Map_DynamodbDependency / Map_MinioDependency
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A dynamodb dependency produces a plain container resource pinned to the
+    /// amazon/dynamodb-local image, health-gated on itself — the off-docker
+    /// registration lock for the Phase B dependency type (the 400-as-healthy
+    /// gate behaviour itself is exercised by DbAssertDynamodbDockerTests).
+    /// </summary>
+    [Fact]
+    public void Map_DynamodbDependency_AddsPinnedContainer_GateOnSelf()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders-db"] = new DependencySpec(Type: "dynamodb", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.SingleOrDefault(r => r.Name == "orders-db");
+        Assert.NotNull(resource);
+        Assert.Contains("orders-db", mapped.HealthGateResourceNames);
+        Assert.Contains("orders-db", mapped.DependencyNames);
+
+        var image = resource!.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("amazon/dynamodb-local", image.Image);
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+    }
+
+    /// <summary>
+    /// A minio dependency produces a plain container resource pinned to the
+    /// minio/minio image, started in server mode ('server /data'), health-gated
+    /// on itself — the off-docker registration lock for the Phase B dependency
+    /// type (the /minio/health/cluster readiness gate is exercised live by
+    /// StorageAssertS3DockerTests).
+    /// </summary>
+    [Fact]
+    public async Task Map_MinioDependency_AddsPinnedContainer_ServerMode_GateOnSelf()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["artefacts"] = new DependencySpec(Type: "minio", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.SingleOrDefault(r => r.Name == "artefacts");
+        Assert.NotNull(resource);
+        Assert.Contains("artefacts", mapped.HealthGateResourceNames);
+        Assert.Contains("artefacts", mapped.DependencyNames);
+
+        var image = resource!.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("minio/minio", image.Image);
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
+        foreach (var argsCallback in resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Contains(args, a => a is string s && s == "server");
+        Assert.Contains(args, a => a is string s && s == "/data");
+    }
+
+    // -----------------------------------------------------------------------
     // Map_ServiceWithBothImageAndProject_Throws
     // -----------------------------------------------------------------------
 

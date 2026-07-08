@@ -101,6 +101,13 @@
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqPublish.Redis\Platform.Steps.MqPublish.Redis.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MqExpect.Redis\Platform.Steps.MqExpect.Redis.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj" />
+    <!--
+      Core batch B (21→23): db-assert.dynamodb and the new storage-assert.s3 family — needed
+      by SchemaFreezeTests, VsCodeShippedSchemaSyncTests, LanguageReferenceGoldenTests, and
+      ClosureProbeCoverageGuardTests, which build the FULL Core-provider registry.
+    -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj" />
   </ItemGroup>
 
 </Project>

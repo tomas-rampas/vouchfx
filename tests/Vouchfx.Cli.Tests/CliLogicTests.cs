@@ -2,8 +2,8 @@
 //
 // These tests exercise ONLY the Docker-free logic:
 //   • ScenarioDiscovery — finds *.e2e.yaml recursively, parses each, captures parse errors.
-//   • ProviderRegistryFactory — names the 21 Core provider assemblies; the registry freezes
-//     with the 21 expected step kinds.
+//   • ProviderRegistryFactory — names the 23 Core provider assemblies; the registry freezes
+//     with the 23 expected step kinds.
 //   • ExitCodes.FromVerdict — Pass/Inconclusive/EnvError → 0, Fail → 1.
 //   • RunCommand.BuildPathArgument — `run <path>` resolves the path; bare `run` → ".".
 //   • RunCommand.ScenarioName / AggregateVerdict — naming + parse-failure folding.
@@ -22,17 +22,17 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ProviderRegistryFactoryTests
 {
     [Fact]
-    public void CoreProviderAssemblies_ReturnsTwentyOneDistinctAssemblies()
+    public void CoreProviderAssemblies_ReturnsTwentyThreeDistinctAssemblies()
     {
         var assemblies = ProviderRegistryFactory.CoreProviderAssemblies();
 
-        Assert.Equal(21, assemblies.Length);
-        // Twenty-one *distinct* assemblies (no accidental duplicate anchor).
-        Assert.Equal(21, assemblies.Distinct().Count());
+        Assert.Equal(23, assemblies.Length);
+        // Twenty-three *distinct* assemblies (no accidental duplicate anchor).
+        Assert.Equal(23, assemblies.Distinct().Count());
     }
 
     [Fact]
-    public void BuildCoreRegistry_FreezesWithTheTwentyOneCoreStepKinds()
+    public void BuildCoreRegistry_FreezesWithTheTwentyThreeCoreStepKinds()
     {
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
@@ -59,6 +59,8 @@ public sealed class ProviderRegistryFactoryTests
                      "cache-assert.redis",
                      "cache-assert.elasticsearch",
                      "metrics-assert.prometheus",
+                     "db-assert.dynamodb",
+                     "storage-assert.s3",
                  })
         {
             Assert.True(

@@ -26,6 +26,7 @@ using Platform.Engine.Compilation.Schema;
 using Platform.Sdk;
 using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Dynamodb;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -44,6 +45,7 @@ using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
+using Platform.Steps.StorageAssert.S3;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
 
@@ -96,6 +98,8 @@ public sealed class LanguageReferenceGoldenTests
         typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
         typeof(MqExpectRedisProvider).Assembly,        // mq-expect.redis
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
+        typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
+        typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
     };
 
     /// <summary>
@@ -172,6 +176,8 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("### `mq-publish.redis`", generated, StringComparison.Ordinal);
         Assert.Contains("### `mq-expect.redis`", generated, StringComparison.Ordinal);
         Assert.Contains("### `metrics-assert.prometheus`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `db-assert.dynamodb`", generated, StringComparison.Ordinal);
+        Assert.Contains("### `storage-assert.s3`", generated, StringComparison.Ordinal);
 
         // The common step fields, documented once.
         Assert.Contains("## Common step fields", generated, StringComparison.Ordinal);

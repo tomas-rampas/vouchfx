@@ -82,6 +82,11 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj"
                       IsAspireProjectResource="false" />
+    <!-- Core batch B (21→23): db-assert.dynamodb + the new storage-assert.s3 family. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Sprint 6 Kafka client libs — direct refs so the DLLs deploy to output">
@@ -109,6 +114,8 @@
     <!-- JsonPath.Net must be a direct reference so its DLL is deployed to the output
          directory (HttpRestProvider accesses it via Assembly.Location at runtime). -->
     <PackageReference Include="JsonPath.Net" />
+    <PackageReference Include="AWSSDK.DynamoDBv2" />
+    <PackageReference Include="AWSSDK.S3" />
   </ItemGroup>
 
 </Project>

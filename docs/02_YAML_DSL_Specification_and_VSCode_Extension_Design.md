@@ -200,6 +200,8 @@ Supported dependency kinds and their available parts are:
 | `nats` | `host`, `port`, `username`, `password` |
 | `elasticsearch` | `host`, `port` |
 | `mailpit` | `host`, `port` (SMTP endpoint) |
+| `dynamodb` | `host`, `port` |
+| `minio` | `host`, `port` |
 
 Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}` or `${secret:…}` references — are passed through to the container verbatim.
 
@@ -500,6 +502,38 @@ The example below uses `db-assert.postgres`, the Core provider that ships with t
       billing_account_id: "{billingAccountId}"
 ```
 
+#### `db-assert.dynamodb` — step fields
+
+Asserts against a DynamoDB item via a single `GetItem` call. The engine provisions a real `dynamodb-local` container for the declared dependency (type `dynamodb`); the connection is a plain container with no HTTP health path of its own — see §3.2's `dynamodb` row and the engine's own EnvironmentMapper documentation for the health-gating choice. `key` is a deliberately simplified flat JSON template, not the low-level DynamoDB wire form: each top-level value becomes an `S`/`N`/`BOOL` attribute at execution time (a JSON string, number, or boolean respectively — nested objects/arrays are rejected, since a primary key cannot contain them).
+
+| Field | Required | Description |
+|---|---|---|
+| `target` | Yes | The logical name of the `dynamodb` dependency declared in `environment.dependencies`. |
+| `table` | Yes | The DynamoDB table name. Supports `{placeholder}` substitution. |
+| `key` | Yes | A flat JSON object template naming the primary key (partition key, optionally plus a sort key), e.g. `{"orderId":"{orderId}"}`. May contain `{placeholder}` tokens inside JSON string values; a JSON-escape guard prevents a resolved value from breaking out of its enclosing string (the same hardening `db-assert.mongodb`'s filter resolution applies). |
+| `expect.exists` | No | Whether the item is expected to exist. Defaults to `true` when omitted. |
+| `expect.item` | No | Map of flat (top-level) attribute name to expected string value, compared against the `GetItem` result (`S` as-is, `N` as the raw stored number string, `BOOL` as `"true"`/`"false"`). Nested attributes are not supported in v1. Mutually exclusive with `expect.exists: false` — an absent item has no fields to assert on. |
+
+> **Number canonicalisation caveat.** DynamoDB canonicalises `N` values — it trims trailing zeros, so an item written as `1.0` is stored (and compared) as `1`. Declare the canonical form in `expect.item` (`"1"`, not `"1.0"`), or the comparison fails on a value that looks identical.
+
+> **Substitution scope.** `db-assert.dynamodb` fields resolve `{placeholder}` tokens only; `${secret:…}` references are not resolved by this provider and pass through literally. This differs from `storage-assert.s3`, which resolves both.
+
+Use `verifyMode: RETRY` when the item may lag the transaction that writes it (the same post-stimulus convergence gap `db-assert.postgres`/`db-assert.mongodb` already accommodate) — `GetItem` is read-only and idempotent, so every RETRY poll attempt is safe to repeat.
+
+```yaml
+- id: assert-order-written
+  type: db-assert.dynamodb
+  target: orders-db
+  verifyMode: RETRY
+  timeout: 15s
+  table: Orders
+  key: '{"orderId":"{orderId}"}'
+  expect:
+    exists: true
+    item:
+      status: "SHIPPED"
+```
+
 ## 5.5 The webhook-listen family
 
 A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the cloud topology, the architecture's reverse SSH port forwarding ensures that a webhook fired by a cloud-hosted service still reaches this listener on the developer's machine. The step is inherently asynchronous and is therefore always combined with `verifyMode: RETRY`.
@@ -588,14 +622,14 @@ The community catalogue at platform launch is summarised in the table below. The
 | rpc | — | rpc.grpc | rpc.json-rpc *(available — the hub's first community provider)*, rpc.thrift |
 | mq-publish | mq-publish.kafka, mq-publish.rabbitmq, mq-publish.nats, mq-publish.azureservicebus, mq-publish.redis | mq-publish.mqtt, mq-publish.sqs, mq-publish.eventhubs | mq-publish.pulsar, mq-publish.activemq-artemis, mq-publish.gcp-pubsub, mq-publish.azurestoragequeue, mq-publish.sns |
 | mq-expect | mq-expect.kafka, mq-expect.rabbitmq, mq-expect.nats, mq-expect.azureservicebus, mq-expect.redis | mq-expect.mqtt, mq-expect.sqs, mq-expect.eventhubs | mq-expect.pulsar, mq-expect.activemq-artemis, mq-expect.gcp-pubsub, mq-expect.azurestoragequeue |
-| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | db-assert.oracle, db-assert.cassandra, db-assert.scylladb, db-assert.cockroachdb, db-assert.clickhouse, db-assert.dynamodb, db-assert.cosmosdb, db-assert.neo4j, db-assert.mariadb | db-assert.ldap, db-assert.qdrant |
+| db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb, db-assert.dynamodb | db-assert.oracle, db-assert.cassandra, db-assert.scylladb, db-assert.cockroachdb, db-assert.clickhouse, db-assert.cosmosdb, db-assert.neo4j, db-assert.mariadb | db-assert.ldap, db-assert.qdrant |
 | cache-assert | cache-assert.redis, cache-assert.elasticsearch | cache-assert.opensearch, cache-assert.valkey | cache-assert.memcached |
 | mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
 | metrics-assert | metrics-assert.prometheus | — | — |
+| storage-assert | storage-assert.s3 | storage-assert.azblob, storage-assert.sftp | storage-assert.gcs |
 | script | script.csharp | — | — |
 | realtime-expect *(reserved)* | — | realtime-expect.websocket, realtime-expect.sse, realtime-expect.signalr | realtime-expect.graphql-ws |
-| storage-assert *(reserved)* | — | storage-assert.s3, storage-assert.azblob, storage-assert.sftp | storage-assert.gcs |
 | trace-expect *(reserved)* | — | trace-expect.otlp | trace-expect.jaeger |
 
 *Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. The dotted `family.provider` form (e.g., `type: mq-publish.kafka`) is the only accepted form for every family, regardless of how many providers it has registered.*
@@ -688,6 +722,62 @@ Example (the delta idiom: capture-before, trigger, assert-after):
     min: "{ordersBefore}"
   verifyMode: RETRY
   timeout: 15s
+```
+
+## 5.9 The storage-assert family
+
+A `storage-assert` step observes an object the system under test wrote to an S3-compatible object store and asserts on its existence, size, content type, user metadata, and (optionally) the body's SHA-256 digest or a body substring. This is the family that proves a business transaction actually *wrote a file* — an export, a generated report, an uploaded attachment — the same "did the system actually do the thing" signal `metrics-assert` provides for counters/gauges and `db-assert` provides for rows/items. `storage-assert` is a brand-new family; its Core provider is `storage-assert.s3`. Like every family, the bare `type: storage-assert` form is not accepted — the dotted form is always required.
+
+Unlike `metrics-assert` (which adds no new infrastructure kind), `storage-assert.s3` **does** require a new managed-dependency type: `minio`, a MinIO container the engine provisions for the declared dependency (§3.2's `minio` row). MinIO speaks the S3 API, so the same provider works unchanged against any S3-compatible endpoint reachable at a `ServiceURL`.
+
+**The exists coherence rule.** `expect.exists: false` excludes every content expectation (`size`, `minSize`, `sha256`, `contentContains`, `contentType`, `metadata`) — an absent object has no content to assert on. `expect.size` and `expect.minSize` are mutually exclusive: declare an exact size or a lower bound, not both.
+
+**The bounded-GET rule.** Every attempt HEADs the object first (existence, size, content type, metadata — no body transfer). Only when `sha256` or `contentContains` is declared does the step GET the body, and only after every HEAD-based check has already passed; a body larger than 16 MiB is refused with a Fail noting the cap, never fetched. A `contentContains` mismatch reports only a boolean match flag and the body length — the searched substring and the body itself are never echoed into the observation (the same "no content in observations" discipline `webhook-listen.http`/`mail-expect.smtp` apply to captured request/message bodies). SHA-256 digests, by contrast, are safe to report verbatim: a one-way, fixed-length hash cannot leak the underlying content.
+
+**`verifyMode: RETRY` is this family's canonical mode — the eventually-consumed idiom.** A file write frequently lags the HTTP response that triggered it (the same post-stimulus convergence gap `mq-expect`/`db-assert`/`metrics-assert` steps already accommodate), so most `storage-assert` steps are written with `verifyMode: RETRY` and a `timeout`; the HEAD call is read-only and idempotent, so every poll attempt is safe to repeat.
+
+**Capture support.** The Pass observation exposes `etag`, `versionId`, `size`, and `exists` to `capture:` via JSONPath (`$.etag`, `$.versionId`, `$.size`, `$.exists`) — mirrors `metrics-assert.prometheus`'s synthesised-observation capture mechanism exactly.
+
+#### `storage-assert.s3` — step fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the `minio` dependency, as declared under environment.dependencies. |
+| bucket | Yes | The S3 bucket name. May contain `{placeholder}` and `${secret:...}` tokens. |
+| key | Yes | The S3 object key. May contain `{placeholder}` and `${secret:...}` tokens. |
+| expect.exists | No | Whether the object is expected to exist. Defaults to `true` when omitted. |
+| expect.size | No | Exact expected object size in bytes. Mutually exclusive with `expect.minSize`. |
+| expect.minSize | No | Inclusive minimum expected object size in bytes. Mutually exclusive with `expect.size`. |
+| expect.sha256 | No | Expected lowercase hex SHA-256 digest of the object body. Triggers the bounded GET (16 MiB cap). |
+| expect.contentContains | No | A substring the object body (decoded as UTF-8) must contain. Triggers the bounded GET; never echoed into the observation. |
+| expect.contentType | No | Expected `Content-Type`, compared against the HEAD response. |
+| expect.metadata | No | Map of user-metadata key to expected value, compared against the HEAD response's object metadata. |
+
+Example (the eventually-consumed idiom: trigger, then RETRY until the export lands):
+
+```yaml
+- id: trigger-export
+  type: http.rest
+  target: app
+  method: POST
+  path: /reports/export
+  body: '{"format":"csv"}'
+  expect:
+    status: 202
+
+- id: assert-report-written
+  type: storage-assert.s3
+  target: reports
+  bucket: reports
+  key: "exports/daily-report.csv"
+  verifyMode: RETRY
+  timeout: 15s
+  expect:
+    exists: true
+    minSize: "1"
+    contentType: "text/csv"
+  capture:
+    reportEtag: $.etag
 ```
 
 # 6. Variable Capture and Substitution
@@ -812,7 +902,7 @@ Each provider's schema fragment contributes the fields specific to that step typ
 
 ### The v1 schema is frozen
 
-The composed v1 JSON Schema — the root language schema plus the fragments from all twenty-one Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+The composed v1 JSON Schema — the root language schema plus the fragments from all twenty-three Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {

@@ -13,17 +13,19 @@
 //   • DisableDashboard = true path is enforced by HeadlessTopology; EnvironmentMapper is topology-agnostic.
 //
 // Provider registration table (s_dependencyRegistry):
-//   Eleven dependency types are supported.  Each entry supplies:
+//   Thirteen dependency types are supported.  Each entry supplies:
 //   • Build — called inside the configure delegate; mutates the Aspire builder, populates
-//     serviceEndpoints for sidecar containers (kafka schema-registry, mailpit SMTP), populates
-//     depConnBuilders for dependencies that need custom connection-string construction
-//     (azureservicebus — whose emulator is a plain container, not an Aspire typed resource,
-//     so it does not implement IResourceWithConnectionString), and returns
+//     serviceEndpoints for sidecar containers (kafka schema-registry, mailpit SMTP) AND for
+//     plain single-endpoint containers that need env: host/port access (mailpit, dynamodb,
+//     minio), populates depConnBuilders for dependencies that need custom connection-string
+//     construction (azureservicebus, dynamodb, minio — all plain containers, not Aspire typed
+//     resources, so none implements IResourceWithConnectionString), and returns
 //     (Retained, MostSpecific) IResourceBuilder<IResource> pairs:
 //     - Retained    → stored in dependencyBuilders[name]; used for connection-string resolution.
 //     - MostSpecific → added to mostSpecificDependencyResources; services WaitFor these.
 //     For database-backed types (postgres/sqlserver/mysql/mongodb) both are the *database* resource.
 //     For server-only types (redis/elasticsearch/rabbitmq/nats/kafka/azureservicebus) both are the server resource.
+//     For plain-container types (mailpit/azureservicebus/dynamodb/minio) both are the container itself.
 //   • HealthGateNames — produces the ordered gate-name sequence for the topology fixture to await.
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
@@ -106,9 +108,11 @@ public sealed record MappedTopology(
 /// </para>
 /// <para>
 /// <b>Dependency mapping</b> (each logical name → <see cref="DependencySpec"/>):
-/// Eleven types are supported via the internal registration table.  Database-backed types
+/// Thirteen types are supported via the internal registration table.  Database-backed types
 /// (postgres, sqlserver, mysql, mongodb) gate on the <em>database</em> resource; server-only
-/// types (redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus) gate on the server itself.
+/// types (redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus) gate on the server itself;
+/// plain-container types with no dedicated Aspire integration (mailpit, azureservicebus,
+/// dynamodb, minio) gate on the container resource itself.
 /// </para>
 /// <para>
 /// <b>WaitFor rule (§4)</b>: every service resource calls <c>WaitFor</c> on every dependency's
@@ -419,6 +423,104 @@ public static class EnvironmentMapper
                     };
 
                     var retained = (IResourceBuilder<IResource>)(object)emulatorBuilder;
+                    return (retained, retained);
+                },
+                HealthGateNames: (name, _) => new[] { name }),
+
+            // ---- dynamodb: DynamoDB Local, a plain container with no HTTP health path ----
+            // amazon/dynamodb-local has no dedicated health-check endpoint: GET "/" returns
+            // HTTP 400 ("Malformed HTTP request") because the request is not a valid AWS
+            // SigV4 API call — but a 400 response still PROVES the Jetty listener is up and
+            // answering, exactly the liveness signal a health check needs. Reflection against
+            // the pinned Aspire.Hosting 13.4.2 DLL confirms WithHttpHealthCheck's 'statusCode'
+            // parameter is literally "the result code to interpret as healthy" — so passing
+            // statusCode: 400 is the correct, documented way to health-gate this container;
+            // no TCP/endpoint-existence workaround is needed.
+            //
+            // Like azureservicebus, dynamodb-local is a plain container (not an Aspire typed
+            // resource) and does NOT implement IResourceWithConnectionString, so the
+            // connection string is synthesised via depConnBuilders once the endpoint's host/
+            // port are known (post-StartAsync). dynamodb-local ignores credentials entirely,
+            // so the synthesised form carries fixed dummy values — never real AWS keys and
+            // never §17 secret material:
+            //   ServiceURL=http://<host>:<port>;AccessKey=local;SecretKey=local
+            // db-assert.dynamodb parses this exact key=value;… form (documented in its own
+            // provider header) into AmazonDynamoDBConfig(ServiceURL) + BasicAWSCredentials.
+            //
+            // The endpoint is ALSO staged into serviceEndpoints[name] (a late-bound
+            // EndpointReference, resolved in the CONTAINER network context, not the
+            // host-published one depConnBuilders reads) so env: host/port references work
+            // for a containerised SUT exactly as they do for kafka/elasticsearch/mailpit.
+
+            ["dynamodb"] = new DependencyRegistration(
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders) =>
+                {
+                    // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
+                    var tag = string.IsNullOrEmpty(spec.Version) ? "2.5.2" : spec.Version;
+                    var containerBuilder = builder
+                        .AddContainer(name, "amazon/dynamodb-local", tag)
+                        .WithHttpEndpoint(targetPort: 8000, name: "http")
+                        .WithHttpHealthCheck(path: "/", statusCode: 400, endpointName: "http");
+
+                    var httpEndpoint = containerBuilder.GetEndpoint("http");
+                    serviceEndpoints[name] = httpEndpoint;
+
+                    depConnBuilders[name] = _ =>
+                    {
+                        var url = httpEndpoint.Url;
+                        var connStr = $"ServiceURL={url};AccessKey=local;SecretKey=local";
+                        return Task.FromResult<string?>(connStr);
+                    };
+
+                    var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
+                    return (retained, retained);
+                },
+                HealthGateNames: (name, _) => new[] { name }),
+
+            // ---- minio: an S3-API-compatible object store, plain container ----
+            // MinIO ships documented health paths; the cluster readiness path
+            // (/minio/health/cluster) returns 200 only once the object layer can serve
+            // requests, whereas /minio/health/live merely proves the process started —
+            // so readiness is the correct gate here, and — unlike dynamodb-local — the
+            // default 200-status WithHttpHealthCheck applies unchanged.
+            // WithArgs (reflection-verified against the pinned Aspire.Hosting 13.4.2 DLL:
+            // ResourceBuilderExtensions.WithArgs(IResourceBuilder<T>, string[])) supplies the
+            // 'server /data' command MinIO requires to start in server mode.
+            //
+            // Like dynamodb-local, minio is a plain container with no
+            // IResourceWithConnectionString, so its connection string is synthesised via
+            // depConnBuilders in the same key=value;… form:
+            //   ServiceURL=http://<host>:<port>;AccessKey=<user>;SecretKey=<password>
+            // MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are fixed LOCAL TEST credentials (never
+            // real production secrets), mirroring how the postgres/sqlserver/mysql
+            // registrations above use fixed default test credentials.
+
+            ["minio"] = new DependencyRegistration(
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders) =>
+                {
+                    // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
+                    var tag = string.IsNullOrEmpty(spec.Version) ? "RELEASE.2025-09-07T16-13-09Z" : spec.Version;
+                    const string accessKey = "vouchfx-minio";
+                    const string secretKey = "vouchfx-minio-secret";
+                    var containerBuilder = builder
+                        .AddContainer(name, "minio/minio", tag)
+                        .WithArgs("server", "/data")
+                        .WithEnvironment("MINIO_ROOT_USER", accessKey)
+                        .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
+                        .WithHttpEndpoint(targetPort: 9000, name: "http")
+                        .WithHttpHealthCheck(path: "/minio/health/cluster", endpointName: "http");
+
+                    var httpEndpoint = containerBuilder.GetEndpoint("http");
+                    serviceEndpoints[name] = httpEndpoint;
+
+                    depConnBuilders[name] = _ =>
+                    {
+                        var url = httpEndpoint.Url;
+                        var connStr = $"ServiceURL={url};AccessKey={accessKey};SecretKey={secretKey}";
+                        return Task.FromResult<string?>(connStr);
+                    };
+
+                    var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
                     return (retained, retained);
                 },
                 HealthGateNames: (name, _) => new[] { name }),
@@ -742,7 +844,12 @@ public static class EnvironmentMapper
     /// The <c>${conn:name.part}</c> accessors supported by single-endpoint kinds that carry no
     /// ENFORCED author-facing credential: kafka has no credential mechanism at all; mailpit is a
     /// plain container with none; elasticsearch provisions a password but this registration
-    /// disables security (<c>xpack.security.enabled=false</c>), so it is never enforced.
+    /// disables security (<c>xpack.security.enabled=false</c>), so it is never enforced;
+    /// dynamodb-local ignores credentials entirely (any AccessKey/SecretKey is accepted); minio
+    /// DOES enforce MINIO_ROOT_USER/MINIO_ROOT_PASSWORD, but those are fixed values this
+    /// registration sets itself (not per-instance generated parameters), so they are exposed to
+    /// providers only via the synthesised <c>depConnBuilders</c> connection string, not as a
+    /// separate <c>${conn:name.username/password}</c> part.
     /// </summary>
     private static readonly string[] s_hostPortOnlyParts = { "host", "port" };
 
@@ -759,7 +866,7 @@ public static class EnvironmentMapper
             "rabbitmq" => s_rabbitmqParts,
             "nats" => s_natsParts,
             "redis" => s_redisParts,
-            "kafka" or "elasticsearch" or "mailpit" => s_hostPortOnlyParts,
+            "kafka" or "elasticsearch" or "mailpit" or "dynamodb" or "minio" => s_hostPortOnlyParts,
             _ => Array.Empty<string>(),
         };
 
@@ -944,6 +1051,22 @@ public static class EnvironmentMapper
                 FullConnection: BuildHostPortExpression(smtp),
                 Host: smtp.Property(EndpointProperty.Host),
                 Port: smtp.Property(EndpointProperty.Port),
+                Username: null,
+                Password: null,
+                Database: null);
+        }
+
+        if (string.Equals(dependencyType, "dynamodb", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(dependencyType, "minio", StringComparison.OrdinalIgnoreCase))
+        {
+            // Both are plain containers (§4) whose Build lambda stages its single HTTP
+            // endpoint into serviceEndpoints[name] for exactly this purpose — mirrors the
+            // mailpit branch above, minus the "-smtp" suffix (one endpoint, not two).
+            var http = serviceEndpoints[name];
+            return new DependencyEnvAccess(
+                FullConnection: BuildHostPortExpression(http),
+                Host: http.Property(EndpointProperty.Host),
+                Port: http.Property(EndpointProperty.Port),
                 Username: null,
                 Password: null,
                 Database: null);
