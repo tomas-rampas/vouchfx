@@ -28,6 +28,7 @@ using Platform.Engine.Runtime;
 using Platform.Sdk;
 using Platform.Steps.MailExpect.Smtp;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Platform.Engine.Orchestration.Tests;
 
@@ -38,6 +39,10 @@ namespace Platform.Engine.Orchestration.Tests;
 [Trait("requires", "docker")]
 public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
 {
+    private readonly ITestOutputHelper _output;
+
+    public MailExpectSmtpDockerTests(ITestOutputHelper output) => _output = output;
+
     // ── Topology constants ────────────────────────────────────────────────────────
 
     private const string AppHostAssemblyName = "Platform.Engine.Orchestration.Tests";
@@ -174,6 +179,24 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
             await Task.Delay(TimeSpan.FromMilliseconds(300));
         }
 
+        // Diagnosability on the CI-only failure path (this test was red on every CI run
+        // since its introduction while green locally): before asserting, surface what the
+        // provider saw and what Mailpit actually holds, so a red run explains itself.
+        if (outcome.Verdict != Verdict.Pass)
+        {
+            _output.WriteLine($"Final outcome: verdict={outcome.Verdict} observation={outcome.Observation}");
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                var inbox = await http.GetStringAsync($"{_httpBaseUrl}/api/v1/messages?limit=100");
+                _output.WriteLine($"Mailpit inbox ({_httpBaseUrl}): {inbox}");
+            }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Mailpit inbox fetch failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         Assert.Equal(Verdict.Pass, outcome.Verdict);
     }
 
@@ -206,13 +229,19 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
     /// using a raw TCP connection.  Uses no deprecated APIs (SmtpClient is deprecated and
     /// TreatWarningsAsErrors=true globally blocks it — Directory.Build.props).
     /// </summary>
-    private static async Task SendSmtpEmailAsync(
+    private async Task SendSmtpEmailAsync(
         string host, int port, string from, string to, string subject, string body)
     {
+        // The whole conversation is bounded: a stuck/silent server surfaces as a visible
+        // failure carrying the transcript so far, never a hung test (the catch below wraps
+        // the raw cancellation, which by itself would carry no transcript).
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var transcript = new List<string>();
+
         var client = new TcpClient();
         try
         {
-            await client.ConnectAsync(host, port).ConfigureAwait(false);
+            await client.ConnectAsync(host, port, cts.Token).ConfigureAwait(false);
             var stream = client.GetStream();
             var reader = new StreamReader(
                 stream,
@@ -225,46 +254,87 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
                 Encoding.ASCII,
                 bufferSize: 1024,
                 leaveOpen: true)
-            { AutoFlush = true };
+            {
+                AutoFlush = true,
+                // SMTP is a CRLF protocol (RFC 5321 §2.3.8). StreamWriter.WriteLineAsync
+                // emits Environment.NewLine by default — bare LF on Linux — which is a
+                // protocol violation and behaved differently on the Linux CI runner than
+                // on local Windows (this suite was CI-red from its first run). Pin CRLF.
+                NewLine = "\r\n",
+            };
             try
             {
-                // Consume greeting.
-                await reader.ReadLineAsync().ConfigureAwait(false);
-
-                await writer.WriteLineAsync("EHLO vouchfx-test").ConfigureAwait(false);
-                string? line;
-                // Consume multi-line EHLO response.
-                do
+                // Every response code is asserted (2xx/3xx) with the full conversation
+                // transcript on failure — a rejected command previously sailed on
+                // silently and surfaced only as "0 messages matched" much later.
+                async Task<string> ReadReplyAsync(string afterCommand)
                 {
-                    line = await reader.ReadLineAsync().ConfigureAwait(false);
+                    string? first = await reader.ReadLineAsync(cts.Token).ConfigureAwait(false);
+                    if (first is null)
+                        throw new InvalidOperationException(
+                            $"SMTP server closed the connection after '{afterCommand}'. Transcript: {string.Join(" | ", transcript)}");
+                    transcript.Add($"S: {first}");
+                    // Consume any multi-line continuation ("250-...").
+                    var line = first;
+                    while (line.Length > 3 && line[3] == '-')
+                    {
+                        line = await reader.ReadLineAsync(cts.Token).ConfigureAwait(false)
+                            ?? throw new InvalidOperationException(
+                                $"SMTP server closed mid multi-line reply after '{afterCommand}'. Transcript: {string.Join(" | ", transcript)}");
+                        transcript.Add($"S: {line}");
+                    }
+                    if (first.Length < 3 || (first[0] != '2' && first[0] != '3'))
+                        throw new InvalidOperationException(
+                            $"SMTP server rejected '{afterCommand}': {first}. Transcript: {string.Join(" | ", transcript)}");
+                    return first;
                 }
-                while (line is not null && line.Length > 3 && line[3] == '-');
 
-                await writer.WriteLineAsync($"MAIL FROM:<{from}>").ConfigureAwait(false);
-                await reader.ReadLineAsync().ConfigureAwait(false);
+                async Task SendAsync(string commandOrLine)
+                {
+                    transcript.Add($"C: {commandOrLine}");
+                    await writer.WriteLineAsync(commandOrLine.AsMemory(), cts.Token).ConfigureAwait(false);
+                }
 
-                await writer.WriteLineAsync($"RCPT TO:<{to}>").ConfigureAwait(false);
-                await reader.ReadLineAsync().ConfigureAwait(false);
+                await ReadReplyAsync("<greeting>").ConfigureAwait(false);
 
-                await writer.WriteLineAsync("DATA").ConfigureAwait(false);
-                await reader.ReadLineAsync().ConfigureAwait(false);
+                await SendAsync("EHLO vouchfx-test").ConfigureAwait(false);
+                await ReadReplyAsync("EHLO").ConfigureAwait(false);
 
-                await writer.WriteLineAsync($"From: <{from}>").ConfigureAwait(false);
-                await writer.WriteLineAsync($"To: <{to}>").ConfigureAwait(false);
-                await writer.WriteLineAsync($"Subject: {subject}").ConfigureAwait(false);
-                await writer.WriteLineAsync("").ConfigureAwait(false);
-                await writer.WriteLineAsync(body).ConfigureAwait(false);
-                await writer.WriteLineAsync(".").ConfigureAwait(false);
-                await reader.ReadLineAsync().ConfigureAwait(false);
+                await SendAsync($"MAIL FROM:<{from}>").ConfigureAwait(false);
+                await ReadReplyAsync("MAIL FROM").ConfigureAwait(false);
 
-                await writer.WriteLineAsync("QUIT").ConfigureAwait(false);
-                await reader.ReadLineAsync().ConfigureAwait(false);
+                await SendAsync($"RCPT TO:<{to}>").ConfigureAwait(false);
+                await ReadReplyAsync("RCPT TO").ConfigureAwait(false);
+
+                await SendAsync("DATA").ConfigureAwait(false);
+                await ReadReplyAsync("DATA").ConfigureAwait(false);
+
+                await SendAsync($"From: <{from}>").ConfigureAwait(false);
+                await SendAsync($"To: <{to}>").ConfigureAwait(false);
+                await SendAsync($"Subject: {subject}").ConfigureAwait(false);
+                await SendAsync("").ConfigureAwait(false);
+                await SendAsync(body).ConfigureAwait(false);
+                await SendAsync(".").ConfigureAwait(false);
+                await ReadReplyAsync("<end of DATA>").ConfigureAwait(false);
+
+                await SendAsync("QUIT").ConfigureAwait(false);
+                // QUIT's 221 is best-effort; the message is already accepted.
+                await reader.ReadLineAsync(cts.Token).ConfigureAwait(false);
+
+                _output.WriteLine($"SMTP conversation OK ({transcript.Count} lines).");
             }
             finally
             {
                 writer.Dispose();
                 reader.Dispose();
             }
+        }
+        catch (OperationCanceledException oce) when (cts.IsCancellationRequested)
+        {
+            // The raw cancellation carries no context — wrap it so the CI log shows how
+            // far the conversation got before the server went silent.
+            throw new InvalidOperationException(
+                $"SMTP conversation timed out (60 s bound). Transcript: {string.Join(" | ", transcript)}", oce);
         }
         finally
         {
