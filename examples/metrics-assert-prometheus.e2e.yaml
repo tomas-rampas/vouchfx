@@ -7,63 +7,72 @@ metadata:
     transaction moved a counter or gauge the SUT exposes — evidence a bare 2xx HTTP
     response cannot provide.  metrics-assert is a brand-new family; the dotted form
     metrics-assert.prometheus is required (there is no bare metrics-assert alias).
+    HONEST-EXAMPLE NOTE: the placeholder SUT below is node-exporter, which serves a
+    real /metrics but has no business API — so this file exercises the REAL scrape,
+    capture, RETRY and delta-idiom mechanics against metrics node-exporter actually
+    exposes, and the descriptions say what to substitute in a real suite (your image,
+    your business counter, your trigger step).  This file runs green as-is.
 
 environment:
   services:
-    # The system under test.  Replace with your own image or project reference.
-    # metrics-assert.prometheus scrapes a SERVICE (like http.rest), not a managed
-    # dependency — it adds no new infrastructure kind to environment.dependencies.
+    # The system under test.  node-exporter is a stand-in with a genuine Prometheus
+    # /metrics endpoint; replace with your own instrumented image or project
+    # reference.  metrics-assert.prometheus scrapes a SERVICE (like http.rest), not
+    # a managed dependency — it adds no new infrastructure kind.
     app:
-      image: traefik/whoami:latest
+      image: quay.io/prometheus/node-exporter:v1.8.2
+      # node_exporter listens on 9100, not the generic-image default of 80 —
+      # httpPort tells the engine which port to expose and health-gate (§3.2.4).
+      httpPort: 9100
 
 steps:
   - id: capture-baseline
     type: metrics-assert.prometheus
     description: >
-      Capture the counter's value BEFORE the transaction, so a later step can prove
-      the transaction moved it (the delta idiom).  min: "0" is a trivially-true
-      bound — its only purpose here is to satisfy the "at least one of
-      value/min/max" requirement while the interesting side effect is the capture.
+      Capture the metric's value BEFORE the transaction, so a later step can prove
+      the transaction did not regress it (the delta idiom).  In a real suite the
+      metric is your business counter (orders_processed_total{status="success"});
+      here it is node-exporter's build-info gauge, whose value is a constant 1.
+      min: "1" satisfies the "at least one of value/min/max" requirement while the
+      interesting side effect is the capture.
     target: app
     path: /metrics
-    metric: orders_processed_total
-    labels:
-      status: success
+    metric: node_exporter_build_info
     expect:
-      min: "0"
+      min: "1"
     capture:
-      ordersBefore: $.value
+      valueBefore: $.value
 
-  - id: trigger-order
+  - id: trigger-transaction
     type: http.rest
-    description: Drive the business transaction the metric is expected to reflect.
+    description: >
+      Drive the business transaction the metric is expected to reflect.  With a
+      real SUT this is your POST /orders (expect.status: 201/202); node-exporter
+      only serves GET, so the runnable stand-in is its landing page.
     target: app
-    method: POST
-    path: /orders
-    body: '{"customerId":"cust-1","amount":49.99}'
+    method: GET
+    path: /
     expect:
-      status: 202
+      status: 200
 
-  - id: assert-orders-processed
+  - id: assert-metric-after
     type: metrics-assert.prometheus
     description: >
-      Assert the SAME counter did not fall below its pre-transaction value — the
+      Assert the SAME metric did not fall below its pre-transaction value — the
       delta idiom's assert-after half.  (The DSL does not evaluate arithmetic over
       placeholders, so proving a STRICT increase of exactly +1 requires an
-      intermediate script.csharp step that computes {ordersBefore + 1} into a new
-      variable; min: "{ordersBefore}" is the non-decrease check expressible directly.)
+      intermediate script.csharp step that computes {valueBefore + 1} into a new
+      variable; min: "{valueBefore}" is the non-decrease check expressible directly.)
       Exactly one sample must match the declared metric name plus every declared
       label — an ambiguous (multiple-match) or absent selection is a Fail, never a
       silently-resolved "first match wins" pick.
-      RETRY is this family's canonical verifyMode: the counter update may lag the
+      RETRY is this family's canonical verifyMode: a real counter update may lag the
       HTTP response that triggered it (post-stimulus convergence, same rationale as
       mq-expect / db-assert).
     target: app
     path: /metrics
-    metric: orders_processed_total
-    labels:
-      status: success
+    metric: node_exporter_build_info
     expect:
-      min: "{ordersBefore}"
+      min: "{valueBefore}"
     verifyMode: RETRY
     timeout: 15s
