@@ -7,6 +7,19 @@ metadata:
     (each attribute becomes a DynamoDB S/N/BOOL attribute at execution time) and
     compares the returned item's top-level attributes against expect.item.
 
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself talk to
+    DynamoDB, and the engine provisions dynamodb-local EMPTY — no table, no item. In
+    production usage, the SUT's own order-creation handler is the thing that would
+    create the "Orders" table (usually once, at deploy time, via infrastructure-as-
+    code) and PutItem the order it just wrote — db-assert.dynamodb would then
+    observe a real write. This example instead SIMULATES that write with a
+    script.csharp step that parses the staged connection string, creates the table,
+    waits for it to become ACTIVE, and puts the item the assertions below expect —
+    exactly the same HONEST-disclosure approach trace-expect-otlp.e2e.yaml uses to
+    simulate the SUT's own OTLP export (see its KNOWN LIMITATION note). It still
+    exercises the full dynamodb-local topology + GetItem + RETRY + assertion path
+    end to end.
+
 environment:
   services:
     # The system under test.  Replace with your own image or project reference.
@@ -28,6 +41,88 @@ steps:
     body: '{"orderId":"1001","customerId":"cust-1","amount":49.99}'
     expect:
       status: 200
+
+  - id: simulate-order-write
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the suite
+      description above): parses the dynamodb dependency's staged connection string
+      (the "ServiceURL=…;AccessKey=local;SecretKey=local" form EnvironmentMapper's
+      "dynamodb" registration produces — dynamodb-local ignores credentials
+      entirely), creates the "Orders" table on demand (PAY_PER_REQUEST, hash key
+      "orderId"), waits for it to reach ACTIVE, then PutItems the row the two
+      assertions below expect. A real suite would delete this step entirely — its
+      SUT already does this write.
+    code: |
+      var connStr = (string)Vars["conn::orders-db"];
+      string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+      foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+      {
+        var eq = part.IndexOf('=');
+        if (eq <= 0) continue;
+        var k = part.Substring(0, eq).Trim();
+        var v = part.Substring(eq + 1).Trim();
+        if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+        else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+        else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+      }
+
+      Amazon.DynamoDBv2.AmazonDynamoDBClient client = null;
+      try
+      {
+        client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(
+          new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+          new Amazon.DynamoDBv2.AmazonDynamoDBConfig
+          {
+            ServiceURL = serviceUrl,
+            MaxErrorRetry = 0,
+            Timeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+          });
+
+        try
+        {
+          await client.CreateTableAsync(new Amazon.DynamoDBv2.Model.CreateTableRequest
+          {
+            TableName = "Orders",
+            AttributeDefinitions = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.AttributeDefinition>
+            {
+              new Amazon.DynamoDBv2.Model.AttributeDefinition("orderId", Amazon.DynamoDBv2.ScalarAttributeType.S),
+            },
+            KeySchema = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.KeySchemaElement>
+            {
+              new Amazon.DynamoDBv2.Model.KeySchemaElement("orderId", Amazon.DynamoDBv2.KeyType.HASH),
+            },
+            BillingMode = Amazon.DynamoDBv2.BillingMode.PAY_PER_REQUEST,
+          });
+        }
+        catch (Amazon.DynamoDBv2.Model.ResourceInUseException)
+        {
+          // Table already exists from a prior scenario run against the same container.
+        }
+
+        for (var i = 0; i < 20; i++)
+        {
+          var describe = await client.DescribeTableAsync("Orders");
+          if (describe.Table.TableStatus == Amazon.DynamoDBv2.TableStatus.ACTIVE) break;
+          await Task.Delay(TimeSpan.FromMilliseconds(250));
+        }
+
+        var orderId = (string)Vars["orderId"];
+        await client.PutItemAsync(new Amazon.DynamoDBv2.Model.PutItemRequest
+        {
+          TableName = "Orders",
+          Item = new System.Collections.Generic.Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+          {
+            ["orderId"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = orderId },
+            ["status"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = "SHIPPED" },
+          },
+        });
+      }
+      finally
+      {
+        client?.Dispose();
+      }
 
   - id: assert-order-written
     type: db-assert.dynamodb

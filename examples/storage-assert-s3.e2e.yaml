@@ -8,6 +8,16 @@ metadata:
     dependency; storage-assert.s3 HEADs the object (and, only if sha256 or
     contentContains is declared, GETs a bounded — 16 MiB cap — copy of the body).
 
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself write to
+    S3, and MinIO starts with no bucket and no object. In production usage, the
+    SUT's own report-export handler is the thing that would PUT the object this
+    provider observes. This example instead SIMULATES that write with a
+    script.csharp step that parses the staged connection string, creates the
+    bucket, and PUTs the object the assertion below expects — exactly the same
+    HONEST-disclosure approach trace-expect-otlp.e2e.yaml uses to simulate the
+    SUT's own OTLP export (see its KNOWN LIMITATION note). It still exercises the
+    full MinIO topology + HEAD + RETRY + assertion path end to end.
+
 environment:
   services:
     # The system under test.  Replace with your own image or project reference.
@@ -28,7 +38,70 @@ steps:
     path: /reports/export
     body: '{"format":"csv"}'
     expect:
-      status: 202
+      status: 200
+
+  - id: simulate-report-write
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the suite
+      description above): parses the minio dependency's staged connection string
+      (the "ServiceURL=…;AccessKey=…;SecretKey=…" form EnvironmentMapper's "minio"
+      registration produces), creates the "reports" bucket on demand, then PUTs the
+      object the assertion below expects. A real suite would delete this step
+      entirely — its SUT already does this write.
+    code: |
+      var connStr = (string)Vars["conn::reports"];
+      string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+      foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+      {
+        var eq = part.IndexOf('=');
+        if (eq <= 0) continue;
+        var k = part.Substring(0, eq).Trim();
+        var v = part.Substring(eq + 1).Trim();
+        if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+        else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+        else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+      }
+
+      Amazon.S3.AmazonS3Client client = null;
+      try
+      {
+        client = new Amazon.S3.AmazonS3Client(
+          new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+          new Amazon.S3.AmazonS3Config
+          {
+            ServiceURL = serviceUrl,
+            ForcePathStyle = true,
+            MaxErrorRetry = 0,
+            Timeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+          });
+
+        try
+        {
+          await client.PutBucketAsync("reports");
+        }
+        catch (Amazon.S3.AmazonS3Exception ex) when (
+          string.Equals(ex.ErrorCode, "BucketAlreadyOwnedByYou", StringComparison.Ordinal)
+          || string.Equals(ex.ErrorCode, "BucketAlreadyExists", StringComparison.Ordinal))
+        {
+          // Already created by a prior scenario run against the same container.
+        }
+
+        var reportKey = (string)Vars["reportKey"];
+        var body = "date,amount\n2026-07-08,49.99\n";
+        await client.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
+        {
+          BucketName = "reports",
+          Key = reportKey,
+          ContentBody = body,
+          ContentType = "text/csv",
+        });
+      }
+      finally
+      {
+        client?.Dispose();
+      }
 
   - id: assert-report-written
     type: storage-assert.s3

@@ -48,7 +48,7 @@ steps:
     path: /orders
     body: '{"customerId":"cust-1","amount":49.99}'
     expect:
-      status: 202
+      status: 200
 
   - id: publish-order-event
     type: mq-publish.redis
