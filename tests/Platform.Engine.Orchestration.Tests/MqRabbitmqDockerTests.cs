@@ -36,7 +36,9 @@ namespace Platform.Engine.Orchestration.Tests;
 /// <summary>
 /// Docker-gated end-to-end execution tests for the <c>mq-publish.rabbitmq</c> and
 /// <c>mq-expect.rabbitmq</c> Core providers.
-/// Requires a running Docker daemon with the <c>rabbitmq:4-management</c> image available.
+/// Requires a running Docker daemon with the RabbitMQ management image available — the exact
+/// tag is Aspire.Hosting.RabbitMQ's own pinned default (currently <c>rabbitmq:4.3-management</c>;
+/// see the pre-pull comment in <c>.github/workflows/build.yml</c>), not hardcoded here.
 /// </summary>
 /// <remarks>
 /// This test class carries <c>[Trait("requires","docker")]</c> on every method so it is
@@ -123,9 +125,18 @@ public sealed class MqRabbitmqDockerTests
                 .ConfigureAwait(false);
             channel = await conn.CreateChannelAsync(cancellationToken: CancellationToken.None)
                 .ConfigureAwait(false);
+            // durable: true — modern RabbitMQ (4.1+) rejects a transient (durable:false),
+            // non-exclusive queue declaration outright (code=541 INTERNAL_ERROR,
+            // "Feature `transient_nonexcl_queues` is deprecated ... not permitted anymore by
+            // default"); the feature is slated for full removal in a future major version
+            // regardless of configuration. A durable, non-exclusive, non-auto-delete queue is
+            // also the exact shape docs/troubleshooting.md recommends authors use for their own
+            // SUT/seed queue provisioning ("RabbitMQ: message not in queue" — "Use durable
+            // queues"), so this test setup now matches the documented guidance rather than
+            // pre-dating it.
             await channel.QueueDeclareAsync(
                 queue: TestQueue,
-                durable: false,
+                durable: true,
                 exclusive: false,
                 autoDelete: false,
                 arguments: null,

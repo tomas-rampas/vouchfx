@@ -227,10 +227,16 @@ jobs:
       #   redis:7                                — CacheAssertRedisDockerTests cache container
       #                                            (cache-assert.redis provider); Aspire.Hosting.Redis
       #                                            AddRedis default image family.
-      #   rabbitmq:4-management                  — MqRabbitmqDockerTests AMQP broker container
+      #   rabbitmq:4.3-management                — MqRabbitmqDockerTests AMQP broker container
       #                                            (mq-publish.rabbitmq / mq-expect.rabbitmq);
-      #                                            management variant includes the HTTP API for
-      #                                            exchange/queue management.
+      #                                            Aspire.Hosting.RabbitMQ 13.4.2 default tag
+      #                                            (RabbitMQContainerImageTags: confirmed by
+      #                                            inspecting the installed package — this list
+      #                                            previously said "4-management", a DIFFERENT,
+      #                                            floating tag Aspire never actually requests,
+      #                                            so the pre-pull silently warmed nothing for
+      #                                            this dependency); management variant includes
+      #                                            the HTTP API for exchange/queue management.
       #   nats:2.14                              — MqNatsDockerTests JetStream broker container
       #                                            (mq-publish.nats / mq-expect.nats);
       #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
@@ -264,7 +270,7 @@ jobs:
             traefik/whoami:latest \
             hashicorp/vault:latest \
             axllent/mailpit:v1.21 \
-            rabbitmq:4-management \
+            rabbitmq:4.3-management \
             elasticsearch:8.17.3 \
             nats:2.14 \
             mysql:9.7 \

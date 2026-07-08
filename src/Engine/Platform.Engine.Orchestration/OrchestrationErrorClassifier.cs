@@ -51,13 +51,31 @@ public static class OrchestrationErrorClassifier
     /// <param name="resourceName">
     /// The Aspire resource name that failed (e.g. <c>"appdb"</c>, <c>"web"</c>).
     /// </param>
+    /// <param name="containerNeverCreated">
+    /// <see langword="true"/> when the caller has independent, non-textual evidence that the
+    /// container runtime never created a container instance for this resource at all (e.g.
+    /// DCP's resource snapshot carries no <c>container.id</c>) — as opposed to a container
+    /// that WAS created and then crashed or never passed its own health check.
+    /// <para>
+    /// This disambiguates a specific ambiguous message shape: Aspire's health-gate wrapper
+    /// exception ("Stopped waiting for resource 'X' to become healthy because it failed to
+    /// start.") is IDENTICAL for both a bad-image pull failure and a genuine health-check
+    /// failure, and DCP surfaces no pull-specific text anywhere the classifier can otherwise
+    /// see (verified empirically — see <c>ResourceCreationEvidence</c> in
+    /// <c>Platform.Engine.Orchestration</c>). Only used when <paramref name="imageRef"/> is
+    /// also non-null (a resource with no image reference can never be an image-pull failure);
+    /// defaults to <see langword="false"/> so every existing call site is unaffected until it
+    /// opts in.
+    /// </para>
+    /// </param>
     /// <returns>
     /// A fully populated <see cref="OrchestrationErrorInfo"/>.
     /// </returns>
     public static OrchestrationErrorInfo Classify(
         Exception exception,
         string? imageRef,
-        string resourceName)
+        string resourceName,
+        bool containerNeverCreated = false)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
@@ -65,7 +83,7 @@ public static class OrchestrationErrorClassifier
         var registryHost = ParseRegistryHost(imageRef);
         var detail = BuildDetail(message);
 
-        var (kind, authStatus) = ClassifyMessage(message, imageRef);
+        var (kind, authStatus) = ClassifyMessage(message, imageRef, containerNeverCreated);
 
         return new OrchestrationErrorInfo(
             Kind: kind,
@@ -189,9 +207,15 @@ public static class OrchestrationErrorClassifier
     /// failure) the message falls through to Discovery / Provision as expected.
     /// When matched, <c>AuthStatus</c> is <see langword="null"/> — no auth was
     /// attempted; the registry host itself was unreachable.
+    ///
+    /// The <paramref name="containerNeverCreated"/> structural signal is checked AFTER every
+    /// message-based pull heuristic above (so a message that DOES carry specific pull-failure
+    /// text — e.g. "pull access denied: 401" — still gets its more precise AuthStatus) but
+    /// BEFORE the Health-gate check (so the ambiguous generic health-gate wrapper message does
+    /// not shadow a bad-image failure just because DCP surfaced no pull-specific text for it).
     /// </remarks>
     private static (OrchestrationErrorKind Kind, string? AuthStatus) ClassifyMessage(
-        string message, string? imageRef)
+        string message, string? imageRef, bool containerNeverCreated)
     {
         // A pull/registry/image token in the message, OR a non-null imageRef, provides
         // the image-pull context required to treat auth keywords as ImagePull signals.
@@ -256,6 +280,16 @@ public static class OrchestrationErrorClassifier
         // Generic pull / image-not-found signals (already imply an image-pull context).
         if (ContainsAny(message,
             "pull", "manifest", "not found", "no such image", "pull access"))
+        {
+            return (OrchestrationErrorKind.ImagePull, "anonymous");
+        }
+
+        // Structural signal (independent of message wording) — see the parameter doc comment
+        // above and ResourceCreationEvidence for the empirical basis. A resource that never had
+        // a container created for it, but DOES carry a known image reference, cannot be a
+        // genuine health-check failure (the app can never even have run); classify it as
+        // ImagePull rather than falling into the ambiguous Health-gate bucket below.
+        if (containerNeverCreated && imageRef is not null)
         {
             return (OrchestrationErrorKind.ImagePull, "anonymous");
         }
