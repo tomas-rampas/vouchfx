@@ -130,6 +130,28 @@ public sealed class OtlpReceiverTests
         Assert.Contains(snapshot, s => s.SpanId == "late-49");
         // The last surviving "early" span is early-50 (the first 50 were evicted).
         Assert.Equal("early-50", snapshot[0].SpanId);
+
+        // TotalReceived is MONOTONIC — it counts every append ever made, including the 50
+        // evicted ones — so TotalReceived - Count is exactly the number evicted so far. This
+        // is the diagnostic trace-expect.otlp's emitted helper surfaces as "evicted" on a Fail
+        // observation.
+        Assert.Equal(cap + 50, buffer.TotalReceived);
+        Assert.Equal(50, buffer.TotalReceived - snapshot.Count);
+    }
+
+    [Fact]
+    public void Buffer_TotalReceived_TracksAppendsBeforeAnyEviction()
+    {
+        var buffer = new TraceCaptureBuffer();
+
+        Assert.Equal(0, buffer.TotalReceived);
+
+        buffer.Append(MakeSpan("t1", "s1", "a"));
+        buffer.Append(MakeSpan("t1", "s2", "b"));
+
+        // Below the cap: TotalReceived equals the retained Count exactly (nothing evicted yet).
+        Assert.Equal(2, buffer.TotalReceived);
+        Assert.Equal(buffer.Count, buffer.TotalReceived);
     }
 
     // ── OtlpReceiver ──────────────────────────────────────────────────────────
@@ -263,6 +285,42 @@ public sealed class OtlpReceiverTests
     }
 
     [Fact]
+    public async Task Receiver_ArrayValueAndKvListValueAttributes_FallBackToRawJsonText()
+    {
+        var buffer = new TraceCaptureBuffer();
+        await using var receiver = await OtlpReceiver.StartAsync(buffer);
+
+        // Two attributes whose "value" is neither stringValue/intValue/boolValue/doubleValue:
+        // an arrayValue and a kvlistValue. StringifyAttributeValue falls back to GetRawText()
+        // on the WHOLE "value" JSON object for both — written compactly (no whitespace) below
+        // so the expected raw text is a byte-exact, unambiguous prediction.
+        const string payload =
+            "{\"resourceSpans\":[{" +
+            "\"resource\":{\"attributes\":[]}," +
+            "\"scopeSpans\":[{\"spans\":[{" +
+            "\"traceId\":\"aa000000000000000000000000000009\",\"spanId\":\"aa00000000000009\"," +
+            "\"parentSpanId\":\"\",\"name\":\"op\"," +
+            "\"attributes\":[" +
+            "{\"key\":\"tags\",\"value\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"a\"},{\"stringValue\":\"b\"}]}}}," +
+            "{\"key\":\"meta\",\"value\":{\"kvlistValue\":{\"values\":[{\"key\":\"x\",\"value\":{\"stringValue\":\"y\"}}]}}}" +
+            "]}]}]}]}";
+
+        using var client = new HttpClient();
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        var response = await client.PostAsync(receiver.Url + "/v1/traces", content);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var span = Assert.Single(buffer.Snapshot());
+        Assert.Equal(
+            "{\"arrayValue\":{\"values\":[{\"stringValue\":\"a\"},{\"stringValue\":\"b\"}]}}",
+            span.Attributes["tags"]);
+        Assert.Equal(
+            "{\"kvlistValue\":{\"values\":[{\"key\":\"x\",\"value\":{\"stringValue\":\"y\"}}]}}",
+            span.Attributes["meta"]);
+    }
+
+    [Fact]
     public async Task Receiver_MissingResourceSpansArray_CapturesNothingButStillSucceeds()
     {
         var buffer = new TraceCaptureBuffer();
@@ -291,6 +349,54 @@ public sealed class OtlpReceiverTests
         var body = await response.Content.ReadAsStringAsync();
         Assert.Contains("JSON", body, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(buffer.Snapshot());
+    }
+
+    [Fact]
+    public async Task Receiver_OversizeBody_Returns413AndCapturesNothing()
+    {
+        var buffer = new TraceCaptureBuffer();
+        await using var receiver = await OtlpReceiver.StartAsync(buffer);
+
+        using var client = new HttpClient();
+
+        // A normal small export is captured first, proving the receiver is otherwise healthy.
+        var smallPayload = BuildExportPayload(
+            traceId: "cc000000000000000000000000000001",
+            spanId: "cc00000000000001",
+            parentSpanId: "",
+            name: "small",
+            serviceName: "svc",
+            extraAttributes: string.Empty,
+            statusCode: string.Empty);
+        using (var smallContent = new StringContent(smallPayload, Encoding.UTF8, "application/json"))
+        {
+            var smallResponse = await client.PostAsync(receiver.Url + "/v1/traces", smallContent);
+            Assert.Equal(HttpStatusCode.OK, smallResponse.StatusCode);
+        }
+
+        // A body larger than the receiver's 4 MiB Kestrel limit (MaxRequestBodyBytes) is
+        // rejected BEFORE the body is read — Kestrel may return a clean 413 or reset the
+        // connection mid-upload; either way the request must NOT be captured.
+        var oversizePayload = "{\"pad\":\"" + new string('x', (4 * 1024 * 1024) + 1) + "\"}";
+        HttpStatusCode? statusIfClean = null;
+        try
+        {
+            using var oversizeContent = new StringContent(oversizePayload, Encoding.UTF8, "application/json");
+            var oversizeResponse = await client.PostAsync(receiver.Url + "/v1/traces", oversizeContent);
+            statusIfClean = oversizeResponse.StatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            // Connection reset on an over-limit upload — acceptable; the body was rejected.
+        }
+
+        if (statusIfClean is not null)
+        {
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, statusIfClean);
+        }
+
+        // Only the small export was ever captured.
+        Assert.Single(buffer.Snapshot());
     }
 
     [Fact]

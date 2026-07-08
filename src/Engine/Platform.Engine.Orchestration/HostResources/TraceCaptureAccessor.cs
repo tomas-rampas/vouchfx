@@ -71,4 +71,16 @@ public sealed class TraceCaptureAccessor : ITraceCaptureAccessor
 
         return Empty;
     }
+
+    /// <inheritdoc />
+    public long GetTotalReceived(string receiverVarName)
+    {
+        if (!string.IsNullOrEmpty(receiverVarName) &&
+            _buffers.TryGetValue(receiverVarName, out var buffer))
+        {
+            return buffer.TotalReceived;
+        }
+
+        return 0;
+    }
 }

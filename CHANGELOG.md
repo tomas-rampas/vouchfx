@@ -61,9 +61,13 @@ delivered-capability record that will seed the v1.0.0 release notes.
   the same hardened-XML-reader / SSRF-guarded-path discipline `http.rest` established. `trace-expect.otlp` is
   the first member of the new `trace-expect` family and the platform's flagship distributed assertion: an
   engine-hosted OTLP/HTTP JSON receiver (mirroring `webhook-listen.http`'s host-resource model) captures the
-  spans a real, unmodified OpenTelemetry SDK exports for the transaction under test, matched by trace id
-  (accepting either a bare id or a full W3C `traceparent`, with automatic extraction), service name, span
-  name, and/or attributes — proving the causal chain a single-service assertion cannot.
+  spans a real, unmodified OpenTelemetry SDK exports for the transaction under test. A trace id is REQUIRED
+  (accepting either a bare id or a full W3C `traceparent`, with automatic extraction) — ties the assertion to
+  the specific transaction under test and is what makes the no-forged-match security posture an enforced
+  guarantee rather than an authoring convention; service name, span name, and attributes are optional
+  refinements layered on top of it, never a substitute for it — proving the causal chain a single-service
+  assertion cannot. The receiver's ring buffer surfaces an `evicted` count on a Fail so a saturated-buffer
+  flood is distinguishable from a genuinely absent export.
 - The Provider SDK (`Platform.Sdk`): the frozen v1 contract (`IStepProvider`, `IStepBinder<T>`,
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,

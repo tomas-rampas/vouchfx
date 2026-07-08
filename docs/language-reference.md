@@ -457,7 +457,7 @@ Set `type: trace-expect.otlp` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `match` | `object` | The criteria a captured span must satisfy. At least one criterion (traceId, service, spanName, or attributes) must be declared. |
+| `match` | `object` | The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it. |
 | `receiver` | `string` | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::<receiver>}"). |
 
 ### `webhook-listen.http`

@@ -33,6 +33,11 @@
 //      EnvironmentError, reference-only.
 //  15. No leak: a Fail observation never contains a span's trace id, name, service, or
 //      attribute values — only counts.
+//  16. Validate: a match with no traceId is REJECTED (traceId is required, not merely "at
+//      least one of several criteria") — the enforcement half of the family's
+//      no-forged-match security posture.
+//  17. Eviction diagnostic: when the accessor reports TotalReceived > the retained/scanned
+//      count, the Fail observation's "evicted" field surfaces the difference.
 using System;
 using System.Collections.Generic;
 using Platform.Engine.Abstractions;
@@ -74,15 +79,26 @@ public sealed class TraceExpectOtlpEmitTests
         private static readonly IReadOnlyList<CapturedSpan> Empty = Array.Empty<CapturedSpan>();
         private readonly string _receiverName;
         private readonly IReadOnlyList<CapturedSpan> _captured;
+        private readonly long _totalReceived;
 
-        public StubTraceAccessor(string receiverName, IReadOnlyList<CapturedSpan> captured)
+        /// <param name="totalReceived">
+        /// Overrides the TOTAL-received count reported by <see cref="GetTotalReceived"/>;
+        /// defaults to <c>captured.Count</c> (no simulated eviction) when omitted. Pass a value
+        /// greater than <c>captured.Count</c> to simulate a ring-buffer that has already
+        /// evicted some spans.
+        /// </param>
+        public StubTraceAccessor(string receiverName, IReadOnlyList<CapturedSpan> captured, long? totalReceived = null)
         {
             _receiverName = receiverName;
             _captured = captured;
+            _totalReceived = totalReceived ?? captured.Count;
         }
 
         public IReadOnlyList<CapturedSpan> GetCaptured(string receiverVarName) =>
             string.Equals(receiverVarName, _receiverName, StringComparison.Ordinal) ? _captured : Empty;
+
+        public long GetTotalReceived(string receiverVarName) =>
+            string.Equals(receiverVarName, _receiverName, StringComparison.Ordinal) ? _totalReceived : 0;
     }
 
     private readonly TraceExpectOtlpProvider _provider = new();
@@ -167,8 +183,12 @@ public sealed class TraceExpectOtlpEmitTests
     [Fact]
     public void Emit_AbsentCriteria_EmitsNullLiterals()
     {
+        // traceId is always present now (required, see the Validate tests below); this test
+        // proves the OTHER, still-optional criteria (service is absent here, spanName is set)
+        // emit a bare 'null' literal — not that Emit itself enforces the traceId requirement
+        // (Validate does).
         var fragment = _provider.Emit(
-            MakeModel("traces", new TraceMatch(null, "svc-only", null, null)),
+            MakeModel("traces", new TraceMatch("abc", null, "op", null)),
             new StubCompileContext("k"));
 
         Assert.Contains("null,", fragment.StatementBlock, StringComparison.Ordinal);
@@ -275,7 +295,7 @@ public sealed class TraceExpectOtlpEmitTests
         const string stepId = "assert-trace";
         const string receiver = "traces";
         var model = MakeModel(receiver, new TraceMatch(
-            TraceId: null, Service: null, SpanName: null,
+            TraceId: "t", Service: null, SpanName: null,
             Attributes: new Dictionary<string, string>(StringComparer.Ordinal) { ["http.method"] = "POST" }));
 
         var attrs = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -296,7 +316,7 @@ public sealed class TraceExpectOtlpEmitTests
         const string stepId = "assert-trace";
         const string receiver = "traces";
         var model = MakeModel(receiver, new TraceMatch(
-            TraceId: null, Service: null, SpanName: null,
+            TraceId: "t", Service: null, SpanName: null,
             Attributes: new Dictionary<string, string>(StringComparer.Ordinal) { ["http.method"] = "POST" }));
 
         var attrs = new Dictionary<string, string>(StringComparer.Ordinal) { ["http.method"] = "GET" };
@@ -386,8 +406,10 @@ public sealed class TraceExpectOtlpEmitTests
             const string stepId = "assert-secret";
             const string receiver = "traces";
 
+            // traceId is a literal (required, non-secret) value here — this test isolates the
+            // ONE failure mode under test: a missing secret in the Service field.
             var model = MakeModel(receiver, new TraceMatch(
-                TraceId: null, Service: $"${{secret:env/{envName}}}", SpanName: null, Attributes: null));
+                TraceId: "t", Service: $"${{secret:env/{envName}}}", SpanName: null, Attributes: null));
 
             var csx = Assemble(model, stepId);
             var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
@@ -436,6 +458,126 @@ public sealed class TraceExpectOtlpEmitTests
         Assert.DoesNotContain("real-span-id", outcome.Observation!, StringComparison.Ordinal);
         Assert.DoesNotContain(secretSpanName, outcome.Observation!, StringComparison.Ordinal);
         Assert.DoesNotContain("real-service-name", outcome.Observation!, StringComparison.Ordinal);
+    }
+
+    // ── 16. Validate: traceId is REQUIRED, not merely "at least one of several" ─────
+
+    private sealed class StubProjectContext : IProjectContext
+    {
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_MissingTraceId_ReturnsValidationFailure()
+    {
+        // Even with service/spanName/attributes ALL declared, a match with no traceId must be
+        // REJECTED — this is the enforcement half of the no-forged-match security posture: a
+        // match with no trace id would accept ANY span the SUT ever exports that happens to
+        // match those refinements, from ANY trace, not the specific transaction under test.
+        var model = MakeModel("traces", new TraceMatch(
+            TraceId: null,
+            Service: "orders-api",
+            SpanName: "POST /orders",
+            Attributes: new Dictionary<string, string>(StringComparer.Ordinal) { ["k"] = "v" }));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("traceId", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_EmptyTraceId_ReturnsValidationFailure()
+    {
+        // An empty (whitespace) traceId is equally rejected — not just a null one.
+        var model = MakeModel("traces", new TraceMatch(
+            TraceId: "   ", Service: null, SpanName: null, Attributes: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("traceId", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_TraceIdPresent_NoOtherCriteria_Succeeds()
+    {
+        // traceId ALONE is a fully valid match — service/spanName/attributes are optional
+        // refinements, never required alongside it.
+        var model = MakeModel("traces", new TraceMatch(
+            TraceId: "abc", Service: null, SpanName: null, Attributes: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_EmptyReceiver_ReturnsValidationFailure()
+    {
+        var model = new TraceExpectOtlpModel(
+            Receiver: string.Empty,
+            Match: new TraceMatch(TraceId: "abc", Service: null, SpanName: null, Attributes: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("receiver", StringComparison.Ordinal));
+    }
+
+    // ── 17. Eviction diagnostic: "evicted" surfaces on a Fail observation ───────────
+
+    [Fact]
+    public async Task Emit_CompileAndRun_TotalReceivedExceedsScanned_FailObservation_IncludesEvictedCount()
+    {
+        const string stepId = "assert-trace";
+        const string receiver = "traces";
+        var model = MakeModel(receiver, new TraceMatch("does-not-exist", null, null, null));
+
+        // The buffer currently retains 3 spans (none matching), but the receiver has received
+        // 12 in total — 9 were evicted by the ring buffer before this scan.
+        var captured = new[]
+        {
+            MakeSpan("aaaa", "s1", "op1", "svc"),
+            MakeSpan("bbbb", "s2", "op2", "svc"),
+            MakeSpan("cccc", "s3", "op3", "svc"),
+        };
+
+        var fragment = _provider.Emit(model, new StubCompileContext(stepId));
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var globals = new ScriptGlobalVariables(
+            vars,
+            new Dictionary<string, object>(StringComparer.Ordinal),
+            NullSecretAccessor.Instance,
+            Platform.Engine.Abstractions.Webhooks.NullWebhookCaptureAccessor.Instance,
+            new StubTraceAccessor(receiver, captured, totalReceived: 12));
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var outcome = ReadOutcome(vars, stepId);
+
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.Contains("\"scanned\":3", outcome.Observation!, StringComparison.Ordinal);
+        Assert.Contains("\"evicted\":9", outcome.Observation!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Emit_CompileAndRun_NoEviction_FailObservation_ReportsEvictedZero()
+    {
+        const string stepId = "assert-trace";
+        const string receiver = "traces";
+        var model = MakeModel(receiver, new TraceMatch("abc", null, null, null));
+
+        // Default StubTraceAccessor: TotalReceived == captured.Count (no simulated eviction).
+        var outcome = await RunAsync(model, stepId, receiver, Array.Empty<CapturedSpan>());
+
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.Contains("\"evicted\":0", outcome.Observation!, StringComparison.Ordinal);
     }
 
     // ── Private harness ───────────────────────────────────────────────────────────

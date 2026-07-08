@@ -864,18 +864,20 @@ A `trace-expect` step scans the spans exported over OTLP/HTTP by the system unde
 | Field | Required | Meaning |
 |---|---|---|
 | receiver | Yes | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at `svc::<receiver>` (and the plain `Vars[<receiver>]` key), ready to be handed to the SUT's OTel SDK configuration, e.g. `OTEL_EXPORTER_OTLP_ENDPOINT: "{traces}"`. |
-| match.traceId | No\* | Expected trace id. Accepts either a bare 32-hex trace id or a full W3C `traceparent` value (`00-<32hex>-<16hex>-<2hex>`) — the 32-hex segment is extracted automatically. Matched case-insensitively. May contain `{placeholder}` / `${secret:...}` tokens. |
-| match.service | No\* | Expected exporting-resource service name (the span's resource-level `service.name` attribute). Matched by ordinal equality. |
-| match.spanName | No\* | Expected span name (operation name). Matched by ordinal equality. |
-| match.attributes | No\* | Map of expected span-attribute key to expected string value (a subset match — the real span may carry additional attributes not mentioned here). |
+| match.traceId | **Yes** | Required expected trace id — the transaction this assertion is tied to. Accepts either a bare 32-hex trace id or a full W3C `traceparent` value (`00-<32hex>-<16hex>-<2hex>`) — the 32-hex segment is extracted automatically. Matched case-insensitively. May contain `{placeholder}` / `${secret:...}` tokens. Never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported (see the security note below) — validation rejects a match with no `traceId`. |
+| match.service | No | Expected exporting-resource service name (the span's resource-level `service.name` attribute). Matched by ordinal equality. An optional *refinement* on top of `traceId`, never a substitute for it. |
+| match.spanName | No | Expected span name (operation name). Matched by ordinal equality. An optional refinement on top of `traceId`. |
+| match.attributes | No | Map of expected span-attribute key to expected string value (a subset match — the real span may carry additional attributes not mentioned here). An optional refinement on top of `traceId`. |
 
-\* At least one `match` criterion must be declared; all declared criteria are conjunctive (every one must hold for a span to match).
+All declared criteria are conjunctive (every one must hold for a span to match).
 
 **OTLP encoding: JSON only in v1.** The receiver accepts OTLP/HTTP's JSON encoding (`Content-Type: application/json`) only — the far more common protobuf wire encoding (`application/x-protobuf`) is rejected `415` with a message naming the limitation. Configure your OTel exporter with `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`; every major OpenTelemetry SDK supports this.
 
 **Capture.** The matched span's fields (`traceId`, `spanId`, `parentSpanId`, `name`, `serviceName`, `statusCode`, and `attributes.<key>`) are exposed to `capture:` via simple dotted-path expressions (`$.spanId`, `$.attributes.orderId`) — mirroring the synthesised-observation idiom `metrics-assert.prometheus`/`storage-assert.s3` already use, though only simple field access is supported (no array indexing, wildcards, or recursive descent).
 
-**No forged-match risk despite no listener-token gate.** Unlike `webhook-listen.http`'s receiver, the OTLP receiver does not add an unguessable path-token segment to its URL — because the standard `OTEL_EXPORTER_OTLP_ENDPOINT` convention must remain a plain, unmodified base URL for a real OpenTelemetry SDK to work against it unmodified. This is safe because a `trace-expect.otlp` assertion always requires a *specific* trace id drawn from the current scenario's own transaction; an off-network onlooker who cannot observe that id cannot manufacture a matching span.
+**No forged-match risk despite no listener-token gate.** Unlike `webhook-listen.http`'s receiver, the OTLP receiver does not add an unguessable path-token segment to its URL — because the standard `OTEL_EXPORTER_OTLP_ENDPOINT` convention must remain a plain, unmodified base URL for a real OpenTelemetry SDK to work against it unmodified. This is safe because `match.traceId` is **required and enforced** (rejected at validation time if omitted, not merely a convention an author could accidentally skip) — a `trace-expect.otlp` assertion always requires a *specific* trace id drawn from the current scenario's own transaction, so an off-network onlooker who cannot observe that id cannot manufacture a matching span.
+
+**Honest caveat on the ring buffer: an availability trade-off, not a forgery risk.** The receiver's ring buffer (§ above, 10,000 spans) bounds *retained* spans, not *accepted* ones: a sustained flood of forged or unrelated exports can still evict the real span from the retained window before a step scans it. This is deliberately **not** a false Pass — it surfaces as a loud `Fail` with a non-zero `evicted` count in the observation (the difference between the total spans the receiver has ever received and the number currently retained), distinguishing "the buffer is saturated" from "the SUT genuinely never exported the span". The ephemeral-port/per-scenario-lifetime and bounded-body/bounded-buffer mitigations keep the exploit window and a flood's worst-case cost small; they do not claim to make a sustained-flood denial impossible.
 
 Example (the traceparent idiom; the OTLP export is SIMULATED per the known limitation above — see `examples/trace-expect-otlp.e2e.yaml` for the fully worked, runnable version):
 
@@ -884,6 +886,9 @@ environment:
   services:
     app:
       image: myorg/orders-api:latest
+  dependencies:
+    orders-db:
+      type: postgres
 
 variables:
   traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"

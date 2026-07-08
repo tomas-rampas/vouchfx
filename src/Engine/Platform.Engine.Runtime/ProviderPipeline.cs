@@ -255,6 +255,40 @@ internal static class ProviderPipeline
                 PollIntervalMs: null));
         }
 
+        // Cross-kind VarName collision guard: reject a VarName claimed by host resources of
+        // MORE THAN ONE kind (e.g. a webhook-listen.http listener named "shared" alongside a
+        // trace-expect.otlp receiver ALSO named "shared"). ScenarioRunner stages EVERY kind's
+        // resource into the SAME three Vars keys (svc::<VarName> / <VarName> / <VarName>
+        // + ContainerVarSuffix), keyed ONLY by VarName — it has no way to know the two
+        // requirements came from different kinds — so two DISTINCT resources sharing one
+        // VarName would silently last-write-wins collide (whichever host resource the runner
+        // starts last overwrites the other's staged URL), exactly the class of bug the
+        // "_container" alias guard below closes from the other direction. Checked BEFORE that
+        // alias guard so the more direct collision is reported first.
+        var varNamesByKind = hostResourcePlan
+            .GroupBy(e => e.Requirement.VarName, StringComparer.Ordinal)
+            .Where(g => g.Select(e => e.Requirement.Kind).Distinct(StringComparer.Ordinal).Count() > 1)
+            .ToList();
+
+        foreach (var group in varNamesByKind)
+        {
+            var kinds = group
+                .Select(e => e.Requirement.Kind)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(k => k, StringComparer.Ordinal);
+
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: new ValidationFailure(
+                    $"host resource '{group.Key}' is declared by more than one kind " +
+                    $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
+                    "by exactly one kind — a webhook listener and an OTLP receiver (or any two " +
+                    "distinct host-resource kinds) cannot share the same name. Rename one of them."));
+        }
+
         // SUT configuration surface (point 3): ScenarioRunner ALSO stages a container-reachable
         // alias of every webhook listener's / OTLP receiver's URL under "<VarName>_container"
         // (see ScenarioRunner.ContainerVarSuffix — the OTLP receiver added in Phase C stages the

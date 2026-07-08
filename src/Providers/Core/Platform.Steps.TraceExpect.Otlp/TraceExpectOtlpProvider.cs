@@ -41,8 +41,8 @@
 // SECURITY (§17, matching the webhook-listen.http precedent): a captured span comes from the
 // SUT's own instrumentation and is therefore UNTRUSTED — a span name or attribute value could
 // in principle echo sensitive data. The MATCH observation therefore carries ONLY metadata
-// (matched / scanned / matchedCriteria / totalCriteria counts) and NEVER a span's trace id,
-// name, service, or attribute values. capture: is the one EXPLICIT, author-declared exception
+// (matched / scanned / matchedCriteria / totalCriteria / evicted counts) and NEVER a span's
+// trace id, name, service, or attribute values. capture: is the one EXPLICIT, author-declared exception
 // (exactly like http.rest's response-body capture): an author who declares
 // `capture: { spanName: "$.name" }` is deliberately pulling that field into Vars, at their own
 // risk, precisely as they already do for an HTTP response body.
@@ -132,11 +132,12 @@ public sealed class TraceExpectOtlpProvider
               "type": "string"
             },
             "match": {
-              "description": "The criteria a captured span must satisfy. At least one criterion (traceId, service, spanName, or attributes) must be declared.",
+              "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
               "type": "object",
+              "required": ["traceId"],
               "properties": {
                 "traceId": {
-                  "description": "Optional expected trace id. May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
+                  "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "string"
                 },
                 "service": {
@@ -242,6 +243,15 @@ public sealed class TraceExpectOtlpProvider
     /// itself contributes (via <see cref="IHostResourceContributor{TModel}"/>), not a declared
     /// <c>environment.dependencies</c> entry the author must reconcile.
     /// </remarks>
+    /// <remarks>
+    /// <see cref="TraceMatch.TraceId"/> is REQUIRED (not merely "at least one criterion of
+    /// several") — see the class remarks for why: without it, a declared
+    /// <c>service</c>/<c>spanName</c>/<c>attributes</c> combination would accept ANY span
+    /// exported by the SUT that happens to match, from ANY trace, not the specific
+    /// transaction the scenario is asserting about. This is the enforcement half of the
+    /// no-forged-match security posture documented on the host-owned <c>OtlpReceiver</c> —
+    /// without this check that posture would be aspirational prose, not an actual guarantee.
+    /// </remarks>
     public ValidationResult Validate(TraceExpectOtlpModel model, IProjectContext ctx)
     {
         var errors = new List<string>();
@@ -249,28 +259,23 @@ public sealed class TraceExpectOtlpProvider
         if (string.IsNullOrWhiteSpace(model.Receiver))
             errors.Add("trace-expect.otlp: 'receiver' must not be empty.");
 
-        if (!HasAnyCriterion(model.Match))
+        if (string.IsNullOrWhiteSpace(model.Match.TraceId))
         {
             errors.Add(
-                "trace-expect.otlp: 'match' must declare at least one criterion " +
-                "(traceId, service, spanName, or attributes).");
+                "trace-expect.otlp: 'match.traceId' is required. This family asserts the " +
+                "causal chain of a SPECIFIC transaction, not a general span shape any trace " +
+                "might satisfy: inject a traceparent header on an earlier step (e.g. an " +
+                "http.rest request) and match its trace id here — a full traceparent value " +
+                "or a bare 32-hex trace id both work, the 32-hex segment is extracted " +
+                "automatically. 'service', 'spanName', and 'attributes' are optional " +
+                "refinements layered on top of the trace id; none of them may substitute " +
+                "for it.");
         }
 
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
     }
-
-    /// <summary>
-    /// Returns <see langword="true"/> when <paramref name="match"/> declares at least one
-    /// effective criterion: a non-null trace id, a non-null service, a non-null span name, or a
-    /// non-empty attributes map.
-    /// </summary>
-    private static bool HasAnyCriterion(TraceMatch match)
-        => match.TraceId is not null
-           || match.Service is not null
-           || match.SpanName is not null
-           || (match.Attributes is { Count: > 0 });
 
     // ── IHostResourceContributor<TraceExpectOtlpModel> ────────────────────────
 
@@ -322,9 +327,10 @@ public sealed class TraceExpectOtlpProvider
     /// </para>
     /// <para>
     /// SECURITY (§17): the observation carries ONLY match metadata
-    /// (<c>matched</c>/<c>scanned</c>/<c>matchedCriteria</c>/<c>totalCriteria</c>) and never a
-    /// captured span's trace id, name, service, or attribute value — captured spans are
-    /// untrusted SUT-originated data (see the file header).
+    /// (<c>matched</c>/<c>scanned</c>/<c>matchedCriteria</c>/<c>totalCriteria</c>, plus
+    /// <c>evicted</c> on a Fail) and never a captured span's trace id, name, service, or
+    /// attribute value — captured spans are untrusted SUT-originated data (see the file
+    /// header).
     /// </para>
     /// <para>
     /// The helper must be byte-identical across every instance of the same provider within a
@@ -393,6 +399,13 @@ public sealed class TraceExpectOtlpProvider
                     // step naming an unknown receiver simply scans zero spans and Fails.
                     var captured = traces.GetCaptured(receiverVarName);
                     int scanned = captured.Count;
+                    // TotalReceived is monotonic (never reset by eviction); the difference
+                    // against the CURRENTLY retained count is exactly how many spans the ring
+                    // buffer has evicted — the diagnostic that tells "scanned:10000" (buffer
+                    // saturated, oldest spans evicted) apart from "the SUT genuinely exported
+                    // only a few hundred spans, none matching" (see the Fail branch below).
+                    long totalReceived = traces.GetTotalReceived(receiverVarName);
+                    long evicted = totalReceived - scanned;
 
                     int totalCriteria = 0;
                     if (traceIdExpected != null) totalCriteria++;
@@ -534,12 +547,17 @@ public sealed class TraceExpectOtlpProvider
                         // No match THIS attempt = Fail. The RETRY runner retries on non-Pass and
                         // converts a sustained Fail to Inconclusive on timeout — never here.
                         // COUNTS ONLY (§17): matchedCriteria reports the best PARTIAL match found
-                        // (never which span, never its trace id/name/attributes).
+                        // (never which span, never its trace id/name/attributes). "evicted"
+                        // surfaces the ring-buffer denial-of-service trade-off (see
+                        // TraceCaptureBuffer's remarks): a flood of forged/unrelated exports can
+                        // push the real span out of the retained window before this step scans
+                        // it — a LOUD Fail with evicted > 0, never a silent false Pass.
                         verdict = Platform.Engine.Abstractions.Verdict.Fail;
                         observation = "{\"matched\":false,\"scanned\":" +
                             scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                             ",\"matchedCriteria\":" + bestMatchedCriteria.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                            ",\"totalCriteria\":" + totalCriteria.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
+                            ",\"totalCriteria\":" + totalCriteria.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                            ",\"evicted\":" + evicted.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
                     }
                 }
                 catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)
@@ -584,10 +602,13 @@ public sealed class TraceExpectOtlpProvider
                 return (m.Success ? m.Groups[1].Value : resolved).ToLowerInvariant();
             }
 
+            // No RegexOptions.Compiled: this pattern runs at most once per step attempt (never
+            // a per-span hot loop, unlike the memory-leak closure probe's touches) so the
+            // upfront IL-generation cost of a compiled regex is not worth paying — the
+            // interpreted engine is fast enough at this call frequency.
             private static readonly System.Text.RegularExpressions.Regex s_traceparentPattern =
                 new System.Text.RegularExpressions.Regex(
-                    @"^[0-9a-fA-F]{2}-([0-9a-fA-F]{32})-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$",
-                    System.Text.RegularExpressions.RegexOptions.Compiled);
+                    @"^[0-9a-fA-F]{2}-([0-9a-fA-F]{32})-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$");
 
             /// <summary>
             /// Evaluates a MINIMAL, JSONPath-compatible dotted field-path expression
@@ -817,6 +838,9 @@ public sealed class TraceExpectOtlpProvider
         var totalCriteria = observation.TryGetProperty("totalCriteria", out var totalCriteriaEl) && totalCriteriaEl.ValueKind == JsonValueKind.Number
             ? totalCriteriaEl.GetInt32()
             : 0;
+        var evicted = observation.TryGetProperty("evicted", out var evictedEl) && evictedEl.ValueKind == JsonValueKind.Number
+            ? evictedEl.GetInt64()
+            : (long?)null;
 
         var sb = new StringBuilder();
         sb.Append("  trace-expect.otlp: no captured span matched every declared criterion").Append('\n');
@@ -826,6 +850,14 @@ public sealed class TraceExpectOtlpProvider
           .Append('/')
           .Append(totalCriteria.ToString(CultureInfo.InvariantCulture))
           .Append(" criteria").Append('\n');
+        if (evicted is > 0)
+        {
+            sb.Append("    spans evicted      : ")
+              .Append(evicted.Value.ToString(CultureInfo.InvariantCulture))
+              .Append(" (ring buffer saturated — the SUT exported more spans than the receiver")
+              .Append(" retains; a flood may have pushed the real span out before this scan)")
+              .Append('\n');
+        }
         sb.Append("    (span attribute values, span names, and the trace id are never rendered — §17)");
         return sb.ToString();
     }

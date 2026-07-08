@@ -40,12 +40,23 @@
 // The narrowed blast radius that makes this an acceptable trade-off: (1) EPHEMERAL PORT +
 // PER-SCENARIO LIFETIME (identical to WebhookListener) bounds the exposure window; (2) BOUNDED
 // BODY (4 MiB) + BOUNDED RING BUFFER (TraceCaptureBuffer.MaxBufferedSpans) bound the memory a
-// flood of forged exports can consume; (3) MOST IMPORTANTLY, a trace-expect.otlp assertion
-// requires the observed span to carry a SPECIFIC 128-bit trace id extracted from THIS scenario's
-// own traceparent (see TraceExpectOtlpProvider) — an off-network onlooker who cannot observe
-// that trace id cannot forge a matching span, so a forged export can pollute the buffer but
-// cannot manufacture a false Pass. This trade-off is documented here precisely so a future
-// reviewer does not "fix" the asymmetry with WebhookListener without re-reading this rationale.
+// flood of forged exports can consume; (3) MOST IMPORTANTLY, a trace-expect.otlp assertion is
+// REQUIRED — enforced by TraceExpectOtlpProvider.Validate, not merely a convention an author
+// could accidentally omit — to declare a SPECIFIC 128-bit trace id extracted from THIS
+// scenario's own traceparent: an off-network onlooker who cannot observe that trace id cannot
+// forge a matching span, so a forged export can pollute the buffer but cannot manufacture a
+// false Pass. This trade-off is documented here precisely so a future reviewer does not "fix"
+// the asymmetry with WebhookListener without re-reading this rationale.
+//
+// HONEST CAVEAT — the ring buffer converts a forgery risk into an AVAILABILITY risk, not zero
+// risk: (2)'s bound is a cap on RETAINED spans, not on ACCEPTED ones, so a sustained flood of
+// forged/unrelated exports can evict the real span from the retained window before a
+// trace-expect.otlp step scans it. This is deliberately NOT a false Pass — it surfaces as a
+// LOUD Fail with a non-zero "evicted" count in the observation (see
+// TraceCaptureBuffer.TotalReceived / ITraceCaptureAccessor.GetTotalReceived), the diagnostic
+// that tells a saturated-buffer denial apart from "the SUT genuinely never exported the span".
+// The (1)+(2) bounds keep the exploit window and the flood's absolute cost small; they do not
+// claim to make a sustained-flood denial impossible.
 using System;
 using System.Collections.Generic;
 using System.IO;

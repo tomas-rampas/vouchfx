@@ -1495,11 +1495,14 @@
                 "type": "string"
               },
               "match": {
-                "description": "The criteria a captured span must satisfy. At least one criterion (traceId, service, spanName, or attributes) must be declared.",
+                "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
                 "type": "object",
+                "required": [
+                  "traceId"
+                ],
                 "properties": {
                   "traceId": {
-                    "description": "Optional expected trace id. May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
+                    "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "string"
                   },
                   "service": {

@@ -52,6 +52,29 @@ public interface ITraceCaptureAccessor
     /// <paramref name="receiverVarName"/>. Never <see langword="null"/>.
     /// </returns>
     IReadOnlyList<CapturedSpan> GetCaptured(string receiverVarName);
+
+    /// <summary>
+    /// Returns the TOTAL number of spans ever received by the receiver registered under
+    /// <paramref name="receiverVarName"/>, including any already evicted by its ring-buffer
+    /// cap (<c>TraceCaptureBuffer.MaxBufferedSpans</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is the diagnostic that lets a consumer distinguish "the receiver's buffer is
+    /// saturated (a flood of spans, possibly evicting the one this step is looking for) from
+    /// "the SUT genuinely exported very few spans, none matching" — both look identical from
+    /// <see cref="GetCaptured"/> alone once the buffer is full (it always reports exactly
+    /// <c>MaxBufferedSpans</c> entries). <c>GetTotalReceived(name) - GetCaptured(name).Count</c>
+    /// is the number of spans evicted so far for that receiver.
+    /// </remarks>
+    /// <param name="receiverVarName">
+    /// The logical name of the receiver, as declared by the provider's
+    /// <c>HostResourceRequirement.VarName</c> and staged at <c>svc::&lt;VarName&gt;</c>.
+    /// </param>
+    /// <returns>
+    /// The total count of spans ever appended; <c>0</c> when no receiver is registered under
+    /// <paramref name="receiverVarName"/>.
+    /// </returns>
+    long GetTotalReceived(string receiverVarName);
 }
 
 /// <summary>
@@ -91,4 +114,8 @@ public sealed class NullTraceCaptureAccessor : ITraceCaptureAccessor
     /// <inheritdoc />
     /// <returns>Always an empty list.</returns>
     public IReadOnlyList<CapturedSpan> GetCaptured(string receiverVarName) => Empty;
+
+    /// <inheritdoc />
+    /// <returns>Always <c>0</c>.</returns>
+    public long GetTotalReceived(string receiverVarName) => 0;
 }

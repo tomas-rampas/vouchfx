@@ -62,6 +62,7 @@ public sealed class TraceCaptureBuffer
 
     private readonly object _gate = new();
     private readonly Queue<CapturedSpan> _items = new();
+    private long _totalReceived;
 
     /// <summary>
     /// Appends <paramref name="span"/> to the buffer.  When the buffer has already reached
@@ -78,6 +79,8 @@ public sealed class TraceCaptureBuffer
         System.ArgumentNullException.ThrowIfNull(span);
         lock (_gate)
         {
+            _totalReceived++;
+
             if (_items.Count >= MaxBufferedSpans)
             {
                 // Ring buffer: evict the OLDEST span to make room for the new one (see the
@@ -86,6 +89,27 @@ public sealed class TraceCaptureBuffer
             }
 
             _items.Enqueue(span);
+        }
+    }
+
+    /// <summary>
+    /// Gets the TOTAL number of spans ever appended to this buffer, monotonically increasing —
+    /// including any already evicted by the ring-buffer cap. <c>TotalReceived - Count</c> is the
+    /// number of spans evicted so far. The <c>trace-expect.otlp</c> provider's emitted helper
+    /// surfaces this (via <c>ITraceCaptureAccessor.GetTotalReceived</c>) as the <c>evicted</c>
+    /// diagnostic on a Fail observation — the honest completion of the ring-buffer's
+    /// denial-of-service trade-off: a flood of forged/unrelated exports can push the real span
+    /// out of the retained window before a step scans it, but that shows up as a LOUD,
+    /// diagnosable Fail (non-zero <c>evicted</c>), never a silent false Pass.
+    /// </summary>
+    public long TotalReceived
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _totalReceived;
+            }
         }
     }
 

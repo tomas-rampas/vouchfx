@@ -96,4 +96,14 @@ public sealed class ProbeTraceAccessor : ITraceCaptureAccessor
         => string.Equals(receiverVarName, ProbeReceiverName, StringComparison.Ordinal)
             ? _seed
             : Empty;
+
+    /// <inheritdoc />
+    /// <returns>
+    /// The two-element seed count for <see cref="ProbeReceiverName"/> (no eviction ever occurs
+    /// against this fixed stub seed); <c>0</c> for any other receiver name.
+    /// </returns>
+    public long GetTotalReceived(string receiverVarName)
+        => string.Equals(receiverVarName, ProbeReceiverName, StringComparison.Ordinal)
+            ? _seed.Count
+            : 0;
 }
