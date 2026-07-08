@@ -50,8 +50,9 @@ steps:
       (the "ServiceURL=…;AccessKey=local;SecretKey=local" form EnvironmentMapper's
       "dynamodb" registration produces — dynamodb-local ignores credentials
       entirely), creates the "Orders" table on demand (PAY_PER_REQUEST, hash key
-      "orderId"), waits for it to reach ACTIVE, then PutItems the row the two
-      assertions below expect. A real suite would delete this step entirely — its
+      "orderId"), waits for it to reach ACTIVE, then writes the row the two
+      assertions below expect with a PutItem call. A real suite would delete this
+      step entirely — its
       SUT already does this write.
     code: |
       var connStr = (string)Vars["conn::orders-db"];

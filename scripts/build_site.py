@@ -40,6 +40,7 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/troubleshooting.md", "User guides", "Troubleshooting"),
     ("docs/telemetry.md", "User guides", "Telemetry & privacy"),
     ("docs/language-reference.md", "User guides", "Language reference (generated)"),
+    ("docs/memory-harness.md", "User guides", "The memory-leak harness"),
     ("docs/accessibility.md", "User guides", "Accessibility"),
     ("docs/roadmap.md", "Project", "Roadmap"),
     ("CHANGELOG.md", "Project", "Changelog"),
