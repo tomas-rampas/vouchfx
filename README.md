@@ -102,7 +102,8 @@ dotnet format --verify-no-changes
 
 Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a blocking **build** job
 (build + format + unit tests), a blocking **memory-leak** job that runs the heap-measurement harness
-over 5,000 load-unload cycles, and a forward-looking **integration** (Docker) job.
+over 5,000 load-unload cycles (see [`docs/memory-harness.md`](docs/memory-harness.md) for the tool, how
+to run it locally, and a sample passing report), and a forward-looking **integration** (Docker) job.
 
 ## Getting started
 
