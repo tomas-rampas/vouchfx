@@ -475,6 +475,10 @@ engine internals.
 
 **Contributing to the platform engine?** Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), [`GOVERNANCE.md`](GOVERNANCE.md), and the [public roadmap](docs/roadmap.md) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
+## AI assistance
+
+Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [`CLAUDE.md`](CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. §1.2 of the [Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
+
 ## Security
 
 For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
