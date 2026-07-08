@@ -1,0 +1,76 @@
+metadata:
+  name: mq-redis-example
+  description: >
+    Example showing how to publish a message to a Redis Stream and then assert that
+    the expected message is present, using the mq-publish.redis and mq-expect.redis
+    providers backed by a live Redis container.
+    The mq-expect step uses verifyMode: RETRY so the engine polls until the message
+    arrives or the timeout expires — authors never write Thread.Sleep.
+    Redis Streams have no separate "subject" concept: the stream key IS the
+    addressing unit, so there is no stream-name derivation to reason about (unlike
+    the mq-*.nats / mq-*.kafka families).
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+
+  dependencies:
+    # Redis Streams: the connection string is staged as conn::cache
+    # (VarKeys.Connection("cache")) by the orchestrator and consumed by both
+    # mq-publish.redis and mq-expect.redis via the 'target' field.
+    cache:
+      type: redis
+
+steps:
+  - id: trigger-order-event
+    type: http.rest
+    description: >
+      Trigger the system under test to publish an order event to the Redis Stream.
+      The SUT should XADD to the 'orders-created' stream via the Redis connection
+      it receives at startup.
+    target: app
+    method: POST
+    path: /orders
+    body: '{"customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 202
+
+  - id: publish-order-event
+    type: mq-publish.redis
+    description: >
+      Direct publish step: XADDs an order-created event to the Redis Stream
+      'orders-created', carried under the family's canonical 'payload' stream field.
+      NOTE: a Pass verdict confirms the entry was appended to the stream; it does
+      NOT confirm that a consumer has read it.  Verify consumption with a following
+      mq-expect.redis step (see assert-order-event).
+    target: cache
+    stream: orders-created
+    payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'
+
+  - id: assert-order-event
+    type: mq-expect.redis
+    description: >
+      Assert that a message matching the criteria is present on the
+      'orders-created' stream.  The criteria are AND-conjunctive: the payload must
+      contain the substring 'order-created' AND the JSONPath $.orderId must select
+      'ord-001'.  The step scans the ENTIRE stream via XRANGE <stream> - + on every
+      RETRY attempt, so the check is idempotent.
+      verifyMode: RETRY polls until the message is found or the timeout expires.
+
+      IMPORTANT — shared-stream caution:
+      mq-expect.redis scans from the START of the stream on every attempt (mirroring
+      mq-expect.nats / mq-expect.kafka retained-log behaviour).  Do NOT share a
+      single redis dependency across scenarios that assert on the same stream key —
+      entries from a prior scenario run will match the criteria of a subsequent
+      scenario and produce a false Pass.  If you need multiple scenarios against the
+      same Redis instance, use distinct stream names per scenario.
+    target: cache
+    stream: orders-created
+    match:
+      payloadContains: "order-created"
+      json:
+        $.orderId: ord-001
+    verifyMode: RETRY
+    timeout: 30s

@@ -16,14 +16,17 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MetricsAssert.Prometheus;
 using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqExpect.Redis;
 using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
+using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 
@@ -51,8 +54,10 @@ internal static class ProviderRegistryFactory
     /// <c>mq-publish.kafka</c>, <c>mq-expect.kafka</c>, <c>mq-publish.rabbitmq</c>,
     /// <c>mq-expect.rabbitmq</c>, <c>mq-publish.nats</c>, <c>mq-expect.nats</c>,
     /// <c>mq-publish.azureservicebus</c>, <c>mq-expect.azureservicebus</c>,
+    /// <c>mq-publish.redis</c>, <c>mq-expect.redis</c>,
     /// <c>webhook-listen.http</c>, <c>mail-expect.smtp</c>,
-    /// <c>cache-assert.redis</c> and <c>cache-assert.elasticsearch</c>.
+    /// <c>cache-assert.redis</c>, <c>cache-assert.elasticsearch</c> and
+    /// <c>metrics-assert.prometheus</c>.
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {
@@ -70,10 +75,13 @@ internal static class ProviderRegistryFactory
         typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
         typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
         typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
+        typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
+        typeof(MqExpectRedisProvider).Assembly,       // mq-expect.redis
         typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
         typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
         typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
         typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
     };
 
     /// <summary>

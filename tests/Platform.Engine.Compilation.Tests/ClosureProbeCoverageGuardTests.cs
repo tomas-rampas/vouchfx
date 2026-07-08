@@ -42,14 +42,17 @@ using Platform.Steps.DbAssert.Postgres;
 using Platform.Steps.DbAssert.SqlServer;
 using Platform.Steps.HttpRest;
 using Platform.Steps.MailExpect.Smtp;
+using Platform.Steps.MetricsAssert.Prometheus;
 using Platform.Steps.MqExpect.AzureServiceBus;
 using Platform.Steps.MqExpect.Kafka;
 using Platform.Steps.MqExpect.Nats;
 using Platform.Steps.MqExpect.Rabbitmq;
+using Platform.Steps.MqExpect.Redis;
 using Platform.Steps.MqPublish.AzureServiceBus;
 using Platform.Steps.MqPublish.Kafka;
 using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
+using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
@@ -147,6 +150,19 @@ public sealed class ClosureProbeCoverageGuardTests
     ///     <c>SocketsHttpHandler</c> pool, which the probe already exercises.  The shared
     ///     probe marker (<c>new System.Net.Http.HttpClient()</c>) satisfies both rows.
     ///   </description></item>
+    ///   <item><description>
+    ///     <c>mq-publish.redis</c> / <c>mq-expect.redis</c> →
+    ///     <c>StackExchange.Redis.ConnectionMultiplexer</c>: both providers open a
+    ///     multiplexer via <c>ConnectionMultiplexer.ConnectAsync</c> exactly like
+    ///     <c>cache-assert.redis</c>'s emitted helper.  Their closure is subsumed by the
+    ///     existing <c>cache-assert.redis</c> probe marker — no new probe block needed.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>metrics-assert.prometheus</c> → <c>System.Net.Http.HttpClient</c> (BCL — closure
+    ///     subsumed by the http.rest probe; metrics-assert.prometheus scrapes the SUT's
+    ///     Prometheus exposition endpoint via HttpClient exactly like http.rest / mail-expect.smtp
+    ///     / cache-assert.elasticsearch).
+    ///   </description></item>
     /// </list>
     /// </remarks>
     private static readonly IReadOnlyList<CoreProviderCoverage> EnumeratedCoverage = new[]
@@ -223,6 +239,18 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "mq-expect.azureservicebus",
             CanonicalClient: "Azure.Messaging.ServiceBus.ServiceBusClient (Azure Service Bus AMQP connection + transport lifecycle; non-destructive PeekMessagesAsync path)",
             ProbeMarker: "Azure.Messaging.ServiceBus.ServiceBusClient"),
+        new CoreProviderCoverage(
+            StepKind: "mq-publish.redis",
+            CanonicalClient: "StackExchange.Redis.ConnectionMultiplexer (Redis Streams XADD via ConnectAsync — closure subsumed by the cache-assert.redis probe marker)",
+            ProbeMarker: "StackExchange.Redis.ConnectionMultiplexer.Connect"),
+        new CoreProviderCoverage(
+            StepKind: "mq-expect.redis",
+            CanonicalClient: "StackExchange.Redis.ConnectionMultiplexer (Redis Streams XRANGE via ConnectAsync — closure subsumed by the cache-assert.redis probe marker)",
+            ProbeMarker: "StackExchange.Redis.ConnectionMultiplexer.Connect"),
+        new CoreProviderCoverage(
+            StepKind: "metrics-assert.prometheus",
+            CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by the http.rest probe; metrics-assert.prometheus scrapes the SUT's /metrics endpoint via HttpClient)",
+            ProbeMarker: "new System.Net.Http.HttpClient()"),
     };
 
     /// <summary>
@@ -253,6 +281,9 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
         typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
         typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
+        typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
+        typeof(MqExpectRedisProvider).Assembly,       // mq-expect.redis
+        typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
     };
 
     // -------------------------------------------------------------------------
@@ -280,8 +311,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Eighteen Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus).
-        Assert.Equal(18, actualKinds.Count);
+        // Twenty-one Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus + mq-publish.redis + mq-expect.redis + metrics-assert.prometheus).
+        Assert.Equal(21, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -308,8 +339,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (eighteen distinct rows).
-        Assert.Equal(18, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (twenty-one distinct rows).
+        Assert.Equal(21, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

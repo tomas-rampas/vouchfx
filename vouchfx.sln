@@ -143,6 +143,18 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Azu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.AzureServiceBus.Tests", "tests\Platform.Steps.MqExpect.AzureServiceBus.Tests\Platform.Steps.MqExpect.AzureServiceBus.Tests.csproj", "{69092283-5012-1544-72AF-8990123F5768}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Redis", "src\Providers\Core\Platform.Steps.MqPublish.Redis\Platform.Steps.MqPublish.Redis.csproj", "{36E963A1-9787-4DED-9F92-114840C9C470}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Redis", "src\Providers\Core\Platform.Steps.MqExpect.Redis\Platform.Steps.MqExpect.Redis.csproj", "{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MetricsAssert.Prometheus", "src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj", "{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Redis.Tests", "tests\Platform.Steps.MqPublish.Redis.Tests\Platform.Steps.MqPublish.Redis.Tests.csproj", "{A24F60E0-7D7A-49CB-A225-253DA946BD1D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Redis.Tests", "tests\Platform.Steps.MqExpect.Redis.Tests\Platform.Steps.MqExpect.Redis.Tests.csproj", "{92A38B94-A300-412A-8783-B7F108A2A614}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MetricsAssert.Prometheus.Tests", "tests\Platform.Steps.MetricsAssert.Prometheus.Tests\Platform.Steps.MetricsAssert.Prometheus.Tests.csproj", "{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -396,6 +408,30 @@ Global
 		{69092283-5012-1544-72AF-8990123F5768}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{69092283-5012-1544-72AF-8990123F5768}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{69092283-5012-1544-72AF-8990123F5768}.Release|Any CPU.Build.0 = Release|Any CPU
+		{36E963A1-9787-4DED-9F92-114840C9C470}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{36E963A1-9787-4DED-9F92-114840C9C470}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{36E963A1-9787-4DED-9F92-114840C9C470}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{36E963A1-9787-4DED-9F92-114840C9C470}.Release|Any CPU.Build.0 = Release|Any CPU
+		{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}.Release|Any CPU.Build.0 = Release|Any CPU
+		{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A24F60E0-7D7A-49CB-A225-253DA946BD1D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A24F60E0-7D7A-49CB-A225-253DA946BD1D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A24F60E0-7D7A-49CB-A225-253DA946BD1D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A24F60E0-7D7A-49CB-A225-253DA946BD1D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{92A38B94-A300-412A-8783-B7F108A2A614}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{92A38B94-A300-412A-8783-B7F108A2A614}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{92A38B94-A300-412A-8783-B7F108A2A614}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{92A38B94-A300-412A-8783-B7F108A2A614}.Release|Any CPU.Build.0 = Release|Any CPU
+		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -459,5 +495,11 @@ Global
 		{49970061-3890-F322-50ED-6778901F3546} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{59981172-4901-0433-61FE-7889012F4657} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
 		{69092283-5012-1544-72AF-8990123F5768} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{36E963A1-9787-4DED-9F92-114840C9C470} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{71C4E379-C4CC-466E-8C03-12C1A56FBC7F} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{A24F60E0-7D7A-49CB-A225-253DA946BD1D} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{92A38B94-A300-412A-8783-B7F108A2A614} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

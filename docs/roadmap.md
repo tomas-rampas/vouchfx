@@ -17,9 +17,10 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
 - **Health-gated orchestration** — headless .NET Aspire + Testcontainers topologies, started deterministically
   and torn down cleanly.
-- **Eighteen Core providers across eight step families** — `http.rest`; `db-assert` for PostgreSQL, MySQL,
-  SQL Server and MongoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS and Azure Service Bus;
-  `cache-assert` for Redis and Elasticsearch; `mail-expect.smtp`; `webhook-listen.http`; `script.csharp`.
+- **Twenty-one Core providers across nine step families** — `http.rest`; `db-assert` for PostgreSQL, MySQL,
+  SQL Server and MongoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS, Azure Service Bus and Redis
+  Streams; `cache-assert` for Redis and Elasticsearch; `mail-expect.smtp`; `webhook-listen.http`;
+  `metrics-assert.prometheus`; `script.csharp`.
 - **Engine-owned asynchronous verification** — `verifyMode: RETRY` with bounded exponential backoff (Polly v8);
   authors never write `Thread.Sleep`.
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
@@ -101,7 +102,7 @@ vouchfx publishes its feature boundary explicitly, in advance, so nobody discove
 
 | Surface | Tier |
 |---|---|
-| The engine, the YAML DSL, all eighteen Core providers, the Provider SDK, the VSCode extension, the terminal renderer, the HTML report, the JUnit XML output, the structured event stream, the CLI runner, the secret-reference resolution mechanism, the reproducibility envelope. | **Apache-2.0, free permanently.** |
+| The engine, the YAML DSL, all twenty-one Core providers, the Provider SDK, the VSCode extension, the terminal renderer, the HTML report, the JUnit XML output, the structured event stream, the CLI runner, the secret-reference resolution mechanism, the reproducibility envelope. | **Apache-2.0, free permanently.** |
 | A hosted cross-run dashboard, managed Vault integration, cloud execution fabric (remote provisioning), agentic test planning/generation/healing, performance-testing tooling, run-history retention beyond the local cache, organisational analytics. | Commercial (future), layered *above* the open-source engine — never carved out of it. |
 | SSO/OIDC federation, on-premises Helm deployment, audit logging, SIEM export, data-residency commitments, dedicated support SLAs. | Commercial enterprise (future). |
 

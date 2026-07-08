@@ -352,6 +352,26 @@ Example (Avro publish):
 
 The `mq-publish.kafka` provider auto-registers the supplied inline schema under the declared subject via the Confluent `AvroSerializer`'s default auto-registration at publish time. No subject-naming-strategy configuration, compatibility-level options, or ephemeral-vs-non-ephemeral distinction are currently implemented.
 
+#### `mq-publish.redis` — step fields
+
+Publishes one UTF-8 message to a Redis Stream via `XADD`, carried under the family's canonical `payload` stream field. Unlike `mq-publish.nats` (subject + optional derived JetStream stream name), a Redis Stream key IS the addressing unit — there is no separate "subject" concept and no stream-name derivation: the author names the stream directly, and `XADD` creates it automatically when it does not yet exist. A Pass verdict confirms the entry was appended to the stream; it does not confirm that a consumer has read it — verify with a following `mq-expect.redis` step.
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the redis dependency to publish to, as declared under environment.dependencies. |
+| stream | Yes | The Redis Stream key to XADD to. May contain {placeholder} and ${secret:...} tokens. |
+| payload | Yes | The message body as a UTF-8 string (literal or inline JSON), written as the value of the canonical `payload` stream field. May contain {placeholder} and ${secret:...} tokens. |
+
+Example:
+
+```yaml
+- id: publish-order-event
+  type: mq-publish.redis
+  target: cache
+  stream: orders-created
+  payload: '{"event":"order-created","orderId":"ord-001"}'
+```
+
 ## 5.3 The mq-expect family
 
 An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. The dotted form is always required; a bare `type: mq-expect` is not a valid step type.
@@ -414,6 +434,33 @@ Example (Avro expect with RETRY):
     json:
       $.userId: "{newUserId}"
       $.amount: "99.99"
+```
+
+#### `mq-expect.redis` — step fields
+
+Asserts that a message matching the declared criteria is present on a Redis Stream. The step scans the ENTIRE stream via `XRANGE <stream> - +` on every attempt (mirroring `mq-expect.nats`'s retained-log rationale), so the check is idempotent under `verifyMode: RETRY`. As with `mq-expect.nats`, do NOT share a single redis dependency across scenarios that assert on the same stream — entries from a prior run will produce a false Pass; use distinct stream keys per scenario.
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the redis dependency to consume from, as declared under environment.dependencies. |
+| stream | Yes | The Redis Stream key to scan via XRANGE. |
+| match | Yes | An assertion-criteria block (see below). At least one criterion must be declared. |
+| match.payloadContains | No | Optional substring that the UTF-8 message payload must contain (ordinal). May contain {placeholder} and ${secret:...} tokens. |
+| match.json | No | Optional map of JSONPath expressions to their expected string values. The message payload is parsed as JSON; each JSONPath must select a node whose stringified value equals the expected value. Each expected value may contain {placeholder} and ${secret:...} tokens. |
+
+Example (with RETRY):
+
+```yaml
+- id: assert-order-event
+  type: mq-expect.redis
+  target: cache
+  stream: orders-created
+  verifyMode: RETRY
+  timeout: 30s
+  match:
+    payloadContains: "order-created"
+    json:
+      $.orderId: ord-001
 ```
 
 ## 5.4 The db-assert family
@@ -533,21 +580,21 @@ The community catalogue at platform launch is summarised in the table below. The
 |---|---|---|---|
 | http | http.rest | http.soap, http.graphql | http.long-polling |
 | rpc | — | rpc.grpc | rpc.json-rpc *(available — the hub's first community provider)*, rpc.thrift |
-| mq-publish | mq-publish.kafka, mq-publish.rabbitmq, mq-publish.nats, mq-publish.azureservicebus | mq-publish.redis, mq-publish.mqtt, mq-publish.sqs, mq-publish.eventhubs | mq-publish.pulsar, mq-publish.activemq-artemis, mq-publish.gcp-pubsub, mq-publish.azurestoragequeue, mq-publish.sns |
-| mq-expect | mq-expect.kafka, mq-expect.rabbitmq, mq-expect.nats, mq-expect.azureservicebus | mq-expect.redis, mq-expect.mqtt, mq-expect.sqs, mq-expect.eventhubs | mq-expect.pulsar, mq-expect.activemq-artemis, mq-expect.gcp-pubsub, mq-expect.azurestoragequeue |
+| mq-publish | mq-publish.kafka, mq-publish.rabbitmq, mq-publish.nats, mq-publish.azureservicebus, mq-publish.redis | mq-publish.mqtt, mq-publish.sqs, mq-publish.eventhubs | mq-publish.pulsar, mq-publish.activemq-artemis, mq-publish.gcp-pubsub, mq-publish.azurestoragequeue, mq-publish.sns |
+| mq-expect | mq-expect.kafka, mq-expect.rabbitmq, mq-expect.nats, mq-expect.azureservicebus, mq-expect.redis | mq-expect.mqtt, mq-expect.sqs, mq-expect.eventhubs | mq-expect.pulsar, mq-expect.activemq-artemis, mq-expect.gcp-pubsub, mq-expect.azurestoragequeue |
 | db-assert | db-assert.postgres, db-assert.sqlserver, db-assert.mysql, db-assert.mongodb | db-assert.oracle, db-assert.cassandra, db-assert.scylladb, db-assert.cockroachdb, db-assert.clickhouse, db-assert.dynamodb, db-assert.cosmosdb, db-assert.neo4j, db-assert.mariadb | db-assert.ldap, db-assert.qdrant |
 | cache-assert | cache-assert.redis, cache-assert.elasticsearch | cache-assert.opensearch, cache-assert.valkey | cache-assert.memcached |
 | mail-expect | mail-expect.smtp | — | — |
 | webhook-listen | webhook-listen.http | — | — |
+| metrics-assert | metrics-assert.prometheus | — | — |
 | script | script.csharp | — | — |
 | realtime-expect *(reserved)* | — | realtime-expect.websocket, realtime-expect.sse, realtime-expect.signalr | realtime-expect.graphql-ws |
 | storage-assert *(reserved)* | — | storage-assert.s3, storage-assert.azblob, storage-assert.sftp | storage-assert.gcs |
 | trace-expect *(reserved)* | — | trace-expect.otlp | trace-expect.jaeger |
-| metrics-assert *(reserved)* | — | — | metrics-assert.prometheus |
 
 *Table 5.1 — The community catalogue at platform launch. The list is indicative; the authoritative list is the unified JSON Schema served by the installed engine. The dotted `family.provider` form (e.g., `type: mq-publish.kafka`) is the only accepted form for every family, regardless of how many providers it has registered.*
 
-Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands. A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect.otlp shapes) have no such prerequisite and can be delivered by the community self-contained. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
+Families marked *(reserved)* are name-reservations: the family name and intent are fixed by the platform team, and the full step-field specification is published when the family's first provider lands. A provider whose steps observe a *managed dependency* (a store or broker declared under `environment.dependencies`) also requires engine support for that dependency type; the supported dependency types are listed in section 3, and additions ride the engine's release cadence. Providers that speak a protocol directly to a service under test (the http, rpc, realtime-expect, metrics-assert and trace-expect.otlp shapes) have no such prerequisite and can be delivered by the community self-contained — `metrics-assert.prometheus` is the shipped proof: it scrapes a service declared under `environment.services` exactly like `http.rest`, with no new dependency kind. Placement in the Verified or Community column is a plan, not a promise of ordering; providers move between tiers under the governance model (see GOVERNANCE.md).
 
 ### 5.7.1 How adding a provider feels to a contributor
 
@@ -575,6 +622,67 @@ Asserts the state of an Elasticsearch index by submitting a Query DSL request an
 | `expect.fields` | No | List of `{field, value}` pairs asserted against the `_source` of the first hit. Each entry must match exactly. |
 
 Use `verifyMode: RETRY` with a `timeout` when the index may lag behind the write path (eventual consistency). `{placeholder}` references in `query` are resolved at execution time after all preceding capture expressions have been applied.
+
+## 5.8 The metrics-assert family
+
+A `metrics-assert` step scrapes a Prometheus text-exposition endpoint — normally the system under test's own `/metrics` — and asserts on one metric's numeric value, optionally scoped by a label subset. This is the family that proves a business transaction actually *moved a counter or gauge the SUT exposes*: a 2xx HTTP response tells you the SUT accepted a request, but only the metric tells you it did the work. `metrics-assert` is a brand-new family; its Core provider is `metrics-assert.prometheus`. Like every family, the bare `type: metrics-assert` form is not accepted — the dotted form is always required.
+
+Unlike `mq-publish`/`mq-expect`/`cache-assert`, this family adds **no new infrastructure kind**: it scrapes a *service* declared under `environment.services` — exactly the mechanism `http.rest` already uses — rather than a managed dependency under `environment.dependencies`. A community contributor can therefore ship a `metrics-assert` provider self-contained, with no engine-side dependency-type work (§5.7's table already lists this family among the self-contained shapes, alongside http, rpc, realtime-expect and trace-expect.otlp).
+
+**Ambiguous-selection policy.** Exactly one sample must match the declared `metric` name plus every declared `labels` entry (a label *subset* match — the real sample may carry additional labels the author did not mention). Zero matches is a Fail (`"found":false`); more than one match is *also* a Fail (`"ambiguous":true`), never a silently-resolved "first match wins" pick — an under-specified label set is an authoring error the author must fix, not a decision the engine makes on their behalf.
+
+**The delta idiom.** Because the DSL's `capture:`/`{placeholder}` substitution never evaluates arithmetic, proving a transaction incremented a counter by exactly *N* needs an intermediate `script.csharp` step to compute the expected post-transaction value. The directly-expressible, still-useful form is capture-before / assert-after with a non-decrease bound: capture the metric's value before the transaction, trigger the transaction, then assert `min` against the captured baseline (see the worked example below). `metrics-assert.prometheus` exposes the matched value to `capture:` at JSONPath `$.value`, evaluated against a small synthesised observation object `{"metric":<name>,"value":<n>,"labels":{...}}` — the very same object the Pass-verdict observation carries.
+
+**`verifyMode: RETRY` is this family's canonical mode.** A metric update frequently lags the HTTP response that triggered it (the same post-stimulus convergence gap `mq-expect` and `db-assert` steps already accommodate), so most `metrics-assert` steps are written with `verifyMode: RETRY` and a `timeout`.
+
+#### `metrics-assert.prometheus` — step fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| target | Yes | Logical name of the service to scrape, as declared under environment.services — normally the system under test. |
+| path | No | The scrape path. May contain {placeholder} and ${secret:...} tokens. Defaults to `/metrics` when omitted. |
+| metric | Yes | The Prometheus sample (metric) name to select, e.g. `orders_processed_total`. May contain {placeholder} and ${secret:...} tokens. |
+| labels | No | Map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match). Values may contain {placeholder} and ${secret:...} tokens. |
+| expect.value | No | Expected exact value, compared with a `1e-9` relative tolerance. A decimal string; may contain {placeholder} / ${secret:...} tokens. |
+| expect.min | No | Inclusive lower bound for the matched sample's value. |
+| expect.max | No | Inclusive upper bound for the matched sample's value. |
+
+At least one of `expect.value`, `expect.min`, or `expect.max` must be declared; all three may combine. A non-200 scrape response is a Fail (the endpoint answered — it just did not serve metrics), never an EnvironmentError; a connection failure or timeout maps to EnvironmentError / Inconclusive exactly as `http.rest` does (§12.1 of the architecture blueprint).
+
+Example (the delta idiom: capture-before, trigger, assert-after):
+
+```yaml
+- id: capture-baseline
+  type: metrics-assert.prometheus
+  target: app
+  metric: orders_processed_total
+  labels:
+    status: success
+  expect:
+    min: "0"
+  capture:
+    ordersBefore: $.value
+
+- id: trigger-order
+  type: http.rest
+  target: app
+  method: POST
+  path: /orders
+  body: '{"customerId":"cust-1","amount":49.99}'
+  expect:
+    status: 202
+
+- id: assert-orders-processed
+  type: metrics-assert.prometheus
+  target: app
+  metric: orders_processed_total
+  labels:
+    status: success
+  expect:
+    min: "{ordersBefore}"
+  verifyMode: RETRY
+  timeout: 15s
+```
 
 # 6. Variable Capture and Substitution
 
@@ -698,7 +806,7 @@ Each provider's schema fragment contributes the fields specific to that step typ
 
 ### The v1 schema is frozen
 
-The composed v1 JSON Schema — the root language schema plus the fragments from all eighteen Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
+The composed v1 JSON Schema — the root language schema plus the fragments from all twenty-one Core providers — is **frozen**. The schema is versioned and self-identifies via the `x-vouchfx-schema-version: v1` annotation; the composed artifact is snapshotted in the test suite and validated byte-for-byte on every build. Any change to the schema (a new provider fragment, a tightened enum, a new keyword) requires deliberate regeneration and review of the frozen golden. This freeze ensures authors building against the v1 schema can rely on a stable contract for their test files.
 
 ```json
 {
