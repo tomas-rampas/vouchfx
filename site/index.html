@@ -4,14 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>vouchfx — End-to-end testing for distributed systems, authored in YAML</title>
-<meta name="description" content="vouchfx compiles declarative .e2e.yaml specs into memory-safe C#, orchestrates the full container topology with .NET Aspire + Testcontainers, and proves your distributed system works end-to-end across REST, databases, message brokers, caches, webhooks and scripts." />
+<meta name="description" content="vouchfx compiles declarative .e2e.yaml specs into memory-safe C#, orchestrates the full container topology with .NET Aspire + Testcontainers, and proves your distributed system works end-to-end across HTTP, databases, message brokers, caches, object storage, metrics, traces, mail, webhooks and scripts." />
 <meta name="theme-color" content="#0b0f1a" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 
 <!-- Open Graph / social -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="vouchfx — End-to-end testing for distributed systems, authored in YAML" />
-<meta property="og:description" content="End-to-end testing for distributed .NET systems. Declarative .e2e.yaml → compiled C# → orchestrated container topology via Aspire. Tests REST, databases, message brokers, caches, webhooks and scripts end-to-end." />
+<meta property="og:description" content="End-to-end testing for distributed .NET systems. Declarative .e2e.yaml → compiled C# → orchestrated container topology via Aspire. Twenty-five providers across eleven step families, from HTTP and databases to brokers, storage, metrics and traces." />
 
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -45,7 +45,7 @@
 <section class="hero">
   <div class="hero__glow" aria-hidden="true"></div>
   <div class="container hero__inner">
-    <span class="badge"><span class="badge__dot"></span> Pre-release · Engine feature-complete · v1.0 in preparation</span>
+    <span class="badge"><span class="badge__dot"></span> v1.0.0-alpha released · <code>dotnet tool install -g vouchfx --prerelease</code> · v1.0 GA in preparation</span>
     <h1 class="hero__title">
       End-to-end testing for<br />distributed systems,<br /><span class="grad">authored in YAML.</span>
     </h1>
@@ -56,7 +56,8 @@
       <em>the seams where distributed systems actually break.</em>
     </p>
     <div class="hero__cta">
-      <a class="btn btn--primary" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Explore the repo</a>
+      <a class="btn btn--primary" href="https://www.nuget.org/packages/vouchfx/" target="_blank" rel="noopener noreferrer">Install from NuGet.org</a>
+      <a class="btn btn--ghost" href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Explore the repo</a>
       <a class="btn btn--ghost" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Run a real sample &rarr;</a>
     </div>
 
@@ -304,11 +305,14 @@ alc.<span class="t">Unload</span>();</code></pre>
       <code>Dictionary&lt;string,object&gt;</code>.
     </p>
     <div class="providers">
-      <span class="prov" title="REST/HTTP"><strong>http</strong></span>
-      <span class="prov" title="PostgreSQL, MySQL, SQL Server, MongoDB"><strong>db-assert</strong>: postgres, mysql, sqlserver, mongodb</span>
-      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus"><strong>mq-publish</strong>: kafka, rabbitmq, nats, asb</span>
-      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus"><strong>mq-expect</strong>: kafka, rabbitmq, nats, asb</span>
+      <span class="prov" title="REST, SOAP"><strong>http</strong>: rest, soap</span>
+      <span class="prov" title="PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB"><strong>db-assert</strong>: postgres, mysql, sqlserver, mongodb, dynamodb</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-publish</strong>: kafka, rabbitmq, nats, asb, redis</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-expect</strong>: kafka, rabbitmq, nats, asb, redis</span>
       <span class="prov" title="Redis, Elasticsearch"><strong>cache-assert</strong>: redis, elasticsearch</span>
+      <span class="prov">metrics-assert.prometheus</span>
+      <span class="prov">storage-assert.s3</span>
+      <span class="prov">trace-expect.otlp</span>
       <span class="prov">mail-expect.smtp</span>
       <span class="prov">webhook-listen.http</span>
       <span class="prov">script.csharp</span>
@@ -376,7 +380,7 @@ alc.<span class="t">Unload</span>();</code></pre>
       <li class="timeline__item timeline__item--done">
         <span class="timeline__badge">Delivered</span>
         <h4>Full step set &amp; SDK</h4>
-        <p>All eighteen Core providers across eight families plus engine-owned RETRY; the v1 schema, provider contract and event-wire contract frozen; the Provider SDK packaged with worked examples; runner selection and the polling timeline.</p>
+        <p>All twenty-five Core providers across eleven families plus engine-owned RETRY; the v1 schema, provider contract and event-wire contract frozen; the Provider SDK packable with worked examples (its NuGet package ships at GA); runner selection and the polling timeline.</p>
       </li>
       <li class="timeline__item timeline__item--done">
         <span class="timeline__badge">Delivered</span>
@@ -385,8 +389,8 @@ alc.<span class="t">Unload</span>();</code></pre>
       </li>
       <li class="timeline__item">
         <span class="timeline__badge">In progress</span>
-        <h4>Pilot &amp; v1.0 release</h4>
-        <p>The community provider hub and sample applications are live. Remaining: validation with pilot teams and the first public release to NuGet.org.</p>
+        <h4>Pilot &amp; v1.0 GA</h4>
+        <p>The first public release has shipped: <code>v1.0.0-alpha</code> is live on NuGet.org and GitHub Releases, signed and provenance-attested. Remaining for GA: validation with pilot teams and publication of the Provider SDK package.</p>
       </li>
     </ol>
   </div>

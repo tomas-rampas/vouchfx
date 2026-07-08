@@ -38,15 +38,18 @@ You should see version and runtime information. On Windows, this typically means
 
 ## Installing vouchfx
 
-vouchfx is packaged as a `dotnet` global tool. From the v1.0 release onwards, install and upgrade it straight from NuGet.org:
+vouchfx is packaged as a `dotnet` global tool and is live on NuGet.org as a pre-release. Install and
+upgrade it straight from NuGet.org:
 
 ```bash
-# Install (v1.0 onwards)
-dotnet tool install -g vouchfx
+# Install (pre-release channel — required while the published versions are 1.0.0-alpha.x)
+dotnet tool install --global vouchfx --prerelease
 
 # Upgrade later
-dotnet tool update -g vouchfx
+dotnet tool update --global vouchfx --prerelease
 ```
+
+From the v1.0 GA release onwards the plain commands (without `--prerelease`) work too.
 
 **The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator, whose binaries are resolved from the per-user NuGet package cache (`~/.nuget/packages/`). Any machine that has ever built or restored a .NET Aspire project already has them. On a completely fresh machine, populate the cache once before your first run — either restore any project that references Aspire (for example, clone this repository and run `dotnet restore vouchfx.sln`), or install the Aspire workload:
 
@@ -58,7 +61,7 @@ Without the cached Aspire orchestration packages, the first `vouchfx run` fails 
 
 ## Building vouchfx from source
 
-Until the v1.0 NuGet publish — or if you want the latest unreleased engine — build from source. Clone the repository if you haven't already:
+If you want the latest unreleased engine — or you are contributing — build from source. Clone the repository if you haven't already:
 
 ```bash
 git clone https://github.com/tomas-rampas/vouchfx.git
