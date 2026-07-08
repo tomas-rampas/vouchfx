@@ -220,7 +220,51 @@ public sealed class MetricsAssertPrometheusProvider
             errors.Add("metrics-assert.prometheus: 'target' must not be empty.");
 
         if (string.IsNullOrWhiteSpace(model.Path))
+        {
             errors.Add("metrics-assert.prometheus: 'path' must not be empty.");
+        }
+        else
+        {
+            // SSRF guard, mirrors HttpRestProvider.Validate's rooted-path checks exactly
+            // (M1): path must be a safe rooted relative reference.  Reject absolute URLs,
+            // protocol-relative paths, backslash paths, and paths that do not start with
+            // '/'.
+            //
+            // NOTE: Uri.TryCreate(path, UriKind.Absolute, …) is intentionally absent — on
+            // Linux a leading '/' parses as a file URI (file:///foo), so that check would
+            // reject valid rooted paths on that platform.  The three guards below are
+            // fully platform-independent and together cover every unsafe form:
+            //   • !StartsWith('/')     — rejects scheme-bearing URLs (http://…) and bare
+            //                            relative paths such as "metrics".
+            //   • StartsWith("//", …)  — rejects protocol-relative paths (//evil/…).
+            //   • Contains('\\', …)    — rejects backslash paths.
+            // A scheme-bearing absolute URL always starts with a letter, not '/', so the
+            // first guard catches it without any Uri parsing.  The runtime same-authority
+            // guard in MetricsAssertPrometheus_Helpers.ScrapeAsync remains as defence in
+            // depth (a resolved {placeholder}/${secret:...} value is only known at
+            // execution time and cannot be checked here).
+            var path = model.Path;
+            if (!path.StartsWith('/'))
+            {
+                errors.Add(
+                    "metrics-assert.prometheus: 'path' must be a rooted relative path " +
+                    "(start with '/'); absolute URLs and protocol-relative paths are not " +
+                    "allowed.");
+            }
+            else if (path.StartsWith("//", StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "metrics-assert.prometheus: 'path' must be a rooted relative path " +
+                    "(start with '/'); absolute URLs and protocol-relative paths are not " +
+                    "allowed.");
+            }
+            else if (path.Contains('\\', StringComparison.Ordinal))
+            {
+                errors.Add(
+                    "metrics-assert.prometheus: 'path' must not contain backslashes; " +
+                    "use forward slashes for URL path separators.");
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(model.Metric))
             errors.Add("metrics-assert.prometheus: 'metric' must not be empty.");
@@ -418,6 +462,24 @@ public sealed class MetricsAssertPrometheusProvider
                         else
                         {
                             var actual = matching[0].Value;
+
+                            if ((double.IsNaN(actual) || double.IsInfinity(actual))
+                                && (expectValue.HasValue || expectMin.HasValue || expectMax.HasValue))
+                            {
+                                // A NaN/±Inf sample value defeats every IEEE comparison below: NaN
+                                // compares false to everything (a value/min/max mismatch would
+                                // never be detected) and ±Inf can silently satisfy an unbounded
+                                // min/max — without this guard the step would silently Pass on a
+                                // non-finite value.  System.Text.Json also has no valid JSON token
+                                // for NaN/Infinity, so FormatNumber("R") would embed an invalid
+                                // literal in the Pass observation.  Report a distinct, JSON-safe
+                                // Fail shape instead (never the raw non-finite double).
+                                verdict = Platform.Engine.Abstractions.Verdict.Fail;
+                                observation = "{\"metric\":" + System.Text.Json.JsonSerializer.Serialize(metric) +
+                                    ",\"nonFinite\":" + System.Text.Json.JsonSerializer.Serialize(NonFiniteToken(actual)) + "}";
+                            }
+                            else
+                            {
                             string? mismatch = null;
                             if (expectValue.HasValue)
                             {
@@ -519,6 +581,7 @@ public sealed class MetricsAssertPrometheusProvider
                                     vars[captureStatusKey] = string.Join(",", System.Array.ConvertAll(matchedFlags, f => f ? "1" : "0"));
                                 }
                             }
+                            }
                         }
                     }
                 }
@@ -570,6 +633,17 @@ public sealed class MetricsAssertPrometheusProvider
 
             private static string FormatNumber(double value) =>
                 value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+            // Renders a non-finite double as Prometheus's own textual token (NaN / +Inf /
+            // -Inf), mirroring ParseExpected / ParseExposition's accepted vocabulary.  Used
+            // ONLY for the "nonFinite" Fail observation — never fed to FormatNumber, which
+            // would emit an invalid JSON numeric literal for these values.
+            private static string NonFiniteToken(double value)
+            {
+                if (double.IsNaN(value))
+                    return "NaN";
+                return value > 0 ? "+Inf" : "-Inf";
+            }
 
             private static string SerialiseLabels(System.Collections.Generic.Dictionary<string, string> labels)
             {

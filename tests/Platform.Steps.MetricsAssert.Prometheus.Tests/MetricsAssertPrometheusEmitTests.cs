@@ -18,7 +18,10 @@
 //   10. Full compile-and-run: metric not found → Fail with "found":false.
 //   11. Full compile-and-run: non-200 scrape response → Fail with the status code.
 //   12. Full compile-and-run: value mismatch → Fail with a {"value":{expected,actual}} shape.
-//   13. Full compile-and-run: missing ${secret:env/…} in path → EnvironmentError,
+//   13. Full compile-and-run: a NaN gauge value → Fail with a JSON-safe {"nonFinite":"NaN"}
+//       shape, never a silent Pass (every IEEE comparison against NaN is false) and never
+//       a raw invalid-JSON NaN token in the observation.
+//   14. Full compile-and-run: missing ${secret:env/…} in path → EnvironmentError,
 //       REFERENCE-ONLY observation (§17), no HTTP request ever attempted.
 using System.Net;
 using System.Text;
@@ -316,7 +319,87 @@ public sealed class MetricsAssertPrometheusEmitTests
         }
     }
 
-    // ── 13. Compile round-trip: EnvironmentError via SECRET resolution (no HTTP) ──
+    // ── 13. Full compile-and-run: NaN gauge → Fail, never a silent Pass ─────────
+
+    /// <summary>
+    /// A matched sample whose value is <c>NaN</c> must Fail, not silently Pass.  Every
+    /// IEEE double comparison against NaN evaluates to <see langword="false"/>, so
+    /// without an explicit non-finite guard <c>actual &lt; expectMin</c> /
+    /// <c>actual &gt; expectMax</c> would both be false and an exact-value check would
+    /// never detect the "mismatch" — the step would Pass on a value that fails every
+    /// declared assertion.  The Fail observation must also be valid JSON: NaN has no
+    /// JSON numeric representation, so the shape carries a string token
+    /// (<c>"nonFinite":"NaN"</c>), never a raw <c>NaN</c> literal.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_NonFiniteValue_NaN_ReturnsFail()
+    {
+        const string body = "orders_total NaN\n";
+
+        var (prefix, serveTask, listener) = StartOneShotServer(18526, body);
+        try
+        {
+            var model = GetModel(value: "1");
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Service("sut")] = prefix,
+            };
+
+            var outcome = await RunStepAsync(model, "met-nan", vars);
+            await serveTask;
+
+            Assert.Equal(Verdict.Fail, outcome.Verdict);
+            Assert.NotNull(outcome.Observation);
+            Assert.Contains("\"nonFinite\":\"NaN\"", outcome.Observation!, StringComparison.Ordinal);
+
+            // The observation must be valid JSON (no raw NaN token leaked into it).
+            using var doc = System.Text.Json.JsonDocument.Parse(outcome.Observation!);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    /// <summary>
+    /// A matched sample whose value is <c>+Inf</c> against an <c>expect.max</c> bound
+    /// must also Fail (an unbounded value must not silently satisfy a finite upper
+    /// bound), reported via the same JSON-safe <c>nonFinite</c> shape.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_NonFiniteValue_PositiveInfinity_ReturnsFail()
+    {
+        const string body = "orders_total +Inf\n";
+
+        var (prefix, serveTask, listener) = StartOneShotServer(18527, body);
+        try
+        {
+            var model = GetModel(value: null, min: null, max: "100");
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Service("sut")] = prefix,
+            };
+
+            var outcome = await RunStepAsync(model, "met-posinf", vars);
+            await serveTask;
+
+            Assert.Equal(Verdict.Fail, outcome.Verdict);
+            Assert.NotNull(outcome.Observation);
+
+            // Parse rather than substring-match: System.Text.Json's default (safe)
+            // encoder escapes the plus sign as a \uXXXX sequence, so the raw
+            // serialised text does not contain a literal "+Inf" substring even
+            // though it is valid, correctly-round-tripping JSON for the string "+Inf".
+            using var doc = System.Text.Json.JsonDocument.Parse(outcome.Observation!);
+            Assert.Equal("+Inf", doc.RootElement.GetProperty("nonFinite").GetString());
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    // ── 14. Compile round-trip: EnvironmentError via SECRET resolution (no HTTP) ──
 
     [Fact]
     public async Task Emit_CompileAndRun_MissingSecretInPath_ReturnsEnvironmentError_ReferenceOnly()

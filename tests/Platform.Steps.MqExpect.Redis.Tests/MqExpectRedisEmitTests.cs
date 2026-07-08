@@ -12,6 +12,9 @@
 //   8.  Emit: RequiredHelpers includes Substitute_Helpers and Secret_Helpers sources (§17 parity).
 //   9.  Full compile-and-run (no docker): missing ${secret:env/…} in payloadContains →
 //       EnvironmentError, observation is REFERENCE-ONLY (§17), with NO connection ever opened.
+//   10. Emit: RequiredHelpers bounds the XRANGE scan with an explicit count (mirrors
+//       mq-expect.nats's MaxMsgs=10000 cap) — the emitted CSX must never call
+//       StreamRangeAsync unbounded.
 using Platform.Engine.Abstractions;
 using Platform.Engine.Abstractions.Secrets;
 using Platform.Engine.Compilation;
@@ -210,6 +213,25 @@ public sealed class MqExpectRedisEmitTests
         {
             Environment.SetEnvironmentVariable(envName, null);
         }
+    }
+
+    // ── 10. RequiredHelpers bounds the XRANGE scan with an explicit count ────────
+
+    /// <summary>
+    /// The emitted helper must call <c>StreamRangeAsync</c> with an explicit
+    /// <c>count</c> bound (mirrors mq-expect.nats's <c>MaxMsgs=10000</c> cap) — an
+    /// unbounded <c>StreamRangeAsync(stream, "-", "+")</c> call would let a
+    /// sufficiently large retained stream make every attempt scan unboundedly.
+    /// </summary>
+    [Fact]
+    public void Emit_RequiredHelpers_BoundsStreamRangeScanWithExplicitCount()
+    {
+        var fragment = _provider.Emit(GetModel(), new StubCompileContext("exp-step"));
+
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("StreamRangeAsync(stream, \"-\", \"+\", 10000)", StringComparison.Ordinal));
+        Assert.DoesNotContain(fragment.RequiredHelpers, h =>
+            h.Contains("StreamRangeAsync(stream, \"-\", \"+\")", StringComparison.Ordinal));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -280,7 +280,7 @@ Set `type: mq-expect.rabbitmq` to use this step.
 
 ### `mq-expect.redis`
 
-Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + on every attempt. IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. Use verifyMode: RETRY to poll until the message arrives.
+Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.redis` to use this step.
 

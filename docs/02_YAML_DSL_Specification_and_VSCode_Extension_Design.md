@@ -356,6 +356,8 @@ The `mq-publish.kafka` provider auto-registers the supplied inline schema under 
 
 Publishes one UTF-8 message to a Redis Stream via `XADD`, carried under the family's canonical `payload` stream field. Unlike `mq-publish.nats` (subject + optional derived JetStream stream name), a Redis Stream key IS the addressing unit — there is no separate "subject" concept and no stream-name derivation: the author names the stream directly, and `XADD` creates it automatically when it does not yet exist. A Pass verdict confirms the entry was appended to the stream; it does not confirm that a consumer has read it — verify with a following `mq-expect.redis` step.
 
+**The `payload`-field convention (fixed in v1, not configurable).** The message is written as a single stream field literally named `payload` — this is the field name `mq-expect.redis` reads back. A field name mismatch is only possible if you hand-write a different producer against the same stream; a configurable field name is a possible additive v1.x extension.
+
 | Field | Required | Meaning |
 |---|---|---|
 | target | Yes | Logical name of the redis dependency to publish to, as declared under environment.dependencies. |
@@ -438,14 +440,18 @@ Example (Avro expect with RETRY):
 
 #### `mq-expect.redis` — step fields
 
-Asserts that a message matching the declared criteria is present on a Redis Stream. The step scans the ENTIRE stream via `XRANGE <stream> - +` on every attempt (mirroring `mq-expect.nats`'s retained-log rationale), so the check is idempotent under `verifyMode: RETRY`. As with `mq-expect.nats`, do NOT share a single redis dependency across scenarios that assert on the same stream — entries from a prior run will produce a false Pass; use distinct stream keys per scenario.
+Asserts that a message matching the declared criteria is present on a Redis Stream. The step scans the stream via `XRANGE <stream> - + COUNT 10000` on every attempt (mirroring `mq-expect.nats`'s retained-log rationale and its `MaxMsgs=10000` bound exactly), so the check is idempotent under `verifyMode: RETRY`. As with `mq-expect.nats`, do NOT share a single redis dependency across scenarios that assert on the same stream — entries from a prior run will produce a false Pass; use distinct stream keys per scenario.
+
+**Scan bound.** If a stream retains more than 10 000 entries, only the first 10 000 (oldest first, from the start of the stream) are inspected on a given attempt — an entry beyond that offset is not found. MAXLEN-trim the stream, or keep the asserted entry within the first 10 000, if this matters for your scenario.
+
+**The `payload`-field convention (fixed in v1, not configurable).** Only entries carrying a field literally named `payload` are matched — the exact convention `mq-publish.redis` writes. An entry produced under any other field name is silently excluded from matching; on a Fail, the observation reports `scanned` (total entries inspected) and `lackingPayloadField` (how many of those lacked the field), so a SUT that writes under a different field name has a concrete diagnostic rather than a bare `matched:false`.
 
 | Field | Required | Meaning |
 |---|---|---|
 | target | Yes | Logical name of the redis dependency to consume from, as declared under environment.dependencies. |
 | stream | Yes | The Redis Stream key to scan via XRANGE. |
 | match | Yes | An assertion-criteria block (see below). At least one criterion must be declared. |
-| match.payloadContains | No | Optional substring that the UTF-8 message payload must contain (ordinal). May contain {placeholder} and ${secret:...} tokens. |
+| match.payloadContains | No | Optional substring that the UTF-8 message payload must contain (ordinal). Only evaluated against entries carrying the `payload` field. May contain {placeholder} and ${secret:...} tokens. |
 | match.json | No | Optional map of JSONPath expressions to their expected string values. The message payload is parsed as JSON; each JSONPath must select a node whose stringified value equals the expected value. Each expected value may contain {placeholder} and ${secret:...} tokens. |
 
 Example (with RETRY):

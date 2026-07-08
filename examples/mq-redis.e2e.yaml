@@ -9,6 +9,12 @@ metadata:
     Redis Streams have no separate "subject" concept: the stream key IS the
     addressing unit, so there is no stream-name derivation to reason about (unlike
     the mq-*.nats / mq-*.kafka families).
+    IMPORTANT — the fixed 'payload'-field convention: mq-expect.redis only matches
+    stream entries that carry a field literally named 'payload' (the field
+    mq-publish.redis itself writes).  A real SUT that XADDs its own entries under a
+    different field name will never match — see the trigger-order-event step below
+    for why this example publishes the asserted entry explicitly rather than relying
+    on the placeholder SUT image to produce it.
 
 environment:
   services:
@@ -27,9 +33,16 @@ steps:
   - id: trigger-order-event
     type: http.rest
     description: >
-      Trigger the system under test to publish an order event to the Redis Stream.
-      The SUT should XADD to the 'orders-created' stream via the Redis connection
-      it receives at startup.
+      Drive the business transaction on the system under test (here, the
+      traefik/whoami placeholder, which does not itself talk to Redis — replace it
+      with your real SUT).  In a REAL integration, your SUT's order-creation
+      handler is the thing that would XADD an event to Redis — and for
+      mq-expect.redis to see it, your SUT's own XADD MUST write the payload under a
+      field literally named 'payload' (the fixed v1 convention this family reads;
+      see the suite description above).  This example does not depend on the
+      placeholder image doing that, so the next step (publish-order-event)
+      publishes the asserted entry explicitly via mq-publish.redis, simulating what
+      your real SUT's write would look like once it follows the convention.
     target: app
     method: POST
     path: /orders
@@ -40,11 +53,13 @@ steps:
   - id: publish-order-event
     type: mq-publish.redis
     description: >
-      Direct publish step: XADDs an order-created event to the Redis Stream
-      'orders-created', carried under the family's canonical 'payload' stream field.
-      NOTE: a Pass verdict confirms the entry was appended to the stream; it does
-      NOT confirm that a consumer has read it.  Verify consumption with a following
-      mq-expect.redis step (see assert-order-event).
+      Simulates the SUT's order-created event landing on the Redis Stream
+      'orders-created', carried under the family's canonical 'payload' stream
+      field — the shape a real SUT's own XADD call must match for mq-expect.redis
+      to recognise it (see the suite description above).  NOTE: a Pass verdict
+      confirms the entry was appended to the stream; it does NOT confirm that a
+      consumer has read it.  Verify consumption with a following mq-expect.redis
+      step (see assert-order-event).
     target: cache
     stream: orders-created
     payload: '{"event":"order-created","orderId":"ord-001","customerId":"cust-1"}'
@@ -55,8 +70,9 @@ steps:
       Assert that a message matching the criteria is present on the
       'orders-created' stream.  The criteria are AND-conjunctive: the payload must
       contain the substring 'order-created' AND the JSONPath $.orderId must select
-      'ord-001'.  The step scans the ENTIRE stream via XRANGE <stream> - + on every
-      RETRY attempt, so the check is idempotent.
+      'ord-001'.  The step scans the stream via XRANGE <stream> - + COUNT 10000 on
+      every RETRY attempt (only entries carrying the fixed 'payload' field are
+      matched — see the suite description above), so the check is idempotent.
       verifyMode: RETRY polls until the message is found or the timeout expires.
 
       IMPORTANT — shared-stream caution:

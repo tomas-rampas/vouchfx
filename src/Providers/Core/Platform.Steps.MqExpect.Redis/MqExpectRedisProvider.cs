@@ -18,11 +18,28 @@
 // writes Inconclusive.
 //
 // Shared-stream caution (mirrors mq-expect.nats's FIX M3 constraint):
-//   mq-expect.redis scans the WHOLE retained stream on every attempt (XRANGE - +,
-//   unbounded by default — no MAXLEN trimming is applied by this provider).  Do NOT
-//   share a single redis dependency across scenarios that assert on the same stream
-//   key: entries from prior runs will produce a false Pass.  Use separate dependency
-//   declarations per scenario, or distinct stream names.
+//   mq-expect.redis scans the retained stream on every attempt (XRANGE - + COUNT 10000,
+//   from the start — no MAXLEN trimming is applied by this provider).  Do NOT share a
+//   single redis dependency across scenarios that assert on the same stream key: entries
+//   from prior runs will produce a false Pass.  Use separate dependency declarations per
+//   scenario, or distinct stream names.
+//
+// Scan bound (mirrors mq-expect.nats's MaxMsgs=10000 N7 documented bound exactly):
+//   COUNT 10000 caps the single-attempt scan.  If a stream retains more than 10 000
+//   entries, only the first 10 000 (starting from "-", the oldest) are inspected — a
+//   matching entry beyond that offset will not be found.  Authors who need a longer
+//   retained log should MAXLEN-trim the stream (out of this provider's scope in v1) or
+//   restructure the scenario so the asserted entry stays within the first 10 000.
+//
+// Payload-field convention (v1 fixed, not configurable):
+//   Only entries carrying a field literally named "payload" are matched — the exact
+//   convention mq-publish.redis writes.  An entry a SUT (or another producer) wrote under
+//   any other field name is silently excluded from matching (it is not malformed, just
+//   not addressed by this convention); a Fail observation reports how many scanned
+//   entries lacked the field ("lackingPayloadField") alongside the total scanned count,
+//   so an author whose SUT uses a different field name has a concrete signal rather than
+//   a bare "matched:false".  A configurable field name is a possible additive v1.x
+//   extension (new optional field, never a breaking change to this one).
 //
 // Substitution + secret model (canonical M2 pattern):
 //   The payloadContains template and json expected VALUES are emitted as RAW template
@@ -73,7 +90,7 @@ public sealed class MqExpectRedisProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + on every attempt.  IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
+          "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "stream", "match"],
           "properties": {
@@ -242,7 +259,12 @@ public sealed class MqExpectRedisProvider
         "{\n" +
         "    /// <summary>\n" +
         "    /// Performs ONE idempotent scan over a Redis Stream via XRANGE &lt;stream&gt; - +\n" +
-        "    /// and writes a typed StepOutcome into Vars.\n" +
+        "    /// COUNT 10000 (mirrors mq-expect.nats's MaxMsgs=10000 bound: a stream retaining\n" +
+        "    /// more than 10000 entries only has its first 10000, oldest-first, inspected) and\n" +
+        "    /// writes a typed StepOutcome into Vars.  Only entries carrying a field literally\n" +
+        "    /// named \"payload\" are matched (the convention mq-publish.redis writes); entries\n" +
+        "    /// lacking it are counted and reported on a Fail observation, never silently\n" +
+        "    /// treated as a match.\n" +
         "    /// Missing connection string = EnvironmentError (§12.1).\n" +
         "    /// A matching message = Pass; no match this attempt = Fail (the RETRY runner\n" +
         "    /// retries on non-Pass and converts a sustained Fail to Inconclusive on\n" +
@@ -298,13 +320,17 @@ public sealed class MqExpectRedisProvider
         "            }\n" +
         "            mux = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr).ConfigureAwait(false);\n" +
         "            var db = mux.GetDatabase();\n" +
-        "            // XRANGE <stream> - + — scan the ENTIRE retained stream on every attempt (the\n" +
-        "            // RETRY runner gets a clean slate each time, mirroring mq-expect.nats's\n" +
-        "            // DeliverPolicy.All rationale).  A stream that does not yet exist returns an\n" +
-        "            // empty array (no exception) — the first attempt before any publish is a\n" +
-        "            // clean Fail, not an EnvironmentError.\n" +
-        "            var entries = await db.StreamRangeAsync(stream, \"-\", \"+\").ConfigureAwait(false);\n" +
+        "            // XRANGE <stream> - + COUNT 10000 — scan the retained stream from the start on\n" +
+        "            // every attempt (the RETRY runner gets a clean slate each time, mirroring\n" +
+        "            // mq-expect.nats's DeliverPolicy.All rationale).  The COUNT bound mirrors\n" +
+        "            // mq-expect.nats's MaxMsgs=10000 (N7 documented bound): a stream retaining more\n" +
+        "            // than 10000 entries only has its first 10000 (oldest first) inspected — a\n" +
+        "            // matching entry beyond that offset will not be found this attempt.  A stream\n" +
+        "            // that does not yet exist returns an empty array (no exception) — the first\n" +
+        "            // attempt before any publish is a clean Fail, not an EnvironmentError.\n" +
+        "            var entries = await db.StreamRangeAsync(stream, \"-\", \"+\", 10000).ConfigureAwait(false);\n" +
         "            int scanned = entries.Length;\n" +
+        "            int lackingPayloadField = 0;\n" +
         "            bool matched = false;\n" +
         "            for (int ei = 0; ei < entries.Length; ei++)\n" +
         "            {\n" +
@@ -319,7 +345,14 @@ public sealed class MqExpectRedisProvider
         "                    }\n" +
         "                }\n" +
         "                if (msgPayload is null)\n" +
+        "                {\n" +
+        "                    // v1 fixed convention: only entries carrying a field literally named\n" +
+        "                    // \"payload\" are addressable by this provider.  Track how many scanned\n" +
+        "                    // entries lacked it so a SUT writing a different field name has a\n" +
+        "                    // concrete diagnostic signal on Fail, instead of a bare \"matched:false\".\n" +
+        "                    lackingPayloadField++;\n" +
         "                    continue;\n" +
+        "                }\n" +
         "                if (MatchesPayload(msgPayload, payloadContains, jsonPaths, jsonValues))\n" +
         "                {\n" +
         "                    matched = true;\n" +
@@ -338,7 +371,9 @@ public sealed class MqExpectRedisProvider
         "                // and converts a sustained Fail to Inconclusive on timeout — never here.\n" +
         "                verdict = Platform.Engine.Abstractions.Verdict.Fail;\n" +
         "                observation = \"{\\\"matched\\\":false,\\\"scanned\\\":\" +\n" +
-        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                    \",\\\"lackingPayloadField\\\":\" +\n" +
+        "                    lackingPayloadField.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "            }\n" +
         "        }\n" +
         "        catch (Platform.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +

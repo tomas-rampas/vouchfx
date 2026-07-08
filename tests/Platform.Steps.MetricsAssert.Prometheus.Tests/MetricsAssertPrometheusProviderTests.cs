@@ -16,6 +16,9 @@
 //   13. Registry: SchemaFragment contains "metric".
 //   14. Resources: yields an http ResourceRequirement whose Name equals model.Target.
 //   15. CompileReferenceAssemblies: contains HttpClient + JsonPath.Net assemblies.
+//   16. Validate: 'path' SSRF guard (mirrors HttpRestProvider.Validate's rooted-path
+//       checks exactly) — an absolute URL, a protocol-relative path, and a backslash
+//       path are all rejected; a rooted relative path is valid.
 //
 // All tests are non-docker.  No topology and no HTTP server are started.
 using Platform.Sdk;
@@ -278,5 +281,71 @@ public sealed class MetricsAssertPrometheusProviderTests
 
         Assert.Contains(refs, a => a.GetName().Name == "System.Net.Http");
         Assert.Contains(refs, a => a.GetName().Name == "JsonPath.Net");
+    }
+
+    // ── 16. Validate: 'path' SSRF guard (mirrors HttpRestProvider.Validate) ──
+
+    [Fact]
+    public void Validate_PathIsAbsoluteUrl_IsInvalid()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "sut", "http://evil.example/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
+    }
+
+    [Fact]
+    public void Validate_PathIsBareRelative_IsInvalid()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "sut", "metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
+    }
+
+    [Fact]
+    public void Validate_PathIsProtocolRelative_IsInvalid()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "sut", "//evil.example/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
+    }
+
+    [Fact]
+    public void Validate_PathContainsBackslash_IsInvalid()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "sut", "/metrics\\..\\admin", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("backslash"));
+    }
+
+    [Fact]
+    public void Validate_PathIsRootedRelative_IsValid()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "sut", "/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, new StubProjectContext());
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 }
