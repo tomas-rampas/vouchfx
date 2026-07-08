@@ -898,12 +898,20 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job performs no checkout, so gh cannot infer the repository
+          # from a .git directory — GH_REPO supplies it explicitly (first real
+          # tag run failed here with "fatal: not a git repository").
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$TAG" \
-            --title "vouchfx $TAG" \
-            --generate-notes \
-            --draft \
-            2>/dev/null || echo "Release $TAG already exists — skipping create"
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping create"
+          else
+            gh release create "$TAG" \
+              --title "vouchfx $TAG" \
+              --generate-notes \
+              --draft
+          fi
 
       # Attach all artifacts to the release.  --clobber replaces any file
       # already uploaded (safe for re-runs or partial re-runs).
@@ -912,6 +920,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           mapfile -d '' files < <(find release-upload/ -type f -print0)
