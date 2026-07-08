@@ -270,7 +270,17 @@ public sealed class StubTopology : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                var info = OrchestrationErrorClassifier.Classify(ex, imageRef: webImage, resourceName: "web");
+                // The generic health-gate wrapper message ("...failed to start") is identical
+                // whether the container never got created (bad image) or was created and then
+                // crashed/never passed its health check — DCP does not surface pull-failure text
+                // anywhere in the exception message OR the resource's log backlog (verified: a
+                // pull failure yields zero log lines and an empty 'container.id' property; see
+                // ResourceCreationEvidence).  Supply that structural signal so a bad image
+                // classifies as ImagePull even on this message shape, without weakening genuine
+                // HealthGate classification when the container legitimately started.
+                var containerNeverCreated = ResourceCreationEvidence.ContainerNeverCreated(app, "web");
+                var info = OrchestrationErrorClassifier.Classify(
+                    ex, imageRef: webImage, resourceName: "web", containerNeverCreated: containerNeverCreated);
                 throw new OrchestrationException(info, ex);
             }
 

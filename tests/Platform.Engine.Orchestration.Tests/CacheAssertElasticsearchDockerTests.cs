@@ -159,9 +159,14 @@ public sealed class CacheAssertElasticsearchDockerTests
             doc2.EnsureSuccessStatusCode();
 
             // Force a refresh so the documents are immediately visible to _search.
+            // IMPORTANT: _refresh does not accept a request body at all — Elasticsearch
+            // 8.17.3 rejects ANY body (even "{}") with
+            // illegal_argument_exception: "request [POST /{index}/_refresh] does not
+            // support having a body" (400), verified directly against a live container.
+            // Passing null content sends no body and no Content-Type header.
             var refresh = await http.PostAsync(
                 $"{baseUrl}/{IndexName}/_refresh",
-                new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json"))
+                content: null)
                 .ConfigureAwait(false);
             _output.WriteLine($"Refresh: {(int)refresh.StatusCode}");
             refresh.EnsureSuccessStatusCode();

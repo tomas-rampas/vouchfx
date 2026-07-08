@@ -114,10 +114,7 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
 
         await SendSmtpEmailAsync(smtpHost, smtpPort, from, to, subject, body);
 
-        // Give Mailpit a brief moment to process the received message.
-        await Task.Delay(500);
-
-        // Build a mail-expect.smtp scenario and run it.
+        // Build a mail-expect.smtp scenario (compile once — §5 memory model).
         var provider = new MailExpectSmtpProvider();
         var model = new MailExpectSmtpModel(
             Target: DepName,
@@ -143,20 +140,40 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
         var compiled = Platform.Engine.Compilation.RoslynScriptCompiler.CompileOnce(
             csx, additionalReferencePaths: refPaths);
 
-        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            [VarKeys.Connection(DepName)] = _httpBaseUrl,
-        };
-        var globals = new ScriptGlobalVariables(vars);
-
-        await Platform.Engine.Compilation.RoslynScriptCompiler
-            .RunIsolatedAsync(compiled, globals);
-
         var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId("mail-check"));
-        Assert.True(vars.ContainsKey(outcomeKey),
-            $"Expected outcome key '{outcomeKey}'. Keys: [{string.Join(", ", vars.Keys)}]");
 
-        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        // Poll for the message to become visible via Mailpit's HTTP API, mirroring how a
+        // real suite would run this step under verifyMode: RETRY (this provider is
+        // documented as a RETRY consumer whose emitted helper performs a single idempotent
+        // scan and never writes Inconclusive itself — the engine-owned RetryRunner is what
+        // re-invokes it). A fixed post-send delay here was flaky under CI's slower runners:
+        // a single scan sometimes ran before Mailpit had indexed the just-sent message, and
+        // there was no retry to recover — compile once, then re-invoke RunIsolatedAsync (safe
+        // to call repeatedly against the same CompiledScript, per its own doc) until Pass or
+        // a generous bounded timeout elapses.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        StepOutcome outcome;
+        while (true)
+        {
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Connection(DepName)] = _httpBaseUrl,
+            };
+            var globals = new ScriptGlobalVariables(vars);
+
+            await Platform.Engine.Compilation.RoslynScriptCompiler
+                .RunIsolatedAsync(compiled, globals);
+
+            Assert.True(vars.ContainsKey(outcomeKey),
+                $"Expected outcome key '{outcomeKey}'. Keys: [{string.Join(", ", vars.Keys)}]");
+            outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+
+            if (outcome.Verdict == Verdict.Pass || DateTime.UtcNow >= deadline)
+                break;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(300));
+        }
+
         Assert.Equal(Verdict.Pass, outcome.Verdict);
     }
 

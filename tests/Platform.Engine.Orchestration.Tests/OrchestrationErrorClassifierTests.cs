@@ -404,6 +404,120 @@ public sealed class OrchestrationErrorClassifierTests
     }
 
     // -----------------------------------------------------------------------
+    // Classify — containerNeverCreated structural signal (S12 classifier fix)
+    //
+    // Aspire's health-gate wrapper exception ("Stopped waiting for resource 'X' to
+    // become healthy because it failed to start.") is emitted verbatim for BOTH a
+    // bad-image pull failure and a genuine health-check failure — DCP surfaces no
+    // pull-specific text the message-only heuristics above can key on. The
+    // containerNeverCreated parameter carries an independent, non-textual signal
+    // (the resource's DCP-managed container was never actually created) so the two
+    // cases can still be told apart. See ResourceCreationEvidence for how a caller
+    // derives this signal from a live Aspire DistributedApplication.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Classify_HealthGateMessage_ContainerNeverCreatedWithImageRef_ReturnsImagePull()
+    {
+        // Arrange — the exact generic wrapper message Aspire emits for BOTH shapes.
+        var ex = new InvalidOperationException(
+            "Stopped waiting for resource 'web' to become healthy because it failed to start.");
+
+        // Act — containerNeverCreated=true + a known imageRef: the resource can never
+        // have actually run, so this must be ImagePull, not HealthGate.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "nonexistent.invalid/vouchfx-does-not-exist:latest",
+            resourceName: "web",
+            containerNeverCreated: true);
+
+        // Assert
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("nonexistent.invalid", info.RegistryHost);
+        Assert.Equal("anonymous", info.AuthStatus);
+    }
+
+    [Fact]
+    public void Classify_HealthGateMessage_ContainerNeverCreatedFalse_StillReturnsHealthGate()
+    {
+        // Arrange — same ambiguous message, but the caller has POSITIVE evidence the
+        // container WAS created (it just never became healthy). Must NOT be reclassified.
+        var ex = new InvalidOperationException(
+            "Stopped waiting for resource 'web' to become healthy because it failed to start.");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "traefik/whoami:latest",
+            resourceName: "web",
+            containerNeverCreated: false);
+
+        // Assert — the default/legacy behaviour is preserved: genuine HealthGate
+        // classification is NOT weakened by the new parameter.
+        Assert.Equal(OrchestrationErrorKind.HealthGate, info.Kind);
+    }
+
+    [Fact]
+    public void Classify_HealthGateMessage_ContainerNeverCreatedWithoutImageRef_DoesNotReclassify()
+    {
+        // Arrange — containerNeverCreated=true, but no imageRef is known (e.g. a managed
+        // dependency gate, or a project-based service with no container image at all).
+        // Without a known image reference this can never be an image-pull failure, so the
+        // signal must be ignored and the message heuristics must decide as before.
+        var ex = new InvalidOperationException(
+            "Stopped waiting for resource 'appdb' to become healthy because it failed to start.");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: null,
+            resourceName: "appdb",
+            containerNeverCreated: true);
+
+        // Assert
+        Assert.Equal(OrchestrationErrorKind.HealthGate, info.Kind);
+    }
+
+    [Fact]
+    public void Classify_DefaultContainerNeverCreatedParameter_PreservesExistingCallSites()
+    {
+        // Arrange — every pre-existing call site omits the new parameter; it must default
+        // to false and behave exactly as it did before this parameter was introduced.
+        var ex = new InvalidOperationException(
+            "Stopped waiting for resource 'web' to become healthy because it failed to start.");
+
+        // Act — no containerNeverCreated argument supplied.
+        var info = OrchestrationErrorClassifier.Classify(
+            ex, imageRef: "nonexistent.invalid/vouchfx-does-not-exist:latest", resourceName: "web");
+
+        // Assert — unchanged legacy behaviour: ambiguous message + no structural evidence
+        // supplied → HealthGate (this is the exact shape the S12 regression exposed).
+        Assert.Equal(OrchestrationErrorKind.HealthGate, info.Kind);
+    }
+
+    [Fact]
+    public void Classify_ContainerNeverCreated_DoesNotOverrideMoreSpecificPullClassification()
+    {
+        // Arrange — the message ALREADY carries specific, more-informative pull-failure
+        // text (a 401). The structural signal must not clobber the richer AuthStatus the
+        // message-based heuristics already derived.
+        var ex = new InvalidOperationException(
+            "failed to pull image registry.example.com/x: 401 Unauthorized");
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(
+            ex,
+            imageRef: "registry.example.com/x:1",
+            resourceName: "web",
+            containerNeverCreated: true);
+
+        // Assert — still ImagePull, and still the MORE SPECIFIC "unauthenticated" (not the
+        // generic "anonymous" the structural-signal branch alone would have produced).
+        Assert.Equal(OrchestrationErrorKind.ImagePull, info.Kind);
+        Assert.Equal("unauthenticated", info.AuthStatus);
+    }
+
+    // -----------------------------------------------------------------------
     // Classify — Discovery
     // -----------------------------------------------------------------------
 
