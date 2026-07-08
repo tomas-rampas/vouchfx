@@ -1,0 +1,57 @@
+metadata:
+  name: db-assert-dynamodb-example
+  description: >
+    Example showing how to assert against a DynamoDB item using a GetItem call.
+    The engine provisions a real dynamodb-local container for the "orders-db"
+    dependency; db-assert.dynamodb parses the "key" field as a flat JSON template
+    (each attribute becomes a DynamoDB S/N/BOOL attribute at execution time) and
+    compares the returned item's top-level attributes against expect.item.
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+  dependencies:
+    orders-db: { type: dynamodb }
+
+variables:
+  orderId: "1001"
+
+steps:
+  - id: trigger-order
+    type: http.rest
+    description: Drive the business transaction that (in a real SUT) writes the item.
+    target: app
+    method: POST
+    path: /orders
+    body: '{"orderId":"1001","customerId":"cust-1","amount":49.99}'
+    expect:
+      status: 200
+
+  - id: assert-order-written
+    type: db-assert.dynamodb
+    description: >
+      Assert the order item exists with the expected status. RETRY accommodates the
+      write lagging the HTTP response that triggered it (post-stimulus convergence,
+      the same idiom db-assert.postgres/mongodb already use).
+    target: orders-db
+    table: Orders
+    key: '{"orderId":"{orderId}"}'
+    verifyMode: RETRY
+    timeout: 15s
+    expect:
+      exists: true
+      item:
+        status: "SHIPPED"
+
+  - id: assert-cancelled-order-absent
+    type: db-assert.dynamodb
+    description: >
+      Assert a cancelled order was never written — the exists:false form of the
+      same GetItem call.
+    target: orders-db
+    table: Orders
+    key: '{"orderId":"cancelled-999"}'
+    expect:
+      exists: false

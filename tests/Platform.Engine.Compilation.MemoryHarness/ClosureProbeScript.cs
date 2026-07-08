@@ -104,6 +104,15 @@ public static class ClosureProbeScript
     ///     in <c>finally</c>.  No <c>Open()</c> — the host does not exist.  Gated to
     ///     <c>iter % 50 == 0</c> (same cadence as the Kafka native-handle build).
     ///   </description></item>
+    ///   <item><description>
+    ///     <b>AWSSDK.DynamoDBv2 / AWSSDK.S3 real client build + Dispose (Phase B)</b> —
+    ///     builds a REAL <c>AmazonDynamoDBClient</c> and a REAL <c>AmazonS3Client</c>
+    ///     (each exercises the AWS SDK's static initialisers and credential/config
+    ///     resolution path the db-assert.dynamodb / storage-assert.s3 providers' emitted
+    ///     helpers rely on), pointed at a deliberately unreachable local port so no
+    ///     network I/O completes, then <c>Dispose()</c>s each in <c>finally</c>.  Gated to
+    ///     <c>iter % 50 == 0</c> (same cadence as the other native/SDK-handle builds).
+    ///   </description></item>
     /// </list>
     /// </summary>
     /// <remarks>
@@ -343,6 +352,54 @@ public static class ClosureProbeScript
                 {
                     try { await asbClient.DisposeAsync().ConfigureAwait(false); } catch { }
                 }
+            }
+
+            // ── Amazon.DynamoDBv2.AmazonDynamoDBClient build + Dispose ──────────
+            // Build a REAL AmazonDynamoDBClient (exercises AWS SDK static initialisers and
+            // the credential/config resolution path db-assert.dynamodb's emitted helper
+            // relies on). ServiceURL points at a deliberately unreachable local port so no
+            // network I/O completes; only the handle allocation and dispose discipline are
+            // exercised. AmazonDynamoDBClient : IDisposable — explicit Dispose() in finally
+            // ('using var' is prohibited in CSX bodies, §13.3.1).
+            Amazon.DynamoDBv2.AmazonDynamoDBClient? dynamoClient = null;
+            try
+            {
+                var dynamoConfig = new Amazon.DynamoDBv2.AmazonDynamoDBConfig
+                {
+                    ServiceURL = "http://127.0.0.1:1",
+                    MaxErrorRetry = 0,
+                };
+                dynamoClient = new Amazon.DynamoDBv2.AmazonDynamoDBClient(
+                    new Amazon.Runtime.BasicAWSCredentials("probe", "probe"), dynamoConfig);
+                Vars["dynamo_client_built"] = 1L;
+            }
+            finally
+            {
+                dynamoClient?.Dispose();
+            }
+
+            // ── Amazon.S3.AmazonS3Client build + Dispose ────────────────────────
+            // Build a REAL AmazonS3Client (exercises AWS SDK static initialisers and the
+            // credential/config resolution path storage-assert.s3's emitted helper relies
+            // on). ServiceURL points at a deliberately unreachable local port so no network
+            // I/O completes; only the handle allocation and dispose discipline are exercised.
+            // AmazonS3Client : IDisposable — explicit Dispose() in finally.
+            Amazon.S3.AmazonS3Client? s3Client = null;
+            try
+            {
+                var s3Config = new Amazon.S3.AmazonS3Config
+                {
+                    ServiceURL = "http://127.0.0.1:1",
+                    ForcePathStyle = true,
+                    MaxErrorRetry = 0,
+                };
+                s3Client = new Amazon.S3.AmazonS3Client(
+                    new Amazon.Runtime.BasicAWSCredentials("probe", "probe"), s3Config);
+                Vars["s3_client_built"] = 1L;
+            }
+            finally
+            {
+                s3Client?.Dispose();
             }
         }
 

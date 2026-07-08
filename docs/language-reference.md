@@ -26,10 +26,11 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 
 ## Step types
 
-Registered step types (21):
+Registered step types (23):
 
 - [`cache-assert.elasticsearch`](#cache-assertelasticsearch)
 - [`cache-assert.redis`](#cache-assertredis)
+- [`db-assert.dynamodb`](#db-assertdynamodb)
 - [`db-assert.mongodb`](#db-assertmongodb)
 - [`db-assert.mysql`](#db-assertmysql)
 - [`db-assert.postgres`](#db-assertpostgres)
@@ -48,6 +49,7 @@ Registered step types (21):
 - [`mq-publish.rabbitmq`](#mq-publishrabbitmq)
 - [`mq-publish.redis`](#mq-publishredis)
 - [`script.csharp`](#scriptcsharp)
+- [`storage-assert.s3`](#storage-asserts3)
 - [`webhook-listen.http`](#webhook-listenhttp)
 
 ### `cache-assert.elasticsearch`
@@ -86,6 +88,19 @@ Set `type: cache-assert.redis` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `field` | `string` | The hash field name for the hget operation (required for hget only). May contain {placeholder} tokens. |
+
+### `db-assert.dynamodb`
+
+Set `type: db-assert.dynamodb` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expect` | `object` | Assertion block declaring the expected GetItem outcome. |
+| `key` | `string` | A flat JSON object template naming the primary key (partition key, optionally plus a sort key) for a GetItem call, e.g. {"orderId":"{orderId}"}. Each top-level value becomes an S/N/BOOL DynamoDB attribute; nested objects/arrays/null are not supported. May contain {placeholder} tokens inside JSON string values. |
+| `table` | `string` | Name of the DynamoDB table to query. May contain {placeholder} tokens. |
+| `target` | `string` | Logical name of the dynamodb dependency to query, as declared under environment.dependencies. |
 
 ### `db-assert.mongodb`
 
@@ -397,6 +412,21 @@ Set `type: script.csharp` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `code` | `string` | Inline C# code block executed inside the compiled CSX submission. Has access to the shared Vars dictionary. |
+
+### `storage-assert.s3`
+
+HEADs (and, if declared, GETs) an S3-compatible object and asserts on its existence, size, content type, metadata, and/or body digest/substring.
+
+Set `type: storage-assert.s3` to use this step.
+
+**Required fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `bucket` | `string` | The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens. |
+| `expect` | `object` | The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive. |
+| `key` | `string` | The S3 object key. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of the minio dependency to query, as declared under environment.dependencies. |
 
 ### `webhook-listen.http`
 

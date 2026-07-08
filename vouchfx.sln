@@ -155,6 +155,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Red
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MetricsAssert.Prometheus.Tests", "tests\Platform.Steps.MetricsAssert.Prometheus.Tests\Platform.Steps.MetricsAssert.Prometheus.Tests.csproj", "{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Dynamodb", "src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj", "{0F2C044B-CABA-4B61-A01E-67014E23012E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.StorageAssert.S3", "src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj", "{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Dynamodb.Tests", "tests\Platform.Steps.DbAssert.Dynamodb.Tests\Platform.Steps.DbAssert.Dynamodb.Tests.csproj", "{851FC279-6DE3-438E-8095-4337262F0169}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.StorageAssert.S3.Tests", "tests\Platform.Steps.StorageAssert.S3.Tests\Platform.Steps.StorageAssert.S3.Tests.csproj", "{87D68AD9-522D-48C3-A012-F3A49B41FE17}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -432,6 +440,22 @@ Global
 		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0F2C044B-CABA-4B61-A01E-67014E23012E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F2C044B-CABA-4B61-A01E-67014E23012E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F2C044B-CABA-4B61-A01E-67014E23012E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F2C044B-CABA-4B61-A01E-67014E23012E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}.Release|Any CPU.Build.0 = Release|Any CPU
+		{851FC279-6DE3-438E-8095-4337262F0169}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{851FC279-6DE3-438E-8095-4337262F0169}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{851FC279-6DE3-438E-8095-4337262F0169}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{851FC279-6DE3-438E-8095-4337262F0169}.Release|Any CPU.Build.0 = Release|Any CPU
+		{87D68AD9-522D-48C3-A012-F3A49B41FE17}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{87D68AD9-522D-48C3-A012-F3A49B41FE17}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{87D68AD9-522D-48C3-A012-F3A49B41FE17}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{87D68AD9-522D-48C3-A012-F3A49B41FE17}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -501,5 +525,9 @@ Global
 		{A24F60E0-7D7A-49CB-A225-253DA946BD1D} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{92A38B94-A300-412A-8783-B7F108A2A614} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{61CEA174-CB0C-4F1D-8798-B71DF5CC2894} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{0F2C044B-CABA-4B61-A01E-67014E23012E} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{15D81E9E-99A0-49D1-B7D4-1DFB41461A33} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
+		{851FC279-6DE3-438E-8095-4337262F0169} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{87D68AD9-522D-48C3-A012-F3A49B41FE17} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

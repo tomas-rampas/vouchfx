@@ -36,6 +36,7 @@ using Platform.Engine.Compilation.MemoryHarness;
 using Platform.Sdk;
 using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Dynamodb;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -54,6 +55,7 @@ using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
+using Platform.Steps.StorageAssert.S3;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
 
@@ -163,6 +165,16 @@ public sealed class ClosureProbeCoverageGuardTests
     ///     Prometheus exposition endpoint via HttpClient exactly like http.rest / mail-expect.smtp
     ///     / cache-assert.elasticsearch).
     ///   </description></item>
+    ///   <item><description>
+    ///     <c>db-assert.dynamodb</c> → <c>Amazon.DynamoDBv2.AmazonDynamoDBClient</c>: the
+    ///     provider asserts against DynamoDB Local via the AWS SDK; the probe builds a real
+    ///     client and disposes it in <c>finally</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>storage-assert.s3</c> → <c>Amazon.S3.AmazonS3Client</c>: the provider HEADs/GETs
+    ///     an S3-compatible (MinIO) object via the AWS SDK; the probe builds a real client and
+    ///     disposes it in <c>finally</c>.
+    ///   </description></item>
     /// </list>
     /// </remarks>
     private static readonly IReadOnlyList<CoreProviderCoverage> EnumeratedCoverage = new[]
@@ -251,6 +263,14 @@ public sealed class ClosureProbeCoverageGuardTests
             StepKind: "metrics-assert.prometheus",
             CanonicalClient: "System.Net.Http.HttpClient (BCL — closure subsumed by the http.rest probe; metrics-assert.prometheus scrapes the SUT's /metrics endpoint via HttpClient)",
             ProbeMarker: "new System.Net.Http.HttpClient()"),
+        new CoreProviderCoverage(
+            StepKind: "db-assert.dynamodb",
+            CanonicalClient: "Amazon.DynamoDBv2.AmazonDynamoDBClient (DynamoDB Local client)",
+            ProbeMarker: "Amazon.DynamoDBv2.AmazonDynamoDBClient"),
+        new CoreProviderCoverage(
+            StepKind: "storage-assert.s3",
+            CanonicalClient: "Amazon.S3.AmazonS3Client (S3-compatible / MinIO client)",
+            ProbeMarker: "Amazon.S3.AmazonS3Client"),
     };
 
     /// <summary>
@@ -284,6 +304,8 @@ public sealed class ClosureProbeCoverageGuardTests
         typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
         typeof(MqExpectRedisProvider).Assembly,       // mq-expect.redis
         typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
+        typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
+        typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
     };
 
     // -------------------------------------------------------------------------
@@ -311,8 +333,8 @@ public sealed class ClosureProbeCoverageGuardTests
             .Select(c => c.StepKind)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Twenty-one Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus + mq-publish.redis + mq-expect.redis + metrics-assert.prometheus).
-        Assert.Equal(21, actualKinds.Count);
+        // Twenty-three Core providers for the v1.x engine (6 original + db-assert.sqlserver + db-assert.mongodb + mail-expect.smtp + db-assert.mysql + cache-assert.redis + mq-publish.rabbitmq + mq-expect.rabbitmq + cache-assert.elasticsearch + mq-publish.nats + mq-expect.nats + mq-publish.azureservicebus + mq-expect.azureservicebus + mq-publish.redis + mq-expect.redis + metrics-assert.prometheus + db-assert.dynamodb + storage-assert.s3).
+        Assert.Equal(23, actualKinds.Count);
 
         var missingFromTable = actualKinds.Except(enumeratedKinds, StringComparer.Ordinal)
             .OrderBy(k => k, StringComparer.Ordinal)
@@ -339,8 +361,8 @@ public sealed class ClosureProbeCoverageGuardTests
         // Belt-and-braces: the two sets are equal (catches any case the diffs above miss).
         Assert.Equal(actualKinds, enumeratedKinds);
 
-        // The table must have no duplicate step kinds (twenty-one distinct rows).
-        Assert.Equal(21, enumeratedKinds.Count);
+        // The table must have no duplicate step kinds (twenty-three distinct rows).
+        Assert.Equal(23, enumeratedKinds.Count);
     }
 
     // -------------------------------------------------------------------------

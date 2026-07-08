@@ -1,0 +1,61 @@
+metadata:
+  name: storage-assert-s3-example
+  description: >
+    Example showing how to assert against an object the system under test writes to
+    an S3-compatible object store.  storage-assert is a brand-new family — the
+    dotted form storage-assert.s3 is required (there is no bare storage-assert
+    alias).  The engine provisions a real MinIO container for the "reports" minio
+    dependency; storage-assert.s3 HEADs the object (and, only if sha256 or
+    contentContains is declared, GETs a bounded — 16 MiB cap — copy of the body).
+
+environment:
+  services:
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+  dependencies:
+    reports: { type: minio }
+
+variables:
+  reportKey: "exports/daily-report.csv"
+
+steps:
+  - id: trigger-export
+    type: http.rest
+    description: Drive the business transaction that (in a real SUT) writes the report.
+    target: app
+    method: POST
+    path: /reports/export
+    body: '{"format":"csv"}'
+    expect:
+      status: 202
+
+  - id: assert-report-written
+    type: storage-assert.s3
+    description: >
+      Assert the exported report object exists with the expected content type and a
+      non-trivial size.  RETRY accommodates the export lagging the HTTP response
+      that triggered it — the family's canonical "eventually-consumed" idiom.
+    target: reports
+    bucket: reports
+    key: "{reportKey}"
+    verifyMode: RETRY
+    timeout: 15s
+    expect:
+      exists: true
+      minSize: "1"
+      contentType: "text/csv"
+    capture:
+      reportEtag: $.etag
+
+  - id: assert-report-not-yet-purged
+    type: storage-assert.s3
+    description: >
+      A later step in the same suite might assert the OPPOSITE — that a purged
+      report no longer exists.  exists:false excludes every content expectation
+      (size/minSize/sha256/contentContains/contentType/metadata).
+    target: reports
+    bucket: reports
+    key: "exports/already-purged.csv"
+    expect:
+      exists: false

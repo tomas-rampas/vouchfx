@@ -44,6 +44,10 @@
     <PackageReference Include="NATS.Net" />
     <!-- Azure.Messaging.ServiceBus: required by MqAzureServiceBusDockerTests (compile-ref + Assembly.Location). -->
     <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <!-- AWSSDK.DynamoDBv2: required by DbAssertDynamodbDockerTests (compile-ref + seed). -->
+    <PackageReference Include="AWSSDK.DynamoDBv2" />
+    <!-- AWSSDK.S3: required by StorageAssertS3DockerTests (compile-ref + seed). -->
+    <PackageReference Include="AWSSDK.S3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -102,6 +106,12 @@
                       IsAspireProjectResource="false" />
     <!-- metrics-assert.prometheus provider (new family): used by MetricsAssertPrometheusDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- Core batch B (21→23): db-assert.dynamodb provider: used by DbAssertDynamodbDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- storage-assert.s3 provider (new family): used by StorageAssertS3DockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>
 

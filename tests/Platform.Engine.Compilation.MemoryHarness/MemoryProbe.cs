@@ -406,6 +406,16 @@ public static class MemoryProbe
                     typeof(Azure.Messaging.ServiceBus.ServiceBusClient).Assembly.Location)!,
                 "Azure.Core.dll"),
 
+            // ── Phase B: db-assert.dynamodb / storage-assert.s3 closure ─────────
+            // The two AWS SDK providers build a real AmazonDynamoDBClient and a real
+            // AmazonS3Client.  Both must be listed here so the closure probe's client
+            // builds compile; the assemblies resolve from the Default ALC (the harness
+            // references AWSSDK.DynamoDBv2 / AWSSDK.S3 directly) and must never load
+            // into the collectible ALC (§5).
+            typeof(Amazon.DynamoDBv2.AmazonDynamoDBClient).Assembly.Location,
+            typeof(Amazon.S3.AmazonS3Client).Assembly.Location,
+            typeof(Amazon.Runtime.BasicAWSCredentials).Assembly.Location,
+
             // Platform.Engine.Abstractions is ALREADY added unconditionally by
             // RoslynScriptCompiler.BuildBaseOptions (the script accesses Vars from
             // ScriptGlobalVariables), so Platform.Engine.Abstractions.Retry.RetryRunner

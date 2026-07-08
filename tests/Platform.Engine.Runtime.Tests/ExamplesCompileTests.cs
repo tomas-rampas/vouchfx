@@ -35,6 +35,7 @@ using Platform.Engine.Runtime;
 using Platform.Sdk;
 using Platform.Steps.CacheAssert.Elasticsearch;
 using Platform.Steps.CacheAssert.Redis;
+using Platform.Steps.DbAssert.Dynamodb;
 using Platform.Steps.DbAssert.Mongodb;
 using Platform.Steps.DbAssert.Mysql;
 using Platform.Steps.DbAssert.Postgres;
@@ -53,6 +54,7 @@ using Platform.Steps.MqPublish.Nats;
 using Platform.Steps.MqPublish.Rabbitmq;
 using Platform.Steps.MqPublish.Redis;
 using Platform.Steps.Script.Csharp;
+using Platform.Steps.StorageAssert.S3;
 using Platform.Steps.WebhookListen.Http;
 using Xunit;
 
@@ -89,6 +91,8 @@ public sealed class ExamplesCompileTests
         typeof(MqExpectRedisProvider).Assembly,
         typeof(MetricsAssertPrometheusProvider).Assembly,
         typeof(WebhookListenHttpProvider).Assembly,
+        typeof(DbAssertDynamodbProvider).Assembly,
+        typeof(StorageAssertS3Provider).Assembly,
     };
 
     private static readonly StepKindRegistry s_registry =

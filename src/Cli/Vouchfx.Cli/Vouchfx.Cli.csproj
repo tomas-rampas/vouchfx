@@ -123,6 +123,10 @@
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj"
                       IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj"
+                      IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup Label="Provider client libs — direct refs so the DLLs deploy to output">
@@ -146,6 +150,11 @@
          client DLLs must be in the runner's output directory so the providers resolve
          their Assembly.Location at runtime and use them as Roslyn MetadataReferences. -->
     <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <!-- db-assert.dynamodb / storage-assert.s3 — AWS SDK client DLLs must be in the runner's
+         output directory so the providers resolve their Assembly.Location at runtime and the
+         Roslyn compile can use them as MetadataReferences. -->
+    <PackageReference Include="AWSSDK.DynamoDBv2" />
+    <PackageReference Include="AWSSDK.S3" />
   </ItemGroup>
 
 </Project>
