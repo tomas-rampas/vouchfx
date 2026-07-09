@@ -1,0 +1,12 @@
+# Keeps the SHA-pinned GitHub Actions in .github/workflows/ maintained.
+# release.yml pins every action to a full commit SHA for supply-chain
+# integrity; without this ecosystem entry those pins would silently rot
+# (no security bumps, no signal when a pinned version is yanked).
+# Dependabot updates SHA pins and their trailing version comments together.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

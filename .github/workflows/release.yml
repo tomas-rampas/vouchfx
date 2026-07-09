@@ -43,6 +43,13 @@
 #      untouched — published packages are IMMUTABLE. A bad artifact is never
 #      fixed by re-running or re-tagging the same version: ship a new patch
 #      version instead.
+#      PRE-FLIGHT before the first release that publishes the five new SDK
+#      package IDs: confirm on nuget.org that the Trusted Publishing policy
+#      permits first-time creation of new IDs from this repo/workflow, and
+#      that no third party has registered or prefix-reserved the IDs. A 403
+#      on one ID aborts the push loop AFTER earlier packages already
+#      published (immutable) — the release then completes only via a new
+#      patch version, so verify policy scope before tagging, not after.
 #
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
 # -------------------------------------------------------------------------

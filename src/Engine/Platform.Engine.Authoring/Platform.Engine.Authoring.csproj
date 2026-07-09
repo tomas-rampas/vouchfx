@@ -14,7 +14,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>$(MSBuildProjectName)</PackageId>
-    <!-- A bare `dotnet pack` (no -p:Version) must never produce a version that outranks a published pre-release. -->
+    <!-- A bare `dotnet pack` (no -p:Version) must never produce a stable-looking version that a default (non-prerelease) restore would prefer over published releases. -->
     <VersionPrefix>1.0.0</VersionPrefix>
     <VersionSuffix>local</VersionSuffix>
     <Authors>vouchfx</Authors>
