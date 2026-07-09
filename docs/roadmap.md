@@ -39,13 +39,21 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 - **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
   and NuGet.org publication via Trusted Publishing (no long-lived keys).
 
-## v1.0 — the first public release (targeted Q4 2026)
+## Pre-releases are live; v1.0 GA targeted Q4 2026
 
-What remains is validation, not construction:
+The first public releases shipped on 2026-07-08: **`v1.0.0-alpha.1` and `v1.0.0-alpha.2`** are published as
+GitHub pre-releases with signed artifacts (cosign, SLSA provenance, CycloneDX SBOMs), and the `vouchfx`
+dotnet global tool is live on NuGet.org via Trusted Publishing:
+
+```bash
+dotnet tool install --global vouchfx --prerelease
+```
+
+The alphas exist for pilot validation. What remains for GA is validation and packaging, not construction:
 
 - Validation of the end-to-end experience with pilot teams.
-- The first public release: the `vouchfx` dotnet global tool on NuGet.org, per-OS self-contained archives
-  and installers, all signed and provenance-attested.
+- Publication of the Provider SDK (`Platform.Sdk`) as a NuGet package, so providers can be authored against
+  the frozen v1 contract without building the engine from source.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
@@ -66,6 +74,18 @@ within v1.x. Within that constraint, the near-term direction is:
   first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted reference implementation) and a comprehensive
   [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) are
   live on the hub.
+- **Provider distribution and consumption** — today, using a provider outside the twenty-five Core ones means
+  building from source with the provider referenced; the planned programme closes that gap in three additive
+  steps, in this order. First, a **provider directory loader**: the CLI learns to load provider assemblies
+  from a directory (a `--providers` flag, an environment variable, and a default probe location), guarded by
+  the same reserved-namespace and version-conflict checks the engine already enforces. Second, **community
+  source submissions on the hub**: community-tier providers may be contributed as source into the hub
+  repository (each building and testing in isolation, author-owned, explicitly unendorsed) so authors need no
+  NuGet account to participate. Third, **one-command acquisition**: `vouchfx providers install <id>` resolves
+  a step kind through the community registry, downloads the package, and places it in the providers directory
+  — with a dependency-only *Verified metapackage* installing the whole reviewed set once Verified providers
+  exist. The frozen v1 SDK contract is what makes externally-built provider binaries loadable across the
+  whole v1.x series.
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
 - **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked

@@ -299,6 +299,10 @@ PORTAL = """<!DOCTYPE html>
         <span class="doc-card__k">REFERENCE</span><h3>Language reference</h3>
         <p>Every field, generated straight from the composed <code>v1</code> JSON Schema the compiler validates against — so it can never drift from what vouchfx accepts.</p>
       </a>
+      <a class="doc-card" href="docs/memory-harness.html">
+        <span class="doc-card__k">GATE</span><h3>The memory-leak harness</h3>
+        <p>The heap-measurement tool behind the permanent CI gate: what it exercises across all twenty-five providers, how to run it locally, and a real passing report.</p>
+      </a>
       <a class="doc-card" href="docs/accessibility.html">
         <span class="doc-card__k">A11Y</span><h3>Accessibility</h3>
         <p>The WCAG 2.1 AA conformance record for the terminal and HTML report renderers — the audit, findings, and remediation.</p>

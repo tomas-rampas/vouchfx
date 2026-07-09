@@ -7,8 +7,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 event-wire contract are frozen for the whole v1.x series and enforced by golden-file CI gates; within v1.x,
 evolution is additive only.
 
-vouchfx is pre-release: no version has been published yet. The `Unreleased` section below is the
-delivered-capability record that will seed the v1.0.0 release notes.
+The first public pre-releases (`1.0.0-alpha.1`, `1.0.0-alpha.2`) shipped on 2026-07-08 — see their entries
+below. The `Unreleased` section remains the cumulative delivered-capability record that seeds the v1.0.0 GA
+release notes; the alpha pre-releases are published previews of it.
+
+## [1.0.0-alpha.2] — 2026-07-08
+
+The same engine as alpha.1, with release-quality fixes found by cutting alpha.1 for real:
+
+### Added
+
+- The NuGet package carries a package README and a current description, so the nuget.org page describes
+  the framework properly.
+
+### Fixed
+
+- The release pipeline's publish job works on real tag pushes — its first-ever execution surfaced a missing
+  repository context (and a masked failure in release creation) that the smoke-test runs could not reach.
+- The Docker integration suite repaired against current dependency images: RabbitMQ 4.x forbids transient
+  non-exclusive queue declarations (test queues are now durable, matching the documented author guidance);
+  Elasticsearch 8.17 rejects request bodies on `_refresh`; and bad-image startup failures classify as
+  `ImagePull` rather than `HealthGate` even under Aspire's generic health-gate wrapper message, using
+  structural container-creation evidence — keeping the four-verdict taxonomy trustworthy.
+
+## [1.0.0-alpha.1] — 2026-07-08
+
+**The first public release.** Everything recorded under `Unreleased` below, published as a pre-release for
+pilot validation ahead of v1.0 GA: the `vouchfx` dotnet global tool on NuGet.org (published via Trusted
+Publishing — no long-lived keys), per-OS self-contained archives, MSI/deb/pkg installers and the VSCode
+extension attached to the GitHub release, all cosign-signed with SLSA provenance attestations and CycloneDX
+SBOMs.
+
+```bash
+dotnet tool install --global vouchfx --prerelease
+```
+
+The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships to NuGet.org with v1.0 GA.
 
 ## [Unreleased]
 
