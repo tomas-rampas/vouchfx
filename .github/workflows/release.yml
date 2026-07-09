@@ -12,7 +12,7 @@
 #
 # Keyless signing and publishing model — no long-lived private key or API key stored as a secret
 # --------------------------------------------------------------------------------------------------
-#   1. SLSA provenance (actions/attest-build-provenance@v4)
+#   1. SLSA provenance (actions/attest-build-provenance@v4.1.1, SHA-pinned)
 #      GitHub OIDC token → signed attestation stored with the repo.
 #      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
 #
@@ -31,6 +31,25 @@
 #      Gated by a Trusted Publishing policy on nuget.org (Package Owner
 #      "Tomas.R"): Repository tomas-rampas/vouchfx, Workflow File
 #      release.yml, no Environment. No NUGET_API_KEY secret is stored.
+#
+#      Publishes six packages per release, all built into artifacts/nuget/:
+#        - vouchfx                       (CLI global tool — primary distribution)
+#        - Platform.Sdk                  (frozen v1 provider contract)
+#        - Platform.Sdk.Testing          (out-of-repo provider test harness)
+#        - Platform.Engine.Abstractions  (Verdict/StepOutcome/ScriptGlobalVariables)
+#        - Platform.Engine.Authoring     (YAML parser + AST builder)
+#        - Platform.Engine.Compilation   (DocumentValidator, RoslynScriptCompiler)
+#      --skip-duplicate means a version already live on nuget.org is left
+#      untouched — published packages are IMMUTABLE. A bad artifact is never
+#      fixed by re-running or re-tagging the same version: ship a new patch
+#      version instead.
+#      PRE-FLIGHT before the first release that publishes the five new SDK
+#      package IDs: confirm on nuget.org that the Trusted Publishing policy
+#      permits first-time creation of new IDs from this repo/workflow, and
+#      that no third party has registered or prefix-reserved the IDs. A 403
+#      on one ID publishes nothing for that ID; fix the policy and re-run the
+#      SAME tag — --skip-duplicate completes the missing pushes. A new patch
+#      version is only needed if a genuinely broken artifact already shipped.
 #
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
 # -------------------------------------------------------------------------
@@ -111,12 +130,12 @@ jobs:
 
     steps:
       - name: Checkout (full history for version embedding)
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
       - name: Set up .NET 8 SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: "8.0.x"
 
@@ -170,6 +189,35 @@ jobs:
             -c Release \
             -p:Version="$VERSION" \
             -o artifacts/nuget
+
+      # Pack the SDK-closure nupkgs (provider-authoring surface) so provider
+      # authors can restore Platform.Sdk et al. straight from NuGet.org
+      # instead of vendoring engine source (mirrors the local-feed pack in
+      # vouchfx-providers/.github/workflows/conformance.yml, which packs the
+      # same five projects from a pinned engine SHA as a bootstrap workaround
+      # until this step existed).
+      # Dependency order: Abstractions and Sdk are leaves; Authoring and
+      # Compilation each ProjectReference Abstractions+Sdk; Sdk.Testing
+      # ProjectReferences all four.  dotnet pack builds each project's own
+      # ProjectReferences regardless of loop order, but packing leaves first
+      # keeps the loop readable and matches the emitted <dependency> graph.
+      - name: Pack nupkg (SDK closure — Platform.Sdk, Platform.Sdk.Testing, Platform.Engine.*)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for csproj in \
+            src/Engine/Platform.Engine.Abstractions/Platform.Engine.Abstractions.csproj \
+            src/Sdk/Platform.Sdk/Platform.Sdk.csproj \
+            src/Engine/Platform.Engine.Authoring/Platform.Engine.Authoring.csproj \
+            src/Engine/Platform.Engine.Compilation/Platform.Engine.Compilation.csproj \
+            src/Sdk/Platform.Sdk.Testing/Platform.Sdk.Testing.csproj ; do
+            echo "Packing: $csproj"
+            dotnet pack "$csproj" \
+              -c Release \
+              -p:Version="$VERSION" \
+              -o artifacts/nuget
+          done
 
       # Self-contained multi-file publish for each RID.
       # PublishSingleFile is NOT used (Assembly.Location → IL3000 build errors).
@@ -241,15 +289,17 @@ jobs:
           ls -lh artifacts/sbom/
 
       - name: Upload nupkg
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nuget-package
-          path: artifacts/nuget/*.nupkg
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload publish archives (all RIDs)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: publish-archives
           path: artifacts/archives/*.tar.gz
@@ -261,7 +311,7 @@ jobs:
       # natively on windows-latest so the embedded DCP path is a Windows absolute
       # path rather than the Linux runner's NuGet cache path.
       - name: Upload linux-x64 publish dir (for .deb)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: publish-linux-x64-dir
           path: artifacts/publish/linux-x64/
@@ -269,7 +319,7 @@ jobs:
           retention-days: 7
 
       - name: Upload osx-arm64 publish dir (for .pkg)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: publish-osx-arm64-dir
           path: artifacts/publish/osx-arm64/
@@ -277,7 +327,7 @@ jobs:
           retention-days: 7
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: artifacts/sbom/*.bom.json
@@ -299,10 +349,10 @@ jobs:
         working-directory: tools/vscode-vouchfx
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Node.js (LTS 22)
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -318,7 +368,7 @@ jobs:
         run: npm run package
 
       - name: Upload .vsix
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vsix
           path: tools/vscode-vouchfx/*.vsix
@@ -346,43 +396,43 @@ jobs:
 
     steps:
       - name: Download nupkg
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: nuget-package
           path: artifacts/nuget/
 
       - name: Download publish archives
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: publish-archives
           path: artifacts/
 
       - name: Download SBOM
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sbom
           path: artifacts/sbom/
 
       - name: Download .vsix
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: vsix
           path: artifacts/vsix/
 
       - name: Download MSI installer (for attestation)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: msi-installer
           path: artifacts/installers/
 
       - name: Download .deb package (for attestation)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: deb-package
           path: artifacts/installers/
 
       - name: Download .pkg installer (for attestation)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pkg-installer
           path: artifacts/installers/
@@ -390,27 +440,29 @@ jobs:
       # SLSA provenance attestations — one per artifact group.
       # Verification: gh attestation verify <file> --repo tomas-rampas/vouchfx
       - name: Attest nupkg (SLSA build provenance)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: artifacts/nuget/*.nupkg
+          subject-path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
 
       - name: Attest publish archives (SLSA build provenance)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: artifacts/vouchfx-*.tar.gz
 
       - name: Attest SBOM (SLSA build provenance)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: artifacts/sbom/*.bom.json
 
       - name: Attest .vsix (SLSA build provenance)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: artifacts/vsix/*.vsix
 
       - name: Attest installers (SLSA build provenance)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: artifacts/installers/*
 
@@ -434,6 +486,7 @@ jobs:
           v="$VERSION"
           for f in \
             artifacts/nuget/*.nupkg \
+            artifacts/nuget/*.snupkg \
             "artifacts/vouchfx-${v}-linux-x64.tar.gz" \
             "artifacts/vouchfx-${v}-win-x64.tar.gz" \
             "artifacts/vouchfx-${v}-osx-x64.tar.gz" \
@@ -471,7 +524,7 @@ jobs:
           done
 
       - name: Upload cosign bundles + GPG signatures
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signing-material
           path: |
@@ -504,10 +557,10 @@ jobs:
       HAS_CODESIGN: ${{ secrets.CODESIGN_PFX_BASE64 != '' }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up .NET 8 SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: "8.0.x"
 
@@ -616,7 +669,7 @@ jobs:
           Remove-Item $pfxPath -Force
 
       - name: Upload MSI installer
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msi-installer
           path: artifacts/installer/*.msi
@@ -641,7 +694,7 @@ jobs:
 
     steps:
       - name: Download linux-x64 publish dir
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: publish-linux-x64-dir
           path: publish/linux-x64/
@@ -711,7 +764,7 @@ jobs:
           echo "Signed: ${deb}.asc"
 
       - name: Upload .deb package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: deb-package
           path: artifacts/installer/*.deb*
@@ -736,7 +789,7 @@ jobs:
 
     steps:
       - name: Download osx-arm64 publish dir
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: publish-osx-arm64-dir
           path: publish/osx-arm64/
@@ -787,7 +840,7 @@ jobs:
           echo "Notarisation complete."
 
       - name: Upload .pkg installer
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pkg-installer
           path: artifacts/installer/*.pkg
@@ -825,31 +878,31 @@ jobs:
 
     steps:
       - name: Download nupkg
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: nuget-package
           path: release-upload/
 
       - name: Download publish archives
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: publish-archives
           path: release-upload/
 
       - name: Download SBOM
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sbom
           path: release-upload/
 
       - name: Download .vsix
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: vsix
           path: release-upload/
 
       - name: Download signing material (cosign bundles, GPG signatures)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         # The sign job uploads this artifact with if-no-files-found: warn, so
         # it legitimately does not exist when every signing step was skipped
         # (no secrets provisioned).  A release without detached signatures is
@@ -861,19 +914,19 @@ jobs:
           path: release-upload/
 
       - name: Download MSI installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: msi-installer
           path: release-upload/
 
       - name: Download .deb package
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: deb-package
           path: release-upload/
 
       - name: Download .pkg installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pkg-installer
           path: release-upload/
@@ -954,10 +1007,21 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
+          # Non-fatal per package: glob order pushes the five Platform.* SDK
+          # packages BEFORE vouchfx, and a first-time 403 on a new ID (policy
+          # scope, prefix squat) must not hold the primary CLI publish hostage.
+          # Every failure is still reported and fails the step at the end;
+          # re-running the same tag completes the missing pushes via
+          # --skip-duplicate once the policy issue is fixed.
+          rc=0
           for nupkg in release-upload/*.nupkg; do
             echo "Pushing: $nupkg"
-            dotnet nuget push "$nupkg" \
+            if ! dotnet nuget push "$nupkg" \
               --api-key "$NUGET_API_KEY" \
               --source https://api.nuget.org/v3/index.json \
-              --skip-duplicate
+              --skip-duplicate; then
+              echo "::error::Push failed for $nupkg — continuing with remaining packages."
+              rc=1
+            fi
           done
+          exit $rc

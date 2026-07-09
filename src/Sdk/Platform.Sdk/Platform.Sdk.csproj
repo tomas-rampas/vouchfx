@@ -12,7 +12,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>Platform.Sdk</PackageId>
-    <Version>1.0.0</Version>
+    <!-- A bare `dotnet pack` (no -p:Version) yields 1.0.0-0.local: the numeric-leading prerelease identifier sorts below every published pre-release (alpha, beta, rc), so a local pack can never outrank anything on NuGet.org. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>0.local</VersionSuffix>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
     <Description>The compile-time provider SDK for authoring vouchfx step providers — the frozen v1 contract (IStepProvider, IStepBinder&lt;T&gt;, IStepValidator&lt;T&gt;, IStepCompiler&lt;T&gt;, IResourceContributor&lt;T&gt;, CsxFragment, StepKindId). vouchfx compiles declarative .e2e.yaml integration tests into C# and orchestrates the container topology to test distributed .NET systems end-to-end.</Description>
