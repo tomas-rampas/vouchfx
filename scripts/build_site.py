@@ -314,7 +314,7 @@ PORTAL = """<!DOCTYPE html>
     <h2>Ecosystem</h2>
     <p>Community providers, sample applications, and related projects.</p>
     <div class="doc-cards">
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge with conformance testing, examples, and the provider authoring rubric.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge, with conformance testing, examples, and the provider authoring rubric.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Real-world microservices in C#, Python, and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
     </div>
   </section>
