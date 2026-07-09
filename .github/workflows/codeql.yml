@@ -1,0 +1,57 @@
+# .github/workflows/codeql.yml — CodeQL static analysis
+# =============================================================================
+# Satisfies the main-ruleset's required code-scanning rule (tool: CodeQL) and
+# provides real value on its own: C# analysis over the engine/providers/CLI,
+# and JavaScript/TypeScript analysis over the VSCode extension sources.
+#
+# The C# job uses build-mode: none (source-level extraction, no dotnet build):
+# the solution's own CI already gates compilation, and extraction-only keeps
+# this job fast and independent of the Aspire/DCP toolchain.
+# =============================================================================
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly sweep so new query-pack releases re-scan main even when quiet.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
