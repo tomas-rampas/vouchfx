@@ -75,17 +75,18 @@ within v1.x. Within that constraint, the near-term direction is:
   [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) are
   live on the hub.
 - **Provider distribution and consumption** — today, using a provider outside the twenty-five Core ones means
-  building from source with the provider referenced; the planned programme closes that gap in three additive
-  steps, in this order. First, a **provider directory loader**: the CLI learns to load provider assemblies
-  from a directory (a `--providers` flag, an environment variable, and a default probe location), guarded by
-  the same reserved-namespace and version-conflict checks the engine already enforces. Second, **community
-  source submissions on the hub**: community-tier providers may be contributed as source into the hub
-  repository (each building and testing in isolation, author-owned, explicitly unendorsed) so authors need no
-  NuGet account to participate. Third, **one-command acquisition**: `vouchfx providers install <id>` resolves
-  a step kind through the community registry, downloads the package, and places it in the providers directory
-  — with a dependency-only *Verified metapackage* installing the whole reviewed set once Verified providers
-  exist. The frozen v1 SDK contract is what makes externally-built provider binaries loadable across the
-  whole v1.x series.
+  building from source with the provider referenced; the programme closing that gap has three additive
+  steps. **Community source submissions on the hub are already open**: community-tier providers may be
+  contributed as source into the [hub repository](https://github.com/tomas-rampas/vouchfx-providers)'s
+  `community/` directory (each building and testing in isolation, author-owned, explicitly unendorsed —
+  hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing
+  guide. Still ahead: a **provider directory loader** — the CLI learns to load provider assemblies from a
+  directory (a `--providers` flag, an environment variable, and a default probe location), guarded by the
+  same reserved-namespace and version-conflict checks the engine already enforces — and then **one-command
+  acquisition**: `vouchfx providers install <id>` resolves a step kind through the community registry,
+  downloads the package, and places it in the providers directory, with a dependency-only *Verified
+  metapackage* installing the whole reviewed set once Verified providers exist. The frozen v1 SDK contract
+  is what makes externally-built provider binaries loadable across the whole v1.x series.
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
 - **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked
