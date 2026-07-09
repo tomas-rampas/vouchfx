@@ -152,7 +152,7 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   with NuGet.org publication via Trusted Publishing (OIDC; no long-lived keys).
 - The release pipeline now packs and publishes the five-package Provider SDK closure (`Platform.Sdk`,
   `Platform.Sdk.Testing`, `Platform.Engine.Abstractions`, `Platform.Engine.Authoring`, `Platform.Engine.Compilation`)
-  alongside the CLI. Symbol packages (snupkg) are carried through attestation and signing; every workflow action
+  alongside the CLI. Symbol packages (snupkg) are carried through attestation and signing; every action in the release workflow
   is SHA-pinned with dependabot keeping the pins current. Bare local packs self-identify as `1.0.0-0.local`.
 
 ### Changed
