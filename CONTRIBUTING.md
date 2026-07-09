@@ -8,10 +8,10 @@ vouchfx is built on a **compile-time, source-level plugin model** — there is n
 
 ### Getting Started
 
-**Install the Provider SDK.** Reference the [`Platform.Sdk`](https://www.nuget.org/packages/Platform.Sdk) NuGet package (v1.0.0 or later, Apache-2.0) in your project. This package is the frozen v1 contract — all interfaces and types you need to implement.
+**Install the Provider SDK.** Reference the [`Platform.Sdk`](https://www.nuget.org/packages/Platform.Sdk) NuGet package in your project. This package is the frozen v1 contract — all interfaces and types you need to implement. The SDK's first published version is a pre-release (the 1.0.0-alpha series — substitute the newest published version; the examples below use 1.0.0-alpha.3, the first release that includes the SDK packages); 1.0.0 final arrives at v1.0 GA.
 
 ```xml
-<PackageReference Include="Platform.Sdk" Version="1.0.0" />
+<PackageReference Include="Platform.Sdk" Version="1.0.0-alpha.3" />
 ```
 
 **Use the worked example as a template.** The repository contains [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete worked example that walks you through implementing a provider end-to-end, with a friction log and authoring journey documented in its README. [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template: a non-Docker provider that emits a message and asserts it equals a constant, explicitly designed as a copyable skeleton. Start with Echo to see the full journey; copy Hello if you want to build from an ultra-minimal scaffold.
@@ -135,8 +135,8 @@ You have two complementary paths for testing:
 Reference the `Platform.Sdk` NuGet package plus `Platform.Sdk.Testing` in your test project:
 
 ```xml
-<PackageReference Include="Platform.Sdk" Version="1.0.0" />
-<PackageReference Include="Platform.Sdk.Testing" Version="1.0.0" />
+<PackageReference Include="Platform.Sdk" Version="1.0.0-alpha.3" />
+<PackageReference Include="Platform.Sdk.Testing" Version="1.0.0-alpha.3" />
 ```
 
 You can then exercise your provider's `Bind`, `Validate`, and `Emit` stages directly using the public `Platform.Sdk.Testing.Contexts` implementations:
@@ -226,7 +226,7 @@ Core providers are bundled with the engine, versioned together, and fully suppor
 - The provider declares a `MinEngineVersion` compatible with the engine's current major version.
 - At least one platform-team maintainer has read the emitted CSX for the provider's representative steps and confirmed it follows the CsxFragment composition contract in the architecture blueprint's section 13.3.1.
 
-Hub-hosted Community providers will be published as individual NuGet packages from the hub's CI (planned). Consumption today is build-time source-level integration into a custom runner. Authors whose provider does not yet meet the rubric remain listed but unbadged, and the rubric itself is the actionable feedback for earning the Vouched badge.
+Hub-hosted Community providers will be published as individual NuGet packages from the hub's packaging pipeline (pack gate + tag-driven publish workflow). Provider packages publish once the SDK is restorable from NuGet.org. Authors whose provider does not yet meet the rubric remain listed but unbadged, and the rubric itself is the actionable feedback for earning the Vouched badge.
 
 ### Submitting Your Provider
 

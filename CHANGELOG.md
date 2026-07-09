@@ -147,9 +147,13 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 
 **Distribution and supply chain**
 
-- A release pipeline producing the nupkg, per-RID self-contained archives, MSI/deb/pkg installers, a
+- A release pipeline producing the CLI nupkg, per-RID self-contained archives, MSI/deb/pkg installers, a
   CycloneDX SBOM and the VSCode extension — each artefact keyless-cosign-signed and SLSA-provenance-attested,
   with NuGet.org publication via Trusted Publishing (OIDC; no long-lived keys).
+- The release pipeline now packs and publishes the five-package Provider SDK closure (`Platform.Sdk`,
+  `Platform.Sdk.Testing`, `Platform.Engine.Abstractions`, `Platform.Engine.Authoring`, `Platform.Engine.Compilation`)
+  alongside the CLI. Symbol packages (snupkg) are carried through attestation and signing; every workflow action
+  is SHA-pinned with dependabot keeping the pins current. Bare local packs self-identify as `1.0.0-0.local`.
 
 ### Changed
 
