@@ -8,7 +8,7 @@ vouchfx is built on a **compile-time, source-level plugin model** — there is n
 
 ### Getting Started
 
-**Install the Provider SDK.** Reference the [`Platform.Sdk`](https://www.nuget.org/packages/Platform.Sdk) NuGet package in your project. This package is the frozen v1 contract — all interfaces and types you need to implement. The SDK's first published version is a pre-release (the 1.0.0-alpha series — substitute the newest published version; the examples below use 1.0.0-alpha.3, the first release that includes the SDK packages); 1.0.0 final arrives at v1.0 GA.
+**Install the Provider SDK.** Reference the [`Platform.Sdk`](https://www.nuget.org/packages/Platform.Sdk) NuGet package in your project. This package is the frozen v1 contract — all interfaces and types you need to implement. The SDK's first published version is a pre-release (the 1.0.0-alpha series — substitute the newest published version; the examples below use 1.0.0-alpha.3 as the anticipated first release to include the SDK packages); 1.0.0 final arrives at v1.0 GA.
 
 ```xml
 <PackageReference Include="Platform.Sdk" Version="1.0.0-alpha.3" />
