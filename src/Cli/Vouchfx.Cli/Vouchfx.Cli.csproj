@@ -43,7 +43,9 @@
          all dependency DLLs — not just the DotnetToolSettings.xml skeleton. -->
     <IsPublishable>true</IsPublishable>
     <PackageId>vouchfx</PackageId>
-    <Version>1.0.0</Version>
+    <!-- A bare `dotnet pack` (no -p:Version) must never produce a version that outranks a published pre-release. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>local</VersionSuffix>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
     <Description>End-to-end integration testing for distributed .NET systems, authored in declarative .e2e.yaml. vouchfx compiles YAML to memory-safe C# via Roslyn, orchestrates the required container topology with .NET Aspire + Testcontainers, and verifies one business transaction across HTTP (REST/SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message brokers (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), cache/search (Redis, Elasticsearch), S3 object storage, Prometheus metrics, OTLP distributed traces, SMTP capture, webhooks and inline C# — twenty-five providers across eleven step families, with engine-owned RETRY polling, execution-time secret resolution with at-source redaction, and a four-verdict taxonomy where only Fail breaks CI by default.</Description>

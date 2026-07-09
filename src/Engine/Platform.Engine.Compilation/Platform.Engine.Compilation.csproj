@@ -13,7 +13,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>$(MSBuildProjectName)</PackageId>
-    <Version>1.0.0</Version>
+    <!-- A bare `dotnet pack` (no -p:Version) must never produce a version that outranks a published pre-release. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>local</VersionSuffix>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
     <Description>vouchfx engine assembly — published to enable the Platform.Sdk.Testing provider harness. TESTING SURFACE, NOT the frozen v1 provider contract (that is Platform.Sdk). Semver-evolved per engine release.</Description>
