@@ -780,7 +780,7 @@ Breaking changes to the contract appear only in a v2.x engine series. A v2 engin
 
 This freeze is now **enforced by a golden-file CI gate** (`SdkContractFreezeTests`) that reflects over the entire `Platform.Sdk` public surface and asserts it is byte-for-byte identical to the committed golden, failing if the contract drifts. The extension mechanism is **demonstrated and tested** through `OptionalExtensionInterfaceTests`, proving that new optional capabilities (such as `IStepDiffRenderer` and `IHostResourceContributor`, both added this way during v1 development) can be added by implementing new interfaces outside the frozen core, with no change to any v1 interface. This pattern — extend via a NEW optional interface, never mutate a v1 interface — is the sole mechanism for evolution within v1.x.
 
-## 13.9 Open-source governance and the two provider tiers and the Vouched badge
+## 13.9 Open-source governance: the two provider tiers and the Vouched badge
 
 The provider model is most valuable when the community contributes to it freely, and the architecture makes that the default rather than the exception. Two tiers exist, each with its own quality bar, owner, and integration path.
 

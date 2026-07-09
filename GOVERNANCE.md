@@ -26,7 +26,7 @@ Earning the Vouched badge is a checklist, not a conversation. The minimum bar:
 - The provider's README contains worked examples covering at least three realistic use cases and a
   known-limitations section.
 - The security checklist is signed off: credential handling reviewed for correctness, transitive dependency
-  vulnerabilities scanned (zero high-severity at promotion), TLS defaults inspected, no telemetry phoning
+  vulnerabilities scanned (zero high-severity at review), TLS defaults inspected, no telemetry phoning
   home, package signature verified.
 - The licence is Apache-2.0 (or compatible) and the contributor has signed off via the Developer Certificate
   of Origin (DCO).
@@ -54,7 +54,7 @@ requires no separate signing infrastructure, and matches .NET Foundation practic
 
 ## Dispute resolution
 
-Serious but good-faith disputes — a contested promotion decision, a rejected engine change, a conduct
+Serious but good-faith disputes — a contested badge award or Core-promotion decision, a rejected engine change, a conduct
 concern that is not a Code of Conduct violation — are handled through a written process before anything
 escalates: state the disagreement in an issue, the platform team responds in writing with reasons, and the
 exchange stays on the record. Code-of-Conduct matters follow [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md);
