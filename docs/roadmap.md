@@ -64,16 +64,15 @@ The three frozen contracts are a trust commitment for the whole v1.x series: not
 within v1.x. Within that constraint, the near-term direction is:
 
 - **Provider breadth through the community pathway** — the Provider SDK is the mechanism by which new
-  technologies arrive (gRPC, Oracle, SQS and the long tail) as Verified or Community providers,
-  without engine changes. This is deliberately community-first; the
-  [provider hub](https://github.com/tomas-rampas/vouchfx-providers) is the front door. The launch catalogue
-  (§5.7 of the DSL specification) now names the planned Verified and Community tier providers and reserves one
+  technologies arrive (gRPC, Oracle, SQS and the long tail) as Community providers — with the Vouched badge
+  marking maintainer-reviewed ones (per reviewed version) — without engine changes. This is deliberately
+  community-first; the [provider hub](https://github.com/tomas-rampas/vouchfx-providers) is the front door.
+  The launch catalogue (§5.7 of the DSL specification) now names the planned community catalogue and reserves one
   additional step family (realtime-expect) for future growth — `trace-expect` graduated out of that reserved
   state with `trace-expect.otlp` shipping as its Core provider, and `http.soap` joined `http.rest` as the
-  `http` family's second Core provider. The
-  first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted reference implementation) and a comprehensive
-  [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) are
-  live on the hub.
+  `http` family's second Core provider. The first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted
+  reference implementation) and a comprehensive [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html)
+  are live on the hub.
 - **Provider distribution and consumption** — today, using a provider outside the twenty-five Core ones means
   building from source with the provider referenced; the programme closing that gap has three additive
   steps. **Community source submissions on the hub are already open**: community-tier providers may be
@@ -84,8 +83,8 @@ within v1.x. Within that constraint, the near-term direction is:
   directory (a `--providers` flag, an environment variable, and a default probe location), guarded by the
   same reserved-namespace and version-conflict checks the engine already enforces — and then **one-command
   acquisition**: `vouchfx providers install <id>` resolves a step kind through the community registry,
-  downloads the package, and places it in the providers directory, with a dependency-only *Verified
-  metapackage* installing the whole reviewed set once Verified providers exist. The frozen v1 SDK contract
+  downloads the package, and places it in the providers directory, with a dependency-only *Vouched
+  metapackage* installing the whole badge-holding set once Vouched providers exist. The frozen v1 SDK contract
   is what makes externally-built provider binaries loadable across the whole v1.x series.
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.

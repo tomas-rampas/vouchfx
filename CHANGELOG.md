@@ -106,10 +106,9 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,
   and an SDK dry-run validation path.
-- Provider-catalogue expansion: the DSL specification now names planned Verified and Community tier providers
-  in the launch catalogue (§5.7, Table 5.1). `trace-expect` has graduated out of its reserved-family state now
-  that `trace-expect.otlp` ships as its Core provider; `realtime-expect` remains the sole reserved family with
-  its intent fixed ahead of its first provider.
+- Provider-catalogue expansion: the DSL specification now names the planned community catalogue (§5.7, Table 5.1).
+  `trace-expect` has graduated out of its reserved-family state now that `trace-expect.otlp` ships as its Core
+  provider; `realtime-expect` remains the sole reserved family with its intent fixed ahead of its first provider.
 - The community provider hub (`vouchfx-providers`) ships the first Community-tier provider — `rpc.json-rpc`,
   hosted in the hub under `community/` and listed in the provider registry — a complete JSON-RPC 2.0 protocol
   implementation over HTTP with substitution, capture, negative testing and the four-verdict mapping, plus a
@@ -151,3 +150,10 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 - A release pipeline producing the nupkg, per-RID self-contained archives, MSI/deb/pkg installers, a
   CycloneDX SBOM and the VSCode extension — each artefact keyless-cosign-signed and SLSA-provenance-attested,
   with NuGet.org publication via Trusted Publishing (OIDC; no long-lived keys).
+
+### Changed
+
+- Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community). The former
+  Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
+  (`vouched: true` + `vouchedVersion` = exact reviewed version) awarded after conformance review; one hygiene-gated
+  contribution flow on the hub; no engine code or contract change.
