@@ -135,13 +135,13 @@ jobs:
       # 1. Check out the CONSUMER's repository (their *.e2e.yaml scenarios). This is the
       #    default checkout — `scenario-path` is resolved relative to this working tree.
       - name: Check out consumer scenarios
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # 2. Check out the vouchfx SOURCE at the requested repo/ref into a sibling path, so
       #    building the engine never collides with the consumer's own files. (Real
       #    packaging will later replace this build-from-source step; see the header.)
       - name: Check out vouchfx source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.vouchfx-repo }}
           ref: ${{ inputs.vouchfx-ref }}
