@@ -314,7 +314,7 @@ PORTAL = """<!DOCTYPE html>
     <h2>Ecosystem</h2>
     <p>Community providers, sample applications, and related projects.</p>
     <div class="doc-cards">
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>Verified and Community tier providers with conformance testing, examples, and the provider authoring rubric.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge with conformance testing, examples, and the provider authoring rubric.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Real-world microservices in C#, Python, and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
     </div>
   </section>
@@ -325,9 +325,9 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/roadmap.html"><span class="doc-card__k">ROADMAP</span><h3>Roadmap</h3><p>What has shipped, what v1.0 still needs, what v1.x adds next — and what stays free permanently.</p></a>
       <a class="doc-card" href="CHANGELOG.html"><span class="doc-card__k">CHANGES</span><h3>Changelog</h3><p>The delivered-capability record, in Keep-a-Changelog format, seeding each release's notes.</p></a>
-      <a class="doc-card" href="GOVERNANCE.html"><span class="doc-card__k">GOV</span><h3>Governance</h3><p>Who decides what enters Core, how providers earn the Verified tier, and how disputes are resolved.</p></a>
+      <a class="doc-card" href="GOVERNANCE.html"><span class="doc-card__k">GOV</span><h3>Governance</h3><p>Who decides what enters Core, how providers earn the Vouched badge, and how disputes are resolved.</p></a>
       <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Project README</h3><p>What vouchfx is, how it works, building &amp; testing, and the repository layout.</p></a>
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SDK</span><h3>Contributing &amp; provider authoring</h3><p>The provider-authoring guide: the frozen v1 contract, CsxFragment rules, testing, and the Verified rubric.</p></a>
+      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SDK</span><h3>Contributing &amp; provider authoring</h3><p>The provider-authoring guide: the frozen v1 contract, CsxFragment rules, testing, and the Vouched rubric.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SEC</span><h3>Security policy</h3><p>How to report a vulnerability, the disclosure process, and the supported-versions table.</p></a>
     </div>
   </section>
