@@ -52,8 +52,7 @@ dotnet tool install --global vouchfx --prerelease
 The alphas exist for pilot validation. What remains for GA is validation and packaging, not construction:
 
 - Validation of the end-to-end experience with pilot teams.
-- Publication of the Provider SDK (`Platform.Sdk`) as a NuGet package, so providers can be authored against
-  the frozen v1 contract without building the engine from source.
+- Publication of the Provider SDK (`Platform.Sdk`, its `Platform.Sdk.Testing` harness and their engine dependency closure) to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release; the GA task narrows to stabilising the SDK at 1.0.0 final.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
