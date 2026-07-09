@@ -125,8 +125,8 @@ networks, and supply-chain weaknesses in the CI/release templates.
 
 ### Out of scope
 
-- **Third-party providers** (Community tier, or any provider not under
-  `src/Providers/Core`). These are the responsibility of their respective
+- **Third-party providers** (any provider not shipped with the engine,
+  whether or not it carries the Vouched badge). These are the responsibility of their respective
   authors; please report to them. We will help coordinate if a shared SDK issue
   is implicated.
 - **Vulnerabilities in upstream dependencies** themselves (Aspire, Roslyn,
