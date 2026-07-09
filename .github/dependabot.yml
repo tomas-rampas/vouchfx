@@ -1,8 +1,10 @@
-# Keeps the SHA-pinned GitHub Actions in .github/workflows/ maintained.
-# release.yml pins every action to a full commit SHA for supply-chain
-# integrity; without this ecosystem entry those pins would silently rot
-# (no security bumps, no signal when a pinned version is yanked).
-# Dependabot updates SHA pins and their trailing version comments together.
+# Keeps GitHub Actions references in .github/workflows/ maintained.
+# release.yml (the only secret-touching, OIDC-publishing workflow) pins
+# every action to a full commit SHA for supply-chain integrity; without
+# this ecosystem entry those pins would silently rot. Dependabot updates
+# SHA pins and their trailing version comments together. The scan covers
+# all workflows: the non-release workflows deliberately stay on floating
+# major tags and receive ordinary major-tag bumps.
 version: 2
 updates:
   - package-ecosystem: "github-actions"

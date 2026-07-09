@@ -47,9 +47,9 @@
 #      package IDs: confirm on nuget.org that the Trusted Publishing policy
 #      permits first-time creation of new IDs from this repo/workflow, and
 #      that no third party has registered or prefix-reserved the IDs. A 403
-#      on one ID aborts the push loop AFTER earlier packages already
-#      published (immutable) — the release then completes only via a new
-#      patch version, so verify policy scope before tagging, not after.
+#      on one ID publishes nothing for that ID; fix the policy and re-run the
+#      SAME tag — --skip-duplicate completes the missing pushes. A new patch
+#      version is only needed if a genuinely broken artifact already shipped.
 #
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
 # -------------------------------------------------------------------------
@@ -1007,10 +1007,21 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
+          # Non-fatal per package: glob order pushes the five Platform.* SDK
+          # packages BEFORE vouchfx, and a first-time 403 on a new ID (policy
+          # scope, prefix squat) must not hold the primary CLI publish hostage.
+          # Every failure is still reported and fails the step at the end;
+          # re-running the same tag completes the missing pushes via
+          # --skip-duplicate once the policy issue is fixed.
+          rc=0
           for nupkg in release-upload/*.nupkg; do
             echo "Pushing: $nupkg"
-            dotnet nuget push "$nupkg" \
+            if ! dotnet nuget push "$nupkg" \
               --api-key "$NUGET_API_KEY" \
               --source https://api.nuget.org/v3/index.json \
-              --skip-duplicate
+              --skip-duplicate; then
+              echo "::error::Push failed for $nupkg — continuing with remaining packages."
+              rc=1
+            fi
           done
+          exit $rc
