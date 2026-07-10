@@ -66,7 +66,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # Install the .NET 8 SDK.  The version spec "8.0.x" satisfies global.json
       # (sdk.version = "8.0.400", rollForward = latestFeature) — the setup
@@ -130,7 +130,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v5
@@ -175,7 +175,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v5
@@ -329,7 +329,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v5
@@ -392,7 +392,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # LTS Node 22 with npm caching keyed on the extension's own lock file.
       - name: Set up Node.js (LTS 22)
