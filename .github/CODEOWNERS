@@ -50,7 +50,7 @@
 # Memory-leak regression harness — the permanent Phase-1 (M1) CI gate (5,000-iteration
 # provider-closure leak test, blocking in build.yml). WHY: weakening it (fewer
 # iterations / a higher threshold) silently removes a hard-invariant safety gate.
-/tests/Platform.Engine.Compilation.MemoryHarness/ @tomas-rampas
+/tests/Vouchfx.Engine.Compilation.MemoryHarness/ @tomas-rampas
 
 
 # === FROZEN v1 contracts — highest bar (Core-provider+ review) ==============
@@ -66,12 +66,12 @@
 
 # Language JSON Schema source — the authored `.e2e.yaml` grammar. The composed
 # schema is frozen; changing the source mutates what every author/IDE validates.
-/src/Engine/Platform.Engine.Compilation/Schema/ @tomas-rampas
+/src/Engine/Vouchfx.Engine.Compilation/Schema/ @tomas-rampas
 
 # Event-wire contract — top-level + nested value records of the JSON Lines event
 # stream. Frozen by EventContractFreezeTests; any rename/type change breaks every
 # renderer and the Healer.
-/src/Engine/Platform.Engine.Abstractions/Events/ @tomas-rampas
+/src/Engine/Vouchfx.Engine.Abstractions/Events/ @tomas-rampas
 
 # Golden files — the frozen baselines themselves (SDK contract, event contract,
 # composed schema snapshots). These ARE the freeze; never edit without intent.

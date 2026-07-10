@@ -1222,7 +1222,7 @@ Schema validation makes the declarative YAML safe, but it stops at the boundary 
 
 ## 11.3 Planned approach for C# IntelliSense
 
-When the fast-follow is scheduled, the preferred path is an embedded "virtual document": the extension synthesises an in-memory `.cs` by concatenating a preamble that declares the engine's global variables (`Platform.Engine.Abstractions.ScriptGlobalVariables` — `Vars`, `Services`, `Secrets`, `Webhooks`) with the author's block-scalar body, then forwards completion and diagnostic requests to the installed C# language server and maps positions back into the `.e2e.yaml` document. The planned approach and technical trade-offs are fully documented in `tools/vscode-vouchfx/docs/csharp-intellisense.md`.
+When the fast-follow is scheduled, the preferred path is an embedded "virtual document": the extension synthesises an in-memory `.cs` by concatenating a preamble that declares the engine's global variables (`Vouchfx.Engine.Abstractions.ScriptGlobalVariables` — `Vars`, `Services`, `Secrets`, `Webhooks`) with the author's block-scalar body, then forwards completion and diagnostic requests to the installed C# language server and maps positions back into the `.e2e.yaml` document. The planned approach and technical trade-offs are fully documented in `tools/vscode-vouchfx/docs/csharp-intellisense.md`.
 
 ## 11.4 Language support and accessibility commitments
 

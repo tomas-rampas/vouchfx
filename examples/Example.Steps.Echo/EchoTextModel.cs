@@ -4,7 +4,7 @@
 // IStepModel — never Dictionary<string,object> (§13 invariant).  An external contributor
 // copies this shape: one immutable record per step kind, one property per author-supplied
 // field.
-using Platform.Sdk;
+using Vouchfx.Sdk;
 
 namespace Example.Steps.Echo;
 

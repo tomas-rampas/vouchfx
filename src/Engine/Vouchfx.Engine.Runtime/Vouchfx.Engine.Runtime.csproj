@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Engine.Runtime</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Expose internal types (ProviderPipeline, PipelineResult, …) to the Runtime test project. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <!-- The CLI runner reuses ScenarioRunner.Elevate (verdict precedence) so the CLI and
+         the engine can never disagree about how verdicts aggregate (S07-C-01). -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>vouchfx</_Parameter1>
+    </AssemblyAttribute>
+    <!-- The memory harness drives the internal ParallelSuiteRunner.RunParallelCoreAsync with a
+         fake core to prove concurrent per-scenario collectible ALCs are all reclaimed (S08-T1). -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Compilation.MemoryHarness</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
+    <ProjectReference Include="..\Vouchfx.Engine.Orchestration\Vouchfx.Engine.Orchestration.csproj" />
+    <ProjectReference Include="..\Vouchfx.Engine.Reporting\Vouchfx.Engine.Reporting.csproj" />
+    <ProjectReference Include="..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

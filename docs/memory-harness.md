@@ -10,7 +10,7 @@ The collectible load context guarantees that dynamically generated assemblies ar
 
 ## What it measures
 
-The harness lives at `tests/Platform.Engine.Compilation.MemoryHarness` and runs the real engine pipeline — `RoslynScriptCompiler.CompileOnce` into a fresh collectible `AssemblyLoadContext`, execute, unload — in a loop, with a script body (the *closure probe*) that deliberately touches every Core provider's canonical client:
+The harness lives at `tests/Vouchfx.Engine.Compilation.MemoryHarness` and runs the real engine pipeline — `RoslynScriptCompiler.CompileOnce` into a fresh collectible `AssemblyLoadContext`, execute, unload — in a loop, with a script body (the *closure probe*) that deliberately touches every Core provider's canonical client:
 
 - **Relational:** `Npgsql`, `Microsoft.Data.SqlClient`, `MySqlConnector` — real connection objects built and disposed per cycle (pools cleared or bounded).
 - **Document / key-value:** `MongoDB.Driver` (`MongoClient` with cluster-registry release), `StackExchange.Redis` (a real multiplexer per cycle), `AWSSDK.DynamoDBv2` (`AmazonDynamoDBClient`).
@@ -31,7 +31,7 @@ After the loop the harness forces a full GC, compares the managed heap against t
 ```bash
 dotnet build vouchfx.sln -c Release
 dotnet run -c Release --no-build \
-  --project tests/Platform.Engine.Compilation.MemoryHarness \
+  --project tests/Vouchfx.Engine.Compilation.MemoryHarness \
   -- --mode closure --iterations 5000 --threshold-bytes 2000000
 ```
 

@@ -28,7 +28,7 @@
 
 using System.Net.Http;
 using System.Reflection;
-using Platform.Engine.Telemetry;
+using Vouchfx.Engine.Telemetry;
 
 namespace Vouchfx.Cli;
 

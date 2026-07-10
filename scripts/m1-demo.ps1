@@ -187,7 +187,7 @@ $p1Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 try {
     Push-Location $repoRoot
 
-    $memoryHarnessProject = Join-Path $repoRoot "tests" "Platform.Engine.Compilation.MemoryHarness"
+    $memoryHarnessProject = Join-Path $repoRoot "tests" "Vouchfx.Engine.Compilation.MemoryHarness"
     Write-Host "  [*] Running closure harness (iterations=$MemoryIterations, threshold=$MemoryThresholdBytes bytes)..." -ForegroundColor Gray
 
     # Capture output.
@@ -265,10 +265,10 @@ try {
     Push-Location $repoRoot
 
     Write-Host "  [*] Running non-Docker test suite..." -ForegroundColor Gray
-    Write-Host "    - Platform.Sdk.Tests (reference provider + registry)" -ForegroundColor Gray
-    Write-Host "    - Platform.Engine.Abstractions.Tests (event schema)" -ForegroundColor Gray
-    Write-Host "    - Platform.Engine.Compilation.Tests (JSON Schema)" -ForegroundColor Gray
-    Write-Host "    - Platform.Engine.Reporting.Tests (terminal renderer)" -ForegroundColor Gray
+    Write-Host "    - Vouchfx.Sdk.Tests (reference provider + registry)" -ForegroundColor Gray
+    Write-Host "    - Vouchfx.Engine.Abstractions.Tests (event schema)" -ForegroundColor Gray
+    Write-Host "    - Vouchfx.Engine.Compilation.Tests (JSON Schema)" -ForegroundColor Gray
+    Write-Host "    - Vouchfx.Engine.Reporting.Tests (terminal renderer)" -ForegroundColor Gray
 
     & dotnet test $solutionPath -c Release --no-build --filter "requires!=docker" 2>&1 | Out-Null
 
@@ -327,7 +327,7 @@ if ($IncludeDocker) {
         $env:VOUCHFX_RELIABILITY_RUNS = $ReliabilityRuns
         Write-Host "  [*] Running Docker orchestration tests (reliability runs: $ReliabilityRuns)..." -ForegroundColor Gray
 
-        & dotnet test tests/Platform.Engine.Orchestration.Tests -c Release --no-build --filter "requires=docker" 2>&1 | Out-Null
+        & dotnet test tests/Vouchfx.Engine.Orchestration.Tests -c Release --no-build --filter "requires=docker" 2>&1 | Out-Null
 
         if ($LASTEXITCODE -eq 0) {
             $p4Stopwatch.Stop()

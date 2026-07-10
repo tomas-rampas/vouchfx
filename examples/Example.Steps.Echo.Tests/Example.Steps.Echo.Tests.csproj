@@ -17,15 +17,15 @@
     <!-- The worked-example provider under test. -->
     <ProjectReference Include="..\Example.Steps.Echo\Example.Steps.Echo.csproj" />
 
-    <!-- The out-of-repo provider test harness (Platform.Sdk.Testing).  A contributor
-         pins this as a PackageReference to Platform.Sdk.Testing 1.0.0; in-tree we use a
+    <!-- The out-of-repo provider test harness (Vouchfx.Sdk.Testing).  A contributor
+         pins this as a PackageReference to Vouchfx.Sdk.Testing 1.0.0; in-tree we use a
          ProjectReference so the example builds against the current SDK.  This harness is
          the ONLY engine surface the test project needs: it transitively pulls the three
          packable engine assemblies (Abstractions / Authoring / Compilation) it uses to
          schema-validate, compile-once and run-isolated a single step WITHOUT Docker.  The
-         test project deliberately does NOT reference any Platform.Engine.* project
+         test project deliberately does NOT reference any Vouchfx.Engine.* project
          directly — it drives the provider purely through ProviderTestHarness. -->
-    <ProjectReference Include="..\..\src\Sdk\Platform.Sdk.Testing\Platform.Sdk.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk.Testing\Vouchfx.Sdk.Testing.csproj" />
   </ItemGroup>
 
 </Project>

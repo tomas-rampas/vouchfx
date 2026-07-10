@@ -7,75 +7,75 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6664381F-613
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Engine", "Engine", "{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Abstractions", "src\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj", "{F1F5DAAA-398A-490C-93E7-EB8C942F3D0D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Abstractions", "src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj", "{F1F5DAAA-398A-490C-93E7-EB8C942F3D0D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Compilation", "src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj", "{97946A59-4E49-426A-AB67-A23C76871C45}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Compilation", "src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj", "{97946A59-4E49-426A-AB67-A23C76871C45}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Orchestration", "src\Engine\Platform.Engine.Orchestration\Platform.Engine.Orchestration.csproj", "{E665B197-12F5-4473-98CF-765D045BF2D1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Orchestration", "src\Engine\Vouchfx.Engine.Orchestration\Vouchfx.Engine.Orchestration.csproj", "{E665B197-12F5-4473-98CF-765D045BF2D1}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Sdk", "Sdk", "{BA96BEAD-E2D6-4A16-85E8-463BC3764C50}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Sdk", "src\Sdk\Platform.Sdk\Platform.Sdk.csproj", "{D71B7143-230F-4347-8A33-4C0572E7782E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Sdk", "src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj", "{D71B7143-230F-4347-8A33-4C0572E7782E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Sdk.Testing", "src\Sdk\Platform.Sdk.Testing\Platform.Sdk.Testing.csproj", "{F8388158-730E-4220-91CF-CF6C017A31F9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Sdk.Testing", "src\Sdk\Vouchfx.Sdk.Testing\Vouchfx.Sdk.Testing.csproj", "{F8388158-730E-4220-91CF-CF6C017A31F9}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Providers", "Providers", "{F0ACCEDC-5989-47E1-9776-643BED479B97}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Core", "Core", "{DAE7D803-ED65-4551-A2A5-109B76F2D0C8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.Core.HttpRest", "src\Providers\Core\Platform.Steps.Core.HttpRest\Platform.Steps.Core.HttpRest.csproj", "{C9C2CD82-B6EE-434A-AE4D-84B25EF7B66F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Core.HttpRest", "src\Providers\Core\Vouchfx.Steps.Core.HttpRest\Vouchfx.Steps.Core.HttpRest.csproj", "{C9C2CD82-B6EE-434A-AE4D-84B25EF7B66F}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Abstractions.Tests", "tests\Platform.Engine.Abstractions.Tests\Platform.Engine.Abstractions.Tests.csproj", "{BDD47FBA-EB56-4B41-A80D-08E561469B32}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Abstractions.Tests", "tests\Vouchfx.Engine.Abstractions.Tests\Vouchfx.Engine.Abstractions.Tests.csproj", "{BDD47FBA-EB56-4B41-A80D-08E561469B32}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Compilation.Tests", "tests\Platform.Engine.Compilation.Tests\Platform.Engine.Compilation.Tests.csproj", "{19491357-9BAE-4023-BC50-382D79C46DE1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Compilation.Tests", "tests\Vouchfx.Engine.Compilation.Tests\Vouchfx.Engine.Compilation.Tests.csproj", "{19491357-9BAE-4023-BC50-382D79C46DE1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Compilation.MemoryHarness", "tests\Platform.Engine.Compilation.MemoryHarness\Platform.Engine.Compilation.MemoryHarness.csproj", "{B0C9C9D2-0EF3-41E4-B670-71F32658BA14}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Compilation.MemoryHarness", "tests\Vouchfx.Engine.Compilation.MemoryHarness\Vouchfx.Engine.Compilation.MemoryHarness.csproj", "{B0C9C9D2-0EF3-41E4-B670-71F32658BA14}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Orchestration.Tests", "tests\Platform.Engine.Orchestration.Tests\Platform.Engine.Orchestration.Tests.csproj", "{306CF0EF-87D7-45A8-BED8-D361F07D45A3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Orchestration.Tests", "tests\Vouchfx.Engine.Orchestration.Tests\Vouchfx.Engine.Orchestration.Tests.csproj", "{306CF0EF-87D7-45A8-BED8-D361F07D45A3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Sdk.Tests", "tests\Platform.Sdk.Tests\Platform.Sdk.Tests.csproj", "{FA6C952C-5566-4627-9855-4F57AF9E37DE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Sdk.Tests", "tests\Vouchfx.Sdk.Tests\Vouchfx.Sdk.Tests.csproj", "{FA6C952C-5566-4627-9855-4F57AF9E37DE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Reporting", "src\Engine\Platform.Engine.Reporting\Platform.Engine.Reporting.csproj", "{49EC8A70-2985-4B00-B9F4-8868A69F82BD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Reporting", "src\Engine\Vouchfx.Engine.Reporting\Vouchfx.Engine.Reporting.csproj", "{49EC8A70-2985-4B00-B9F4-8868A69F82BD}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Reporting.Tests", "tests\Platform.Engine.Reporting.Tests\Platform.Engine.Reporting.Tests.csproj", "{6175A057-1099-40B7-BEAB-5221D7E9ABD9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Reporting.Tests", "tests\Vouchfx.Engine.Reporting.Tests\Vouchfx.Engine.Reporting.Tests.csproj", "{6175A057-1099-40B7-BEAB-5221D7E9ABD9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Authoring", "src\Engine\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj", "{66603AA1-D104-4EB2-841A-DABE1FC018FB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Authoring", "src\Engine\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj", "{66603AA1-D104-4EB2-841A-DABE1FC018FB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Authoring.Tests", "tests\Platform.Engine.Authoring.Tests\Platform.Engine.Authoring.Tests.csproj", "{9724E20A-1741-4FF6-BFD1-73CB45DF9704}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Authoring.Tests", "tests\Vouchfx.Engine.Authoring.Tests\Vouchfx.Engine.Authoring.Tests.csproj", "{9724E20A-1741-4FF6-BFD1-73CB45DF9704}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime", "src\Engine\Platform.Engine.Runtime\Platform.Engine.Runtime.csproj", "{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Runtime", "src\Engine\Vouchfx.Engine.Runtime\Vouchfx.Engine.Runtime.csproj", "{A3B7C91D-5F2E-4A8B-B3D6-E4F5A6B7C8D9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Runtime.Tests", "tests\Platform.Engine.Runtime.Tests\Platform.Engine.Runtime.Tests.csproj", "{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Runtime.Tests", "tests\Vouchfx.Engine.Runtime.Tests\Vouchfx.Engine.Runtime.Tests.csproj", "{B4C8D02E-6A3F-5B9C-C4E7-F5A6B7C8D9E0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Postgres", "src\Providers\Core\Platform.Steps.DbAssert.Postgres\Platform.Steps.DbAssert.Postgres.csproj", "{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Postgres", "src\Providers\Core\Vouchfx.Steps.DbAssert.Postgres\Vouchfx.Steps.DbAssert.Postgres.csproj", "{B4B02DC7-E831-4BAF-B38B-50389FF6B1F4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Postgres.Tests", "tests\Platform.Steps.DbAssert.Postgres.Tests\Platform.Steps.DbAssert.Postgres.Tests.csproj", "{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Postgres.Tests", "tests\Vouchfx.Steps.DbAssert.Postgres.Tests\Vouchfx.Steps.DbAssert.Postgres.Tests.csproj", "{B005AE7D-CC19-40FD-A3E1-5C38A69C1ACF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.SqlServer", "src\Providers\Core\Platform.Steps.DbAssert.SqlServer\Platform.Steps.DbAssert.SqlServer.csproj", "{5AB3DC21-9F8E-4C07-A6B2-3D4E5F607182}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.SqlServer", "src\Providers\Core\Vouchfx.Steps.DbAssert.SqlServer\Vouchfx.Steps.DbAssert.SqlServer.csproj", "{5AB3DC21-9F8E-4C07-A6B2-3D4E5F607182}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.SqlServer.Tests", "tests\Platform.Steps.DbAssert.SqlServer.Tests\Platform.Steps.DbAssert.SqlServer.Tests.csproj", "{6BC4ED32-0A9F-5D18-B7C3-4E5F60718293}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.SqlServer.Tests", "tests\Vouchfx.Steps.DbAssert.SqlServer.Tests\Vouchfx.Steps.DbAssert.SqlServer.Tests.csproj", "{6BC4ED32-0A9F-5D18-B7C3-4E5F60718293}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Mongodb", "src\Providers\Core\Platform.Steps.DbAssert.Mongodb\Platform.Steps.DbAssert.Mongodb.csproj", "{7CD5ED43-0A9B-4C1D-8E2F-3A4B5C6D7E8F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Mongodb", "src\Providers\Core\Vouchfx.Steps.DbAssert.Mongodb\Vouchfx.Steps.DbAssert.Mongodb.csproj", "{7CD5ED43-0A9B-4C1D-8E2F-3A4B5C6D7E8F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Mongodb.Tests", "tests\Platform.Steps.DbAssert.Mongodb.Tests\Platform.Steps.DbAssert.Mongodb.Tests.csproj", "{8DE6FE54-1BAC-5D2E-9F30-4B5C6D7E8F90}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Mongodb.Tests", "tests\Vouchfx.Steps.DbAssert.Mongodb.Tests\Vouchfx.Steps.DbAssert.Mongodb.Tests.csproj", "{8DE6FE54-1BAC-5D2E-9F30-4B5C6D7E8F90}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Mysql", "src\Providers\Core\Platform.Steps.DbAssert.Mysql\Platform.Steps.DbAssert.Mysql.csproj", "{9EF70065-2CBD-6E3F-AF41-5C6D7E8F9001}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Mysql", "src\Providers\Core\Vouchfx.Steps.DbAssert.Mysql\Vouchfx.Steps.DbAssert.Mysql.csproj", "{9EF70065-2CBD-6E3F-AF41-5C6D7E8F9001}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Mysql.Tests", "tests\Platform.Steps.DbAssert.Mysql.Tests\Platform.Steps.DbAssert.Mysql.Tests.csproj", "{AF080076-3DCE-7F40-BE52-6D7E8F900112}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Mysql.Tests", "tests\Vouchfx.Steps.DbAssert.Mysql.Tests\Vouchfx.Steps.DbAssert.Mysql.Tests.csproj", "{AF080076-3DCE-7F40-BE52-6D7E8F900112}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.Script.Csharp", "src\Providers\Core\Platform.Steps.Script.Csharp\Platform.Steps.Script.Csharp.csproj", "{C1D2E3F4-A5B6-7890-ABCD-EF1234567890}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Script.Csharp", "src\Providers\Core\Vouchfx.Steps.Script.Csharp\Vouchfx.Steps.Script.Csharp.csproj", "{C1D2E3F4-A5B6-7890-ABCD-EF1234567890}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.Script.Csharp.Tests", "tests\Platform.Steps.Script.Csharp.Tests\Platform.Steps.Script.Csharp.Tests.csproj", "{D2E3F4A5-B6C7-8901-BCDE-F12345678901}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Script.Csharp.Tests", "tests\Vouchfx.Steps.Script.Csharp.Tests\Vouchfx.Steps.Script.Csharp.Tests.csproj", "{D2E3F4A5-B6C7-8901-BCDE-F12345678901}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Kafka", "src\Providers\Core\Platform.Steps.MqPublish.Kafka\Platform.Steps.MqPublish.Kafka.csproj", "{757A858B-E1A2-43C5-BD86-4C796771B51F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Kafka", "src\Providers\Core\Vouchfx.Steps.MqPublish.Kafka\Vouchfx.Steps.MqPublish.Kafka.csproj", "{757A858B-E1A2-43C5-BD86-4C796771B51F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Kafka.Tests", "tests\Platform.Steps.MqPublish.Kafka.Tests\Platform.Steps.MqPublish.Kafka.Tests.csproj", "{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Kafka.Tests", "tests\Vouchfx.Steps.MqPublish.Kafka.Tests\Vouchfx.Steps.MqPublish.Kafka.Tests.csproj", "{C9A7E0B7-F01E-48CE-AE58-CD63386184C4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Kafka", "src\Providers\Core\Platform.Steps.MqExpect.Kafka\Platform.Steps.MqExpect.Kafka.csproj", "{04486CE0-D91F-444C-A81B-D8688FF3210F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Kafka", "src\Providers\Core\Vouchfx.Steps.MqExpect.Kafka\Vouchfx.Steps.MqExpect.Kafka.csproj", "{04486CE0-D91F-444C-A81B-D8688FF3210F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Kafka.Tests", "tests\Platform.Steps.MqExpect.Kafka.Tests\Platform.Steps.MqExpect.Kafka.Tests.csproj", "{294BD427-85F8-4A46-B370-69AAEF314B21}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Kafka.Tests", "tests\Vouchfx.Steps.MqExpect.Kafka.Tests\Vouchfx.Steps.MqExpect.Kafka.Tests.csproj", "{294BD427-85F8-4A46-B370-69AAEF314B21}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Cli", "Cli", "{C472369A-093E-4037-8181-9C07F0172859}"
 EndProject
@@ -83,9 +83,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Cli", "src\Cli\Vouc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Cli.Tests", "tests\Vouchfx.Cli.Tests\Vouchfx.Cli.Tests.csproj", "{90177E23-4365-47B7-8DE3-D3E98A2DAF63}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.WebhookListen.Http", "src\Providers\Core\Platform.Steps.WebhookListen.Http\Platform.Steps.WebhookListen.Http.csproj", "{E3C8205E-9334-4DFC-833A-61F61880CB8E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.WebhookListen.Http", "src\Providers\Core\Vouchfx.Steps.WebhookListen.Http\Vouchfx.Steps.WebhookListen.Http.csproj", "{E3C8205E-9334-4DFC-833A-61F61880CB8E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.WebhookListen.Http.Tests", "tests\Platform.Steps.WebhookListen.Http.Tests\Platform.Steps.WebhookListen.Http.Tests.csproj", "{FE2FC1A0-35CC-4FC4-8750-4F2D671E987B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.WebhookListen.Http.Tests", "tests\Vouchfx.Steps.WebhookListen.Http.Tests\Vouchfx.Steps.WebhookListen.Http.Tests.csproj", "{FE2FC1A0-35CC-4FC4-8750-4F2D671E987B}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{A33A111D-22DB-4917-AA4E-7FBDBAC021EB}"
 EndProject
@@ -93,9 +93,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Example.Steps.Hello", "exam
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Example.Steps.Hello.Tests", "examples\Example.Steps.Hello.Tests\Example.Steps.Hello.Tests.csproj", "{FCADEAA3-B1F9-41CC-AC24-914F2A207129}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Sdk.Testing.Tests", "tests\Platform.Sdk.Testing.Tests\Platform.Sdk.Testing.Tests.csproj", "{D0B84857-3E54-4FEE-8797-7EB0CE0EBDC4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Sdk.Testing.Tests", "tests\Vouchfx.Sdk.Testing.Tests\Vouchfx.Sdk.Testing.Tests.csproj", "{D0B84857-3E54-4FEE-8797-7EB0CE0EBDC4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.TestSupport", "tests\Platform.TestSupport\Platform.TestSupport.csproj", "{249984A6-414A-4F03-8BC5-34E32801849B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.TestSupport", "tests\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj", "{249984A6-414A-4F03-8BC5-34E32801849B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Example.Steps.Echo", "examples\Example.Steps.Echo\Example.Steps.Echo.csproj", "{3D400F8F-2A86-445C-BFF2-0E150FC59701}"
 EndProject
@@ -103,73 +103,73 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Example.Steps.Echo.Tests", 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Engine", "Engine", "{80C9DFB9-728F-4DE2-99FC-E0BFF6AF605B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Telemetry", "src\Engine\Platform.Engine.Telemetry\Platform.Engine.Telemetry.csproj", "{0B236038-6263-4D07-AC1B-4EFAEF14C0BC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Telemetry", "src\Engine\Vouchfx.Engine.Telemetry\Vouchfx.Engine.Telemetry.csproj", "{0B236038-6263-4D07-AC1B-4EFAEF14C0BC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Engine.Telemetry.Tests", "tests\Platform.Engine.Telemetry.Tests\Platform.Engine.Telemetry.Tests.csproj", "{776F9151-587A-4429-863E-0AB54DD27568}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Telemetry.Tests", "tests\Vouchfx.Engine.Telemetry.Tests\Vouchfx.Engine.Telemetry.Tests.csproj", "{776F9151-587A-4429-863E-0AB54DD27568}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MailExpect.Smtp", "src\Providers\Core\Platform.Steps.MailExpect.Smtp\Platform.Steps.MailExpect.Smtp.csproj", "{CE26EA83-B389-4654-A14E-422F9794BFE8}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MailExpect.Smtp", "src\Providers\Core\Vouchfx.Steps.MailExpect.Smtp\Vouchfx.Steps.MailExpect.Smtp.csproj", "{CE26EA83-B389-4654-A14E-422F9794BFE8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MailExpect.Smtp.Tests", "tests\Platform.Steps.MailExpect.Smtp.Tests\Platform.Steps.MailExpect.Smtp.Tests.csproj", "{1F4B7ED9-993E-4209-A69F-7A31ADC904A2}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MailExpect.Smtp.Tests", "tests\Vouchfx.Steps.MailExpect.Smtp.Tests\Vouchfx.Steps.MailExpect.Smtp.Tests.csproj", "{1F4B7ED9-993E-4209-A69F-7A31ADC904A2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.Redis", "src\Providers\Core\Platform.Steps.CacheAssert.Redis\Platform.Steps.CacheAssert.Redis.csproj", "{03899BE0-2033-439F-84B7-1A4F847706AE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.CacheAssert.Redis", "src\Providers\Core\Vouchfx.Steps.CacheAssert.Redis\Vouchfx.Steps.CacheAssert.Redis.csproj", "{03899BE0-2033-439F-84B7-1A4F847706AE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.Redis.Tests", "tests\Platform.Steps.CacheAssert.Redis.Tests\Platform.Steps.CacheAssert.Redis.Tests.csproj", "{55DE7E67-9FA0-4258-A210-989299673440}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.CacheAssert.Redis.Tests", "tests\Vouchfx.Steps.CacheAssert.Redis.Tests\Vouchfx.Steps.CacheAssert.Redis.Tests.csproj", "{55DE7E67-9FA0-4258-A210-989299673440}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.Elasticsearch", "src\Providers\Core\Platform.Steps.CacheAssert.Elasticsearch\Platform.Steps.CacheAssert.Elasticsearch.csproj", "{A4B5C6D7-E8F9-0A1B-C2D3-E4F567890A1B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.CacheAssert.Elasticsearch", "src\Providers\Core\Vouchfx.Steps.CacheAssert.Elasticsearch\Vouchfx.Steps.CacheAssert.Elasticsearch.csproj", "{A4B5C6D7-E8F9-0A1B-C2D3-E4F567890A1B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.CacheAssert.Elasticsearch.Tests", "tests\Platform.Steps.CacheAssert.Elasticsearch.Tests\Platform.Steps.CacheAssert.Elasticsearch.Tests.csproj", "{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.CacheAssert.Elasticsearch.Tests", "tests\Vouchfx.Steps.CacheAssert.Elasticsearch.Tests\Vouchfx.Steps.CacheAssert.Elasticsearch.Tests.csproj", "{B5C6D7E8-F9A0-1B2C-D3E4-F5A678901B2C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Rabbitmq", "src\Providers\Core\Platform.Steps.MqPublish.Rabbitmq\Platform.Steps.MqPublish.Rabbitmq.csproj", "{B0E10187-4F11-6A23-C854-7E8F90012A3B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Rabbitmq", "src\Providers\Core\Vouchfx.Steps.MqPublish.Rabbitmq\Vouchfx.Steps.MqPublish.Rabbitmq.csproj", "{B0E10187-4F11-6A23-C854-7E8F90012A3B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Rabbitmq.Tests", "tests\Platform.Steps.MqPublish.Rabbitmq.Tests\Platform.Steps.MqPublish.Rabbitmq.Tests.csproj", "{C1F21298-5012-7B34-D965-8F9001234C5D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Rabbitmq.Tests", "tests\Vouchfx.Steps.MqPublish.Rabbitmq.Tests\Vouchfx.Steps.MqPublish.Rabbitmq.Tests.csproj", "{C1F21298-5012-7B34-D965-8F9001234C5D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rabbitmq", "src\Providers\Core\Platform.Steps.MqExpect.Rabbitmq\Platform.Steps.MqExpect.Rabbitmq.csproj", "{D2030309-6123-8C45-EA76-9001234D6E7F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Rabbitmq", "src\Providers\Core\Vouchfx.Steps.MqExpect.Rabbitmq\Vouchfx.Steps.MqExpect.Rabbitmq.csproj", "{D2030309-6123-8C45-EA76-9001234D6E7F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Rabbitmq.Tests", "tests\Platform.Steps.MqExpect.Rabbitmq.Tests\Platform.Steps.MqExpect.Rabbitmq.Tests.csproj", "{E314040A-7234-9D56-FB87-0112345E7F80}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Rabbitmq.Tests", "tests\Vouchfx.Steps.MqExpect.Rabbitmq.Tests\Vouchfx.Steps.MqExpect.Rabbitmq.Tests.csproj", "{E314040A-7234-9D56-FB87-0112345E7F80}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Nats", "src\Providers\Core\Platform.Steps.MqPublish.Nats\Platform.Steps.MqPublish.Nats.csproj", "{F425051B-8345-AECF-0C98-1223456F8091}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Nats", "src\Providers\Core\Vouchfx.Steps.MqPublish.Nats\Vouchfx.Steps.MqPublish.Nats.csproj", "{F425051B-8345-AECF-0C98-1223456F8091}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Nats.Tests", "tests\Platform.Steps.MqPublish.Nats.Tests\Platform.Steps.MqPublish.Nats.Tests.csproj", "{05536C2D-9456-BFDF-1DA9-2334567F9102}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Nats.Tests", "tests\Vouchfx.Steps.MqPublish.Nats.Tests\Vouchfx.Steps.MqPublish.Nats.Tests.csproj", "{05536C2D-9456-BFDF-1DA9-2334567F9102}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nats", "src\Providers\Core\Platform.Steps.MqExpect.Nats\Platform.Steps.MqExpect.Nats.csproj", "{16647D3E-0567-C0EF-2EBA-3445678F0213}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Nats", "src\Providers\Core\Vouchfx.Steps.MqExpect.Nats\Vouchfx.Steps.MqExpect.Nats.csproj", "{16647D3E-0567-C0EF-2EBA-3445678F0213}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Nats.Tests", "tests\Platform.Steps.MqExpect.Nats.Tests\Platform.Steps.MqExpect.Nats.Tests.csproj", "{27758E4F-1678-D100-3FCB-4556789F1324}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Nats.Tests", "tests\Vouchfx.Steps.MqExpect.Nats.Tests\Vouchfx.Steps.MqExpect.Nats.Tests.csproj", "{27758E4F-1678-D100-3FCB-4556789F1324}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.AzureServiceBus", "src\Providers\Core\Platform.Steps.MqPublish.AzureServiceBus\Platform.Steps.MqPublish.AzureServiceBus.csproj", "{38869F50-2789-E211-4FDC-5667890F2435}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.AzureServiceBus", "src\Providers\Core\Vouchfx.Steps.MqPublish.AzureServiceBus\Vouchfx.Steps.MqPublish.AzureServiceBus.csproj", "{38869F50-2789-E211-4FDC-5667890F2435}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.AzureServiceBus.Tests", "tests\Platform.Steps.MqPublish.AzureServiceBus.Tests\Platform.Steps.MqPublish.AzureServiceBus.Tests.csproj", "{49970061-3890-F322-50ED-6778901F3546}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.AzureServiceBus.Tests", "tests\Vouchfx.Steps.MqPublish.AzureServiceBus.Tests\Vouchfx.Steps.MqPublish.AzureServiceBus.Tests.csproj", "{49970061-3890-F322-50ED-6778901F3546}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.AzureServiceBus", "src\Providers\Core\Platform.Steps.MqExpect.AzureServiceBus\Platform.Steps.MqExpect.AzureServiceBus.csproj", "{59981172-4901-0433-61FE-7889012F4657}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.AzureServiceBus", "src\Providers\Core\Vouchfx.Steps.MqExpect.AzureServiceBus\Vouchfx.Steps.MqExpect.AzureServiceBus.csproj", "{59981172-4901-0433-61FE-7889012F4657}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.AzureServiceBus.Tests", "tests\Platform.Steps.MqExpect.AzureServiceBus.Tests\Platform.Steps.MqExpect.AzureServiceBus.Tests.csproj", "{69092283-5012-1544-72AF-8990123F5768}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.AzureServiceBus.Tests", "tests\Vouchfx.Steps.MqExpect.AzureServiceBus.Tests\Vouchfx.Steps.MqExpect.AzureServiceBus.Tests.csproj", "{69092283-5012-1544-72AF-8990123F5768}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Redis", "src\Providers\Core\Platform.Steps.MqPublish.Redis\Platform.Steps.MqPublish.Redis.csproj", "{36E963A1-9787-4DED-9F92-114840C9C470}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Redis", "src\Providers\Core\Vouchfx.Steps.MqPublish.Redis\Vouchfx.Steps.MqPublish.Redis.csproj", "{36E963A1-9787-4DED-9F92-114840C9C470}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Redis", "src\Providers\Core\Platform.Steps.MqExpect.Redis\Platform.Steps.MqExpect.Redis.csproj", "{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Redis", "src\Providers\Core\Vouchfx.Steps.MqExpect.Redis\Vouchfx.Steps.MqExpect.Redis.csproj", "{95E0E2AA-E9F2-44EB-B434-0AA5A631BF33}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MetricsAssert.Prometheus", "src\Providers\Core\Platform.Steps.MetricsAssert.Prometheus\Platform.Steps.MetricsAssert.Prometheus.csproj", "{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MetricsAssert.Prometheus", "src\Providers\Core\Vouchfx.Steps.MetricsAssert.Prometheus\Vouchfx.Steps.MetricsAssert.Prometheus.csproj", "{71C4E379-C4CC-466E-8C03-12C1A56FBC7F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqPublish.Redis.Tests", "tests\Platform.Steps.MqPublish.Redis.Tests\Platform.Steps.MqPublish.Redis.Tests.csproj", "{A24F60E0-7D7A-49CB-A225-253DA946BD1D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqPublish.Redis.Tests", "tests\Vouchfx.Steps.MqPublish.Redis.Tests\Vouchfx.Steps.MqPublish.Redis.Tests.csproj", "{A24F60E0-7D7A-49CB-A225-253DA946BD1D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MqExpect.Redis.Tests", "tests\Platform.Steps.MqExpect.Redis.Tests\Platform.Steps.MqExpect.Redis.Tests.csproj", "{92A38B94-A300-412A-8783-B7F108A2A614}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MqExpect.Redis.Tests", "tests\Vouchfx.Steps.MqExpect.Redis.Tests\Vouchfx.Steps.MqExpect.Redis.Tests.csproj", "{92A38B94-A300-412A-8783-B7F108A2A614}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.MetricsAssert.Prometheus.Tests", "tests\Platform.Steps.MetricsAssert.Prometheus.Tests\Platform.Steps.MetricsAssert.Prometheus.Tests.csproj", "{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.MetricsAssert.Prometheus.Tests", "tests\Vouchfx.Steps.MetricsAssert.Prometheus.Tests\Vouchfx.Steps.MetricsAssert.Prometheus.Tests.csproj", "{61CEA174-CB0C-4F1D-8798-B71DF5CC2894}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Dynamodb", "src\Providers\Core\Platform.Steps.DbAssert.Dynamodb\Platform.Steps.DbAssert.Dynamodb.csproj", "{0F2C044B-CABA-4B61-A01E-67014E23012E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Dynamodb", "src\Providers\Core\Vouchfx.Steps.DbAssert.Dynamodb\Vouchfx.Steps.DbAssert.Dynamodb.csproj", "{0F2C044B-CABA-4B61-A01E-67014E23012E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.StorageAssert.S3", "src\Providers\Core\Platform.Steps.StorageAssert.S3\Platform.Steps.StorageAssert.S3.csproj", "{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.StorageAssert.S3", "src\Providers\Core\Vouchfx.Steps.StorageAssert.S3\Vouchfx.Steps.StorageAssert.S3.csproj", "{15D81E9E-99A0-49D1-B7D4-1DFB41461A33}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.DbAssert.Dynamodb.Tests", "tests\Platform.Steps.DbAssert.Dynamodb.Tests\Platform.Steps.DbAssert.Dynamodb.Tests.csproj", "{851FC279-6DE3-438E-8095-4337262F0169}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.DbAssert.Dynamodb.Tests", "tests\Vouchfx.Steps.DbAssert.Dynamodb.Tests\Vouchfx.Steps.DbAssert.Dynamodb.Tests.csproj", "{851FC279-6DE3-438E-8095-4337262F0169}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.StorageAssert.S3.Tests", "tests\Platform.Steps.StorageAssert.S3.Tests\Platform.Steps.StorageAssert.S3.Tests.csproj", "{87D68AD9-522D-48C3-A012-F3A49B41FE17}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.StorageAssert.S3.Tests", "tests\Vouchfx.Steps.StorageAssert.S3.Tests\Vouchfx.Steps.StorageAssert.S3.Tests.csproj", "{87D68AD9-522D-48C3-A012-F3A49B41FE17}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.TraceExpect.Otlp", "src\Providers\Core\Platform.Steps.TraceExpect.Otlp\Platform.Steps.TraceExpect.Otlp.csproj", "{D59C8E39-D19B-4857-86D2-BDCAA7914DF9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.TraceExpect.Otlp", "src\Providers\Core\Vouchfx.Steps.TraceExpect.Otlp\Vouchfx.Steps.TraceExpect.Otlp.csproj", "{D59C8E39-D19B-4857-86D2-BDCAA7914DF9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.Http.Soap", "src\Providers\Core\Platform.Steps.Http.Soap\Platform.Steps.Http.Soap.csproj", "{472AC540-C97A-4AF7-8B7D-C8EF6DF4616E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Http.Soap", "src\Providers\Core\Vouchfx.Steps.Http.Soap\Vouchfx.Steps.Http.Soap.csproj", "{472AC540-C97A-4AF7-8B7D-C8EF6DF4616E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.TraceExpect.Otlp.Tests", "tests\Platform.Steps.TraceExpect.Otlp.Tests\Platform.Steps.TraceExpect.Otlp.Tests.csproj", "{A158C877-89A9-4E38-B8B1-707F57DEB91B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.TraceExpect.Otlp.Tests", "tests\Vouchfx.Steps.TraceExpect.Otlp.Tests\Vouchfx.Steps.TraceExpect.Otlp.Tests.csproj", "{A158C877-89A9-4E38-B8B1-707F57DEB91B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Platform.Steps.Http.Soap.Tests", "tests\Platform.Steps.Http.Soap.Tests\Platform.Steps.Http.Soap.Tests.csproj", "{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Http.Soap.Tests", "tests\Vouchfx.Steps.Http.Soap.Tests\Vouchfx.Steps.Http.Soap.Tests.csproj", "{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

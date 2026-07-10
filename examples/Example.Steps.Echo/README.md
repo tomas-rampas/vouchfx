@@ -1,8 +1,8 @@
 # Example.Steps.Echo — Provider SDK dry-run (`echo.text`)
 
 A worked example that an **outside contributor** can copy to build a **non-Core**
-vouchfx provider against the frozen v1 `Platform.Sdk` contract, and prove it works
-**end to end without Docker** via the published `Platform.Sdk.Testing` harness.
+vouchfx provider against the frozen v1 `Vouchfx.Sdk` contract, and prove it works
+**end to end without Docker** via the published `Vouchfx.Sdk.Testing` harness.
 
 `echo.text` is the smallest provider that demonstrates `{placeholder}` substitution: it
 resolves its `text` field against the shared `Vars` global at execution time (the same
@@ -16,11 +16,11 @@ run pipeline directly — no container required.
 This is the entire surface a contributor touches; the engine discovers and drives the
 rest reflectively.
 
-1. **Add a project that references only `Platform.Sdk`.**
+1. **Add a project that references only `Vouchfx.Sdk`.**
    See `Example.Steps.Echo.csproj`. A non-Core provider depends solely on the frozen v1
-   SDK contract — it takes **no** reference to any `Platform.Engine.*` assembly. The
-   project lives in a **non-reserved** namespace (`Example.Steps.Echo`); `Platform.Steps.*`
-   and `Platform.Engine.*` are reserved for the engine and its Core providers and a
+   SDK contract — it takes **no** reference to any `Vouchfx.Engine.*` assembly. The
+   project lives in a **non-reserved** namespace (`Example.Steps.Echo`); `Vouchfx.Steps.*`
+   and `Vouchfx.Engine.*` are reserved for the engine and its Core providers and a
    customer DLL declaring them is refused at startup (§5.6).
 
 2. **Define a strongly-typed model record implementing `IStepModel`.**
@@ -92,7 +92,7 @@ references `System.Text.Json`), but the **emitted CSX** failed Roslyn compilatio
 
 Root cause: the engine compiles the assembled script against a **minimal** base reference
 set (`System.Private.CoreLib` / `System.Runtime` / `System.Collections` /
-`System.Text.RegularExpressions` + `Platform.Engine.Abstractions`). `System.Text.Json` is
+`System.Text.RegularExpressions` + `Vouchfx.Engine.Abstractions`). `System.Text.Json` is
 **not** in that set. A provider can extend the reference set by implementing the optional
 `ICompileReferenceContributor` (as `http.rest` does to pull in `JsonPath.Net`), but
 `echo.text` is intentionally dependency-free and the single-step harness does not run that

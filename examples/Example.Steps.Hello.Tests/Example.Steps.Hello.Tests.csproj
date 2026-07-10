@@ -18,16 +18,16 @@
     <ProjectReference Include="..\Example.Steps.Hello\Example.Steps.Hello.csproj" />
 
     <!-- Engine surface the fixture drives the example provider through, end to end:
-           • Platform.Sdk            — StepKindRegistry (reflective discovery).
-           • Platform.Engine.Authoring   — YamlDocumentParser + AstBuilder (front end).
-           • Platform.Engine.Compilation  — DocumentValidator (schema), CsxAssembler,
+           • Vouchfx.Sdk            — StepKindRegistry (reflective discovery).
+           • Vouchfx.Engine.Authoring   — YamlDocumentParser + AstBuilder (front end).
+           • Vouchfx.Engine.Compilation  — DocumentValidator (schema), CsxAssembler,
                                             RoslynScriptCompiler (compile-once + run).
-           • Platform.Engine.Abstractions — Verdict, StepOutcome, VarKeys,
+           • Vouchfx.Engine.Abstractions — Verdict, StepOutcome, VarKeys,
                                             ScriptGlobalVariables (read the result). -->
-    <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
-    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Abstractions\Platform.Engine.Abstractions.csproj" />
-    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Authoring\Platform.Engine.Authoring.csproj" />
-    <ProjectReference Include="..\..\src\Engine\Platform.Engine.Compilation\Platform.Engine.Compilation.csproj" />
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
   </ItemGroup>
 
 </Project>

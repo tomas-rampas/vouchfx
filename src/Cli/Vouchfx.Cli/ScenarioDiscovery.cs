@@ -9,9 +9,9 @@
 // suite. The run command surfaces such a file as an Inconclusive scenario (§12.1 — an
 // authoring error, the scenario never ran), never as a Fail.
 
-using Platform.Engine.Authoring;
-using Platform.Engine.Authoring.Ast;
-using Platform.Sdk;
+using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Sdk;
 
 namespace Vouchfx.Cli;
 

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Label="S08-F-02 / M4 — frozen Vouchfx.Sdk.Testing public-API golden artifact">
+    <!--
+      The committed golden the SdkTestingContractFreezeTests gate diffs against.
+      Copied next to the test DLL so the test reads it from
+      AppContext.BaseDirectory/Golden (mirrors Vouchfx.Sdk.Tests' golden wiring).
+      Non-compiled Content; CopyToOutputDirectory keeps it fresh.
+    -->
+    <Content Include="Golden\vouchfx-sdk-testing-public-api.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The harness under test.  Its transitive ProjectReferences (Vouchfx.Sdk +
+         the three engine assemblies) flow in, so the in-test echo.console provider
+         and the tests can reference Vouchfx.Sdk (IStepProvider, …) and
+         Vouchfx.Engine.Abstractions (Verdict) directly. -->
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk.Testing\Vouchfx.Sdk.Testing.csproj" />
+    <!-- Shared canonical public-API signature builder (SdkPublicApiSignature) — the
+         SAME implementation Vouchfx.Sdk.Tests uses, so the two goldens are
+         byte-comparable (S08-F-02 / M4 follow-up). -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
+  </ItemGroup>
+
+</Project>

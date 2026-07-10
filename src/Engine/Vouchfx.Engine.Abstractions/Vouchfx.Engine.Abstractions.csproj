@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Engine.Abstractions</RootNamespace>
+  </PropertyGroup>
+
+  <!-- NuGet packaging (M3 SDK-validation gate): published to enable the
+       Vouchfx.Sdk.Testing provider harness.  TESTING SURFACE, NOT the frozen v1
+       provider contract (that is Vouchfx.Sdk).  Mirrors the proven Vouchfx.Sdk
+       packaging block; PackageId = the project name; semver-evolved per engine release. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>$(MSBuildProjectName)</PackageId>
+    <!-- A bare `dotnet pack` (no -p:Version) yields 1.0.0-0.local: the numeric-leading prerelease identifier sorts below every published pre-release (alpha, beta, rc), so a local pack can never outrank anything on NuGet.org. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>0.local</VersionSuffix>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>vouchfx engine assembly — published to enable the Vouchfx.Sdk.Testing provider harness. TESTING SURFACE, NOT the frozen v1 provider contract (that is Vouchfx.Sdk). Semver-evolved per engine release.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;testing;engine</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Resilience (§5.7) — Polly v8 (ResiliencePipeline) backs the RETRY runner.
+       Version comes from central package management (Directory.Packages.props). -->
+  <ItemGroup>
+    <PackageReference Include="Polly.Core" />
+  </ItemGroup>
+
+  <!-- Expose the internal SecretString constructor to the Abstractions test project
+       so tests can mint a SecretString without an injection sink (S05-B-02). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Abstractions.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

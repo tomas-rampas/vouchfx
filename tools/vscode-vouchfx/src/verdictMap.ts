@@ -4,7 +4,7 @@
 // SOURCE OF TRUTH — the wire tokens (PASS/FAIL/ENV_ERROR/INCONCLUSIVE) mirror the
 // .NET `VerdictJsonConverter` (Token* constants), which exists on `main`. The
 // editor-state mapping mirrors the .NET `EditorStateMapping` pinned in
-//   tests/Platform.Engine.Reporting.Tests/RendererParityTests.cs
+//   tests/Vouchfx.Engine.Reporting.Tests/RendererParityTests.cs
 // — the renderer-parity guard that pins how the four §12.1 verdicts surface on
 // the editor / Test Explorer surface — delivered in the companion Sprint-10 .NET
 // PR #148 (so that symbol is not yet on `main`). The four-verdict taxonomy is non-

@@ -10,9 +10,9 @@
 //     never touched.
 
 using System.CommandLine;
-using Platform.Engine.Abstractions;
-using Platform.Engine.Abstractions.Events;
-using Platform.Engine.Telemetry;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Events;
+using Vouchfx.Engine.Telemetry;
 using Vouchfx.Cli;
 using Xunit;
 

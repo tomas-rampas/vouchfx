@@ -19,7 +19,7 @@
 // for). Path and change-set filters apply to parse-failures normally (path/identity, not
 // metadata), so a tag-free `--path`/`--changed-since` selection still narrows them.
 
-using Platform.Engine.Authoring.Model;
+using Vouchfx.Engine.Authoring.Model;
 
 namespace Vouchfx.Cli.Selection;
 

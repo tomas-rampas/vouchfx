@@ -10,7 +10,7 @@
 
 using System.CommandLine;
 using System.Net.Http;
-using Platform.Engine.Telemetry;
+using Vouchfx.Engine.Telemetry;
 
 namespace Vouchfx.Cli;
 

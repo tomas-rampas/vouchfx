@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Steps.WebhookListen.Http</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- No client-library package: the webhook listener is a HOST resource owned by the
+       runner (Default ALC).  This provider only reads its captures through the typed
+       IWebhookCaptureAccessor on ScriptGlobalVariables.Webhooks (§5, S07-F-01a). -->
+
+</Project>

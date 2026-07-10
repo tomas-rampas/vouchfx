@@ -6,8 +6,8 @@
 
 This document records the accessibility audit of the two primary report-rendering surfaces in vouchfx:
 
-- **Terminal renderer** (`src/Engine/Platform.Engine.Reporting/TerminalRenderer.cs`) — structured JSON Lines event stream rendered to stdout or a file as plain text, with optional accessibility decorations (shape glyphs and ANSI colour).
-- **HTML renderer** (`src/Engine/Platform.Engine.Reporting/HtmlRenderer.cs`) — the same event stream rendered as a self-contained HTML5 document with inline stylesheet and no external resource fetches.
+- **Terminal renderer** (`src/Engine/Vouchfx.Engine.Reporting/TerminalRenderer.cs`) — structured JSON Lines event stream rendered to stdout or a file as plain text, with optional accessibility decorations (shape glyphs and ANSI colour).
+- **HTML renderer** (`src/Engine/Vouchfx.Engine.Reporting/HtmlRenderer.cs`) — the same event stream rendered as a self-contained HTML5 document with inline stylesheet and no external resource fetches.
 
 ### Audit method
 
@@ -15,8 +15,8 @@ This record is based on:
 
 1. **Internal expert code review** — direct examination of the rendering source code and the CSS/HTML structure emitted.
 2. **Deterministic automated CI gates** — two comprehensive test suites that verify conformance properties and regression-prevent any future drift:
-   - `tests/Platform.Engine.Reporting.Tests/TerminalRendererAccessibilityTests.cs` — verifies that all four §12.1 verdicts are distinguishable by text token alone (colour and glyphs stripped).
-   - `tests/Platform.Engine.Reporting.Tests/HtmlRendererWcagTests.cs` — recomputes WCAG 2.1 relative-luminance contrast ratios from the emitted stylesheet and asserts structural invariants.
+   - `tests/Vouchfx.Engine.Reporting.Tests/TerminalRendererAccessibilityTests.cs` — verifies that all four §12.1 verdicts are distinguishable by text token alone (colour and glyphs stripped).
+   - `tests/Vouchfx.Engine.Reporting.Tests/HtmlRendererWcagTests.cs` — recomputes WCAG 2.1 relative-luminance contrast ratios from the emitted stylesheet and asserts structural invariants.
 
 The gates do not use assistive technology or live user testing; they are deterministic unit tests that can run in any CI environment without specialised hardware.
 

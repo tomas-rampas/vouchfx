@@ -114,7 +114,7 @@ This is **NOT a vouchfx configuration knob** (there is no `--health-check-timeou
    - Using a healthcheck endpoint that returns quickly (not one that validates database connectivity, which adds latency).
    - Profiling the container with `docker logs` to see where time is spent.
 
-4. **Serialize topology startup** if you are running tests in parallel locally. The `[assembly: CollectionBehavior(DisableTestParallelization=true)]` attribute (on xUnit test projects that use Aspire) serialises test startup, preventing concurrent DCP resource startup from overwhelming the machine and triggering timeouts. This is already applied in the vouchfx test projects (see `Platform.Engine.Runtime.Tests` for the example).
+4. **Serialize topology startup** if you are running tests in parallel locally. The `[assembly: CollectionBehavior(DisableTestParallelization=true)]` attribute (on xUnit test projects that use Aspire) serialises test startup, preventing concurrent DCP resource startup from overwhelming the machine and triggering timeouts. This is already applied in the vouchfx test projects (see `Vouchfx.Engine.Runtime.Tests` for the example).
 
 5. **In CI, increase runner capacity or use a faster image pull network.** If your CI runner has constrained network or disk bandwidth, image pulls take longer. Use a faster runner if available, or pre-cache the image in the runner's local Docker registry.
 
