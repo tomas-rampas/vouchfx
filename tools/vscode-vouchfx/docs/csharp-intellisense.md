@@ -25,7 +25,7 @@ cursor is inside a `code:` block, the extension would synthesise an in-memory
 `.cs` document by concatenating
 
 1. a **preamble** that declares the engine globals the script runs against —
-   the `Platform.Engine.Abstractions.ScriptGlobalVariables` surface
+   the `Vouchfx.Engine.Abstractions.ScriptGlobalVariables` surface
    (`Vars`, `Services`, `Secrets`, `Webhooks`) — so member completion on those
    resolves, plus
 2. the author's block-scalar body,
@@ -42,7 +42,7 @@ This is deferred for concrete, current reasons:
   project/workspace, so an un-projected synthetic buffer does not reliably get
   semantic completion or diagnostics. Driving it would mean fabricating (and
   keeping in sync) a throwaway project that references the engine's
-  `Platform.Engine.Abstractions` assembly.
+  `Vouchfx.Engine.Abstractions` assembly.
 - **YAML ↔ virtual-document position mapping is non-trivial.** The block-scalar
   body is dedented by its indentation and may use literal (`|`) or folded (`>`)
   chomping; every request and every diagnostic range has to be translated
@@ -61,7 +61,7 @@ service) and records **IntelliSense as a fast-follow**.
 When the fast-follow is scheduled:
 
 1. Prefer **Option A** with a minimal generated companion project that
-   references `Platform.Engine.Abstractions`, so the Roslyn LSP has a workspace
+   references `Vouchfx.Engine.Abstractions`, so the Roslyn LSP has a workspace
    and the `ScriptGlobalVariables` globals resolve.
 2. Build the preamble from the engine's actual `ScriptGlobalVariables` contract
    (kept in lock-step with the frozen Provider SDK surface) so completions match

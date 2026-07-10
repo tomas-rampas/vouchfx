@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="JsonPath.Net" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MetricsAssert.Prometheus\Vouchfx.Steps.MetricsAssert.Prometheus.csproj" />
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

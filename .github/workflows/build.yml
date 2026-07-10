@@ -26,7 +26,7 @@
 #               transitive packages via `dotnet list package --vulnerable
 #               --include-transitive` so maintainers retain continuous CVE
 #               visibility over the published-package footprint (the engine
-#               assemblies + Platform.Sdk.Testing now ship a code-generating
+#               assemblies + Vouchfx.Sdk.Testing now ship a code-generating
 #               compiler + JsonSchema.Net + YamlDotNet onto every consumer's
 #               transitive graph).  It deliberately NEVER gates merge: a
 #               newly-published upstream CVE must not break unrelated PRs.
@@ -156,7 +156,7 @@ jobs:
           dotnet run
           -c Release
           --no-build
-          --project tests/Platform.Engine.Compilation.MemoryHarness
+          --project tests/Vouchfx.Engine.Compilation.MemoryHarness
           -- --mode closure --iterations 5000 --threshold-bytes 2000000
 
   # ── Docker / Aspire integration — forward-looking stub ───────────────────────
@@ -360,7 +360,7 @@ jobs:
   #   * The extension is new (greenfield), so its Node toolchain is allowed to be
   #     skipped or flaky without blocking unrelated .NET PRs.
   #   * The AUTHORITATIVE editor-schema-vs-compiler contract gate is the .NET test
-  #     `VsCodeShippedSchemaSyncTests` (Platform.Engine.Compilation.Tests), which
+  #     `VsCodeShippedSchemaSyncTests` (Vouchfx.Engine.Compilation.Tests), which
   #     runs in the BLOCKING `build` job (`--filter "requires!=docker"`). That
   #     test asserts the schema shipped with the extension equals the composer's
   #     output and remains the single source of truth even if this Node job is

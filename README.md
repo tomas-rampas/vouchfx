@@ -28,7 +28,7 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all twenty-five Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB, DynamoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), metrics (Prometheus), storage (S3), HTTP (REST, SOAP), distributed tracing (OTLP), webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Platform.Sdk`) is packable with developer guidance and worked-example providers (publication to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release), and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha.1`/`v1.0.0-alpha.2` pre-releases for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Vouchfx.Sdk`) is packable with developer guidance and worked-example providers (publication to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release), and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha.1`/`v1.0.0-alpha.2` pre-releases for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
 > The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with the community registry, hub-hosted community providers, and the maintainer-awarded Vouched badge, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0 GA: validation with pilot teams, and stabilisation of the Provider SDK at 1.0.0 final (see the [roadmap](docs/roadmap.md)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
@@ -424,23 +424,23 @@ with per-step verdicts and failing-line decoration in the editor. Full in-block 
 ```
 src/
   Engine/
-    Platform.Engine.Abstractions      ScriptGlobalVariables, the JSON Lines event envelope
-    Platform.Engine.Compilation       compile-once Roslyn path, collectible context, leak guards
-    Platform.Engine.Orchestration     headless Aspire AppHost, health-gated topology
+    Vouchfx.Engine.Abstractions      ScriptGlobalVariables, the JSON Lines event envelope
+    Vouchfx.Engine.Compilation       compile-once Roslyn path, collectible context, leak guards
+    Vouchfx.Engine.Orchestration     headless Aspire AppHost, health-gated topology
   Sdk/
-    Platform.Sdk                      the frozen v1.x provider contract
+    Vouchfx.Sdk                      the frozen v1.x provider contract
   Providers/Core/                     twenty-five providers across eleven families
-    Platform.Steps.Http.*             HTTP family (REST, SOAP)
-    Platform.Steps.DbAssert.*         database assertions (Postgres, MySQL, SQL Server, MongoDB, DynamoDB)
-    Platform.Steps.MqPublish.*        message publishing (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams)
-    Platform.Steps.MqExpect.*         message consumption & assertions (same 5 brokers)
-    Platform.Steps.CacheAssert.*      cache/search assertions (Redis, Elasticsearch)
-    Platform.Steps.MetricsAssert.*    metrics assertions (Prometheus)
-    Platform.Steps.StorageAssert.*    object-storage assertions (S3)
-    Platform.Steps.TraceExpect.*      distributed-trace assertions (OTLP)
-    Platform.Steps.MailExpect.*       email assertions (SMTP)
-    Platform.Steps.WebhookListen.*    webhook listening (HTTP)
-    Platform.Steps.Script.*           embedded code (C#)
+    Vouchfx.Steps.Http.*             HTTP family (REST, SOAP)
+    Vouchfx.Steps.DbAssert.*         database assertions (Postgres, MySQL, SQL Server, MongoDB, DynamoDB)
+    Vouchfx.Steps.MqPublish.*        message publishing (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams)
+    Vouchfx.Steps.MqExpect.*         message consumption & assertions (same 5 brokers)
+    Vouchfx.Steps.CacheAssert.*      cache/search assertions (Redis, Elasticsearch)
+    Vouchfx.Steps.MetricsAssert.*    metrics assertions (Prometheus)
+    Vouchfx.Steps.StorageAssert.*    object-storage assertions (S3)
+    Vouchfx.Steps.TraceExpect.*      distributed-trace assertions (OTLP)
+    Vouchfx.Steps.MailExpect.*       email assertions (SMTP)
+    Vouchfx.Steps.WebhookListen.*    webhook listening (HTTP)
+    Vouchfx.Steps.Script.*           embedded code (C#)
 tests/                                per-component and per-provider xUnit projects + the memory-leak measurement harness
 docs/                                 the authoritative design — single source of truth (see below)
 CLAUDE.md                             operating rules and hard invariants for this repository
@@ -468,10 +468,10 @@ than at runtime:
 
 | Prefix | Owner | Purpose |
 |---|---|---|
-| `Platform.Engine.*` | Engine | Core engine internals — compilation, orchestration, execution host, verdict taxonomy, reporting. |
-| `Platform.Steps.*` | Providers | Step providers — e.g. `Platform.Steps.Core.HttpRest`, `Platform.Steps.DbAssert.Postgres`. |
+| `Vouchfx.Engine.*` | Engine | Core engine internals — compilation, orchestration, execution host, verdict taxonomy, reporting. |
+| `Vouchfx.Steps.*` | Providers | Step providers — e.g. `Vouchfx.Steps.Core.HttpRest`, `Vouchfx.Steps.DbAssert.Postgres`. |
 
-`Platform.Sdk` is the public provider-authoring contract — consumed by providers, not part of the
+`Vouchfx.Sdk` is the public provider-authoring contract — consumed by providers, not part of the
 engine internals.
 
 ## Related repositories
@@ -481,7 +481,7 @@ engine internals.
 
 ## Contributing
 
-**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Platform.Sdk` project (will ship with the next tagged pre-release; until then it is packable locally, or via the provider hub's local-feed setup), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Community.Steps.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Community.Steps.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for an end-to-end walkthrough.
+**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Vouchfx.Sdk` project (publishes as Vouchfx.Sdk with the next tagged pre-release; until then it is packable locally, or via the provider hub's local-feed setup), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for an end-to-end walkthrough.
 
 **Contributing to the platform engine?** Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), [`GOVERNANCE.md`](GOVERNANCE.md), and the [public roadmap](docs/roadmap.md) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 

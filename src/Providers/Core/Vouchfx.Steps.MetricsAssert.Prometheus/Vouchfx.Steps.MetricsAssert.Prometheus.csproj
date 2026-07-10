@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Steps.MetricsAssert.Prometheus</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JsonPath.Net: Json.Path.JsonPath used to evaluate the optional capture: block
+         against the small {"metric":…,"value":…,"labels":{…}} observation object.
+         The HTTP client itself is the BCL System.Net.Http — no package needed. -->
+    <PackageReference Include="JsonPath.Net" />
+  </ItemGroup>
+
+</Project>

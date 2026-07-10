@@ -68,7 +68,7 @@ to eyeball it.
 
 Full in-block C# IntelliSense is a **documented fast-follow**, not built in v1.
 The intended path — an embedded "virtual document" that declares the engine's
-`Platform.Engine.Abstractions.ScriptGlobalVariables` globals (`Vars`, `Services`,
+`Vouchfx.Engine.Abstractions.ScriptGlobalVariables` globals (`Vars`, `Services`,
 `Secrets`, `Webhooks`) in a preamble and forwards completion/diagnostics to the
 installed C# extension — is deferred because the modern **C# Dev Kit / Roslyn
 LSP does not cleanly expose virtual-document completion forwarding** for an

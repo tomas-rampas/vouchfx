@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Steps.MqPublish.Kafka</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" />
+  </ItemGroup>
+
+  <ItemGroup Label="Avro / schema-registry (S06) — Avro publish branch">
+    <!-- These are compile-time MetadataReferences only; they resolve from the Default
+         ALC and are never loaded into the collectible ALC (§5 memory-model). -->
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
+  </ItemGroup>
+
+</Project>

@@ -102,10 +102,10 @@ fixes; please upgrade rather than relying on an older pre-release.
 
 Security issues in the parts of this repository the project maintains:
 
-- **The engine** (`Platform.Engine.*`): compilation (parser → AST → CSX →
+- **The engine** (`Vouchfx.Engine.*`): compilation (parser → AST → CSX →
   Roslyn), orchestration (Aspire AppHost / Testcontainers), execution (the
   collectible `AssemblyLoadContext` host, Polly resilience), and reporting.
-- **The Core providers** (`Platform.Steps.*` under `src/Providers/Core`):
+- **The Core providers** (`Vouchfx.Steps.*` under `src/Providers/Core`):
   `http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`,
   `mq-expect.kafka`, `webhook-listen.http`.
 - **The Provider SDK** (`src/Sdk`) — the frozen v1 interface contract.

@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- CRITICAL teaching point (§5.6 assembly-graph hygiene):
          a non-Core / customer provider MUST live in a NON-reserved namespace.
-         'Platform.Steps.*' and 'Platform.Engine.*' are RESERVED for the engine and
+         'Vouchfx.Steps.*' and 'Vouchfx.Engine.*' are RESERVED for the engine and
          its Core providers — a customer DLL declaring those is refused at startup.
          This worked example uses 'Example.Steps.Hello' to model the rule correctly. -->
     <RootNamespace>Example.Steps.Hello</RootNamespace>
@@ -11,14 +11,14 @@
 
   <ItemGroup>
     <!-- A worked-example / non-Core provider depends ONLY on the frozen v1 SDK
-         contract.  It needs NO reference to any Platform.Engine.* assembly: the
-         engine drives the provider through the Platform.Sdk interfaces, and the
+         contract.  It needs NO reference to any Vouchfx.Engine.* assembly: the
+         engine drives the provider through the Vouchfx.Sdk interfaces, and the
          emitted CsxFragment reaches the run environment solely through the
          engine-injected `Vars` global (cross-step state passes only via Vars).
          A PROJECT reference here keeps the example building in-tree against the
          current SDK; a contributor outside the repo would use a PackageReference
-         to the published Platform.Sdk package instead. -->
-    <ProjectReference Include="..\..\src\Sdk\Platform.Sdk\Platform.Sdk.csproj" />
+         to the published Vouchfx.Sdk package instead. -->
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,8 +1,8 @@
 // Integration-test fixture for the WORKED-EXAMPLE provider echo.text (S10-F-01).
 //
 // This is the acceptance proof that an OUTSIDE CONTRIBUTOR can build a NON-Core provider
-// against the frozen v1 Platform.Sdk contract and exercise it end to end, WITHOUT Docker,
-// using ONLY the published Platform.Sdk.Testing harness:
+// against the frozen v1 Vouchfx.Sdk contract and exercise it end to end, WITHOUT Docker,
+// using ONLY the published Vouchfx.Sdk.Testing harness:
 //
 //   1. The reflective StepKindRegistry discovers the example provider purely from its
 //      [StepProvider] attribute (no hand-registration) — the contributor only has to
@@ -23,8 +23,8 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Example.Steps.Echo;
-using Platform.Engine.Abstractions;
-using Platform.Sdk.Testing;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Sdk.Testing;
 using Xunit;
 
 namespace Example.Steps.Echo.Tests;

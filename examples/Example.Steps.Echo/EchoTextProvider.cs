@@ -3,8 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────────
 // READ ME FIRST — this is the SECOND worked-example provider (after hello.console).
 // It exists to PROVE, end to end, that an OUTSIDE CONTRIBUTOR can author a non-Core
-// provider against the frozen v1 Platform.Sdk contract and exercise it through the
-// published Platform.Sdk.Testing harness — WITHOUT Docker.
+// provider against the frozen v1 Vouchfx.Sdk contract and exercise it through the
+// published Vouchfx.Sdk.Testing harness — WITHOUT Docker.
 // ─────────────────────────────────────────────────────────────────────────────────
 //
 // `echo.text` is the smallest provider that demonstrates {placeholder} substitution:
@@ -14,26 +14,26 @@
 // integration fixture (Example.Steps.Echo.Tests) runs it end to end WITHOUT Docker.
 //
 // The four steps a contributor takes are exactly:
-//   1. Add a project that references ONLY Platform.Sdk (this csproj).
+//   1. Add a project that references ONLY Vouchfx.Sdk (this csproj).
 //   2. Define a strongly-typed model record : IStepModel (EchoTextModel).
 //   3. Implement the v1 contract on one [StepProvider]-decorated class (this file):
 //        IStepProvider + IStepBinder<T> + IStepValidator<T> + IStepCompiler<T>.
 //   4. The reflective StepKindRegistry discovers it at startup — no registration code.
 //
 // §5.6 ASSEMBLY-GRAPH HYGIENE: this assembly uses the NON-reserved namespace
-// `Example.Steps.Echo`.  The `Platform.Steps.*` and `Platform.Engine.*` namespaces are
+// `Example.Steps.Echo`.  The `Vouchfx.Steps.*` and `Vouchfx.Engine.*` namespaces are
 // RESERVED for the engine and its Core providers; a customer DLL declaring them is
 // refused at startup.  A real provider you ship must likewise pick its own namespace.
 //
-// §5 MEMORY MODEL: this provider takes NO reference to Platform.Engine.Abstractions.
+// §5 MEMORY MODEL: this provider takes NO reference to Vouchfx.Engine.Abstractions.
 // The emitted CSX reaches the run environment ONLY through the engine-injected `Vars`
 // global and refers to engine types (StepOutcome, Verdict, VarKeys) by fully-qualified
-// name — the engine already references Platform.Engine.Abstractions when it compiles the
+// name — the engine already references Vouchfx.Engine.Abstractions when it compiles the
 // assembled script, so no static handle from this provider bridges the collectible
 // AssemblyLoadContext boundary.
 
 using System.Text.Json;
-using Platform.Sdk;
+using Vouchfx.Sdk;
 using YamlDotNet.RepresentationModel;
 
 namespace Example.Steps.Echo;
@@ -46,7 +46,7 @@ namespace Example.Steps.Echo;
 /// <remarks>
 /// <para>
 /// This class is the second teaching template for authoring a <strong>non-Core</strong>
-/// provider against the frozen v1 <see cref="Platform.Sdk"/> contract (§13).  It
+/// provider against the frozen v1 <see cref="Vouchfx.Sdk"/> contract (§13).  It
 /// implements the four mandatory provider interfaces on a single
 /// <c>[StepProvider]</c>-decorated class: <see cref="IStepProvider"/> (identity),
 /// <see cref="IStepBinder{TModel}"/> (YAML → model + schema fragment),
@@ -105,7 +105,7 @@ public sealed class EchoTextProvider
     // FRICTION-LOG F2 (see README): the emitted body deliberately depends ONLY on types
     // the engine's MINIMAL Roslyn base reference set always provides (System.Private.CoreLib /
     // System.Runtime / System.Collections / System.Text.RegularExpressions +
-    // Platform.Engine.Abstractions).  System.Text.Json is NOT in that minimal set, and this
+    // Vouchfx.Engine.Abstractions).  System.Text.Json is NOT in that minimal set, and this
     // dependency-free provider does NOT implement the optional ICompileReferenceContributor
     // (the single-step harness does not run that stage anyway), so the emitted block must
     // avoid System.Text.Json at RUNTIME.  The structured observation is therefore escaped by
@@ -116,7 +116,7 @@ public sealed class EchoTextProvider
     {
         "System",
         "System.Diagnostics",
-        "Platform.Engine.Abstractions",
+        "Vouchfx.Engine.Abstractions",
     };
 
     // ── IStepProvider ─────────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ public sealed class EchoTextProvider
         //
         // Engine-introduced locals carry the safeId suffix so two echo.text steps in one
         // suite never collide.  Engine types are referenced by fully-qualified name (this
-        // provider does not reference Platform.Engine.Abstractions; the engine does when
+        // provider does not reference Vouchfx.Engine.Abstractions; the engine does when
         // it compiles the assembled script).  Cross-step state is read/written ONLY
         // through `Vars`.
         var block =
@@ -326,8 +326,8 @@ public sealed class EchoTextProvider
                 __sw_{{safeId}}.Stop();
 
                 var __verdict_{{safeId}} = __pass_{{safeId}}
-                    ? Platform.Engine.Abstractions.Verdict.Pass
-                    : Platform.Engine.Abstractions.Verdict.Fail;
+                    ? Vouchfx.Engine.Abstractions.Verdict.Pass
+                    : Vouchfx.Engine.Abstractions.Verdict.Fail;
 
                 // Build the structured observation at RUNTIME (the echoed text is only known
                 // once Substitute_Helpers.Resolve has run), then write the outcome under the
@@ -335,8 +335,8 @@ public sealed class EchoTextProvider
                 var __observation_{{safeId}} =
                     EchoText_Helpers.Observe(__text_{{safeId}}, __expect_{{safeId}});
 
-                Vars[Platform.Engine.Abstractions.VarKeys.Outcome("{{safeId}}")] =
-                    new Platform.Engine.Abstractions.StepOutcome(
+                Vars[Vouchfx.Engine.Abstractions.VarKeys.Outcome("{{safeId}}")] =
+                    new Vouchfx.Engine.Abstractions.StepOutcome(
                         __verdict_{{safeId}},
                         __sw_{{safeId}}.ElapsedMilliseconds,
                         __observation_{{safeId}});

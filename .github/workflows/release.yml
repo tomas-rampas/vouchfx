@@ -34,11 +34,11 @@
 #
 #      Publishes six packages per release, all built into artifacts/nuget/:
 #        - vouchfx                       (CLI global tool — primary distribution)
-#        - Platform.Sdk                  (frozen v1 provider contract)
-#        - Platform.Sdk.Testing          (out-of-repo provider test harness)
-#        - Platform.Engine.Abstractions  (Verdict/StepOutcome/ScriptGlobalVariables)
-#        - Platform.Engine.Authoring     (YAML parser + AST builder)
-#        - Platform.Engine.Compilation   (DocumentValidator, RoslynScriptCompiler)
+#        - Vouchfx.Sdk                  (frozen v1 provider contract)
+#        - Vouchfx.Sdk.Testing          (out-of-repo provider test harness)
+#        - Vouchfx.Engine.Abstractions  (Verdict/StepOutcome/ScriptGlobalVariables)
+#        - Vouchfx.Engine.Authoring     (YAML parser + AST builder)
+#        - Vouchfx.Engine.Compilation   (DocumentValidator, RoslynScriptCompiler)
 #      --skip-duplicate means a version already live on nuget.org is left
 #      untouched — published packages are IMMUTABLE. A bad artifact is never
 #      fixed by re-running or re-tagging the same version: ship a new patch
@@ -72,7 +72,7 @@
 #   is at the standard path and contains the matching Aspire package.
 #
 # - PublishSingleFile is NEVER set: Assembly.Location returns an empty string
-#   for embedded assemblies; Platform.Engine.Compilation uses it to discover
+#   for embedded assemblies; Vouchfx.Engine.Compilation uses it to discover
 #   provider DLLs for Roslyn (hard engine invariant, CLAUDE.md).
 #
 # See docs/decisions/dotnet-tool-packaging.md for the full analysis.
@@ -191,7 +191,7 @@ jobs:
             -o artifacts/nuget
 
       # Pack the SDK-closure nupkgs (provider-authoring surface) so provider
-      # authors can restore Platform.Sdk et al. straight from NuGet.org
+      # authors can restore Vouchfx.Sdk et al. straight from NuGet.org
       # instead of vendoring engine source (mirrors the local-feed pack in
       # vouchfx-providers/.github/workflows/conformance.yml, which packs the
       # same five projects from a pinned engine SHA as a bootstrap workaround
@@ -201,17 +201,17 @@ jobs:
       # ProjectReferences all four.  dotnet pack builds each project's own
       # ProjectReferences regardless of loop order, but packing leaves first
       # keeps the loop readable and matches the emitted <dependency> graph.
-      - name: Pack nupkg (SDK closure — Platform.Sdk, Platform.Sdk.Testing, Platform.Engine.*)
+      - name: Pack nupkg (SDK closure — Vouchfx.Sdk, Vouchfx.Sdk.Testing, Vouchfx.Engine.*)
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           for csproj in \
-            src/Engine/Platform.Engine.Abstractions/Platform.Engine.Abstractions.csproj \
-            src/Sdk/Platform.Sdk/Platform.Sdk.csproj \
-            src/Engine/Platform.Engine.Authoring/Platform.Engine.Authoring.csproj \
-            src/Engine/Platform.Engine.Compilation/Platform.Engine.Compilation.csproj \
-            src/Sdk/Platform.Sdk.Testing/Platform.Sdk.Testing.csproj ; do
+            src/Engine/Vouchfx.Engine.Abstractions/Vouchfx.Engine.Abstractions.csproj \
+            src/Sdk/Vouchfx.Sdk/Vouchfx.Sdk.csproj \
+            src/Engine/Vouchfx.Engine.Authoring/Vouchfx.Engine.Authoring.csproj \
+            src/Engine/Vouchfx.Engine.Compilation/Vouchfx.Engine.Compilation.csproj \
+            src/Sdk/Vouchfx.Sdk.Testing/Vouchfx.Sdk.Testing.csproj ; do
             echo "Packing: $csproj"
             dotnet pack "$csproj" \
               -c Release \
@@ -1007,7 +1007,7 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
-          # Non-fatal per package: glob order pushes the five Platform.* SDK
+          # Non-fatal per package: glob order pushes the five Vouchfx.* SDK
           # packages BEFORE vouchfx, and a first-time 403 on a new ID (policy
           # scope, prefix squat) must not hold the primary CLI publish hostage.
           # Every failure is still reported and fails the step at the end;

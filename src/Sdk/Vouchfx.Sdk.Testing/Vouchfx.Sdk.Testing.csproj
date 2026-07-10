@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Sdk.Testing</RootNamespace>
+    <AssemblyName>Vouchfx.Sdk.Testing</AssemblyName>
+  </PropertyGroup>
+
+  <!-- NuGet packaging (M3 SDK-validation gate): publish the out-of-repo provider
+       test harness as Vouchfx.Sdk.Testing 1.0.0.  This package lets a provider
+       author exercise a single-step .e2e.yaml end to end using ONLY published
+       packages.  It is a TESTING SURFACE: it depends on the (versioned-not-frozen)
+       engine assemblies, NOT just the frozen v1 contract (that is Vouchfx.Sdk). -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Vouchfx.Sdk.Testing</PackageId>
+    <!-- A bare `dotnet pack` (no -p:Version) yields 1.0.0-0.local: the numeric-leading prerelease identifier sorts below every published pre-release (alpha, beta, rc), so a local pack can never outrank anything on NuGet.org. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>0.local</VersionSuffix>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>Out-of-repo provider test harness for vouchfx step providers. Drives a single-step .e2e.yaml end to end (schema-validate → parse → AST → bind → validate → emit → compile-once → run-isolated) so a provider author can prove a custom provider works against the published engine. TESTING SURFACE — depends on the versioned-not-frozen engine assemblies; the frozen v1 provider contract is Vouchfx.Sdk.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;testing;provider-sdk;test-harness</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Deterministic, reproducible packaging. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <!-- SourceLink + symbols (mirrors Vouchfx.Sdk): let provider authors step into
+         the harness source.  PublishRepositoryUrl/EmbedUntrackedSources map PDB source
+         paths back to GitHub; IncludeSymbols + the snupkg format ships a separate
+         symbols package alongside the main .nupkg. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Each referenced project carries its own PackageId (Version 1.0.0), so under
+         central package management these ProjectReferences auto-emit as NuGet
+         <dependency> entries of Vouchfx.Sdk.Testing 1.0.0 — no hand-wiring needed.
+           • Vouchfx.Sdk            — the frozen v1 provider contract + StepKindRegistry.
+           • Vouchfx.Engine.Abstractions — Verdict / StepOutcome / VarKeys / ScriptGlobalVariables.
+           • Vouchfx.Engine.Authoring    — YamlDocumentParser + AstBuilder (front end).
+           • Vouchfx.Engine.Compilation  — DocumentValidator, CsxAssembler, RoslynScriptCompiler. -->
+    <ProjectReference Include="..\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj" />
+    <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

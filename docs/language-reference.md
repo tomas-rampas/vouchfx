@@ -477,12 +477,12 @@ This file is generated from the composed JSON Schema by `LanguageReferenceGenera
 
 ```bash
 # 1. Run the golden gate; on drift it prints the first differing line.
-dotnet test tests/Platform.Engine.Compilation.Tests \
+dotnet test tests/Vouchfx.Engine.Compilation.Tests \
   --filter "FullyQualifiedName~LanguageReferenceGoldenTests"
 
 # 2. To regenerate, set the environment variable below and re-run the gate;
 #    it rewrites docs/language-reference.md from the freshly-composed schema.
 #    Review the diff, then commit.
-VOUCHFX_REGEN_LANGUAGE_REFERENCE=1 dotnet test tests/Platform.Engine.Compilation.Tests \
+VOUCHFX_REGEN_LANGUAGE_REFERENCE=1 dotnet test tests/Vouchfx.Engine.Compilation.Tests \
   --filter "FullyQualifiedName~LanguageReferenceGoldenTests"
 ```

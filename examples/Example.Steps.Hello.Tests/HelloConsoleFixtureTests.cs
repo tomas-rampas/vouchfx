@@ -1,6 +1,6 @@
 // Integration-test fixture for the WORKED-EXAMPLE provider (S08 T5a / S08-F-04).
 //
-// This is the acceptance proof that the frozen v1 Platform.Sdk contract is usable
+// This is the acceptance proof that the frozen v1 Vouchfx.Sdk contract is usable
 // to build a NON-Core provider end to end, WITHOUT Docker:
 //
 //   1. The reflective StepKindRegistry discovers the example provider purely from
@@ -19,18 +19,18 @@
 // All tests are non-docker: `hello.console` is a dependency-free step (no service,
 // no managed dependency), so the fixture drives the compile-and-run pipeline directly
 // without standing up any Aspire topology — mirroring the existing non-docker provider
-// round-trip tests (e.g. Platform.Steps.Script.Csharp.Tests).
+// round-trip tests (e.g. Vouchfx.Steps.Script.Csharp.Tests).
 //
 // BDD note: this fixture was written FIRST (red — the provider did not yet exist),
 // then the provider was implemented to make it pass (green).
 
 using System.Linq;
 using Example.Steps.Hello;
-using Platform.Engine.Abstractions;
-using Platform.Engine.Authoring;
-using Platform.Engine.Compilation;
-using Platform.Engine.Compilation.Schema;
-using Platform.Sdk;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Compilation;
+using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Sdk;
 using Xunit;
 
 namespace Example.Steps.Hello.Tests;
@@ -109,8 +109,8 @@ public sealed class HelloConsoleFixtureTests
 
     /// <summary>
     /// §5.6 teaching point: the worked example lives in a NON-reserved namespace
-    /// (<c>Example.Steps.*</c>), NOT the reserved <c>Platform.Steps.*</c> /
-    /// <c>Platform.Engine.*</c> namespaces that customer DLLs are refused for.  This
+    /// (<c>Example.Steps.*</c>), NOT the reserved <c>Vouchfx.Steps.*</c> /
+    /// <c>Vouchfx.Engine.*</c> namespaces that customer DLLs are refused for.  This
     /// test documents and guards that the template a contributor copies is itself
     /// compliant with the assembly-graph-hygiene rule.
     /// </summary>
@@ -121,11 +121,11 @@ public sealed class HelloConsoleFixtureTests
 
         Assert.Equal("Example.Steps.Hello", ns);
         Assert.False(
-            ns!.StartsWith("Platform.Steps", StringComparison.Ordinal),
-            "The worked example must NOT use the reserved 'Platform.Steps.*' namespace (§5.6).");
+            ns!.StartsWith("Vouchfx.Steps", StringComparison.Ordinal),
+            "The worked example must NOT use the reserved 'Vouchfx.Steps.*' namespace (§5.6).");
         Assert.False(
-            ns.StartsWith("Platform.Engine", StringComparison.Ordinal),
-            "The worked example must NOT use the reserved 'Platform.Engine.*' namespace (§5.6).");
+            ns.StartsWith("Vouchfx.Engine", StringComparison.Ordinal),
+            "The worked example must NOT use the reserved 'Vouchfx.Engine.*' namespace (§5.6).");
     }
 
     // ── Acceptance: a .e2e.yaml using the example step validates + runs → Pass ────

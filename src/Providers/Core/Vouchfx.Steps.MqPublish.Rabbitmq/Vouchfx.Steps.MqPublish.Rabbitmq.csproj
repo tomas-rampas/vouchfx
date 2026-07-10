@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Steps.MqPublish.Rabbitmq</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" />
+  </ItemGroup>
+
+</Project>

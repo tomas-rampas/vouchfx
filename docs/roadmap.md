@@ -25,7 +25,7 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   authors never write `Thread.Sleep`.
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
   frozen byte-for-byte, each enforced by a golden-file CI gate. Evolution within v1.x is additive only.
-- **The Provider SDK** (`Platform.Sdk`) with worked example providers, a conformance test harness, and the
+- **The Provider SDK** (`Vouchfx.Sdk`) with worked example providers, a conformance test harness, and the
   [community provider hub](https://github.com/tomas-rampas/vouchfx-providers).
 - **Secrets as references** — `${secret:env/…}` and `${secret:vault/…}`, resolved at execution time, redacted
   at the source; the redaction path has passed a penetration test.
@@ -52,7 +52,7 @@ dotnet tool install --global vouchfx --prerelease
 The alphas exist for pilot validation. What remains for GA is validation and packaging, not construction:
 
 - Validation of the end-to-end experience with pilot teams.
-- Publication of the Provider SDK (`Platform.Sdk`, its `Platform.Sdk.Testing` harness and their engine dependency closure) to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release; the GA task narrows to stabilising the SDK at 1.0.0 final.
+- Publication of the Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release; the GA task narrows to stabilising the SDK at 1.0.0 final.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.

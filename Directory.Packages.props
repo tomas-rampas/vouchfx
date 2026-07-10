@@ -87,7 +87,7 @@
          then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->
     <PackageVersion Include="Respawn" Version="6.2.1" />
   </ItemGroup>
-  <ItemGroup Label="SourceLink (S08-F-03) — symbols/source-stepping for the packed Platform.Sdk">
+  <ItemGroup Label="SourceLink (S08-F-03) — symbols/source-stepping for the packed Vouchfx.Sdk">
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup Label="Test stack">

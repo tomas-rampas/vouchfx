@@ -56,6 +56,19 @@ Plus: engine-owned RETRY polling (you never write `Thread.Sleep`), `${secret:…
 
 - **Documentation**: <https://tomas-rampas.github.io/vouchfx/> — getting started (60-minute path), recipes, the language reference, and the architecture blueprint.
 - **Source**: <https://github.com/tomas-rampas/vouchfx> (Apache-2.0)
-- **Community provider hub**: <https://github.com/tomas-rampas/vouchfx-providers> — build your own step providers against the frozen v1 SDK.
+- **Community provider hub**: <https://github.com/tomas-rampas/vouchfx-providers> — Core and Community providers, the Vouched badge rubric, and examples.
+
+## Related packages
+
+`vouchfx` is the CLI tool only — it runs `.e2e.yaml` suites and does not need to be
+referenced from code. If you're **writing a new step provider** instead of running
+suites, you want these packages, not this one:
+
+- **[`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk)** — the frozen v1 provider
+  contract (`IStepProvider`, `IStepBinder<T>`, `IStepValidator<T>`, `IStepCompiler<T>`,
+  `IResourceContributor<T>`). Reference this from your provider project.
+- **[`Vouchfx.Sdk.Testing`](https://www.nuget.org/packages/Vouchfx.Sdk.Testing)** — an
+  out-of-repo test harness that runs a single-step `.e2e.yaml` scenario end to end
+  without Docker. Reference this from your provider's test project.
 
 > **Pre-release note**: `1.0.0-alpha.x` versions are for pilot validation ahead of v1.0. The v1 language schema, provider SDK and event-wire contracts are frozen; within the v1.x series evolution is additive only.

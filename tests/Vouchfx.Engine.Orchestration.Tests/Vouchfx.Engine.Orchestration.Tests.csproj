@@ -1,0 +1,131 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Aspire.AppHost.Sdk injects DCP binary references (Aspire.Hosting.Orchestration.<RID>,
+       where <RID> is resolved per build host: win-x64 on Windows, linux-x64 on the CI runner,
+       osx-arm64 on Apple Silicon, etc.) and embeds the dcpclipath / dcpextensionpaths
+       AssemblyMetadata attributes that DistributedApplication.CreateBuilder requires to
+       locate the DCP process.
+       This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
+       a plain Aspire.Hosting library reference alone does NOT carry DCP binaries. -->
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
+
+  <!-- Mark this project as an Aspire host so the AppHost build targets embed the DCP metadata. -->
+  <PropertyGroup>
+    <IsAspireHost>true</IsAspireHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- AppHost must be a *direct* reference so its build/ targets run and embed the DCP metadata.
+         Aspire.AppHost.Sdk auto-adds this package; the explicit reference pins the CPM version. -->
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- Npgsql: required by S01-A-03 connection-string acceptance test (live SELECT 1). -->
+    <PackageReference Include="Npgsql" />
+    <!-- Microsoft.Data.SqlClient: required by DbAssertSqlServerDockerTests (compile-ref). -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <!-- MongoDB.Driver: required by DbAssertMongodbDockerTests (compile-ref + seed). -->
+    <PackageReference Include="MongoDB.Driver" />
+    <!-- MySqlConnector: required by DbAssertMysqlDockerTests (compile-ref + seed). -->
+    <PackageReference Include="MySqlConnector" />
+    <!-- StackExchange.Redis: required by CacheAssertRedisDockerTests (compile-ref + seed). -->
+    <PackageReference Include="StackExchange.Redis" />
+    <!-- RabbitMQ.Client: required by MqRabbitmqDockerTests (compile-ref + seed/setup). -->
+    <PackageReference Include="RabbitMQ.Client" />
+    <!-- NATS.Net: required by MqNatsDockerTests (compile-ref for Assembly.Location access). -->
+    <PackageReference Include="NATS.Net" />
+    <!-- Azure.Messaging.ServiceBus: required by MqAzureServiceBusDockerTests (compile-ref + Assembly.Location). -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <!-- AWSSDK.DynamoDBv2: required by DbAssertDynamodbDockerTests (compile-ref + seed). -->
+    <PackageReference Include="AWSSDK.DynamoDBv2" />
+    <!-- AWSSDK.S3: required by StorageAssertS3DockerTests (compile-ref + seed). -->
+    <PackageReference Include="AWSSDK.S3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- IsAspireProjectResource=false: these are libraries, not orchestrated services. -->
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Orchestration\Vouchfx.Engine.Orchestration.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Postgres\Vouchfx.Steps.DbAssert.Postgres.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- script.csharp provider: used by RespawnResetProofTests (S04-A-01). -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Script.Csharp\Vouchfx.Steps.Script.Csharp.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.sqlserver provider: used by DbAssertSqlServerDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.SqlServer\Vouchfx.Steps.DbAssert.SqlServer.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.mongodb provider: used by DbAssertMongodbDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Mongodb\Vouchfx.Steps.DbAssert.Mongodb.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- db-assert.mysql provider: used by DbAssertMysqlDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Mysql\Vouchfx.Steps.DbAssert.Mysql.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- Sprint 4 capstone: http.rest provider + ScenarioRunner (Runtime). -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Core.HttpRest\Vouchfx.Steps.Core.HttpRest.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Runtime\Vouchfx.Engine.Runtime.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mail-expect.smtp provider: used by MailExpectSmtpDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MailExpect.Smtp\Vouchfx.Steps.MailExpect.Smtp.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- cache-assert.redis provider: used by CacheAssertRedisDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.CacheAssert.Redis\Vouchfx.Steps.CacheAssert.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- cache-assert.elasticsearch provider: used by CacheAssertElasticsearchDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.CacheAssert.Elasticsearch\Vouchfx.Steps.CacheAssert.Elasticsearch.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.rabbitmq + mq-expect.rabbitmq providers: used by MqRabbitmqDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqPublish.Rabbitmq\Vouchfx.Steps.MqPublish.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqExpect.Rabbitmq\Vouchfx.Steps.MqExpect.Rabbitmq.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.nats + mq-expect.nats providers: used by MqNatsDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqPublish.Nats\Vouchfx.Steps.MqPublish.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqExpect.Nats\Vouchfx.Steps.MqExpect.Nats.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- mq-publish.azureservicebus + mq-expect.azureservicebus providers: used by MqAzureServiceBusDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqPublish.AzureServiceBus\Vouchfx.Steps.MqPublish.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqExpect.AzureServiceBus\Vouchfx.Steps.MqExpect.AzureServiceBus.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- Core batch A (18→21): mq-publish.redis + mq-expect.redis providers: used by MqRedisDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqPublish.Redis\Vouchfx.Steps.MqPublish.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqExpect.Redis\Vouchfx.Steps.MqExpect.Redis.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- metrics-assert.prometheus provider (new family): used by MetricsAssertPrometheusDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MetricsAssert.Prometheus\Vouchfx.Steps.MetricsAssert.Prometheus.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- Core batch B (21→23): db-assert.dynamodb provider: used by DbAssertDynamodbDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Dynamodb\Vouchfx.Steps.DbAssert.Dynamodb.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- storage-assert.s3 provider (new family): used by StorageAssertS3DockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.StorageAssert.S3\Vouchfx.Steps.StorageAssert.S3.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- Phase C: trace-expect.otlp (new family) + http.soap (second http-family provider):
+         used by TraceExpectOtlpDockerTests / HttpSoapDockerTests. -->
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.TraceExpect.Otlp\Vouchfx.Steps.TraceExpect.Otlp.csproj"
+                      IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Http.Soap\Vouchfx.Steps.Http.Soap.csproj"
+                      IsAspireProjectResource="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JsonPath.Net must be a direct reference so its DLL is deployed to the output
+         directory.  HttpRestProvider accesses it via Assembly.Location at runtime;
+         the transitive project-reference path alone does not guarantee deployment. -->
+    <PackageReference Include="JsonPath.Net" />
+  </ItemGroup>
+
+</Project>

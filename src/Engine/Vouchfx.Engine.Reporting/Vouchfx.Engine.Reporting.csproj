@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Engine.Reporting</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- Expose the internal FileReportWriter seam (S09-D-01, T3) to the runtime (which both
+       runner paths call after their terminal render) and to the reporting test project (which
+       unit-tests the wiring directly, Docker-free). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Vouchfx.Engine.Runtime" />
+    <InternalsVisibleTo Include="Vouchfx.Engine.Reporting.Tests" />
+    <!-- The runtime secret-redaction penetration suite (S11-B-01) drives the REAL
+         FileReportWriter so its end-to-end events-artifact test asserts over the actual
+         bytes on disk and cannot silently desync if the writer changes. -->
+    <InternalsVisibleTo Include="Vouchfx.Engine.Runtime.Tests" />
+  </ItemGroup>
+
+</Project>

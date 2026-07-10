@@ -12,9 +12,9 @@
 // Docker, so it is NOT invoked here.
 
 using System.CommandLine;
-using Platform.Engine.Abstractions;
-using Platform.Sdk;
 using Vouchfx.Cli;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Sdk;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Vouchfx.Sdk</RootNamespace>
+    <AssemblyName>Vouchfx.Sdk</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- NuGet packaging (S08 T4 / S08-F-03): publish the frozen v1 provider SDK
+       contract as Vouchfx.Sdk 1.0.0. Only this project is packable; the engine,
+       provider, and test projects are not. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Vouchfx.Sdk</PackageId>
+    <!-- A bare `dotnet pack` (no -p:Version) yields 1.0.0-0.local: the numeric-leading prerelease identifier sorts below every published pre-release (alpha, beta, rc), so a local pack can never outrank anything on NuGet.org. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>0.local</VersionSuffix>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>The compile-time provider SDK for authoring vouchfx step providers — the frozen v1 contract (IStepProvider, IStepBinder&lt;T&gt;, IStepValidator&lt;T&gt;, IStepCompiler&lt;T&gt;, IResourceContributor&lt;T&gt;, CsxFragment, StepKindId). vouchfx compiles declarative .e2e.yaml integration tests into C# and orchestrates the container topology to test distributed .NET systems end-to-end.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx</PackageProjectUrl>
+    <PackageTags>vouchfx;e2e;testing;provider-sdk</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Deterministic, reproducible packaging. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+    <!-- SourceLink + symbols (S08-F-03): let external provider authors step into the SDK.
+         PublishRepositoryUrl/EmbedUntrackedSources map PDB source paths back to GitHub;
+         IncludeSymbols + the snupkg format ships a separate symbols package alongside the
+         main .nupkg so debuggers can resolve SDK source without it bloating the lib package. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

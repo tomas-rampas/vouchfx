@@ -9,26 +9,26 @@
 // (Example.Steps.Hello.Tests) runs it end to end WITHOUT Docker.  Copy this project to
 // bootstrap your own provider; the four steps a contributor takes are exactly:
 //
-//   1. Add a project that references ONLY Platform.Sdk (this csproj).
+//   1. Add a project that references ONLY Vouchfx.Sdk (this csproj).
 //   2. Define a strongly-typed model record : IStepModel (HelloConsoleModel).
 //   3. Implement the v1 contract on one [StepProvider]-decorated class (this file):
 //        IStepProvider + IStepBinder<T> + IStepValidator<T> + IStepCompiler<T>.
 //   4. The reflective StepKindRegistry discovers it at startup — no registration code.
 //
 // §5.6 ASSEMBLY-GRAPH HYGIENE: this assembly uses the NON-reserved namespace
-// `Example.Steps.Hello`.  The `Platform.Steps.*` and `Platform.Engine.*` namespaces are
+// `Example.Steps.Hello`.  The `Vouchfx.Steps.*` and `Vouchfx.Engine.*` namespaces are
 // RESERVED for the engine and its Core providers; a customer DLL declaring them is
 // refused at startup.  A real provider you ship must likewise pick its own namespace.
 //
-// §5 MEMORY MODEL: this provider takes NO reference to Platform.Engine.Abstractions.
+// §5 MEMORY MODEL: this provider takes NO reference to Vouchfx.Engine.Abstractions.
 // The emitted CSX reaches the run environment ONLY through the engine-injected `Vars`
 // global and refers to engine types (StepOutcome, Verdict, VarKeys) by fully-qualified
-// name — the engine already references Platform.Engine.Abstractions when it compiles the
+// name — the engine already references Vouchfx.Engine.Abstractions when it compiles the
 // assembled script, so no static handle from this provider bridges the collectible
 // AssemblyLoadContext boundary.
 
 using System.Text.Json;
-using Platform.Sdk;
+using Vouchfx.Sdk;
 using YamlDotNet.RepresentationModel;
 
 namespace Example.Steps.Hello;
@@ -40,7 +40,7 @@ namespace Example.Steps.Hello;
 /// <remarks>
 /// <para>
 /// This class is a teaching template for authoring a <strong>non-Core</strong> provider
-/// against the frozen v1 <see cref="Platform.Sdk"/> contract (§13).  It implements the
+/// against the frozen v1 <see cref="Vouchfx.Sdk"/> contract (§13).  It implements the
 /// four mandatory provider interfaces on a single <c>[StepProvider]</c>-decorated class:
 /// <see cref="IStepProvider"/> (identity), <see cref="IStepBinder{TModel}"/> (YAML →
 /// model + schema fragment), <see cref="IStepValidator{TModel}"/> (model rules), and
@@ -79,7 +79,7 @@ public sealed class HelloConsoleProvider
     //
     // The emitted body deliberately depends ONLY on types the engine's Roslyn base
     // reference set always provides (System.Private.CoreLib / System.Runtime /
-    // System.Collections + Platform.Engine.Abstractions): a portable provider should
+    // System.Collections + Vouchfx.Engine.Abstractions): a portable provider should
     // not assume references the minimal compile path does not guarantee.  That is why
     // the step records its emitted greeting into `Vars` (idiomatic state-via-Vars)
     // rather than writing to System.Console, and builds its observation by plain string
@@ -88,7 +88,7 @@ public sealed class HelloConsoleProvider
     {
         "System",
         "System.Diagnostics",
-        "Platform.Engine.Abstractions",
+        "Vouchfx.Engine.Abstractions",
     };
 
     // ── IStepProvider ─────────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ public sealed class HelloConsoleProvider
         //
         // Engine-introduced locals carry the safeId suffix so two hello.console steps in
         // one suite never collide.  Engine types are referenced by fully-qualified name
-        // (this provider does not reference Platform.Engine.Abstractions; the engine does
+        // (this provider does not reference Vouchfx.Engine.Abstractions; the engine does
         // when it compiles the assembled script).  Cross-step state is read/written ONLY
         // through `Vars`.
         var block =
@@ -249,16 +249,16 @@ public sealed class HelloConsoleProvider
                 __sw_{{safeId}}.Stop();
 
                 var __verdict_{{safeId}} = __pass_{{safeId}}
-                    ? Platform.Engine.Abstractions.Verdict.Pass
-                    : Platform.Engine.Abstractions.Verdict.Fail;
+                    ? Vouchfx.Engine.Abstractions.Verdict.Pass
+                    : Vouchfx.Engine.Abstractions.Verdict.Fail;
 
                 // Write the outcome under the engine's canonical key; the runner reads it
                 // back after the isolated run.  VarKeys.Outcome is the single source of
                 // truth for the key convention, called here at RUNTIME inside the emitted
-                // CSX (which has Platform.Engine.Abstractions referenced).  The structured
+                // CSX (which has Vouchfx.Engine.Abstractions referenced).  The structured
                 // observation literal is built at emit time, so the body needs no JSON ref.
-                Vars[Platform.Engine.Abstractions.VarKeys.Outcome("{{safeId}}")] =
-                    new Platform.Engine.Abstractions.StepOutcome(
+                Vars[Vouchfx.Engine.Abstractions.VarKeys.Outcome("{{safeId}}")] =
+                    new Vouchfx.Engine.Abstractions.StepOutcome(
                         __verdict_{{safeId}},
                         __sw_{{safeId}}.ElapsedMilliseconds,
                         {{observationLiteral}});

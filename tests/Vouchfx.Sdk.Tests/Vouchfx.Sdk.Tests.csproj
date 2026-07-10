@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Label="S08-F-02 — frozen v1 provider-contract golden artifact">
+    <!--
+      The committed golden the SdkContractFreezeTests gate diffs against.  Copied
+      next to the test DLL so the test reads it from AppContext.BaseDirectory/Golden.
+      Treated as a non-compiled Content item; CopyToOutputDirectory keeps it fresh.
+    -->
+    <Content Include="Golden\vouchfx-sdk-public-api.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
+    <!-- Shared canonical public-API signature builder (SdkPublicApiSignature) used by
+         both this gate and the Vouchfx.Sdk.Testing freeze gate (S08-F-02 / M4). -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
+  </ItemGroup>
+
+</Project>

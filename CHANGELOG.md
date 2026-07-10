@@ -102,7 +102,7 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   refinements layered on top of it, never a substitute for it — proving the causal chain a single-service
   assertion cannot. The receiver's ring buffer surfaces an `evicted` count on a Fail so a saturated-buffer
   flood is distinguishable from a genuinely absent export.
-- The Provider SDK (`Platform.Sdk`): the frozen v1 contract (`IStepProvider`, `IStepBinder<T>`,
+- The Provider SDK (`Vouchfx.Sdk`): the frozen v1 contract (`IStepProvider`, `IStepBinder<T>`,
   `IStepValidator<T>`, `IStepCompiler<T>`, `IResourceContributor<T>`), optional extension interfaces
   (`IStepDiffRenderer`, `IHostResourceContributor`), a conformance test harness, worked example providers,
   and an SDK dry-run validation path.
@@ -150,13 +150,19 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 - A release pipeline producing the CLI nupkg, per-RID self-contained archives, MSI/deb/pkg installers, a
   CycloneDX SBOM and the VSCode extension — each artefact keyless-cosign-signed and SLSA-provenance-attested,
   with NuGet.org publication via Trusted Publishing (OIDC; no long-lived keys).
-- The release pipeline now packs and publishes the five-package Provider SDK closure (`Platform.Sdk`,
-  `Platform.Sdk.Testing`, `Platform.Engine.Abstractions`, `Platform.Engine.Authoring`, `Platform.Engine.Compilation`)
+- The release pipeline now packs and publishes the five-package Provider SDK closure (`Vouchfx.Sdk`,
+  `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, `Vouchfx.Engine.Compilation`)
   alongside the CLI. Symbol packages (snupkg) are carried through attestation and signing; every action in the release workflow
   is SHA-pinned with dependabot keeping the pins current. Bare local packs self-identify as `1.0.0-0.local`.
 
 ### Changed
 
+- **The .NET identifier space is rebranded pre-GA**: package IDs, assembly names, and namespaces move from the generic
+  `Platform.*` (engine and Core providers) to `Vouchfx.*`; the hub's community providers adopt `Vouchfx.Community.*` (hub repository change).
+  The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1); schema goldens and provider/event contracts
+  are regenerated as pure renames; earlier alpha packages (v1.0.0-alpha.1, v1.0.0-alpha.2, etc. under `Platform.Sdk`,
+  `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) will be unlisted and deprecated with migration pointers (NuGet alternate-package
+  set to the `Vouchfx.*` successor) once v1.0.0-alpha.4 publishes the new IDs.
 - Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community). The former
   Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
   (`vouched: true` + `vouchedVersion` = exact reviewed version) awarded after conformance review; one hygiene-gated
