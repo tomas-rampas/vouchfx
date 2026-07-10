@@ -18,9 +18,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Vouchfx.Engine.Abstractions;
 using Polly;
 using Polly.Retry;
+using Vouchfx.Engine.Abstractions;
 
 namespace Vouchfx.Engine.Abstractions.Retry;
 

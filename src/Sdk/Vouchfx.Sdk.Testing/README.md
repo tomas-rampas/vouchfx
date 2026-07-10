@@ -138,9 +138,7 @@ project.
 
 ## Status
 
-Published as `1.0.0-alpha.x` pre-releases ahead of v1.0 GA (`dotnet add package
-Vouchfx.Sdk.Testing --prerelease`). The frozen-contract guarantee above applies to
-`Vouchfx.Sdk`, not to this harness or its engine dependencies.
+Ships as `1.0.0-alpha.x` pre-releases ahead of v1.0 GA. When available on NuGet.org, install with `dotnet add package Vouchfx.Sdk.Testing --prerelease`. The frozen-contract guarantee above applies to `Vouchfx.Sdk`, not to this harness or its engine dependencies.
 
 ## Learn more
 

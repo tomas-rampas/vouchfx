@@ -82,7 +82,7 @@ public sealed class SdkContractFreezeTests
     /// the v1 provider contract has drifted.
     /// </summary>
     [Fact]
-    public void PlatformSdkPublicApi_MatchesGolden_ByteForByte()
+    public void VouchfxSdkPublicApi_MatchesGolden_ByteForByte()
     {
         var actual = SdkPublicApiSignature.Build(typeof(IStepProvider).Assembly, BannerTitle);
 

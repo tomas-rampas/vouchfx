@@ -29,6 +29,59 @@ The release pipeline (`release.yml`) fires on exactly two events:
 **Never push a `v*` tag without intending a release.**  The pipeline cannot
 be cancelled mid-flight (concurrency policy: `cancel-in-progress: false`).
 
+---
+
+## First release after the Vouchfx.* rebrand (v1.0.0-alpha.4)
+
+The v1.0.0-alpha.4 release marks the first publish of the `Vouchfx.*` package IDs after the pre-GA namespace rebrand from `Platform.*`. This section documents the one-time release steps specific to this transition.
+
+### Pre-tag checklist
+
+- **Confirm NuGet.org Trusted Publishing permits first-time package creation.** The existing Trusted Publishing policy (created 2026-07-05 for the `vouchfx` CLI nupkg) was granted by NuGet.org for this repository. Verify that:
+  1. The policy's state is "active" on the NuGet.org Trusted Publishing page.
+  2. The policy permits creation of new package IDs under the `Vouchfx.` prefix (empirical precedent: the same policy created the six `Platform.*` package IDs at alpha.3). If in doubt, contact NuGet.org support in advance.
+  
+- **Confirm no third party holds a prefix reservation on `Vouchfx.*`.** Query NuGet.org to ensure `Vouchfx.Sdk`, `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, and `Vouchfx.Engine.Compilation` are unclaimed. All five must resolve to "not found" before proceeding.
+
+### Post-publish checklist
+
+Once the v1.0.0-alpha.4 tag publishes and NuGet.org surfaces the five new `Vouchfx.*` packages, immediately execute these steps **on NuGet.org**:
+
+1. **Unlist all versions of the six old package IDs:**
+   - `Platform.Sdk` (all versions)
+   - `Platform.Sdk.Testing` (all versions)
+   - `Platform.Engine.Abstractions` (all versions)
+   - `Platform.Engine.Authoring` (all versions)
+   - `Platform.Engine.Compilation` (all versions)
+   - `Community.Steps.JsonRpc` from the hub (if it was published as a separate NuGet ID; check current hub CI)
+
+   Unlisting keeps exact-version `dotnet restore` commands working for downstream consumers (e.g. the hub's pinned alpha.3 restore stays green until its repin PR), while hiding them from search and latest-version resolvers.
+
+2. **Set deprecation notices and alternate-package pointers on each unlisted package.** For each old ID:
+   - Go to the package's NuGet.org page.
+   - Mark it as **Deprecated**.
+   - Set the **Deprecation Alternate Package** field to the corresponding `Vouchfx.*` successor:
+     - `Platform.Sdk` → `Vouchfx.Sdk`
+     - `Platform.Sdk.Testing` → `Vouchfx.Sdk.Testing`
+     - `Platform.Engine.Abstractions` → `Vouchfx.Engine.Abstractions`
+     - `Platform.Engine.Authoring` → `Vouchfx.Engine.Authoring`
+     - `Platform.Engine.Compilation` → `Vouchfx.Engine.Compilation`
+     - `Community.Steps.JsonRpc` → `Vouchfx.Community.JsonRpc` (if applicable)
+   
+   The alternate-package pointer is the primary migration path; NuGet.org displays it to users who have the old ID restored, with a clear link to upgrade.
+
+3. **Note the version-line discontinuity in release notes.** The vouchfx CLI continues its version sequence: alpha.1 → alpha.2 → alpha.3 → alpha.4. However, the SDK and Engine packages are published for the *first time* under the `Vouchfx.*` names at v1.0.0-alpha.4 (there are no `Vouchfx.Sdk` alpha.1, alpha.2, or alpha.3 versions). The `Platform.*` package IDs carry alpha.1–alpha.3. Document this explicitly in the alpha.4 release notes to clarify the naming transition.
+
+### Post-release follow-up
+
+After the first successful `Vouchfx.*` publish and NuGet.org processing (typically within 1 hour), **apply for the `Vouchfx.` reserved ID prefix** on NuGet.org. This protects against third-party typosquatting. Submit a support request to NuGet.org via their website or contact form with:
+
+- Requested prefix: `Vouchfx.`
+- Justification: Brand protection for vouchfx open-source project.
+- Current owner package: `Vouchfx.Sdk` (v1.0.0-alpha.4)
+
+---
+
 3. **Smoke-test without cutting a tag** (`workflow_dispatch`)
    - In the GitHub Actions UI, select `Release (signed, provenance)` and
      click **Run workflow**.

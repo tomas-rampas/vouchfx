@@ -158,11 +158,11 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 ### Changed
 
 - **The .NET identifier space is rebranded pre-GA**: package IDs, assembly names, and namespaces move from the generic
-  `Platform.*` (engine and Core providers) and hub-hosted `Community.*` (community providers) to `Vouchfx.*` and
-  `Vouchfx.Community.*` respectively. The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1);
-  schema goldens and provider/event contracts are regenerated as pure renames; earlier alpha packages (v1.0.0-alpha.1,
-  v1.0.0-alpha.2, etc. under `Platform.Sdk`, `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) are unlisted and deprecated
-  with migration pointers.
+  `Platform.*` (engine and Core providers) to `Vouchfx.*`; the hub's community providers adopt `Vouchfx.Community.*` (hub repository change).
+  The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1); schema goldens and provider/event contracts
+  are regenerated as pure renames; earlier alpha packages (v1.0.0-alpha.1, v1.0.0-alpha.2, etc. under `Platform.Sdk`,
+  `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) will be unlisted and deprecated with migration pointers (NuGet alternate-package
+  set to the `Vouchfx.*` successor) once v1.0.0-alpha.4 publishes the new IDs.
 - Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community). The former
   Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
   (`vouched: true` + `vouchedVersion` = exact reviewed version) awarded after conformance review; one hygiene-gated

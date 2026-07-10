@@ -6,10 +6,10 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using Vouchfx.Engine.Authoring.Ast;
-using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Cli;
 using Vouchfx.Cli.Selection;
+using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;

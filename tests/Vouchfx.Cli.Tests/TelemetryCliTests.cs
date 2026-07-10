@@ -10,10 +10,10 @@
 //     never touched.
 
 using System.CommandLine;
+using Vouchfx.Cli;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Telemetry;
-using Vouchfx.Cli;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;

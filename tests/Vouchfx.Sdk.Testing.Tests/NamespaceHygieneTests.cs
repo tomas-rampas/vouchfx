@@ -27,7 +27,7 @@ public sealed class NamespaceHygieneTests
     /// <c>Vouchfx.Steps.*</c> (reserved) — or any other namespace — fails the guard.
     /// </summary>
     [Fact]
-    public void AllPublicTypes_LiveUnderPlatformSdkTestingNamespace()
+    public void AllPublicTypes_LiveUnderVouchfxSdkTestingNamespace()
     {
         var offenders = s_harnessAssembly
             .GetTypes()

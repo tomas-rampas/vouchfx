@@ -66,7 +66,7 @@ public sealed class SdkTestingContractFreezeTests
     /// published test-harness surface has drifted.
     /// </summary>
     [Fact]
-    public void PlatformSdkTestingPublicApi_MatchesGolden_ByteForByte()
+    public void VouchfxSdkTestingPublicApi_MatchesGolden_ByteForByte()
     {
         var actual = SdkPublicApiSignature.Build(typeof(ProviderTestHarness).Assembly, BannerTitle);
 

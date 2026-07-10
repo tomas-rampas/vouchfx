@@ -11,13 +11,13 @@
 // fully unit-tested with fakes.
 
 using System.Reflection;
+using Vouchfx.Cli.Watch;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
-using Vouchfx.Cli.Watch;
 
 namespace Vouchfx.Cli;
 

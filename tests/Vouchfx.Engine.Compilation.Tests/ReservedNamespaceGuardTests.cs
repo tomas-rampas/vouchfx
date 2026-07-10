@@ -94,7 +94,7 @@ public sealed class ReservedNamespaceGuardTests
     /// namespace must be flagged with <c>ReservedPrefix == "Vouchfx.Steps."</c>.
     /// </summary>
     [Fact]
-    public void Find_CustomerDeclaringPlatformSteps_IsViolation()
+    public void Find_CustomerDeclaringVouchfxSteps_IsViolation()
     {
         // Arrange.
         const string source = """
