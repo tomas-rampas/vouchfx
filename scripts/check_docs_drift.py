@@ -69,7 +69,7 @@ HREF_RE = re.compile(r'href="([^"]+)"')
 # too broad — content pages are full of unrelated version-shaped numbers
 # (dependency versions, ports, dates) — so each fact is matched only in its
 # known context. (fact key, pattern with one capture group for the value).
-_VER = r"(\d+\.\d+\.\d+(?:-alpha\.\d+)?)"
+_VER = r"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.+-]*[0-9A-Za-z])?)"
 FACT_LINE_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("engine_release", re.compile(r"currently <code>v" + _VER + r"</code>")),
     ("engine_release", re.compile(r"Live: engine v" + _VER)),
@@ -131,7 +131,7 @@ def crawl(name: str, base_url: str) -> tuple[dict[str, str], list[tuple[str, str
     links: list[tuple[str, str]] = []
     seen: set[str] = set()
     queue: deque[tuple[str, int]] = deque([(base_url, 0), (urljoin(base_url, "docs.html"), 0)])
-    while queue and len(seen) < MAX_PAGES_PER_SITE:
+    while queue and len(pages) < MAX_PAGES_PER_SITE:
         url, depth = queue.popleft()
         url = url.split("#", 1)[0]
         if url in seen:
@@ -149,13 +149,16 @@ def crawl(name: str, base_url: str) -> tuple[dict[str, str], list[tuple[str, str
                 continue
             if is_tracked_site(target) is not None:
                 links.append((url, target))
-                if target.startswith(base_url) and target not in seen and len(seen) < MAX_PAGES_PER_SITE:
+                if target.startswith(base_url) and target not in seen and len(pages) < MAX_PAGES_PER_SITE:
                     queue.append((target, depth + 1))
     return pages, links
 
 
 def _fetch_json(url: str) -> object:
-    req = Request(url, headers={"User-Agent": UA, "Accept": "application/vnd.github+json"})
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    if url.startswith("https://api.github.com/"):
+        headers["Accept"] = "application/vnd.github+json"
+    req = Request(url, headers=headers)
     with urlopen(req, timeout=TIMEOUT) as resp:  # nosec B310 - fixed https URLs only
         return json.loads(resp.read().decode("utf-8"))
 

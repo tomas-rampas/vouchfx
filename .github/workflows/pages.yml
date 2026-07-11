@@ -117,7 +117,7 @@ jobs:
           for repo in vouchfx-providers vouchfx-samples vouchfx-telemetry-backend; do
             if curl -sfS -X POST \
               -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" \n              -H "Content-Type: application/json" \
               "https://api.github.com/repos/$GITHUB_REPOSITORY_OWNER/$repo/dispatches" \
               -d '{"event_type":"ecosystem-docs-updated"}'; then
               echo "notified $repo" >> "$GITHUB_STEP_SUMMARY"
