@@ -277,7 +277,7 @@ alc.Unload();                             // dynamic assemblies reclaimed
 
 The collectible load context guarantees that **dynamically generated** assemblies are reclaimed on unload. It does not, on its own, guarantee that **references held by libraries outside the context** are reclaimed. Several common .NET libraries register process-wide singletons or hold static caches that can pin objects across the boundary: `HttpClient`'s default handler pool, `Npgsql`'s connection pool, `Confluent.Kafka`'s producer cache, OpenTelemetry tracer providers, logging providers registered through `ILoggerFactory`. When a Core or community provider's emitted code constructs one of these, the resulting object may be retained even after the load context unloads, and over thousands of iterations memory will grow.
 
-The architecture treats this as a first-class concern with three rules. First, provider services are exposed to the script **only** through the global-context object, never through static fields the provider's own assembly owns. Second, provider-managed resources (connection pools, broker clients) live inside the engine's durable services container, are created and disposed by the engine's lifetime hooks rather than by the script, and are exposed to the script as already-initialised handles. Third, a memory-leak regression test runs in CI against the full transitive closure of every Core provider, not just against trivial scripts, so that a dependency-introduced leak is caught early rather than near the pilot. This third rule is named explicitly as a Phase 1 deliverable in the project plan because the cost of discovering it at Phase 4 is much higher.
+The architecture treats this as a first-class concern with three rules. First, provider services are exposed to the script **only** through the global-context object, never through static fields the provider's own assembly owns. Second, provider-managed resources (connection pools, broker clients) live inside the engine's durable services container, are created and disposed by the engine's lifetime hooks rather than by the script, and are exposed to the script as already-initialised handles. Third, a memory-leak regression test runs in CI against the full transitive closure of every Core provider, not just against trivial scripts, so that a dependency-introduced leak is caught early rather than near the pilot. This third rule is named explicitly as a first-milestone deliverable because the cost of discovering a dependency-introduced leak late is much higher.
 
 ## 5.5 Dynamic assembly resolution for customer code
 
@@ -365,17 +365,17 @@ In the local tier, aimed at solo developers and open-source contributors, everyt
 
 ## 7.2 SaaS execution — small and agile teams
 
-For teams that cannot justify dedicated local hardware capable of running dozens of microservices, the SaaS tier offloads container provisioning to the cloud fabric. Developers still author locally with full IDE support, but execution targets the remote backend. This tier is the natural fit for CI/CD pipelines, where lightweight runner agents that lack nested virtualisation cannot start containers themselves and instead connect to the SaaS platform to do the heavy lifting.
+For teams that cannot justify dedicated local hardware capable of running dozens of microservices, the planned SaaS (Team) tier offloads container provisioning to the cloud fabric. Developers still author locally with full IDE support, but execution targets the remote backend. This tier is the natural fit for CI/CD pipelines, where lightweight runner agents that lack nested virtualisation cannot start containers themselves and instead connect to the SaaS platform to do the heavy lifting.
 
 ## 7.3 Enterprise execution — on-premises and SSO
 
-Regulated sectors — finance, healthcare, defence — frequently cannot use multi-tenant SaaS because of data-residency and network-egress rules. The enterprise tier therefore packages the cloud execution engine as a deployable artefact: a Kubernetes Helm chart or a self-hosted Docker architecture installed inside the customer's own VPC or VNet. The execution model is identical to the SaaS tier; only the location of the backend changes.
+Regulated sectors — finance, healthcare, defence — frequently cannot use multi-tenant SaaS because of data-residency and network-egress rules. The planned Enterprise tier therefore packages the cloud execution engine as a deployable artefact: a Kubernetes Helm chart or a self-hosted Docker architecture installed inside the customer's own VPC or VNet. The execution model is identical to the SaaS tier; only the location of the backend changes.
 
 ### 7.3.1 Identity as part of the execution path
 
 The deep architectural difference in the enterprise tier is identity and access management. The platform integrates with SSO providers through SAML 2.0 and OpenID Connect, and that integration is not confined to a reporting dashboard — it reaches into the test-runner CLI and the VSCode plugin. A developer authenticates local tooling against the enterprise identity provider and receives a short-lived JSON Web Token. That token authorises the provisioning of large container topologies and carries Role-Based Access Control claims. The effect is that authorisation is evaluated at the moment infrastructure is requested: every spin-up is logged to a central audit trail, and a junior user can be prevented from launching a resource-intensive load test that might destabilise a shared staging cluster.
 
-| Dimension | Local (Indie) | SaaS (Team) | Enterprise |
+| Dimension | Local (free core) | SaaS (planned Team tier) | Enterprise (planned) |
 |---|---|---|---|
 | Where containers run | Local Docker socket | Multi-tenant SaaS cloud | Customer-managed VPC / VNet |
 | Network model | Single local namespace | SSH tunnel + reverse forwarding | SSH tunnel within customer network |
@@ -392,7 +392,7 @@ The architecture described so far still assumes a human authors the YAML. The ag
 
 ## 8.1 The three-agent topology
 
-Rather than one monolithic agent, the platform uses three specialised agents, each with a narrow remit. The separation keeps each agent auditable and lets the platform expose them at different commercial tiers.
+Rather than one monolithic agent, the platform uses three specialised agents, each with a narrow remit. The separation keeps each agent auditable and positions the platform for future tiered offerings.
 
 | Agent | Trigger | Responsibility |
 |---|---|---|
@@ -501,7 +501,7 @@ A test platform generates an unusual amount of information about its users' syst
 
 The default is **no telemetry**. At first run the tool prints a notice describing what telemetry would be collected and the command to enable it; nothing is collected until the user opts in explicitly. When telemetry is enabled, the tool reports only structural counts and timings: number of runs, scenarios per run, verdicts by category, steps by family and provider, suite startup time, time-to-first-passing-test, an anonymous installation identifier, the platform and tool version. The tool never reports test file contents, captured variable values, secret references or resolved values, error messages, system-under-test addresses, container image names, or any data that originated from the system under test. A test file may declare itself non-telemetered with a metadata flag, in which case no run-level telemetry is reported from that file regardless of the global setting.
 
-**Access, residency, and retention. **Telemetry data, when present, flows to a backend the platform team operates in EU-region infrastructure (the working assumption based on the team's location; the precise region commitment is published before any Enterprise pilot involves real data). Access inside the platform team is limited to a named set of engineers and is auditable. Data is retained for ninety days at the Indie tier; disabling telemetry deletes the installation identifier from the backend within thirty days. Telemetry data is never shared with third parties. This commitment is encoded in the v1.0 release manifest and surfaced to the user at first run; the detailed v1.0 telemetry policy lives in the project plan, section 9.3.
+**Access, residency, and retention.** Telemetry data, when present, flows to a backend the platform team operates in EU-region infrastructure (the working assumption based on the team's location; the precise region commitment is published before any Enterprise pilot involves real data). Access inside the platform team is limited to a named set of engineers and is auditable. Data is retained for ninety days; disabling telemetry deletes the installation identifier from the backend within thirty days. Telemetry data is never shared with third parties. This commitment is encoded in the v1.0 release manifest and surfaced to the user at first run; the detailed v1.0 telemetry policy is published in [`docs/telemetry.md`](telemetry.md).
 
 # 12. Observability and Operability
 
@@ -562,7 +562,7 @@ The DSL's `type` field carries two pieces of information in one dotted name: the
 | webhook-listen | Open a listener and assert on the inbound call. | webhook-listen.http |
 | script | Execute a code block in the chosen language. | script.csharp |
 
-*Table 13.1 — Families, the operation each one names, and providers that implement them. The Indie open-source layer ships an initial set; the community is expected to grow the right-hand column over time.*
+*Table 13.1 — Families, the operation each one names, and providers that implement them. The permanently free Apache-2.0 core ships an initial set of twenty-five Core providers; the community is expected to grow the right-hand column over time.*
 
 There is no bare-family shorthand: the author always writes the dotted name — `type: http.rest`, never a bare `type: http` — even for a family with only one registered provider today. This was a deliberate subtractive change made pre-v1.0, while the schema was still unpublished: a family gaining a second provider later must never silently change, or invalidate, the meaning of a step type an existing file already uses. Tooling renders the same canonical dotted name in suggestions and error messages, so a file is always unambiguous regardless of which team wrote it or reads it back.
 
@@ -577,7 +577,7 @@ public sealed record StepKindId(string Family, string Provider);
 public sealed record ProviderMetadata(
     string   Version,           // SemVer; the provider's own version
     string   MinEngineVersion,
-    string   License,           // SPDX identifier; Apache-2.0 for the Indie layer
+    string   License,           // SPDX identifier; Apache-2.0 for the core OSS layer
     string[] Authors);
 
 // A provider declares which step kind it implements.
@@ -700,7 +700,7 @@ With the contract in hand, the engine's existing compilation pipeline (section 5
 
 | Stage | What happens | Provider role |
 |---|---|---|
-| Resolve | The compiler reads the step's type field, splits it on the dot into family and provider, and looks the result up in the registry. There is no bare-family resolution: a non-dotted type is rejected at AST-build time, even for a family with a single registered provider (Phase 0, retire-bare-aliases). | Identified by StepKindId. |
+| Resolve | The compiler reads the step's type field, splits it on the dot into family and provider, and looks the result up in the registry. There is no bare-family resolution: a non-dotted type is rejected at AST-build time, and all step types are written in the fully-qualified `family.provider` form. | Identified by StepKindId. |
 | Bind | The provider's binder converts the YAML node into a typed model and validates it structurally against the provider's JSON Schema fragment. | IStepBinder<TModel>. |
 | Validate | The provider's validator checks semantic correctness against the wider project: the target dependency exists, captured variables are referenced consistently, the verification mode is permitted for this kind. | IStepValidator<TModel>. |
 | Plan resources | The compiler aggregates each step's resource requirements into the orchestration plan, so that every container, port, and environment variable needed by the suite is known before Aspire starts. | IResourceContributor<TModel>. |
@@ -905,7 +905,7 @@ That is the entire provider. The next provider in line — db-assert.sqlserver, 
 
 The platform's value is realised only when its outcome reaches the engineer who must act on it. Every section so far describes machinery that exists to produce a single thing: a trustworthy answer to the question “did the system under test do what we expected?” The reporting layer is the surface through which that answer becomes visible — and the surface through which the rest of the architecture either earns trust or loses it. A platform that orchestrates correctly, compiles deterministically, and asserts faithfully but then surfaces a failure as “step 4 failed: expectation not met” has wasted the work upstream, because the developer's next move is to bypass it and dig through raw logs. Reporting is therefore not a closing afterthought; it is a first-class architectural concern, designed with the same rigour as the compiler and the orchestrator.
 
-This section defines the architecture's answer in five parts. It names the audiences the report serves, fixes the verdict taxonomy that classifies every outcome, defines the five-layer report architecture that carries data outward from a single step to a multi-week trend, specifies the structured event stream that every renderer and the Healer agent consume in common, and describes the rendering moves that turn the platform's deepest difficulties — asynchrony and cross-step state — into visible developer stories rather than forensic exercises. The section closes with the format spectrum mapped onto the platform's three commercial tiers.
+This section defines the architecture's answer in five parts. It names the audiences the report serves, fixes the verdict taxonomy that classifies every outcome, defines the five-layer report architecture that carries data outward from a single step to a multi-week trend, specifies the structured event stream that every renderer and the Healer agent consume in common, and describes the rendering moves that turn the platform's deepest difficulties — asynchrony and cross-step state — into visible developer stories rather than forensic exercises. The section closes with the format spectrum mapped onto the permanently free OSS core and the planned Team and Enterprise tiers.
 
 ## 14.1 Reporting as a first-class architectural concern
 
@@ -930,7 +930,7 @@ The four verdicts are defined authoritatively in Section 12.1 — Pass, Fail, En
 | **Environment error** | Amber warning. | Counted separately from failures and listed in a dedicated section of the summary; carries the orchestrator's diagnostic and a link to the relevant container, broker, or tunnel log. |
 | **Inconclusive** | Grey circle. | Counted separately again; carries the sub-case (timeout-without-response, partition-outlasted-grace, or upstream-capture-unmet) and, for sub-case (c), the id of the earlier step whose capture was unmet. |
 
-Separating defect from environment failure is the most important contribution the reporting layer makes here, and it is the contribution most existing testing tools fail at. A failure that says “your Kafka container did not start” is fundamentally different from “your code is broken,” and a report that conflates the two destroys trust in the tool within days. Inconclusive deserves the same care: a step skipped because an earlier capture was unmet is not a defect in the system under test, and rendering it as a failure would falsely accuse a downstream component of misbehaviour. The conservative behaviour — four verdicts, four colours, four counters — is what keeps each case legible. In the cloud-backed Team and Enterprise tiers, these classifications also drive notification routing into the customer's existing alerting channels; in the local Indie tier they are purely presentational.
+Separating defect from environment failure is the most important contribution the reporting layer makes here, and it is the contribution most existing testing tools fail at. A failure that says “your Kafka container did not start” is fundamentally different from “your code is broken,” and a report that conflates the two destroys trust in the tool within days. Inconclusive deserves the same care: a step skipped because an earlier capture was unmet is not a defect in the system under test, and rendering it as a failure would falsely accuse a downstream component of misbehaviour. The conservative behaviour — four verdicts, four colours, four counters — is what keeps each case legible. In the planned cloud-backed Team and Enterprise tiers, these classifications would also drive notification routing into the customer's existing alerting channels; in the free local core they are purely presentational.
 
 ## 14.2a Terminal renderer accessibility (WCAG 1.4.1)
 
@@ -1079,13 +1079,13 @@ The Healer agent of Section 8 consumes the same structured event stream the deve
 
 ## 14.9 Format spectrum and tier mapping
 
-The five-layer model maps naturally onto the platform's three commercial tiers, because the inner layers serve the developer (who is the Indie tier's user) and the outer layers serve the team and the organisation (who pay for the Team and Enterprise tiers).
+The five-layer model maps naturally onto the platform's architecture, where the inner layers serve the developer and form the permanently free Apache-2.0 open-source core, and the outer layers enable team and organisational capabilities planned for future commercial offerings.
 
-| Tier | Reporting capabilities included |
+| Scope | Reporting capabilities included |
 |---|---|
-| **Indie** | Rich terminal renderer with colour and the polling timeline; HTML report written to disk; JUnit XML for CI gates; VSCode Test Explorer integration with inline decorations on failing YAML lines; the live execution feed in both the terminal and the editor. |
-| **Team** | Everything above, plus a hosted cross-run dashboard: flakiness scores, time-to-green, ownership distribution, regression detection, and trend charts. Reports forwarded to the cloud backend on every run with no change to author workflow. |
-| **Enterprise** | Everything above, plus RBAC on report access, audit-grade immutability of historical records, structured SIEM export (Splunk, Datadog, native), retention policies aligned to compliance frameworks, and signed reports for attestation. The reporting layer joins the rest of the organisation's data plane rather than living as an island. |
+| **Permanently free OSS core** | Rich terminal renderer with colour and the polling timeline; HTML report written to disk; JUnit XML for CI gates; VSCode Test Explorer integration with inline decorations on failing YAML lines; the live execution feed in both the terminal and the editor. |
+| **Planned Team tier** | Everything above, plus a hosted cross-run dashboard: flakiness scores, time-to-green, ownership distribution, regression detection, and trend charts. Reports forwarded to the cloud backend on every run with no change to author workflow. |
+| **Planned Enterprise tier** | Everything above, plus RBAC on report access, audit-grade immutability of historical records, structured SIEM export (Splunk, Datadog, native), retention policies aligned to compliance frameworks, and signed reports for attestation. The reporting layer joins the rest of the organisation's data plane rather than living as an island. |
 
 ## 14.10 Provider participation in reports
 
@@ -1140,16 +1140,16 @@ The command-line runner was described earlier as a headless executor with determ
 
 ## 16.1 Test selection
 
-A team with five hundred test files never wants to run all of them on every change. The runner therefore exposes a selection language that composes several independent axes, so that a developer, a CI pipeline, and a nightly job can each ask for exactly the subset they need. The first four axes operate on metadata already in the file or the source tree and are available in every tier. The fifth depends on persisted run history, and its full form is a Team-tier capability.
+A team with five hundred test files never wants to run all of them on every change. The runner therefore exposes a selection language that composes several independent axes, so that a developer, a CI pipeline, and a nightly job can each ask for exactly the subset they need. The first four axes operate on metadata already in the file or the source tree and are available in the permanently free core. The fifth depends on persisted run history; local prior-verdict selection is in the core, whilst the full history form is planned for future commercial offerings.
 
-| Selection axis | Example intent | How it is expressed | Tier |
+| Selection axis | Example intent | How it is expressed | Availability |
 |---|---|---|---|
-| By tag | “Run the smoke tests only.” | Tags declared in each file's metadata block; the runner takes an include and exclude tag expression. | All |
-| By ownership | “Run the payments team's suites.” | An owner field in metadata; the runner filters on it. | All |
-| By path | “Run everything under tests/billing.” | Glob patterns over the file tree. | All |
-| By change | “Run only what this branch touched.” | The runner diffs against a base ref and selects files changed plus, optionally, files whose declared dependencies changed. | All |
-| By prior verdict (last run) | “Run the suites that failed last time.” | The Indie tier writes the most recent run's structured event stream to a local cache; the runner reads it and selects by prior verdict. Only the immediately previous run is retained locally. | Indie+ |
-| By prior verdict (across history) | “Run the suites that failed in any of the last seven days.” | Backed by the hosted run-history store; selection is over the full retained window. | Team+ |
+| By tag | “Run the smoke tests only.” | Tags declared in each file's metadata block; the runner takes an include and exclude tag expression. | Free core |
+| By ownership | “Run the payments team's suites.” | An owner field in metadata; the runner filters on it. | Free core |
+| By path | “Run everything under tests/billing.” | Glob patterns over the file tree. | Free core |
+| By change | “Run only what this branch touched.” | The runner diffs against a base ref and selects files changed plus, optionally, files whose declared dependencies changed. | Free core |
+| By prior verdict (last run) | “Run the suites that failed last time.” | The core writes the most recent run's structured event stream to a local cache; the runner reads it and selects by prior verdict. Only the immediately previous run is retained locally. | Free core |
+| By prior verdict (across history) | “Run the suites that failed in any of the last seven days.” | Backed by the hosted run-history store; selection is over the full retained window. | Planned Team tier |
 
 The axes compose: a CI job can ask for “tagged regression, owned by payments, changed in this branch” in a single invocation. Selection operates on metadata the author already writes, so it costs the author nothing beyond tagging discipline.
 
@@ -1242,14 +1242,14 @@ The memory model is clean: the ledger holds plain `System.String` values in the 
 
 ## 17.2 Pluggable secret sources
 
-The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future tiers.
+The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future development.
 
-| Source prefix | Resolves from | Tier | Status |
+| Source prefix | Resolves from | Availability | Status |
 |---|---|---|---|
-| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie | MVP |
-| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Indie | MVP |
-| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie | Deferred |
-| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Team and Enterprise | Deferred |
+| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Free core | MVP |
+| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Free core | MVP |
+| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Free core | Deferred |
+| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Planned commercial tiers | Deferred |
 
 Because the source is chosen by configuration and only the logical path appears in the file, a test authored against an environment variable locally runs unchanged against Vault in CI. The seam between “which secret” and “where secrets come from” is exactly the seam that lets one test file move between environments without edits.
 

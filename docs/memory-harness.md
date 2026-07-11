@@ -70,7 +70,7 @@ The machine-readable JSON line the harness also emits (`netDeltaBytes`, `passed`
 
 ## Where it runs in CI
 
-The gate is the `memory-leak` job in `.github/workflows/build.yml`: **blocking** on every push and pull request, and scheduled weekly (Mondays 06:00 UTC) so a leak introduced by a dependency upgrade between pushes is still caught within days. It has been a permanent gate since Phase 1 — the project plan deliberately front-loaded it because a leak discovered late costs far more than one caught the week a client library enters the closure.
+The gate is the `memory-leak` job in `.github/workflows/build.yml`: **blocking** on every push and pull request, and scheduled weekly (Mondays 06:00 UTC) so a leak introduced by a dependency upgrade between pushes is still caught within days. It is a permanent CI gate from the project's first milestone because a leak discovered late costs far more than one caught the week a client library enters the closure.
 
 ## Adding a provider to the closure
 

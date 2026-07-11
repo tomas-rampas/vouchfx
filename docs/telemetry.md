@@ -117,7 +117,7 @@ The environment variable doubles as the **production-run exclusion** — CI/auto
 
 In v1, telemetry events are **persisted locally only** by default — they are appended to a JSON Lines file on your machine. A future hosted pilot backend is out of scope in this release.
 
-However, you can optionally configure vouchfx to drain the local outbox to a backend telemetry endpoint (Phase A of #152). See [Sending telemetry to a backend (opt-in transport)](#sending-telemetry-to-a-backend-opt-in-transport) below.
+However, you can optionally configure vouchfx to drain the local outbox to a backend telemetry endpoint. See [Sending telemetry to a backend (opt-in transport)](#sending-telemetry-to-a-backend-opt-in-transport) below.
 
 ### Storage location
 
@@ -302,9 +302,9 @@ If the backend is unreachable, the forget request is silently skipped — the lo
 
 ### Backend availability
 
-This is the **client transport** (Phase A of #152). When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at a compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
+This is the **client-side transport layer**. When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at a compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
 
-An official vouchfx telemetry backend implementing the frozen `/v1/telemetry` and `/v1/telemetry/forget` contract (PostgreSQL storage, 90-day retention, install-id deletion support) has been built and will be published alongside a hosted pilot instance; it is not yet publicly available. Any HTTP service implementing the frozen contract works as a backend. **Until you configure both environment variables, telemetry remains local-only.** When you are ready to send telemetry to a backend, obtain the endpoint URL and authentication token from the backend operator, then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
+An official vouchfx telemetry backend implementing the frozen `/v1/telemetry` and `/v1/telemetry/forget` contract is publicly available at [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) — source-complete and CI-tested for self-hosting. A hosted pilot instance is not yet running, so telemetry remains local-only by default unless you self-host the backend. Any HTTP service implementing the frozen contract works as a backend. **Until you configure both environment variables, telemetry remains local-only.** When you are ready to send telemetry to a backend, obtain the endpoint URL and authentication token from the backend operator (or from your self-hosted deployment), then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
 
 ## Questions and feedback
 

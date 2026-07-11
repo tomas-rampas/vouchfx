@@ -45,6 +45,7 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/roadmap.md", "Project", "Roadmap"),
     ("CHANGELOG.md", "Project", "Changelog"),
     ("GOVERNANCE.md", "Project", "Governance"),
+    ("docs/decisions/dotnet-tool-packaging.md", "Project", "Decision: dotnet tool packaging"),
     ("README.md", "Project", "Project README"),
 ]
 
@@ -326,6 +327,7 @@ PORTAL = """<!DOCTYPE html>
       <a class="doc-card" href="docs/roadmap.html"><span class="doc-card__k">ROADMAP</span><h3>Roadmap</h3><p>What has shipped, what v1.0 still needs, what v1.x adds next — and what stays free permanently.</p></a>
       <a class="doc-card" href="CHANGELOG.html"><span class="doc-card__k">CHANGES</span><h3>Changelog</h3><p>The delivered-capability record, in Keep-a-Changelog format, seeding each release's notes.</p></a>
       <a class="doc-card" href="GOVERNANCE.html"><span class="doc-card__k">GOV</span><h3>Governance</h3><p>Who decides what enters Core, how providers earn the Vouched badge, and how disputes are resolved.</p></a>
+      <a class="doc-card" href="docs/decisions/dotnet-tool-packaging.html"><span class="doc-card__k">ADR</span><h3>Decision: dotnet tool packaging</h3><p>Why the CLI ships as a dotnet global tool, how DCP metadata resolution works, and the portability trade-off.</p></a>
       <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Project README</h3><p>What vouchfx is, how it works, building &amp; testing, and the repository layout.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SDK</span><h3>Contributing &amp; provider authoring</h3><p>The provider-authoring guide: the frozen v1 contract, CsxFragment rules, testing, and the Vouched rubric.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SEC</span><h3>Security policy</h3><p>How to report a vulnerability, the disclosure process, and the supported-versions table.</p></a>
