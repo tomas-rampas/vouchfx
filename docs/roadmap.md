@@ -20,7 +20,8 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 - **Twenty-five Core providers across eleven step families** — `http.rest`, `http.soap`; `db-assert` for PostgreSQL, MySQL,
   SQL Server, MongoDB and DynamoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS, Azure Service Bus and
   Redis Streams; `cache-assert` for Redis and Elasticsearch; `mail-expect.smtp`; `webhook-listen.http`;
-  `metrics-assert.prometheus`; `storage-assert.s3`; `trace-expect.otlp`; `script.csharp`.
+  `metrics-assert.prometheus`; `storage-assert.s3`; `trace-expect.otlp`; `script.csharp` (inline `code` or an
+  external `file` reference).
 - **Engine-owned asynchronous verification** — `verifyMode: RETRY` with bounded exponential backoff (Polly v8);
   authors never write `Thread.Sleep`.
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are

@@ -114,6 +114,10 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   implementation over HTTP with substitution, capture, negative testing and the four-verdict mapping, plus a
   Docker-free conformance test harness pattern (21 tests, no infrastructure dependencies); it doubles as the
   reference implementation for the hub's provider-implementation guide, with its own conformance CI lane.
+- `script.csharp` accepts a `file` field as an alternative to inline `code`: a path (resolved relative to the
+  `.e2e.yaml` file's own directory) to an external `.csx` file, read once at compile time and spliced verbatim
+  — identical trust boundary and lack of placeholder/secret substitution as `code`. `code` and `file` are
+  mutually exclusive; a missing `file` is a clean Inconclusive validation failure, not a runtime crash.
 
 **Verdicts and reporting**
 

@@ -184,7 +184,8 @@ public sealed class SubstitutionUniformityTests
         // ${secret:...}-shaped token *as C# string content*. If the provider participated
         // in uniform substitution it would route this through a resolve helper — it must NOT.
         var model = new ScriptCsharpModel(
-            Code: "var note = \"order {p} token ${secret:env/X}\"; Vars[\"note\"] = note;");
+            Code: "var note = \"order {p} token ${secret:env/X}\"; Vars[\"note\"] = note;",
+            File: null);
         var ctx = new StubCompileContext("verbatim-step");
 
         var fragment = provider.Emit(model, ctx);
@@ -276,6 +277,9 @@ public sealed class SubstitutionUniformityTests
     /// <summary>Minimal compile context with no captures.</summary>
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(string stepId) => StepId = stepId;
 
         public string StepId { get; }

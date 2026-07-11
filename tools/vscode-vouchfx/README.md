@@ -58,6 +58,24 @@ indented at or below the `code:` key. Open
 [`examples/script-csharp-highlighting.e2e.yaml`](./examples/script-csharp-highlighting.e2e.yaml)
 to eyeball it.
 
+A step can instead reference an external `.csx` file via `file:` (resolved
+relative to the `.e2e.yaml` file's own directory) — mutually exclusive with
+`code:`, and read once at compile time, spliced verbatim exactly like an
+inline body:
+
+```yaml
+- id: compute
+  type: script.csharp
+  file: scripts/compute.csx
+```
+
+`.csx` files opened directly get full C#/OmniSharp editing support from
+VSCode's standard C# extension, so this is the natural place to grow a
+`script.csharp` body once it outgrows a `code:` block scalar. The injection
+grammar above only applies to `code:`; a `file:` value is a plain path string,
+not an embedded C# region, so there is nothing to highlight inline. See
+[`examples/script-csharp-external-file.e2e.yaml`](./examples/script-csharp-external-file.e2e.yaml).
+
 ### C# IntelliSense (status)
 
 | Capability | v1 |

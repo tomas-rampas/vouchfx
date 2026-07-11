@@ -49,6 +49,9 @@ file sealed class FixtureBindingContext : IBindingContext { }
 /// <summary>Minimal <see cref="IProjectContext"/> for the example fixture.</summary>
 file sealed class FixtureProjectContext : IProjectContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }
@@ -56,6 +59,9 @@ file sealed class FixtureProjectContext : IProjectContext
 /// <summary>Minimal <see cref="ICompileContext"/> for the example fixture.</summary>
 file sealed class FixtureCompileContext : ICompileContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     internal FixtureCompileContext(string stepId) => StepId = stepId;
 
     public string StepId { get; }

@@ -13,31 +13,46 @@
 //   6. Validator: empty/whitespace Code rejected.
 //   7. Brace-injection attempt: unbalanced author body → compile error (not silent clobber).
 //   8. Registry: provider discoverable via StepKindRegistry with key "script.csharp".
-//   9. SchemaFragment: contains "code" field.
+//   9. SchemaFragment: contains "code" and "file" fields.
 //  10. M3 fix: return; in author body does NOT abort downstream steps (local-function containment).
 //  11. M3 fix: author body using await compiles and runs correctly.
 //  12. M3 fix: brace-injection into local function still yields compile error.
+//  13. 'file' field: Bind reads it, Validate enforces exclusivity/existence, Emit
+//      reads the referenced .csx file's content and splices it verbatim, exactly
+//      like an inline 'code' body.
+using System.IO;
 using System.Linq;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.Script.Csharp;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Steps.Script.Csharp.Tests;
 
 // ── Stubs ─────────────────────────────────────────────────────────────────────
 
+/// <summary>Minimal <see cref="IBindingContext"/> for bind tests.</summary>
+file sealed class StubBindingContext : IBindingContext { }
+
 /// <summary>Minimal <see cref="ICompileContext"/> for emit tests.</summary>
 file sealed class StubCompileContext : ICompileContext
 {
-    internal StubCompileContext(string stepId) => StepId = stepId;
+    internal StubCompileContext(string stepId, string? suiteDirectory = null)
+    {
+        StepId = stepId;
+        SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
+    }
 
     /// <inheritdoc />
     public string StepId { get; }
 
     /// <inheritdoc />
     public string SuiteNamespace => "Generated";
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> Captures { get; } =
@@ -51,8 +66,16 @@ file sealed class StubCompileContext : ICompileContext
 /// <summary>Minimal <see cref="IProjectContext"/> for validator tests.</summary>
 file sealed class StubProjectContext : IProjectContext
 {
+    internal StubProjectContext(string? suiteDirectory = null)
+    {
+        SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
+    }
+
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
         = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 }
 
 // ── Test class ────────────────────────────────────────────────────────────────
@@ -60,10 +83,32 @@ file sealed class StubProjectContext : IProjectContext
 /// <summary>
 /// Non-docker unit and integration tests for <see cref="ScriptCsharpProvider"/>.
 /// </summary>
-public sealed class ScriptCsharpProviderTests
+public sealed class ScriptCsharpProviderTests : IDisposable
 {
     private readonly ScriptCsharpProvider _provider = new();
     private static readonly IProjectContext s_projectCtx = new StubProjectContext();
+
+    // A fresh temp directory per test, used by the 'file' field tests to stand in
+    // for the scenario's own directory (SuiteDirectory).  Deleted in Dispose.
+    private readonly string _root =
+        Path.Combine(Path.GetTempPath(), "vouchfx-script-csharp-tests-" + Guid.NewGuid().ToString("n"));
+
+    public ScriptCsharpProviderTests()
+    {
+        Directory.CreateDirectory(_root);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Best-effort temp cleanup; a locked file must not fail the test.
+        }
+    }
 
     // ── 1. Emit lint ─────────────────────────────────────────────────────────
 
@@ -74,7 +119,7 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Emit_StatementBlock_StartsAndEndsWithBrace()
     {
-        var model = new ScriptCsharpModel(Code: "Vars[\"x\"] = 1;");
+        var model = new ScriptCsharpModel(Code: "Vars[\"x\"] = 1;", File: null);
         var ctx = new StubCompileContext("my-step");
 
         var fragment = _provider.Emit(model, ctx);
@@ -94,7 +139,7 @@ public sealed class ScriptCsharpProviderTests
     public void Emit_StatementBlock_ContainsAuthorCodeVerbatim()
     {
         const string authorCode = "Vars[\"greeting\"] = \"hello\";";
-        var model = new ScriptCsharpModel(Code: authorCode);
+        var model = new ScriptCsharpModel(Code: authorCode, File: null);
         var ctx = new StubCompileContext("greet");
 
         var fragment = _provider.Emit(model, ctx);
@@ -109,7 +154,7 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Emit_StatementBlock_ContainsNoUsingVar()
     {
-        var model = new ScriptCsharpModel(Code: "var x = 1;");
+        var model = new ScriptCsharpModel(Code: "var x = 1;", File: null);
         var ctx = new StubCompileContext("s");
 
         var fragment = _provider.Emit(model, ctx);
@@ -126,7 +171,7 @@ public sealed class ScriptCsharpProviderTests
     {
         const string rawId = "inline-script-step";
         var safeId = CsxFragment.SanitiseId(rawId); // "inline_script_step"
-        var model = new ScriptCsharpModel(Code: "// author comment");
+        var model = new ScriptCsharpModel(Code: "// author comment", File: null);
         var ctx = new StubCompileContext(rawId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -155,7 +200,7 @@ public sealed class ScriptCsharpProviderTests
         const string stepId = "check";
         var safeId = CsxFragment.SanitiseId(stepId);
         var expectedKeyLiteral = System.Text.Json.JsonSerializer.Serialize(VarKeys.Outcome(safeId));
-        var model = new ScriptCsharpModel(Code: "// no-op");
+        var model = new ScriptCsharpModel(Code: "// no-op", File: null);
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -171,7 +216,7 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Emit_RequiredUsings_ContainsExpectedNamespaces()
     {
-        var model = new ScriptCsharpModel(Code: "// no-op");
+        var model = new ScriptCsharpModel(Code: "// no-op", File: null);
         var ctx = new StubCompileContext("u");
 
         var fragment = _provider.Emit(model, ctx);
@@ -194,7 +239,7 @@ public sealed class ScriptCsharpProviderTests
     {
         const string rawId = "a-b-c";
         var safeId = CsxFragment.SanitiseId(rawId); // "a_b_c"
-        var model = new ScriptCsharpModel(Code: "Vars[\"k\"] = 0;");
+        var model = new ScriptCsharpModel(Code: "Vars[\"k\"] = 0;", File: null);
         var ctx = new StubCompileContext(rawId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -220,7 +265,7 @@ public sealed class ScriptCsharpProviderTests
     {
         const string authorCode =
             "if (true) { Vars[\"n\"] = 1; } else { Vars[\"n\"] = 2; }";
-        var model = new ScriptCsharpModel(Code: authorCode);
+        var model = new ScriptCsharpModel(Code: authorCode, File: null);
         var ctx = new StubCompileContext("branching");
 
         var fragment = _provider.Emit(model, ctx);
@@ -240,7 +285,7 @@ public sealed class ScriptCsharpProviderTests
     {
         const string stepId = "greet-step";
         const string authorCode = "Vars[\"greeting\"] = \"hi\";";
-        var model = new ScriptCsharpModel(Code: authorCode);
+        var model = new ScriptCsharpModel(Code: authorCode, File: null);
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -279,7 +324,7 @@ public sealed class ScriptCsharpProviderTests
     {
         const string stepId = "boom-step";
         const string authorCode = "throw new System.Exception(\"boom\");";
-        var model = new ScriptCsharpModel(Code: authorCode);
+        var model = new ScriptCsharpModel(Code: authorCode, File: null);
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -311,14 +356,13 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Validate_EmptyCode_IsInvalid()
     {
-        var model = new ScriptCsharpModel(Code: string.Empty);
+        var model = new ScriptCsharpModel(Code: string.Empty, File: null);
 
         var result = _provider.Validate(model, s_projectCtx);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
-            e.Contains("'code'", StringComparison.Ordinal) &&
-            e.Contains("empty", StringComparison.Ordinal));
+            e.Contains("exactly one of", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -327,7 +371,7 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Validate_WhitespaceCode_IsInvalid()
     {
-        var model = new ScriptCsharpModel(Code: "   \t\n  ");
+        var model = new ScriptCsharpModel(Code: "   \t\n  ", File: null);
 
         var result = _provider.Validate(model, s_projectCtx);
 
@@ -341,12 +385,83 @@ public sealed class ScriptCsharpProviderTests
     [Fact]
     public void Validate_NonEmptyCode_IsValid()
     {
-        var model = new ScriptCsharpModel(Code: "var x = 1;");
+        var model = new ScriptCsharpModel(Code: "var x = 1;", File: null);
 
         var result = _provider.Validate(model, s_projectCtx);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
         Assert.Empty(result.Errors);
+    }
+
+    // ── 13a. Validator: 'code'/'file' exclusivity ─────────────────────────────
+
+    /// <summary>
+    /// Setting both 'code' and 'file' must be rejected as mutually exclusive.
+    /// </summary>
+    [Fact]
+    public void Validate_BothCodeAndFileSet_IsInvalid()
+    {
+        var model = new ScriptCsharpModel(Code: "var x = 1;", File: "script.csx");
+
+        var result = _provider.Validate(model, s_projectCtx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("mutually exclusive", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Setting neither 'code' nor 'file' must be rejected.
+    /// </summary>
+    [Fact]
+    public void Validate_NeitherCodeNorFileSet_IsInvalid()
+    {
+        var model = new ScriptCsharpModel(Code: null, File: null);
+
+        var result = _provider.Validate(model, s_projectCtx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("exactly one of", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A 'file' reference that does not exist relative to
+    /// <see cref="IProjectContext.SuiteDirectory"/> must be rejected with a clear
+    /// error naming both the declared path and the resolved path — this keeps a
+    /// bad/typo'd path a clean Inconclusive verdict (via ValidationFailure) rather
+    /// than an unhandled exception from Emit.
+    /// </summary>
+    [Fact]
+    public void Validate_FileSet_MissingFile_IsInvalid()
+    {
+        var model = new ScriptCsharpModel(Code: null, File: "does-not-exist.csx");
+        var ctx = new StubProjectContext(_root);
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("does-not-exist.csx", StringComparison.Ordinal) &&
+            e.Contains(_root, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A 'file' reference that exists relative to
+    /// <see cref="IProjectContext.SuiteDirectory"/> passes validation.
+    /// </summary>
+    [Fact]
+    public void Validate_FileSet_ExistingFile_IsValid()
+    {
+        var fileName = "existing-" + Guid.NewGuid().ToString("n") + ".csx";
+        File.WriteAllText(Path.Combine(_root, fileName), "Vars[\"x\"] = 1;");
+
+        var model = new ScriptCsharpModel(Code: null, File: fileName);
+        var ctx = new StubProjectContext(_root);
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
     // ── 7. Brace-injection attempt ────────────────────────────────────────────
@@ -370,7 +485,7 @@ public sealed class ScriptCsharpProviderTests
         // catch clause which is syntactically invalid outside a try block.
         const string maliciousCode = "} catch (System.Exception) { Vars[\"evil\"] = 1; } async System.Threading.Tasks.Task __dummy() {";
         const string stepId = "injection-attempt";
-        var model = new ScriptCsharpModel(Code: maliciousCode);
+        var model = new ScriptCsharpModel(Code: maliciousCode, File: null);
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -401,13 +516,13 @@ public sealed class ScriptCsharpProviderTests
     {
         // Step 1: author body is a bare 'return;'
         const string stepId1 = "early-return";
-        var model1 = new ScriptCsharpModel(Code: "return;");
+        var model1 = new ScriptCsharpModel(Code: "return;", File: null);
         var ctx1 = new StubCompileContext(stepId1);
         var fragment1 = _provider.Emit(model1, ctx1);
 
         // Step 2: author body writes a marker var
         const string stepId2 = "after-return";
-        var model2 = new ScriptCsharpModel(Code: "Vars[\"after\"] = \"ok\";");
+        var model2 = new ScriptCsharpModel(Code: "Vars[\"after\"] = \"ok\";", File: null);
         var ctx2 = new StubCompileContext(stepId2);
         var fragment2 = _provider.Emit(model2, ctx2);
 
@@ -450,7 +565,7 @@ public sealed class ScriptCsharpProviderTests
         const string authorCode =
             "await System.Threading.Tasks.Task.Delay(1);\n" +
             "Vars[\"awaited\"] = \"yes\";";
-        var model = new ScriptCsharpModel(Code: authorCode);
+        var model = new ScriptCsharpModel(Code: authorCode, File: null);
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
@@ -494,7 +609,7 @@ public sealed class ScriptCsharpProviderTests
         Assert.IsType<ScriptCsharpProvider>(registered.Instance);
     }
 
-    // ── 9. SchemaFragment contains "code" ─────────────────────────────────────
+    // ── 9. SchemaFragment contains "code" and "file" ──────────────────────────
 
     /// <summary>
     /// The provider's <see cref="JsonSchemaFragment"/> must reference the <c>code</c> field.
@@ -511,7 +626,133 @@ public sealed class ScriptCsharpProviderTests
         Assert.Contains("code", registered.SchemaFragment!.Json, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The provider's <see cref="JsonSchemaFragment"/> must also reference the
+    /// <c>file</c> field, and require exactly one of <c>code</c>/<c>file</c>.
+    /// </summary>
+    [Fact]
+    public void Provider_SchemaFragment_ContainsFileField()
+    {
+        var registry = StepKindRegistry.BuildAndFreeze(
+            new[] { typeof(ScriptCsharpProvider).Assembly });
+
+        registry.TryGet("script.csharp", out var registered);
+
+        Assert.NotNull(registered!.SchemaFragment);
+        Assert.Contains("file", registered.SchemaFragment!.Json, StringComparison.Ordinal);
+        Assert.Contains("oneOf", registered.SchemaFragment.Json, StringComparison.Ordinal);
+    }
+
+    // ── 13b. Bind: 'file' vs 'code' ────────────────────────────────────────────
+
+    /// <summary>
+    /// Binding a step mapping with a <c>file</c> key populates
+    /// <see cref="ScriptCsharpModel.File"/> and leaves <see cref="ScriptCsharpModel.Code"/> null.
+    /// </summary>
+    [Fact]
+    public void Bind_FileKey_PopulatesFileNotCode()
+    {
+        var model = BindYaml("id: s1\ntype: script.csharp\nfile: scripts/check.csx\n");
+
+        Assert.Equal("scripts/check.csx", model.File);
+        Assert.Null(model.Code);
+    }
+
+    /// <summary>
+    /// Binding a step mapping with a <c>code</c> key populates
+    /// <see cref="ScriptCsharpModel.Code"/> and leaves <see cref="ScriptCsharpModel.File"/> null.
+    /// </summary>
+    [Fact]
+    public void Bind_CodeKey_PopulatesCodeNotFile()
+    {
+        var model = BindYaml("id: s1\ntype: script.csharp\ncode: 'Vars[\"x\"] = 1;'\n");
+
+        Assert.Equal("Vars[\"x\"] = 1;", model.Code);
+        Assert.Null(model.File);
+    }
+
+    /// <summary>
+    /// Binding a step mapping with neither key leaves both null (Validate is the
+    /// stage that rejects this, not Bind — Bind is a pure, non-throwing projection).
+    /// </summary>
+    [Fact]
+    public void Bind_MappingWithNeitherKey_BothNull()
+    {
+        var model = BindYaml("id: s1\ntype: script.csharp\n");
+
+        Assert.Null(model.Code);
+        Assert.Null(model.File);
+    }
+
+    // ── 13c. Emit: 'file' reads and splices external content ─────────────────
+
+    /// <summary>
+    /// When <see cref="ScriptCsharpModel.File"/> is set, <c>Emit</c> reads the
+    /// referenced file's content (resolved against
+    /// <see cref="ICompileContext.SuiteDirectory"/>) and splices it verbatim —
+    /// identically to how an inline <c>code</c> body is spliced.
+    /// </summary>
+    [Fact]
+    public void Emit_FileSet_ReadsExternalFileContent_SplicesVerbatim()
+    {
+        const string fileContent = "Vars[\"fromFile\"] = \"yes\";";
+        var fileName = "check-" + Guid.NewGuid().ToString("n") + ".csx";
+        File.WriteAllText(Path.Combine(_root, fileName), fileContent);
+
+        var model = new ScriptCsharpModel(Code: null, File: fileName);
+        var ctx = new StubCompileContext("file-step", _root);
+
+        var fragment = _provider.Emit(model, ctx);
+
+        Assert.Contains(fileContent, fragment.StatementBlock, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A step whose 'file' reference sets a Vars entry compiles, runs, and
+    /// produces <see cref="Verdict.Pass"/> with the value visible in Vars
+    /// afterwards — the full round trip via an external file, not just Emit.
+    /// </summary>
+    [Fact]
+    public async Task Emit_CompileAndRun_FileBasedScript_PassVerdict_ValueAppearsInVars()
+    {
+        const string stepId = "file-greet-step";
+        var fileName = "greet-" + Guid.NewGuid().ToString("n") + ".csx";
+        File.WriteAllText(Path.Combine(_root, fileName), "Vars[\"greeting\"] = \"hi from file\";");
+
+        var model = new ScriptCsharpModel(Code: null, File: fileName);
+        var ctx = new StubCompileContext(stepId, _root);
+
+        var fragment = _provider.Emit(model, ctx);
+        var compiled = CompileFragment(fragment);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var safeId = CsxFragment.SanitiseId(stepId);
+        var outcomeKey = VarKeys.Outcome(safeId);
+
+        var outcome = Assert.IsType<StepOutcome>(vars[outcomeKey]);
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
+
+        Assert.True(vars.ContainsKey("greeting"),
+            "Expected Vars[\"greeting\"] to be set by the external file's code.");
+        Assert.Equal("hi from file", vars["greeting"]);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Parses a single-step YAML mapping and binds it through the provider.
+    /// </summary>
+    private ScriptCsharpModel BindYaml(string yaml)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yaml));
+        var root = (YamlMappingNode)stream.Documents[0].RootNode;
+        return _provider.Bind(root, new StubBindingContext());
+    }
 
     /// <summary>
     /// Assembles a <see cref="CsxFragment"/> into a single CSX source string and

@@ -166,6 +166,9 @@ public sealed class NoopEchoProvider
 /// </summary>
 public sealed class CompileContextWithStepId : ICompileContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     /// <summary>
     /// Initialises a new instance with the given step identifier.
     /// </summary>

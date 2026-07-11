@@ -46,6 +46,9 @@ public sealed class HttpSoapEmitTests
 {
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(string stepId, IReadOnlyDictionary<string, CaptureExpr>? captures = null)
         {
             StepId = stepId;
@@ -571,6 +574,9 @@ public sealed class HttpSoapEmitTests
 
     private sealed class StubProjectContext : IProjectContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
     }

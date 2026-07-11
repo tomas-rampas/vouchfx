@@ -428,11 +428,12 @@ Set `type: mq-publish.redis` to use this step.
 
 Set `type: script.csharp` to use this step.
 
-**Required fields**
+**Optional fields**
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `code` | `string` | Inline C# code block executed inside the compiled CSX submission. Has access to the shared Vars dictionary. |
+| `code` | `string` | Inline C# code block executed inside the compiled CSX submission. Has access to the shared Vars dictionary. Mutually exclusive with 'file'. |
+| `file` | `string` | Path to an external .csx file, resolved relative to the .e2e.yaml file's directory. Read once at compile time and spliced verbatim, exactly like 'code'. Mutually exclusive with 'code'. |
 
 ### `storage-assert.s3`
 

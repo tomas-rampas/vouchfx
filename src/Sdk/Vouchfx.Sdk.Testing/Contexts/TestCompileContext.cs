@@ -5,6 +5,7 @@
 // the engine's RunCompileContext exactly: it is constructed from the format-aware
 // CaptureExpr map and derives the back-compatible expression-string Captures view from
 // it, so the two views stay key- and value-aligned (the engine's invariant).
+using System.IO;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Sdk.Testing.Contexts;
@@ -55,10 +56,16 @@ public sealed class TestCompileContext : ICompileContext
     /// with no <c>capture</c> section.  The back-compatible <see cref="Captures"/> view
     /// is derived from this, preserving iteration order.
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path fields (e.g. <c>script.csharp</c>'s
+    /// <c>file</c>) are resolved against.  Defaults to the process's current
+    /// directory when omitted.
+    /// </param>
     public TestCompileContext(
         string stepId,
         string suiteNamespace = "VouchfxGenerated",
-        IReadOnlyDictionary<string, CaptureExpr>? captureExprs = null)
+        IReadOnlyDictionary<string, CaptureExpr>? captureExprs = null,
+        string? suiteDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(stepId);
 
@@ -66,6 +73,7 @@ public sealed class TestCompileContext : ICompileContext
         SuiteNamespace = suiteNamespace;
         CaptureExprs = captureExprs ?? s_emptyExprs;
         Captures = ProjectExpressions(CaptureExprs);
+        SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
     }
 
     /// <inheritdoc />
@@ -73,6 +81,9 @@ public sealed class TestCompileContext : ICompileContext
 
     /// <inheritdoc />
     public string SuiteNamespace { get; }
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> Captures { get; }

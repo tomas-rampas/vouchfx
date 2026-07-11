@@ -39,6 +39,9 @@ public sealed class HttpRestExecutionTests
     /// </summary>
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
@@ -727,6 +730,9 @@ public sealed class HttpRestExecutionTests
     /// </summary>
     private sealed class StubProjectContext : IProjectContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         /// <inheritdoc />
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);

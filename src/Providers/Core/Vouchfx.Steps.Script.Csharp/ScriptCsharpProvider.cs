@@ -1,11 +1,14 @@
 // Vouchfx.Steps.Script.Csharp — script.csharp step provider (DSL §5, §13).
 //
-// Allows a test author to embed a block of raw C# that runs inside the compiled
-// CSX submission with access to Vars.
+// Allows a test author to embed a block of raw C# — inline via `code`, or
+// referenced from an external `.csx` file via `file` — that runs inside the
+// compiled CSX submission with access to Vars. Exactly one of `code`/`file` is
+// required; `file` is read once at compile time and spliced verbatim, exactly
+// like `code`.
 //
 // Schema composition invariants (§13.3.1, §13.6):
-//   • SchemaFragment describes ONLY the provider's own field (code).  The type
-//     const discriminator is injected by SchemaComposer from Kind.
+//   • SchemaFragment describes ONLY the provider's own fields (code, file).
+//     The type const discriminator is injected by SchemaComposer from Kind.
 //   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
 //     is empty (no shared static class needed); StatementBlock is assembled with
 //     a StringBuilder — the author body is NEVER placed inside a $$"""…""" hole.
@@ -19,8 +22,9 @@ namespace Vouchfx.Steps.Script.Csharp;
 
 /// <summary>
 /// Core provider for the <c>script.csharp</c> step kind (DSL §5, §13).
-/// Lets a test author embed an inline C# block that runs inside the compiled
-/// CSX submission with access to <c>Vars</c>.
+/// Lets a test author embed a C# block — inline via <c>code</c>, or referenced
+/// from an external <c>.csx</c> file via <c>file</c> — that runs inside the
+/// compiled CSX submission with access to <c>Vars</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,6 +32,19 @@ namespace Vouchfx.Steps.Script.Csharp;
 /// The engine's <c>SchemaComposer</c> assembles the unified schema by injecting
 /// a <c>const</c>-keyed <c>if</c>/<c>then</c> discriminator derived from
 /// <see cref="Kind"/> — the fragment text never repeats that discriminator (§13.6).
+/// </para>
+/// <para>
+/// <strong><c>code</c> vs. <c>file</c>.</strong> Exactly one is required
+/// (enforced by <see cref="Validate"/>, not the JSON Schema's <c>oneOf</c>
+/// alone — the model-level check gives a clear step-scoped
+/// <see cref="ValidationResult.Failure(string)"/> message instead of a generic
+/// schema-validation error). <c>file</c> is resolved relative to
+/// <see cref="IProjectContext.SuiteDirectory"/> / <see cref="ICompileContext.SuiteDirectory"/>
+/// (the scenario's own directory) and its content is read once, at compile
+/// time, then spliced exactly like <c>code</c> — it is not re-read per
+/// execution, and neither field participates in <c>{placeholder}</c> or
+/// <c>${secret:…}</c> substitution (both are compile-time-only text, resolved
+/// before any <c>Vars</c> exist).
 /// </para>
 /// <para>
 /// The <see cref="Emit"/> method assembles the <see cref="CsxFragment"/>
@@ -106,10 +123,17 @@ public sealed class ScriptCsharpProvider
         """
         {
           "type": "object",
-          "required": ["code"],
+          "oneOf": [
+            { "required": ["code"] },
+            { "required": ["file"] }
+          ],
           "properties": {
             "code": {
-              "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.",
+              "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.",
+              "type": "string"
+            },
+            "file": {
+              "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
               "type": "string"
             }
           },
@@ -121,14 +145,19 @@ public sealed class ScriptCsharpProvider
     public ScriptCsharpModel Bind(YamlNode node, IBindingContext ctx)
     {
         if (node is not YamlMappingNode mapping)
-            return new ScriptCsharpModel(Code: string.Empty);
+            return new ScriptCsharpModel(Code: null, File: null);
 
         var code = mapping.Children.TryGetValue(new YamlScalarNode("code"), out var codeNode)
-                   && codeNode is YamlScalarNode scalar
-            ? scalar.Value ?? string.Empty
-            : string.Empty;
+                   && codeNode is YamlScalarNode codeScalar
+            ? codeScalar.Value
+            : null;
 
-        return new ScriptCsharpModel(Code: code);
+        var file = mapping.Children.TryGetValue(new YamlScalarNode("file"), out var fileNode)
+                   && fileNode is YamlScalarNode fileScalar
+            ? fileScalar.Value
+            : null;
+
+        return new ScriptCsharpModel(Code: code, File: file);
     }
 
     // ── IStepValidator<ScriptCsharpModel> ────────────────────────────────────
@@ -136,10 +165,31 @@ public sealed class ScriptCsharpProvider
     /// <inheritdoc />
     public ValidationResult Validate(ScriptCsharpModel model, IProjectContext ctx)
     {
-        if (string.IsNullOrWhiteSpace(model.Code))
+        var hasCode = !string.IsNullOrWhiteSpace(model.Code);
+        var hasFile = !string.IsNullOrWhiteSpace(model.File);
+
+        if (!hasCode && !hasFile)
         {
             return ValidationResult.Failure(
-                "script.csharp: 'code' must not be empty or whitespace.");
+                "script.csharp: exactly one of 'code' or 'file' must be set.");
+        }
+
+        if (hasCode && hasFile)
+        {
+            return ValidationResult.Failure(
+                "script.csharp: 'code' and 'file' are mutually exclusive.");
+        }
+
+        if (hasFile)
+        {
+            var resolvedPath = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(ctx.SuiteDirectory, model.File!));
+
+            if (!System.IO.File.Exists(resolvedPath))
+            {
+                return ValidationResult.Failure(
+                    $"script.csharp: file '{model.File}' not found (resolved to '{resolvedPath}').");
+            }
         }
 
         return ValidationResult.Success;
@@ -207,6 +257,17 @@ public sealed class ScriptCsharpProvider
     {
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
+        // 'file' is resolved and read here (compile time, once) rather than at bind
+        // time, so that Bind stays a pure, non-throwing YAML→model projection and
+        // Validate remains the single stage that reports a bad/missing path as a
+        // clean ValidationFailure (→ Inconclusive) instead of an unhandled exception.
+        // Validate already confirmed the file exists; a same-run TOCTOU race here is
+        // an accepted, narrow edge case.
+        var source = model.File is not null
+            ? System.IO.File.ReadAllText(
+                System.IO.Path.GetFullPath(System.IO.Path.Combine(ctx.SuiteDirectory, model.File)))
+            : model.Code!;
+
         // The outcome key is engine-derived only (never from author input).
         // JsonSerializer.Serialize wraps it in double-quotes and escapes any
         // special characters, producing a safe C# string literal.
@@ -244,7 +305,7 @@ public sealed class ScriptCsharpProvider
         sb.Append("    {\n");
         sb.Append("        await System.Threading.Tasks.Task.CompletedTask;\n");
         sb.Append("        // ---- begin author code (spliced verbatim) ----\n");
-        sb.Append(model.Code);
+        sb.Append(source);
         sb.Append("\n        // ---- end author code ----\n");
         sb.Append("    }\n");
         sb.Append("    try\n");

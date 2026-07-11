@@ -284,6 +284,9 @@ public sealed class SchemaCompositionTests
     /// <summary>Minimal test implementation of <see cref="ICompileContext"/>.</summary>
     private sealed class TestCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public TestCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";
@@ -299,6 +302,9 @@ public sealed class SchemaCompositionTests
     /// <summary>Minimal test implementation of <see cref="IProjectContext"/>.</summary>
     private sealed class TestProjectContext : IProjectContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         /// <inheritdoc />
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);

@@ -665,13 +665,24 @@ A `script` step is the escape hatch. It contains a block of code in a chosen lan
     Vars.Set("checksum", Checksum.Of(acct));   // customer library
 ```
 
+As the body grows, an author can move it out of the YAML and into a sibling `.csx` file, referenced by `file` instead of `code`:
+
+```yaml
+- id: derive-and-check
+  type: script.csharp
+  description: "Compute an expected checksum and assert it"
+  file: scripts/derive-and-check.csx
+```
+
+`file` and `code` are mutually exclusive — a step declares exactly one. The path is resolved relative to the `.e2e.yaml` file's own directory, and the referenced file's content is read once at compile time and spliced into the compiled submission exactly as an inline `code` body would be — same trust boundary, same lack of sandboxing, same absence of placeholder/secret substitution (§6.2). A `file` that does not exist is a validation error, reported before topology start (an authoring mistake, not a product defect — §12.1 Inconclusive).
+
 > **Guidance**
 >
-> Reach for a script step only when the declarative types genuinely cannot express the intent. Declarative steps are validated by the schema, are readable by non-engineers, and are the unit the agentic Generator produces. A file that is mostly script steps has lost most of the DSL's benefits.
+> Reach for a script step only when the declarative types genuinely cannot express the intent. Declarative steps are validated by the schema, are readable by non-engineers, and are the unit the agentic Generator produces. A file that is mostly script steps has lost most of the DSL's benefits. Prefer `file` once a script body is long enough to want its own C#/OmniSharp editing support, or is shared across scenarios.
 
 > **Security caution: Secret handling in script.csharp**
 >
-> Because `script.csharp` runs author-trusted code in the shared variable context, it can read any staged value — including connection strings and secret values accessed via `Vars.Secrets.Resolve(...).Reveal()`. The engine's redaction cannot guarantee that a value an author explicitly writes into a captured variable, a returned observation, or an exception message stays out of the report. Authors must not surface secrets from script bodies; prefer keeping credentials in `${secret:…}` references consumed by typed provider fields.
+> Because `script.csharp` runs author-trusted code in the shared variable context, it can read any staged value — including connection strings and secret values accessed via `Vars.Secrets.Resolve(...).Reveal()`. The engine's redaction cannot guarantee that a value an author explicitly writes into a captured variable, a returned observation, or an exception message stays out of the report. Authors must not surface secrets from script bodies; prefer keeping credentials in `${secret:…}` references consumed by typed provider fields. This applies identically whether the body is inline (`code`) or referenced (`file`).
 
 ## 5.7 Step families and the provider extension model
 
@@ -983,7 +994,7 @@ Anywhere a value is expected in a declarative step, a captured or seeded variabl
 
 Because substitution happens at execution time, a placeholder always reflects the most recent value — which is what lets a generated identifier from step one appear in the assertions of step five.
 
-**`script.csharp` does not participate in placeholder substitution or secret redaction.** Unlike every other Core step family, a `script.csharp` step's `code` is Turing-complete C# spliced into the compiled submission verbatim — the engine performs **no** `{placeholder}` substitution and **no** `${secret:source/path}` resolution on it, and `SecretString` redaction is **not** applied. The author is trusted (it is their own test code) and may read any value in `Vars` directly. To use a secret from `script.csharp`, resolve it explicitly via the secret accessor in code rather than expecting template substitution.
+**`script.csharp` does not participate in placeholder substitution or secret redaction.** Unlike every other Core step family, a `script.csharp` step's `code` (or, equivalently, the content of the file it references via `file`) is Turing-complete C# spliced into the compiled submission verbatim — the engine performs **no** `{placeholder}` substitution and **no** `${secret:source/path}` resolution on it, and `SecretString` redaction is **not** applied. This also means the `file` path itself is not substituted — a `{placeholder}` written inside `file:` is treated as a literal string, not resolved, and will simply fail to resolve to a real path. The author is trusted (it is their own test code) and may read any value in `Vars` directly. To use a secret from `script.csharp`, resolve it explicitly via the secret accessor in code rather than expecting template substitution.
 
 ## 6.3 A worked thread of state
 

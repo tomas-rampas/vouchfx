@@ -41,6 +41,9 @@ public sealed class MetricsAssertPrometheusEmitTests
 {
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(
             string stepId,
             IReadOnlyDictionary<string, CaptureExpr>? captures = null)

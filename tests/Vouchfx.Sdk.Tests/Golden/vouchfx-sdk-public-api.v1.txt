@@ -31,6 +31,7 @@ interface Vouchfx.Sdk.ICompileContext
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Captures { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> CaptureExprs { get }
   property System.String StepId { get }
+  property System.String SuiteDirectory { get }
   property System.String SuiteNamespace { get }
 
 interface Vouchfx.Sdk.ICompileReferenceContributor
@@ -41,6 +42,7 @@ interface Vouchfx.Sdk.IHostResourceContributor<TModel>
 
 interface Vouchfx.Sdk.IProjectContext
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
+  property System.String SuiteDirectory { get }
 
 interface Vouchfx.Sdk.IProviderModule
   method System.Collections.Generic.IEnumerable<Vouchfx.Sdk.IStepProvider> Providers()

@@ -13,6 +13,7 @@
 // All tests are non-docker.  No topology is started.  Stub providers are defined
 // with file scope and declared in this file only.
 
+using System.IO;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
@@ -408,7 +409,7 @@ public sealed class ProviderPipelineTests
         };
 
         // Access through the public IProjectContext interface, as providers do.
-        Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(deps);
+        Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(deps, Directory.GetCurrentDirectory());
 
         Assert.Equal(2, ctx.DeclaredDependencies.Count);
         Assert.Equal("postgres", ctx.DeclaredDependencies["orders-db"]);
@@ -422,7 +423,7 @@ public sealed class ProviderPipelineTests
     [Fact]
     public void RunProjectContext_Empty_HasNoDeclaredDependencies()
     {
-        Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty;
+        Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
 
         Assert.Empty(ctx.DeclaredDependencies);
     }

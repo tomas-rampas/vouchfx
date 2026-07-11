@@ -43,6 +43,9 @@ namespace Vouchfx.Steps.DbAssert.SqlServer.Tests;
 /// </summary>
 file sealed class StubProjectContext : IProjectContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     internal StubProjectContext(IReadOnlyDictionary<string, string>? deps = null)
     {
         DeclaredDependencies = deps
@@ -64,6 +67,9 @@ internal sealed class StubBindingContext : IBindingContext { }
 /// </summary>
 internal sealed class StubCompileContext : ICompileContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     public StubCompileContext(string stepId) => StepId = stepId;
 
     /// <inheritdoc />

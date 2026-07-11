@@ -1379,12 +1379,25 @@
           },
           "then": {
             "type": "object",
-            "required": [
-              "code"
+            "oneOf": [
+              {
+                "required": [
+                  "code"
+                ]
+              },
+              {
+                "required": [
+                  "file"
+                ]
+              }
             ],
             "properties": {
               "code": {
-                "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.",
+                "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.",
+                "type": "string"
+              },
+              "file": {
+                "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
                 "type": "string"
               }
             },

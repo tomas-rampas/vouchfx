@@ -389,7 +389,7 @@ public static class ScenarioRunner
         }
 
         // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
         if (pipelineResult.Failure is not null)
         {
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
@@ -711,7 +711,7 @@ public static class ScenarioRunner
             }
 
             // Provider pipeline compile.
-            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
             if (pipelineResult.Failure is not null)
             {
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
@@ -1069,7 +1069,7 @@ public static class ScenarioRunner
 
         // ── Validate + compile the (latest-saved) scenario ────────────────────
         if (TryCompileForRun(
-                registry, yamlText, ast, scenarioName, runId, buffer,
+                registry, yamlText, ast, scenarioName, runId, buffer, seedBaseDirectory,
                 out var pipeline, out var earlyVerdict, out var earlyMessage))
         {
             if (!string.IsNullOrEmpty(earlyMessage))
@@ -1119,6 +1119,7 @@ public static class ScenarioRunner
         string scenarioName,
         string runId,
         List<string> buffer,
+        string? seedBaseDirectory,
         out PipelineResult? pipeline,
         out Verdict earlyVerdict,
         out string? earlyMessage)
@@ -1161,7 +1162,7 @@ public static class ScenarioRunner
             return true;
         }
 
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace);
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
         if (pipelineResult.Failure is not null)
         {
             EmitInconclusive();
@@ -2270,7 +2271,9 @@ public static class ScenarioRunner
         }
 
         // ── 2. Fixture content hashes from the seed block ──────────────────────
-        var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory);
+        var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory)
+            .Concat(CollectScriptFileDigests(ast.Steps, seedBaseDirectory))
+            .ToList();
 
         // Compute() is pure: reference text + fixture digests only, no resolver.
         return ReproducibilityEnvelope.Compute(references, fixtures);
@@ -2334,6 +2337,42 @@ public static class ScenarioRunner
                 {
                     digests.Add(HashFixtureOrNull(baseDir, document.From));
                 }
+            }
+        }
+
+        return digests;
+    }
+
+    /// <summary>
+    /// Enumerates every <c>script.csharp</c> step's <c>file</c> reference (when
+    /// present) and computes its content hash, so that editing a referenced
+    /// <c>.csx</c> file registers as a suite change in the reproducibility
+    /// envelope — the same property <see cref="CollectFixtureDigests"/> already
+    /// gives seed fixtures. Steps using inline <c>code</c> contribute nothing
+    /// here (their body is already part of the compiled CSX, which the caller
+    /// hashes separately).
+    /// </summary>
+    /// <param name="steps">The scenario's step nodes.</param>
+    /// <param name="seedBaseDirectory">
+    /// The base directory relative <c>file</c> paths are resolved against — the
+    /// same base directory used for seed fixtures; the current working
+    /// directory when <see langword="null"/>.
+    /// </param>
+    private static List<FixtureDigest> CollectScriptFileDigests(
+        IReadOnlyList<StepNode> steps,
+        string? seedBaseDirectory)
+    {
+        var baseDir = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+        var digests = new List<FixtureDigest>();
+
+        foreach (var node in steps)
+        {
+            if (!string.Equals(node.CanonicalType, "script.csharp", StringComparison.Ordinal))
+                continue;
+
+            if (TryGetScalar(node.RawNode, "file", out var file) && !string.IsNullOrEmpty(file))
+            {
+                digests.Add(HashFixtureOrNull(baseDir, file));
             }
         }
 

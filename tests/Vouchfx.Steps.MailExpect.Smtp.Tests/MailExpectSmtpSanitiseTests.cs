@@ -21,6 +21,9 @@ public sealed class MailExpectSmtpSanitiseTests
 
     private sealed class StubCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCtx(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";

@@ -23,6 +23,9 @@ public sealed class NullBindingContext : IBindingContext
 /// </summary>
 public sealed class NullProjectContext : IProjectContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     /// <summary>Gets the singleton instance.</summary>
     public static readonly NullProjectContext Instance = new();
 
@@ -41,6 +44,9 @@ public sealed class NullProjectContext : IProjectContext
 /// </summary>
 public sealed class NullCompileContext : ICompileContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     /// <summary>Gets the singleton instance.</summary>
     public static readonly NullCompileContext Instance = new();
 

@@ -5,15 +5,17 @@ class Vouchfx.Sdk.Testing.Contexts.TestBindingContext : Vouchfx.Sdk.IBindingCont
   .ctor()
 
 class Vouchfx.Sdk.Testing.Contexts.TestCompileContext : Vouchfx.Sdk.ICompileContext
-  .ctor(System.String stepId, System.String suiteNamespace, System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> captureExprs)
+  .ctor(System.String stepId, System.String suiteNamespace, System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> captureExprs, System.String suiteDirectory)
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Captures { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> CaptureExprs { get }
   property System.String StepId { get }
+  property System.String SuiteDirectory { get }
   property System.String SuiteNamespace { get }
 
 class Vouchfx.Sdk.Testing.Contexts.TestProjectContext : Vouchfx.Sdk.IProjectContext
-  .ctor(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> declaredDependencies)
+  .ctor(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> declaredDependencies, System.String suiteDirectory)
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
+  property System.String SuiteDirectory { get }
 
 class Vouchfx.Sdk.Testing.ProviderTestHarness
   method static System.Threading.Tasks.Task<Vouchfx.Sdk.Testing.StepRunResult> RunSingleStepAsync(System.String yaml, System.Reflection.Assembly providerAssembly, System.String stepId, System.Threading.CancellationToken cancellationToken)

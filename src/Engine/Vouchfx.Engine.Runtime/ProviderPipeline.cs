@@ -148,6 +148,12 @@ internal static class ProviderPipeline
     /// The C# namespace injected into every <see cref="RunCompileContext"/> during
     /// the emit stage.
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path step fields (e.g.
+    /// <c>script.csharp</c>'s <c>file</c>) are resolved against — the same base
+    /// directory used to resolve <c>environment.seed</c> fixture paths. Pass
+    /// <see langword="null"/> to fall back to the process's current directory.
+    /// </param>
     /// <returns>
     /// A <see cref="PipelineResult"/> whose <see cref="PipelineResult.Failure"/> is
     /// non-null when a model-validation failure is encountered (the caller should map
@@ -158,8 +164,10 @@ internal static class ProviderPipeline
     internal static PipelineResult Compile(
         ScenarioAst ast,
         StepKindRegistry registry,
-        string suiteNamespace)
+        string suiteNamespace,
+        string? suiteDirectory = null)
     {
+        var resolvedSuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
         var fragments = new List<StepCompilePlan>(ast.Steps.Count);
         var resourcePlan = new List<ResourcePlanEntry>();
         var hostResourcePlan = new List<HostResourcePlanEntry>();
@@ -169,7 +177,7 @@ internal static class ProviderPipeline
         // Build the declared-dependencies map once for the whole pipeline run.
         // This is derived from environment.dependencies (name → Type) and is
         // empty when the scenario omits the environment section (Sprint-4).
-        var projectCtx = BuildProjectContext(ast);
+        var projectCtx = BuildProjectContext(ast, resolvedSuiteDirectory);
 
         foreach (var node in ast.Steps)
         {
@@ -192,7 +200,7 @@ internal static class ProviderPipeline
             // (varName → CaptureExpr) into the compile context so providers can emit
             // capture logic into the CSX block.  The context exposes both the typed
             // CaptureExprs view and the back-compatible expression-string Captures view.
-            var compileCtx = new RunCompileContext(node.Id, suiteNamespace, node.Capture);
+            var compileCtx = new RunCompileContext(node.Id, suiteNamespace, resolvedSuiteDirectory, node.Capture);
 
             // ── Bind ──────────────────────────────────────────────────────────
             var model = ReflectBind(instance, node.RawNode, bindingCtx);
@@ -503,6 +511,9 @@ internal static class ProviderPipeline
     /// <c>environment.dependencies</c> section (Sprint-4).
     /// </summary>
     /// <param name="ast">The normalised scenario AST.</param>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path step fields are resolved against.
+    /// </param>
     /// <returns>
     /// A <see cref="RunProjectContext"/> whose
     /// <see cref="RunProjectContext.DeclaredDependencies"/> map contains every
@@ -510,16 +521,16 @@ internal static class ProviderPipeline
     /// <see cref="RunProjectContext.Empty"/> when the scenario omits the
     /// <c>environment.dependencies</c> section.
     /// </returns>
-    private static RunProjectContext BuildProjectContext(ScenarioAst ast)
+    private static RunProjectContext BuildProjectContext(ScenarioAst ast, string suiteDirectory)
     {
         var deps = ast.Environment?.Dependencies;
         if (deps is null || deps.Count == 0)
-            return RunProjectContext.Empty;
+            return RunProjectContext.Empty(suiteDirectory);
 
         var map = new Dictionary<string, string>(deps.Count, StringComparer.Ordinal);
         foreach (var kv in deps)
             map[kv.Key] = kv.Value.Type;
 
-        return new RunProjectContext(map);
+        return new RunProjectContext(map, suiteDirectory);
     }
 }

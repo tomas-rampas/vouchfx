@@ -31,6 +31,9 @@ namespace Vouchfx.Steps.MqPublish.Redis.Tests;
 /// </summary>
 file sealed class StubProjectContext : IProjectContext
 {
+    /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
     internal StubProjectContext(IReadOnlyDictionary<string, string>? deps = null)
     {
         DeclaredDependencies = deps

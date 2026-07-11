@@ -30,6 +30,9 @@ namespace Vouchfx.Steps.WebhookListen.Http.Tests;
 file sealed class StubProjectContext : IProjectContext
 {
     /// <inheritdoc />
+    public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
+    /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }

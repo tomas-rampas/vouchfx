@@ -4,6 +4,7 @@
 // supplied to a provider's Validate stage when driving it through the harness.  It
 // mirrors the engine's RunProjectContext: an optional declared-dependencies map,
 // defaulting to empty (the common single-step, dependency-free case).
+using System.IO;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Sdk.Testing.Contexts;
@@ -38,13 +39,23 @@ public sealed class TestProjectContext : IProjectContext
     /// Pass <see langword="null"/> (or omit) to use an empty map — the default for a
     /// single-step, dependency-free scenario.
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path fields (e.g. <c>script.csharp</c>'s
+    /// <c>file</c>) are resolved against.  Defaults to the process's current
+    /// directory when omitted.
+    /// </param>
     public TestProjectContext(
-        IReadOnlyDictionary<string, string>? declaredDependencies = null)
+        IReadOnlyDictionary<string, string>? declaredDependencies = null,
+        string? suiteDirectory = null)
     {
         DeclaredDependencies = declaredDependencies
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
     }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 }

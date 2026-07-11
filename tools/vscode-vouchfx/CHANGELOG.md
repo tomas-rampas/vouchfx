@@ -29,6 +29,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   schema (existence, parseability, `x-vouchfx-schema-version: v1`), plus
   structural and real-tokenisation (`vscode-textmate` + `vscode-oniguruma`)
   tests proving the C# injection grammar's block-scalar boundary.
+- Schema support for `script.csharp`'s `file` field (an external `.csx` file
+  reference, mutually exclusive with `code:`): autocomplete/hover/validation via
+  the bundled schema, kept in sync with the engine by the same byte-for-byte CI
+  gate. An example fixture (`examples/script-csharp-external-file.e2e.yaml`) is
+  included alongside its referenced `.csx` file.
 - **S11-D-01 reference fixture** (`src/test/fixtures/reference-four-tech.e2e.yaml`):
   a faithful mirror of the canonical four-technology reference scenario
   (`examples/reference/reference.e2e.yaml`) used by the editor-surface tests.
