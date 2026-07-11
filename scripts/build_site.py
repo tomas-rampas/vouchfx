@@ -42,6 +42,7 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/language-reference.md", "User guides", "Language reference (generated)"),
     ("docs/memory-harness.md", "User guides", "The memory-leak harness"),
     ("docs/accessibility.md", "User guides", "Accessibility"),
+    ("docs/ecosystem.md", "Ecosystem", "The ecosystem"),
     ("docs/roadmap.md", "Project", "Roadmap"),
     ("CHANGELOG.md", "Project", "Changelog"),
     ("GOVERNANCE.md", "Project", "Governance"),
@@ -315,8 +316,10 @@ PORTAL = """<!DOCTYPE html>
     <h2>Ecosystem</h2>
     <p>Community providers, sample applications, and related projects.</p>
     <div class="doc-cards">
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge, with conformance testing, examples, and the provider authoring rubric.</p></a>
-      <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Real-world microservices in C#, Python, and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
+      <a class="doc-card" href="docs/ecosystem.html"><span class="doc-card__k">MAP</span><h3>The ecosystem</h3><p>One engine, four repositories: what each is for, where its site lives, and where to ask questions.</p></a>
+      <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-providers/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge, with conformance testing, examples, and the provider authoring rubric.</p></a>
+      <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-samples/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Four production-grade sample applications in C#, Python, Node.js and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
+      <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-telemetry-backend/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">TELEMETRY</span><h3>Telemetry Backend</h3><p>Optional, privacy-first, self-hostable telemetry ingest — why telemetry, deployment, outbox verification, and privacy guarantees.</p></a>
     </div>
   </section>
 
@@ -344,8 +347,9 @@ PORTAL = """<!DOCTYPE html>
     <div class="footer__links">
       <a href="index.html">Home</a>
       <a href="https://github.com/tomas-rampas/vouchfx" target="_blank" rel="noopener noreferrer">Repository</a>
-      <a href="https://github.com/tomas-rampas/vouchfx-providers" target="_blank" rel="noopener noreferrer">Community Provider Hub</a>
-      <a href="https://github.com/tomas-rampas/vouchfx-samples" target="_blank" rel="noopener noreferrer">Sample Applications</a>
+      <a href="https://tomas-rampas.github.io/vouchfx-providers/" target="_blank" rel="noopener noreferrer">Provider Hub</a>
+      <a href="https://tomas-rampas.github.io/vouchfx-samples/" target="_blank" rel="noopener noreferrer">Sample Applications</a>
+      <a href="https://tomas-rampas.github.io/vouchfx-telemetry-backend/" target="_blank" rel="noopener noreferrer">Telemetry Backend</a>
       <a href="https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
     </div>
   </div>
