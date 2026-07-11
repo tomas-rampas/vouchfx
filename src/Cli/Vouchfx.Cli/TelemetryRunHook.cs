@@ -6,6 +6,10 @@
 //   1. Before the run: when consent is Undecided, show the one-time first-run notice.
 //   2. Decide whether this run may emit (consent==Enabled AND not opted out) — if not,
 //      it asks the runner to write NO telemetry events file (so we never even collect).
+//      ENVIRONMENT-CONFIGURED mode (CI): when all three VOUCHFX_TELEMETRY_* variables
+//      are set (endpoint, token, install id) that IS the opt-in for this environment —
+//      the local consent store is bypassed and the event carries the supplied, stable
+//      per-repo install id.  --no-telemetry / VOUCHFX_NO_TELEMETRY still always win.
 //   3. After the run: from the SAME buffered event stream the renderers consumed
 //      (re-read from the runner's --events output), build the allowlisted TelemetryEvent
 //      and append it to the local outbox sink.
@@ -48,6 +52,7 @@ internal sealed class TelemetryRunHook
     private readonly ITelemetrySink _sink;
     private readonly bool _noTelemetryFlag;
     private readonly TextWriter _diagnostics;
+    private readonly Guid? _environmentInstallId;
 
     /// <summary>
     /// Creates a hook over the supplied telemetry seams.  The production caller passes
@@ -60,18 +65,46 @@ internal sealed class TelemetryRunHook
     /// <param name="sink">The telemetry transport (local outbox in v1).</param>
     /// <param name="noTelemetryFlag">The <c>--no-telemetry</c> run flag.</param>
     /// <param name="diagnostics">An optional sink for one-line, redaction-safe notices.</param>
+    /// <param name="environmentInstallIdRaw">
+    /// The raw <see cref="TelemetryInstallId.EnvVar"/> value (pass
+    /// <c>Environment.GetEnvironmentVariable</c>; injectable so tests never mutate
+    /// process env).  Together with <paramref name="transportConfigured"/> it selects
+    /// ENVIRONMENT-CONFIGURED mode: a valid GUID here + a configured transport is the
+    /// opt-in for this environment, and the event carries this id instead of the
+    /// store's.  The local consent store is bypassed entirely in that mode.
+    /// </param>
+    /// <param name="transportConfigured">
+    /// Whether the HTTP transport is configured
+    /// (<see cref="TelemetryTransportOptions.IsConfigured"/>) — environment-configured
+    /// mode requires all three <c>VOUCHFX_TELEMETRY_*</c> variables, not just the id.
+    /// </param>
     public TelemetryRunHook(
         TelemetryConsentStore store,
         ITelemetryPaths paths,
         ITelemetrySink sink,
         bool noTelemetryFlag,
-        TextWriter diagnostics)
+        TextWriter diagnostics,
+        string? environmentInstallIdRaw = null,
+        bool transportConfigured = false)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
         _noTelemetryFlag = noTelemetryFlag;
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+
+        if (!TelemetryInstallId.TryParse(environmentInstallIdRaw, out var envId))
+        {
+            // Invalid id: warn once (redaction-safe — never echo the raw value) and fall
+            // through to the store-based behaviour; telemetry must never break a run.
+            _diagnostics.WriteLine(
+                $"telemetry: {TelemetryInstallId.EnvVar} must be a non-empty, "
+                + "non-all-zero GUID — ignored.");
+        }
+        else if (envId is { } && transportConfigured)
+        {
+            _environmentInstallId = envId;
+        }
     }
 
     /// <summary>
@@ -108,7 +141,9 @@ internal sealed class TelemetryRunHook
             paths,
             sink,
             noTelemetryFlag,
-            diagnostics);
+            diagnostics,
+            Environment.GetEnvironmentVariable(TelemetryInstallId.EnvVar),
+            options.IsConfigured);
     }
 
     // A single shared HttpClient for the process: HttpClient is designed to be reused, and
@@ -127,7 +162,13 @@ internal sealed class TelemetryRunHook
     {
         try
         {
-            var consent = _store.Read().Consent;
+            // ENVIRONMENT-CONFIGURED mode: all three VOUCHFX_TELEMETRY_* variables present
+            // and valid IS the opt-in for this environment (CI) — the local consent store
+            // is not consulted.  The --no-telemetry flag and VOUCHFX_NO_TELEMETRY keep
+            // absolute precedence via the same suppression conjunction.
+            var consent = _environmentInstallId is not null
+                ? TelemetryConsent.Enabled
+                : _store.Read().Consent;
             var envOptOut = Environment.GetEnvironmentVariable(TelemetrySuppression.OptOutEnvVar);
             return TelemetrySuppression.ShouldEmit(consent, _noTelemetryFlag, envOptOut);
         }
@@ -148,6 +189,14 @@ internal sealed class TelemetryRunHook
     {
         try
         {
+            if (_environmentInstallId is not null)
+            {
+                // Environment-configured telemetry is active: the store-based "you have
+                // not decided yet" notice would be misleading (and, on ephemeral CI
+                // runners, would nag on every run because noticeShown never persists).
+                return;
+            }
+
             _store.ShowFirstRunNoticeIfNeeded(stderr);
         }
         catch (Exception ex)
@@ -248,7 +297,9 @@ internal sealed class TelemetryRunHook
             var lines = await File.ReadAllLinesAsync(eventsPath, cancellationToken)
                 .ConfigureAwait(false);
 
-            var installId = _store.Read().InstallId;
+            // Environment-configured mode supplies the id directly (stable per repo);
+            // otherwise the id comes from the local consent store as before.
+            var installId = _environmentInstallId ?? _store.Read().InstallId;
             if (installId is not { } id)
             {
                 // Enabled but no install id (should not happen) → do not emit an

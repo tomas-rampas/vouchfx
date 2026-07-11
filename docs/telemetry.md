@@ -151,6 +151,8 @@ The install identifier is a random GUID that:
 
 If you re-enable telemetry after disabling it, a new install identifier is minted. Old and new identities are unlinked.
 
+**One exception:** [environment-configured telemetry (CI)](#environment-configured-telemetry-ci) bypasses the local store entirely — when `VOUCHFX_TELEMETRY_INSTALL_ID` is set alongside the endpoint and token variables, the run emits under that supplied identifier and nothing above applies to it. That mode deliberately keeps one stable identity across ephemeral CI runners.
+
 ## First-run notice
 
 When consent is undecided (i.e. you have not yet run `vouchfx telemetry enable` or `disable`), the first time you run `vouchfx`, a one-time notice is printed to stderr informing you of the telemetry feature, what is collected, and how to opt in or out:
@@ -176,11 +178,11 @@ This notice is shown **exactly once** per machine, even while consent stays unde
 
 Telemetry emission requires **all** of the following to be true:
 
-1. Consent is **Enabled** (you have run `vouchfx telemetry enable`).
+1. Consent is granted — either **Enabled** locally (you have run `vouchfx telemetry enable`), **or** the run is [environment-configured](#environment-configured-telemetry-ci) (all three `VOUCHFX_TELEMETRY_*` variables set — an equally explicit, per-environment opt-in).
 2. The `--no-telemetry` flag was **not passed** on the current `vouchfx run` invocation.
 3. The `VOUCHFX_NO_TELEMETRY` environment variable is **not set** (or is empty/whitespace).
 
-If any one of these is false, telemetry is suppressed for that run. This conjunction-of-consent model ensures that a single opt-out signal at any level (global consent, run flag, or environment variable) prevents emission.
+If any one of these is false, telemetry is suppressed for that run. This conjunction-of-consent model ensures that a single opt-out signal at any level (consent, run flag, or environment variable) prevents emission — the opt-out signals in points 2 and 3 override **both** consent channels.
 
 ## Future work: per-file opt-out (v2)
 
@@ -233,6 +235,27 @@ Configure the HTTP transport by setting two environment variables:
 - **`VOUCHFX_TELEMETRY_TOKEN`** — a bearer token for authentication (required). Carried only on the HTTP `Authorization: Bearer` header and never logged, printed, or echoed in diagnostics or error messages (§17 secret handling).
 
 The transport is **inert until BOTH variables are set** and the endpoint is a valid absolute HTTP/HTTPS URI. A missing, empty, relative, or malformed endpoint leaves telemetry in local-outbox-only mode — no network call is ever attempted.
+
+A third, optional variable — `VOUCHFX_TELEMETRY_INSTALL_ID` — turns the pair into fully [environment-configured telemetry](#environment-configured-telemetry-ci), designed for CI.
+
+### Environment-configured telemetry (CI)
+
+On an ephemeral CI runner the consent store does not survive between jobs, so opting in with `vouchfx telemetry enable` would mint a fresh install identifier on every run — each CI job would appear in the backend as a brand-new install with exactly one run, inflating install counts and destroying per-repository signal.
+
+Environment-configured telemetry fixes this with one additional variable:
+
+- **`VOUCHFX_TELEMETRY_INSTALL_ID`** — a GUID you choose **once per repository/project** (e.g. from `uuidgen`) and store in your CI settings alongside the endpoint and token.
+
+When **all three** `VOUCHFX_TELEMETRY_*` variables are present and valid, setting them *is* the opt-in for that environment: no `telemetry enable` step is needed, the local consent store is bypassed entirely (nothing is written to `telemetry.json`, and the first-run notice is suppressed), and every run emits under the supplied identifier — so all of a repository's CI runs aggregate under one stable install identity.
+
+Rules:
+
+- **All three or nothing.** The install id without a configured endpoint/token — or vice versa — leaves the ordinary store-based behaviour in force; nothing new happens.
+- **An invalid (non-GUID, or all-zero) install id is ignored** with a single diagnostic naming the variable, falling back to store-based behaviour. Telemetry never breaks a run.
+- **Opt-outs always win.** `--no-telemetry` and `VOUCHFX_NO_TELEMETRY=1` suppress emission in this mode exactly as they do locally.
+- **Choose a random GUID.** The identifier is pseudonymous exactly like a locally minted one — it identifies the CI environment you configured it for, and nothing else.
+
+The GitHub Actions reusable workflow (`.github/workflows/vouchfx-run.yml`) exposes matching `telemetry-*` inputs, and the GitLab template (`ci/gitlab/vouchfx-run.gitlab-ci.yml`) documents the equivalent project variables — see each file's header for the worked example.
 
 ### How it works
 
