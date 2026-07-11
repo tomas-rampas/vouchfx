@@ -28,6 +28,21 @@
 #     (The defaults below use tags only to stay legible in this reference; production
 #     callers should supply digests.)
 #
+# ── Telemetry (opt-in, off by default) ──────────────────────────────────────────────
+#   vouchfx telemetry from CI is ENVIRONMENT-CONFIGURED (docs/telemetry.md): providing
+#   all three values below IS the opt-in — no `telemetry enable` step, no consent store.
+#   The engine emits under the SUPPLIED install id, so every run of the same repository
+#   aggregates under one stable install identity instead of minting a fresh id per
+#   ephemeral runner. One-time setup in the caller repository's Settings → Secrets and
+#   variables → Actions:
+#     • variable VOUCHFX_TELEMETRY_ENDPOINT   — the ingest base URL (not sensitive)
+#     • variable VOUCHFX_TELEMETRY_INSTALL_ID — any GUID you choose once (e.g. `uuidgen`)
+#     • secret   VOUCHFX_TELEMETRY_TOKEN      — the bearer ingest token (SECRET — it
+#       authenticates uploads; the other two are plain variables)
+#   then pass them through as in the worked example. Any of the three missing → the
+#   engine stays inert (nothing sent). To force telemetry off regardless, set
+#   VOUCHFX_NO_TELEMETRY=1 in the caller job — it always wins.
+#
 # ── Worked example (caller) ─────────────────────────────────────────────────────────
 #   jobs:
 #     e2e:
@@ -38,6 +53,11 @@
 #         prewarm-images: |
 #           traefik/whoami@sha256:<digest>
 #           postgres@sha256:<digest>
+#         # OPTIONAL telemetry (see the telemetry header block above):
+#         telemetry-endpoint: ${{ vars.VOUCHFX_TELEMETRY_ENDPOINT }}
+#         telemetry-install-id: ${{ vars.VOUCHFX_TELEMETRY_INSTALL_ID }}
+#       secrets:
+#         telemetry-token: ${{ secrets.VOUCHFX_TELEMETRY_TOKEN }}
 
 name: Run vouchfx suite (reusable)
 
@@ -116,6 +136,35 @@ on:
         type: string
         required: false
         default: "ubuntu-latest"
+
+      telemetry-endpoint:
+        description: >-
+          OPTIONAL vouchfx-telemetry ingest base URL (see the telemetry header block).
+          Not sensitive — typically passed from a caller repository VARIABLE. Telemetry
+          activates only when this, `telemetry-install-id`, AND the `telemetry-token`
+          secret are all provided; otherwise the engine stays inert.
+        type: string
+        required: false
+        default: ""
+
+      telemetry-install-id:
+        description: >-
+          OPTIONAL stable install id for telemetry — any GUID chosen ONCE per caller
+          repository (e.g. from `uuidgen`) and stored as a repository VARIABLE. Reusing
+          the same GUID on every run is the point: it aggregates all of this repository's
+          CI runs under one install identity instead of a fresh id per ephemeral runner.
+          An invalid value is ignored by the engine with a warning (never fails the run).
+        type: string
+        required: false
+        default: ""
+
+    secrets:
+      telemetry-token:
+        description: >-
+          OPTIONAL bearer token authenticating telemetry uploads (the only sensitive
+          value of the three; see the telemetry header block). Telemetry stays off
+          without it.
+        required: false
 
 # Read-only token: this reusable workflow only reads source and uploads artefacts.
 permissions:
@@ -201,9 +250,16 @@ jobs:
       #    (the same pattern the pre-warm step uses for PREWARM_IMAGES).  The boolean
       #    fail-on-* inputs are `type: boolean`, so their ${{ … && '--flag' || '' }}
       #    expansion can only emit the fixed flag literal or nothing — no injection surface.
+      #    TELEMETRY: the three VOUCHFX_TELEMETRY_* variables are bound unconditionally —
+      #    the engine is inert unless ALL of them are present and valid (environment-
+      #    configured telemetry, docs/telemetry.md), so empty values change nothing. They
+      #    enter only via env:, never the shell line, per the injection-safety pattern.
       - name: Run vouchfx suite
         env:
           SCENARIO_PATH: ${{ inputs.scenario-path }}
+          VOUCHFX_TELEMETRY_ENDPOINT: ${{ inputs.telemetry-endpoint }}
+          VOUCHFX_TELEMETRY_INSTALL_ID: ${{ inputs.telemetry-install-id }}
+          VOUCHFX_TELEMETRY_TOKEN: ${{ secrets.telemetry-token }}
         run: >-
           dotnet run
           --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj

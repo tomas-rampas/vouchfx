@@ -113,6 +113,26 @@
 #                                              ~20s per-resource cold-start watchdog. Each pull
 #                                              is best-effort and non-fatal. SUPPLY-CHAIN: pin
 #                                              each entry to an image DIGEST (name@sha256:...).
+#
+# ── Telemetry (opt-in, off by default) — plain project CI variables, no template logic ──
+#   GitLab project/group CI variables are already environment variables inside the job,
+#   and their names below ARE the engine's own variables — so unlike the GH workflow no
+#   plumbing exists here at all; the engine reads them directly. Providing all three is
+#   ENVIRONMENT-CONFIGURED telemetry (docs/telemetry.md in the vouchfx repo): it IS the
+#   opt-in — no `vouchfx telemetry enable` step, no consent store — and every run emits
+#   under the SUPPLIED install id, so all of a project's CI runs aggregate under one
+#   stable install identity instead of minting a fresh id per ephemeral runner.
+#   One-time setup under Settings → CI/CD → Variables:
+#   VOUCHFX_TELEMETRY_ENDPOINT   (unset)        The ingest base URL (not sensitive).
+#   VOUCHFX_TELEMETRY_TOKEN      (unset)        The bearer ingest token — set as a MASKED
+#                                              variable (it authenticates uploads; the
+#                                              other two are ordinary variables).
+#   VOUCHFX_TELEMETRY_INSTALL_ID (unset)        Any GUID chosen ONCE per project (e.g. from
+#                                              `uuidgen`). Reusing the same GUID every run
+#                                              is the point. An invalid value is ignored by
+#                                              the engine with a warning, never a failure.
+#   Any of the three missing → the engine stays inert (nothing sent). To force telemetry
+#   off regardless, set VOUCHFX_NO_TELEMETRY=1 — it always wins.
 
 # ── Hidden base job: all the behaviour, none of the pipeline-stage assumptions. ────────
 # A consumer can `extends: .vouchfx-run`, or just configure the concrete `vouchfx-run`
