@@ -281,7 +281,7 @@ To run vouchfx tests in GitHub Actions or GitLab CI/CD, see the [README](../READ
 
 ### Writing a custom provider
 
-Once you're comfortable with the built-in steps, you can write your own. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the contract, and the [`examples/Example.Steps.Echo`](../examples/Example.Steps.Echo) worked example — walk through its contributor friction log and README to understand the author's journey.
+Once you're comfortable with the built-in steps, you can write your own. See the [provider hub's implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for the complete journey from contract to conformance. To use someone else's community provider, see the [consuming guide](https://tomas-rampas.github.io/vouchfx-providers/docs/consuming-a-provider.html). For platform-engine details and the frozen v1 contract, see [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the [`examples/Example.Steps.Echo`](../examples/Example.Steps.Echo) worked example — walk through its contributor friction log and README to understand the author's journey.
 
 ## Summary
 

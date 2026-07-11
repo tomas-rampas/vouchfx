@@ -513,8 +513,9 @@ engine internals.
 
 ## Related repositories
 
-- **[vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers)** — The community provider hub. Hosts community providers, with PR-gated conformance testing and the Vouched badge rubric.
-- **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications (C#, Python, Java) and complete end-to-end test suites demonstrating common patterns and provider usage.
+- **[vouchfx-providers](https://tomas-rampas.github.io/vouchfx-providers/)** — The community provider hub. Hosts community providers, with PR-gated conformance testing and the Vouched badge rubric. ([source](https://github.com/tomas-rampas/vouchfx-providers))
+- **[vouchfx-samples](https://tomas-rampas.github.io/vouchfx-samples/)** — Four production-grade sample applications (C#, Python, Node.js, Java) and complete end-to-end test suites demonstrating common patterns and provider usage. ([source](https://github.com/tomas-rampas/vouchfx-samples))
+- **[vouchfx-telemetry-backend](https://tomas-rampas.github.io/vouchfx-telemetry-backend/)** — The optional, privacy-first, self-hostable telemetry backend. Why telemetry, deployment, outbox verification, and privacy guarantees. ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend))
 
 ## Contributing
 
