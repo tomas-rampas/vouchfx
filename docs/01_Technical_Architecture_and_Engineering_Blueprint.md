@@ -277,7 +277,7 @@ alc.Unload();                             // dynamic assemblies reclaimed
 
 The collectible load context guarantees that **dynamically generated** assemblies are reclaimed on unload. It does not, on its own, guarantee that **references held by libraries outside the context** are reclaimed. Several common .NET libraries register process-wide singletons or hold static caches that can pin objects across the boundary: `HttpClient`'s default handler pool, `Npgsql`'s connection pool, `Confluent.Kafka`'s producer cache, OpenTelemetry tracer providers, logging providers registered through `ILoggerFactory`. When a Core or community provider's emitted code constructs one of these, the resulting object may be retained even after the load context unloads, and over thousands of iterations memory will grow.
 
-The architecture treats this as a first-class concern with three rules. First, provider services are exposed to the script **only** through the global-context object, never through static fields the provider's own assembly owns. Second, provider-managed resources (connection pools, broker clients) live inside the engine's durable services container, are created and disposed by the engine's lifetime hooks rather than by the script, and are exposed to the script as already-initialised handles. Third, a memory-leak regression test runs in CI against the full transitive closure of every Core provider, not just against trivial scripts, so that a dependency-introduced leak is caught early rather than near the pilot. This third rule is named explicitly as a Phase 1 deliverable in the project plan because the cost of discovering it at Phase 4 is much higher.
+The architecture treats this as a first-class concern with three rules. First, provider services are exposed to the script **only** through the global-context object, never through static fields the provider's own assembly owns. Second, provider-managed resources (connection pools, broker clients) live inside the engine's durable services container, are created and disposed by the engine's lifetime hooks rather than by the script, and are exposed to the script as already-initialised handles. Third, a memory-leak regression test runs in CI against the full transitive closure of every Core provider, not just against trivial scripts, so that a dependency-introduced leak is caught early rather than near the pilot. This third rule is named explicitly as a first-milestone deliverable because the cost of discovering a dependency-introduced leak late is much higher.
 
 ## 5.5 Dynamic assembly resolution for customer code
 
@@ -365,17 +365,17 @@ In the local tier, aimed at solo developers and open-source contributors, everyt
 
 ## 7.2 SaaS execution — small and agile teams
 
-For teams that cannot justify dedicated local hardware capable of running dozens of microservices, the SaaS tier offloads container provisioning to the cloud fabric. Developers still author locally with full IDE support, but execution targets the remote backend. This tier is the natural fit for CI/CD pipelines, where lightweight runner agents that lack nested virtualisation cannot start containers themselves and instead connect to the SaaS platform to do the heavy lifting.
+For teams that cannot justify dedicated local hardware capable of running dozens of microservices, the planned SaaS (Team) tier offloads container provisioning to the cloud fabric. Developers still author locally with full IDE support, but execution targets the remote backend. This tier is the natural fit for CI/CD pipelines, where lightweight runner agents that lack nested virtualisation cannot start containers themselves and instead connect to the SaaS platform to do the heavy lifting.
 
 ## 7.3 Enterprise execution — on-premises and SSO
 
-Regulated sectors — finance, healthcare, defence — frequently cannot use multi-tenant SaaS because of data-residency and network-egress rules. The enterprise tier therefore packages the cloud execution engine as a deployable artefact: a Kubernetes Helm chart or a self-hosted Docker architecture installed inside the customer's own VPC or VNet. The execution model is identical to the SaaS tier; only the location of the backend changes.
+Regulated sectors — finance, healthcare, defence — frequently cannot use multi-tenant SaaS because of data-residency and network-egress rules. The planned Enterprise tier therefore packages the cloud execution engine as a deployable artefact: a Kubernetes Helm chart or a self-hosted Docker architecture installed inside the customer's own VPC or VNet. The execution model is identical to the SaaS tier; only the location of the backend changes.
 
 ### 7.3.1 Identity as part of the execution path
 
 The deep architectural difference in the enterprise tier is identity and access management. The platform integrates with SSO providers through SAML 2.0 and OpenID Connect, and that integration is not confined to a reporting dashboard — it reaches into the test-runner CLI and the VSCode plugin. A developer authenticates local tooling against the enterprise identity provider and receives a short-lived JSON Web Token. That token authorises the provisioning of large container topologies and carries Role-Based Access Control claims. The effect is that authorisation is evaluated at the moment infrastructure is requested: every spin-up is logged to a central audit trail, and a junior user can be prevented from launching a resource-intensive load test that might destabilise a shared staging cluster.
 
-| Dimension | Local (Indie) | SaaS (Team) | Enterprise |
+| Dimension | Local (free core) | SaaS (planned Team tier) | Enterprise (planned) |
 |---|---|---|---|
 | Where containers run | Local Docker socket | Multi-tenant SaaS cloud | Customer-managed VPC / VNet |
 | Network model | Single local namespace | SSH tunnel + reverse forwarding | SSH tunnel within customer network |

@@ -5,7 +5,7 @@
 
 ## Context
 
-The vouchfx CLI is an Aspire-host executable that carries the `Aspire.AppHost.Sdk` and is marked as an Aspire host (`IsAspireHost: true`). This SDK embeds DCP (Distributed Application Cluster) metadata (`dcpclipath` and `aspiredashboardpath` AssemblyMetadata attributes) at build time, which the CLI requires at runtime to locate and launch the DCP process for orchestrating container topologies. This dependency is documented in the Architecture Blueprint § 4 and § 19.
+The vouchfx CLI is an Aspire-host executable that carries the `Aspire.AppHost.Sdk` and is marked as an Aspire host (`IsAspireHost: true`). This SDK embeds DCP (Developer Control Plane) metadata (`dcpclipath` and `aspiredashboardpath` AssemblyMetadata attributes) at build time, which the CLI requires at runtime to locate and launch the DCP process for orchestrating container topologies. This dependency is documented in the Architecture Blueprint § 4 and § 19.
 
 The question: can the CLI be packaged as a `dotnet global tool` (via `PackAsTool: true`) given this Aspire dependency, and if so, what are the portability implications?
 

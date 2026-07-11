@@ -94,6 +94,7 @@ dotnet tool install --global vouchfx --prerelease
 ```
 
 The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships to NuGet.org with v1.0 GA.
+*(Superseded: the SDK closure shipped early, at v1.0.0-alpha.3, and was renamed to `Vouchfx.*` in alpha.4 — see those entries.)*
 
 ## [Unreleased]
 
@@ -222,8 +223,8 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 - **The .NET identifier space is rebranded pre-GA**: package IDs, assembly names, and namespaces move from the generic
   `Platform.*` (engine and Core providers) to `Vouchfx.*`; the hub's community providers adopt `Vouchfx.Community.*` (hub repository change).
   The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1); schema goldens and provider/event contracts
-  are regenerated as pure renames; earlier alpha packages (v1.0.0-alpha.1, v1.0.0-alpha.2, etc. under `Platform.Sdk`,
-  `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) are to be unlisted and deprecated with migration pointers (NuGet alternate-package
+  are regenerated as pure renames; the `Platform.*` SDK packages (published at v1.0.0-alpha.3 under `Platform.Sdk`,
+  `Platform.Sdk.Testing` and the `Platform.Engine.*` IDs) are to be unlisted and deprecated with migration pointers (NuGet alternate-package
   set to the `Vouchfx.*` successor) now that v1.0.0-alpha.4 has published the new IDs.
 - Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community). The former
   Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
