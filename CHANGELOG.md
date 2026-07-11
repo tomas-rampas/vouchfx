@@ -7,9 +7,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 event-wire contract are frozen for the whole v1.x series and enforced by golden-file CI gates; within v1.x,
 evolution is additive only.
 
-The first public pre-releases (`1.0.0-alpha.1`, `1.0.0-alpha.2`) shipped on 2026-07-08 — see their entries
-below. The `Unreleased` section remains the cumulative delivered-capability record that seeds the v1.0.0 GA
-release notes; the alpha pre-releases are published previews of it.
+The first public pre-releases shipped beginning 2026-07-08: see the version entries below. The `Unreleased`
+section remains the cumulative delivered-capability record that seeds the v1.0.0 GA release notes; the alpha
+pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alpha.3 and v1.0.0-alpha.4 were
+left in draft status at the time of publication; packages shipped to NuGet.org regardless.
+
+## [1.0.0-alpha.5] — 2026-07-11
+
+The alpha series continues with minor feature additions and dependency updates.
+
+### Added
+
+- `script.csharp` steps now accept an optional `file` field: a path to an external `.csx` file, resolved
+  relative to the `.e2e.yaml` file's directory, read once at compile time and spliced verbatim into the
+  generated code. Provides an alternative to inline `code` for larger scripts. `code` and `file` are
+  mutually exclusive.
+
+### Changed
+
+- Dependency version upgrades via Dependabot (cosign-installer, actions/checkout).
+
+## [1.0.0-alpha.4] — 2026-07-10
+
+The .NET identifier space is rebranded to `Vouchfx.*` ahead of v1.0 GA, replacing the generic `Platform.*`
+naming used in earlier alpha releases.
+
+### Changed
+
+- **The .NET identifier space is rebranded pre-GA**: package IDs, assembly names, and namespaces move from
+  `Platform.*` to `Vouchfx.*` across the engine and all Core providers. The `.e2e.yaml` language and JSON
+  wire contracts remain unchanged (frozen at v1). Provider SDK packages published as `Vouchfx.Sdk`,
+  `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, and
+  `Vouchfx.Engine.Compilation`.
+
+## [1.0.0-alpha.3] — 2026-07-09
+
+Governance structure is simplified to two tiers (Core / Community) and the Provider SDK closure is published.
+
+### Changed
+
+- Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community).
+  The former Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry
+  metadata entry awarded after conformance review on the community provider hub.
+
+### Added
+
+- The release pipeline now packs and publishes the five-package Provider SDK closure (`Vouchfx.Sdk`,
+  `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, `Vouchfx.Engine.Compilation`)
+  alongside the CLI, enabling provider authors to consume the published NuGet packages.
+
+### Fixed
+
+- Docker integration suite repaired against current dependency images: RabbitMQ 4.x queue behaviour,
+  Elasticsearch 8.17 request handling, and container startup failure classification.
 
 ## [1.0.0-alpha.2] — 2026-07-08
 
@@ -169,8 +219,8 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   `Platform.*` (engine and Core providers) to `Vouchfx.*`; the hub's community providers adopt `Vouchfx.Community.*` (hub repository change).
   The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1); schema goldens and provider/event contracts
   are regenerated as pure renames; earlier alpha packages (v1.0.0-alpha.1, v1.0.0-alpha.2, etc. under `Platform.Sdk`,
-  `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) will be unlisted and deprecated with migration pointers (NuGet alternate-package
-  set to the `Vouchfx.*` successor) once v1.0.0-alpha.4 publishes the new IDs.
+  `Platform.Sdk.Testing` and `Platform.Engine.*` IDs) are to be unlisted and deprecated with migration pointers (NuGet alternate-package
+  set to the `Vouchfx.*` successor) now that v1.0.0-alpha.4 has published the new IDs.
 - Provider governance simplified from three tiers (Core / Verified / Community) to two (Core / Community). The former
   Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
   (`vouched: true` + `vouchedVersion` = exact reviewed version) awarded after conformance review; one hygiene-gated

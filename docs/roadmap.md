@@ -42,9 +42,9 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 
 ## Pre-releases are live; v1.0 GA targeted Q4 2026
 
-The first public releases shipped on 2026-07-08: **`v1.0.0-alpha.1` and `v1.0.0-alpha.2`** are published as
-GitHub pre-releases with signed artifacts (cosign, SLSA provenance, CycloneDX SBOMs), and the `vouchfx`
-dotnet global tool is live on NuGet.org via Trusted Publishing:
+The first public releases shipped on 2026-07-08 and the **`v1.0.0-alpha` series** (currently
+`v1.0.0-alpha.5`) is published as GitHub pre-releases with signed artifacts (cosign, SLSA provenance,
+CycloneDX SBOMs), and the `vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing:
 
 ```bash
 dotnet tool install --global vouchfx --prerelease
@@ -53,7 +53,7 @@ dotnet tool install --global vouchfx --prerelease
 The alphas exist for pilot validation. What remains for GA is validation and packaging, not construction:
 
 - Validation of the end-to-end experience with pilot teams.
-- Publication of the Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) to NuGet.org is wired into the release pipeline and ships with the next tagged pre-release; the GA task narrows to stabilising the SDK at 1.0.0 final.
+- The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published to NuGet.org through the release pipeline; the GA task narrows to stabilising the SDK at 1.0.0 final.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
@@ -73,9 +73,13 @@ within v1.x. Within that constraint, the near-term direction is:
   `http` family's second Core provider. The first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted
   reference implementation) and a comprehensive [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html)
   are live on the hub.
-- **Provider distribution and consumption** — today, using a provider outside the twenty-five Core ones means
-  building from source with the provider referenced; the programme closing that gap has three additive
-  steps. **Community source submissions on the hub are already open**: community-tier providers may be
+- **Provider distribution and consumption** — the first Community provider package
+  ([`Vouchfx.Community.JsonRpc`](https://www.nuget.org/packages/Vouchfx.Community.JsonRpc)) is published on
+  NuGet.org and consumable today from a small custom runner built on the public engine API (the
+  [`ledger-jsonrpc` sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/ledger-jsonrpc)
+  is the worked example); using an unpublished provider still means building from source with the provider
+  referenced. The programme closing the remaining gap has additive steps.
+  **Community source submissions on the hub are already open**: community-tier providers may be
   contributed as source into the [hub repository](https://github.com/tomas-rampas/vouchfx-providers)'s
   `community/` directory (each building and testing in isolation, author-owned, explicitly unendorsed —
   hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing

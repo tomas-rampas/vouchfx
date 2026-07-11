@@ -392,7 +392,7 @@ The architecture described so far still assumes a human authors the YAML. The ag
 
 ## 8.1 The three-agent topology
 
-Rather than one monolithic agent, the platform uses three specialised agents, each with a narrow remit. The separation keeps each agent auditable and lets the platform expose them at different commercial tiers.
+Rather than one monolithic agent, the platform uses three specialised agents, each with a narrow remit. The separation keeps each agent auditable and positions the platform for future tiered offerings.
 
 | Agent | Trigger | Responsibility |
 |---|---|---|
@@ -562,7 +562,7 @@ The DSL's `type` field carries two pieces of information in one dotted name: the
 | webhook-listen | Open a listener and assert on the inbound call. | webhook-listen.http |
 | script | Execute a code block in the chosen language. | script.csharp |
 
-*Table 13.1 — Families, the operation each one names, and providers that implement them. The Indie open-source layer ships an initial set; the community is expected to grow the right-hand column over time.*
+*Table 13.1 — Families, the operation each one names, and providers that implement them. The permanently free Apache-2.0 core ships an initial set of twenty-five Core providers; the community is expected to grow the right-hand column over time.*
 
 There is no bare-family shorthand: the author always writes the dotted name — `type: http.rest`, never a bare `type: http` — even for a family with only one registered provider today. This was a deliberate subtractive change made pre-v1.0, while the schema was still unpublished: a family gaining a second provider later must never silently change, or invalidate, the meaning of a step type an existing file already uses. Tooling renders the same canonical dotted name in suggestions and error messages, so a file is always unambiguous regardless of which team wrote it or reads it back.
 
@@ -577,7 +577,7 @@ public sealed record StepKindId(string Family, string Provider);
 public sealed record ProviderMetadata(
     string   Version,           // SemVer; the provider's own version
     string   MinEngineVersion,
-    string   License,           // SPDX identifier; Apache-2.0 for the Indie layer
+    string   License,           // SPDX identifier; Apache-2.0 for the core OSS layer
     string[] Authors);
 
 // A provider declares which step kind it implements.
@@ -700,7 +700,7 @@ With the contract in hand, the engine's existing compilation pipeline (section 5
 
 | Stage | What happens | Provider role |
 |---|---|---|
-| Resolve | The compiler reads the step's type field, splits it on the dot into family and provider, and looks the result up in the registry. There is no bare-family resolution: a non-dotted type is rejected at AST-build time, even for a family with a single registered provider (Phase 0, retire-bare-aliases). | Identified by StepKindId. |
+| Resolve | The compiler reads the step's type field, splits it on the dot into family and provider, and looks the result up in the registry. There is no bare-family resolution: a non-dotted type is rejected at AST-build time, and all step types are written in the fully-qualified `family.provider` form. | Identified by StepKindId. |
 | Bind | The provider's binder converts the YAML node into a typed model and validates it structurally against the provider's JSON Schema fragment. | IStepBinder<TModel>. |
 | Validate | The provider's validator checks semantic correctness against the wider project: the target dependency exists, captured variables are referenced consistently, the verification mode is permitted for this kind. | IStepValidator<TModel>. |
 | Plan resources | The compiler aggregates each step's resource requirements into the orchestration plan, so that every container, port, and environment variable needed by the suite is known before Aspire starts. | IResourceContributor<TModel>. |
@@ -1079,13 +1079,13 @@ The Healer agent of Section 8 consumes the same structured event stream the deve
 
 ## 14.9 Format spectrum and tier mapping
 
-The five-layer model maps naturally onto the platform's three commercial tiers, because the inner layers serve the developer (who is the Indie tier's user) and the outer layers serve the team and the organisation (who pay for the Team and Enterprise tiers).
+The five-layer model maps naturally onto the platform's architecture, where the inner layers serve the developer and form the permanently free Apache-2.0 open-source core, and the outer layers enable team and organisational capabilities planned for future commercial offerings.
 
-| Tier | Reporting capabilities included |
+| Scope | Reporting capabilities included |
 |---|---|
-| **Indie** | Rich terminal renderer with colour and the polling timeline; HTML report written to disk; JUnit XML for CI gates; VSCode Test Explorer integration with inline decorations on failing YAML lines; the live execution feed in both the terminal and the editor. |
-| **Team** | Everything above, plus a hosted cross-run dashboard: flakiness scores, time-to-green, ownership distribution, regression detection, and trend charts. Reports forwarded to the cloud backend on every run with no change to author workflow. |
-| **Enterprise** | Everything above, plus RBAC on report access, audit-grade immutability of historical records, structured SIEM export (Splunk, Datadog, native), retention policies aligned to compliance frameworks, and signed reports for attestation. The reporting layer joins the rest of the organisation's data plane rather than living as an island. |
+| **Permanently free OSS core** | Rich terminal renderer with colour and the polling timeline; HTML report written to disk; JUnit XML for CI gates; VSCode Test Explorer integration with inline decorations on failing YAML lines; the live execution feed in both the terminal and the editor. |
+| **Planned Team tier** | Everything above, plus a hosted cross-run dashboard: flakiness scores, time-to-green, ownership distribution, regression detection, and trend charts. Reports forwarded to the cloud backend on every run with no change to author workflow. |
+| **Planned Enterprise tier** | Everything above, plus RBAC on report access, audit-grade immutability of historical records, structured SIEM export (Splunk, Datadog, native), retention policies aligned to compliance frameworks, and signed reports for attestation. The reporting layer joins the rest of the organisation's data plane rather than living as an island. |
 
 ## 14.10 Provider participation in reports
 
@@ -1140,16 +1140,16 @@ The command-line runner was described earlier as a headless executor with determ
 
 ## 16.1 Test selection
 
-A team with five hundred test files never wants to run all of them on every change. The runner therefore exposes a selection language that composes several independent axes, so that a developer, a CI pipeline, and a nightly job can each ask for exactly the subset they need. The first four axes operate on metadata already in the file or the source tree and are available in every tier. The fifth depends on persisted run history, and its full form is a Team-tier capability.
+A team with five hundred test files never wants to run all of them on every change. The runner therefore exposes a selection language that composes several independent axes, so that a developer, a CI pipeline, and a nightly job can each ask for exactly the subset they need. The first four axes operate on metadata already in the file or the source tree and are available in the permanently free core. The fifth depends on persisted run history; local prior-verdict selection is in the core, whilst the full history form is planned for future commercial offerings.
 
-| Selection axis | Example intent | How it is expressed | Tier |
+| Selection axis | Example intent | How it is expressed | Availability |
 |---|---|---|---|
-| By tag | “Run the smoke tests only.” | Tags declared in each file's metadata block; the runner takes an include and exclude tag expression. | All |
-| By ownership | “Run the payments team's suites.” | An owner field in metadata; the runner filters on it. | All |
-| By path | “Run everything under tests/billing.” | Glob patterns over the file tree. | All |
-| By change | “Run only what this branch touched.” | The runner diffs against a base ref and selects files changed plus, optionally, files whose declared dependencies changed. | All |
-| By prior verdict (last run) | “Run the suites that failed last time.” | The Indie tier writes the most recent run's structured event stream to a local cache; the runner reads it and selects by prior verdict. Only the immediately previous run is retained locally. | Indie+ |
-| By prior verdict (across history) | “Run the suites that failed in any of the last seven days.” | Backed by the hosted run-history store; selection is over the full retained window. | Team+ |
+| By tag | “Run the smoke tests only.” | Tags declared in each file's metadata block; the runner takes an include and exclude tag expression. | Free core |
+| By ownership | “Run the payments team's suites.” | An owner field in metadata; the runner filters on it. | Free core |
+| By path | “Run everything under tests/billing.” | Glob patterns over the file tree. | Free core |
+| By change | “Run only what this branch touched.” | The runner diffs against a base ref and selects files changed plus, optionally, files whose declared dependencies changed. | Free core |
+| By prior verdict (last run) | “Run the suites that failed last time.” | The core writes the most recent run's structured event stream to a local cache; the runner reads it and selects by prior verdict. Only the immediately previous run is retained locally. | Free core |
+| By prior verdict (across history) | “Run the suites that failed in any of the last seven days.” | Backed by the hosted run-history store; selection is over the full retained window. | Planned Team tier |
 
 The axes compose: a CI job can ask for “tagged regression, owned by payments, changed in this branch” in a single invocation. Selection operates on metadata the author already writes, so it costs the author nothing beyond tagging discipline.
 
@@ -1242,14 +1242,14 @@ The memory model is clean: the ledger holds plain `System.String` values in the 
 
 ## 17.2 Pluggable secret sources
 
-The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future tiers.
+The part of the reference before the slash names the source, and sources are pluggable so that the same test file works in different environments by changing configuration rather than content. The MVP implements two sources, with two more reserved for future development.
 
-| Source prefix | Resolves from | Tier | Status |
+| Source prefix | Resolves from | Availability | Status |
 |---|---|---|---|
-| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Indie | MVP |
-| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Indie | MVP |
-| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Indie | Deferred |
-| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Team and Enterprise | Deferred |
+| env | An environment variable on the machine running the suite. The simplest source; suitable for local development and basic CI. | Free core | MVP |
+| vault | HashiCorp Vault KV v2, addressed by logical path and field selector. Configuration via three environment variables: `VAULT_ADDR` (server address, e.g. `http://127.0.0.1:8200`), `VAULT_TOKEN` (access token), and `VAULT_KV_MOUNT` (KV v2 mount name; defaults to `secret`). Resolution happens at step-execution time; the token and resolved value never leak into logs, reports, or captured variables. Reference form: `${secret:vault/<kvPath>#<field>}` (e.g. `${secret:vault/secrets/api-keys#admin-token}`). | Free core | MVP |
+| file | A local secrets file outside the repository, git-ignored by convention. Convenient for a developer's standing local credentials. | Free core | Deferred |
+| cloud | A cloud provider secret manager — Azure Key Vault, AWS Secrets Manager — selected by configuration. | Planned commercial tiers | Deferred |
 
 Because the source is chosen by configuration and only the logical path appears in the file, a test authored against an environment variable locally runs unchanged against Vault in CI. The seam between “which secret” and “where secrets come from” is exactly the seam that lets one test file move between environments without edits.
 

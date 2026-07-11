@@ -5,7 +5,7 @@
 
 ## Context
 
-The vouchfx CLI is an Aspire-host executable that carries the `Aspire.AppHost.Sdk` and is marked as an Aspire host (`IsAspireHost: true`). This SDK embeds DCP (Distributed Application Cluster) metadata (`dcpclipath` and `aspiredashboardpath` AssemblyMetadata attributes) at build time, which the CLI requires at runtime to locate and launch the DCP process for orchestrating container topologies. This is a CLAUDE.md hard invariant and is documented in the Architecture Blueprint § 4 and § 19.
+The vouchfx CLI is an Aspire-host executable that carries the `Aspire.AppHost.Sdk` and is marked as an Aspire host (`IsAspireHost: true`). This SDK embeds DCP (Distributed Application Cluster) metadata (`dcpclipath` and `aspiredashboardpath` AssemblyMetadata attributes) at build time, which the CLI requires at runtime to locate and launch the DCP process for orchestrating container topologies. This dependency is documented in the Architecture Blueprint § 4 and § 19.
 
 The question: can the CLI be packaged as a `dotnet global tool` (via `PackAsTool: true`) given this Aspire dependency, and if so, what are the portability implications?
 
@@ -68,6 +68,6 @@ The nupkg is ~61 MB (framework-dependent; all transitive dependencies bundled). 
 
 ## Related Documents
 
-- CLAUDE.md § "Aspire (§4, §19)" — hard invariant on DCP metadata and `IsPublishable` override.
-- Csproj comment (lines 24–34 in `src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj`) — implementation details.
+- Architecture Blueprint § 4 and § 19 — Aspire orchestration and technology choices.
+- `src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj` — implementation details of tool packaging.
 - README.md "Getting started" section — user-facing installation guidance.
