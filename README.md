@@ -216,7 +216,7 @@ Dependabot resolves the trailing `# vX.Y.Z` comment on the SHA pin above, watche
 git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.5
 ```
 
-This project's release tags are annotated, so `git ls-remote --tags` prints *two* lines per tag — `refs/tags/v1.0.0-alpha.5` (the tag object's own SHA) and `refs/tags/v1.0.0-alpha.5^{}` (the commit it points at, "peeled"). **Always take the `^{}` line** — that's the commit SHA to pin, not the tag object's SHA.
+Depending on how a release tag was created (RELEASING.md documents both kinds), `git ls-remote --tags` prints either *two* lines for it — `refs/tags/v1.0.0-alpha.5` (an annotated tag object's own SHA) and `refs/tags/v1.0.0-alpha.5^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the single line's SHA is the commit SHA to pin.
 
 **Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
 
@@ -289,7 +289,7 @@ Reports are stored under the job's default artefact path and include:
 git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.5
 ```
 
-This project's release tags are annotated, so this prints *two* lines per tag — take the `refs/tags/v1.0.0-alpha.5^{}` ("peeled") line's SHA, not the `refs/tags/v1.0.0-alpha.5` line's (that one is the tag object's own SHA, not the commit).
+Depending on how the release tag was created (RELEASING.md documents both kinds), this prints either *two* lines for it (an annotated tag) — take the `refs/tags/v1.0.0-alpha.5^{}` ("peeled") line's SHA, not the tag object's own — or a *single* line (a lightweight tag), whose SHA already **is** the commit to pin.
 
 **Verification status (important).** The GitLab template is **static-validated only** (yamllint + GitLab CI JSON schema + behavioural-equivalence cross-check against the GitHub workflow), but has **not been run on a live GitLab instance** — a live pipeline / `ci/lint` run is an infrastructure-gated follow-up. The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed containers are reachable under sibling Docker-in-Docker** (the template sets `TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw Testcontainers) — that dind-to-DCP networking is the primary unknown.
 

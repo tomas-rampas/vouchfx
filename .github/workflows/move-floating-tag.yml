@@ -91,13 +91,20 @@ jobs:
           tag="$EV_TAG"
           version="${tag#v}"
 
-          # Same semver pattern release.yml's version step validates against:
-          # MAJOR.MINOR.PATCH with an optional pre-release/build suffix.
-          if [[ ! "$version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          # Semver-accurate validation: MAJOR.MINOR.PATCH, an optional pre-release
+          # that MUST begin with '-', and optional '+build' metadata. Deliberately
+          # STRICTER than release.yml's pattern (which also tolerates a '.'-led
+          # suffix): a mistag like v1.2.3.rc.1 must fail here rather than slip
+          # through with no '-' and be routed as a GA release, moving `v1`.
+          if [[ ! "$version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$tag' is not a valid semver tag — refusing to move any floating tag."
             exit 1
           fi
           major="${BASH_REMATCH[1]}"
+
+          # Routing decisions ignore '+build' metadata (semver: build metadata does
+          # not affect precedence or release identity): v1.2.3+build.7 is still GA.
+          base_version="${version%%+*}"
 
           if [[ "$major" != "1" ]]; then
             echo "Release '$tag' is not on the v1.x line (major=$major) — no floating tag is defined for it yet. Skipping."
@@ -107,9 +114,9 @@ jobs:
           # v1-alpha tracks ONLY the alpha/beta pre-GA line (dotted identifiers,
           # the repo's release-tag format: v1.0.0-alpha.4) — an rc/preview/other
           # pre-release must never move it, per the README's documented contract.
-          if [[ "$version" == 1.0.0-alpha.* || "$version" == 1.0.0-beta.* ]]; then
+          if [[ "$base_version" == 1.0.0-alpha.* || "$base_version" == 1.0.0-beta.* ]]; then
             target_tag="v1-alpha"
-          elif [[ "$version" != *-* ]]; then
+          elif [[ "$base_version" != *-* ]]; then
             target_tag="v1"
           else
             echo "Release '$tag' is a pre-release v1-alpha does not track — v1-alpha follows only v1.0.0-alpha.*/-beta.*, and v1 only tracks GA releases. Skipping."
