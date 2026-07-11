@@ -15,7 +15,10 @@
 #
 # TAGS MAINTAINED (v1.x line only — see "Decide the target floating tag"
 # below for what happens outside it):
-#   v1-alpha   moved to every v1.0.0-alphaN / -betaN pre-release. Retired
+#   v1-alpha   moved to every v1.0.0-alpha.N / -beta.N pre-release (the dotted
+#              identifier format this repo's release tags use, e.g.
+#              v1.0.0-alpha.4 — see RELEASING.md). Other v1.0.0 pre-release
+#              kinds (rc, preview, …) do NOT move it. Retired
 #              (simply stops being updated — never deleted) the moment v1.0.0
 #              GA ships; consumers should move to `v1` at that point.
 #   v1         moved to every v1.y.z GA release once GA exists. Does not
@@ -101,12 +104,15 @@ jobs:
             exit 0
           fi
 
-          if [[ "$version" == 1.0.0-* ]]; then
+          # v1-alpha tracks ONLY the alpha/beta pre-GA line (dotted identifiers,
+          # the repo's release-tag format: v1.0.0-alpha.4) — an rc/preview/other
+          # pre-release must never move it, per the README's documented contract.
+          if [[ "$version" == 1.0.0-alpha.* || "$version" == 1.0.0-beta.* ]]; then
             target_tag="v1-alpha"
           elif [[ "$version" != *-* ]]; then
             target_tag="v1"
           else
-            echo "Release '$tag' is a pre-release outside the v1.0.0 pre-GA line — v1-alpha only tracks v1.0.0-*, and v1 only tracks GA releases. Skipping."
+            echo "Release '$tag' is a pre-release v1-alpha does not track — v1-alpha follows only v1.0.0-alpha.*/-beta.*, and v1 only tracks GA releases. Skipping."
             exit 0
           fi
 
