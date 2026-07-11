@@ -1,0 +1,117 @@
+# .github/workflows/move-floating-tag.yml — maintains the CI-integration
+# "convenience tier" floating tags consumers can reference without ever
+# resolving a commit SHA themselves.
+#
+# BACKGROUND (README.md "CI integration with GitHub Actions" / "with GitLab
+# CI"): the reusable workflow is normally consumed pinned to a full 40-char
+# commit SHA — the correct, immutable choice for production, and unchanged by
+# this file. But requiring EVERY adopter to hand-resolve a SHA before their
+# first CI run is needless friction for a first try or a low-stakes internal
+# repo. This workflow maintains a small set of floating tags that trade
+# immutability for zero-setup convenience, exactly mirroring the pattern this
+# repo already uses for its OWN non-release workflows' action references (see
+# .github/dependabot.yml's header comment: "non-release workflows deliberately
+# stay on floating major tags").
+#
+# TAGS MAINTAINED (v1.x line only — see "Decide the target floating tag"
+# below for what happens outside it):
+#   v1-alpha   moved to every v1.0.0-alphaN / -betaN pre-release. Retired
+#              (simply stops being updated — never deleted) the moment v1.0.0
+#              GA ships; consumers should move to `v1` at that point.
+#   v1         moved to every v1.y.z GA release once GA exists. Does not
+#              exist yet (no v1.0.0 has shipped) — this workflow only starts
+#              writing it once a clean (non-pre-release) v1.y.z tag appears.
+#
+# WHY `release: published`, NOT `push: tags` (RELEASING.md's own two-step
+# flow: a pushed tag first creates a DRAFT release the maintainer reviews
+# before publishing): gating on `published` guarantees a floating tag only
+# ever moves to a release the maintainer actually confirmed — the same
+# review gate every other artefact in this repo's release pipeline gets.
+#
+# WHY A SEPARATE WORKFLOW, NOT A JOB IN release.yml: keeps this decoupled
+# from the signed/attested/OIDC-publishing pipeline entirely — no `needs:`
+# coupling to that job graph, no risk of this file's failure modes touching
+# anything security-sensitive there, and vice versa.
+#
+# WHY THE FORCE-PUSH IS SAFE HERE (and would NOT be for release.yml's tags):
+# these are clearly-labeled, documented-as-mutable convenience refs — never
+# used for the signed-artifact pipeline, never the SHA a production consumer
+# is told to pin. Moving them is exactly the advertised behaviour, and this
+# workflow's own run log is the audit trail for when/why each one moved.
+#
+# github.sha PITFALL (already called out and worked around identically in
+# release.yml's "Determine release version" step): for a `release` event,
+# github.sha is NOT reliably the tag's commit. This workflow checks out the
+# release's own tag_name and reads the resulting commit via `git rev-parse
+# HEAD` rather than ever trusting github.sha directly.
+
+name: Move floating convenience tag
+
+on:
+  release:
+    types: [published]
+
+# Minimum workflow-level permission; the job below declares the write access
+# it actually needs.
+permissions:
+  contents: read
+
+jobs:
+  move-tag:
+    name: Move v1-alpha / v1 to the published release
+    runs-on: ubuntu-latest
+    # Canonical-repo guard: a fork's own release event must never move tags
+    # here (mirrors release.yml's NuGet Trusted Publishing repository guard).
+    if: github.repository == 'tomas-rampas/vouchfx'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout at the published tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 1
+
+      - name: Decide the target floating tag and move it
+        # SECURITY: the tag name is attacker-influenceable only in the sense
+        # that anyone who can publish a release in THIS repo controls it —
+        # already gated above to the canonical repo. Still passed through a
+        # quoted env var and validated before use, matching release.yml's
+        # "Determine release version" discipline (never interpolate directly
+        # into a run: shell via ${{ }}).
+        env:
+          EV_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          tag="$EV_TAG"
+          version="${tag#v}"
+
+          # Same semver pattern release.yml's version step validates against:
+          # MAJOR.MINOR.PATCH with an optional pre-release/build suffix.
+          if [[ ! "$version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$tag' is not a valid semver tag — refusing to move any floating tag."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+
+          if [[ "$major" != "1" ]]; then
+            echo "Release '$tag' is not on the v1.x line (major=$major) — no floating tag is defined for it yet. Skipping."
+            exit 0
+          fi
+
+          if [[ "$version" == *-* ]]; then
+            target_tag="v1-alpha"
+          else
+            target_tag="v1"
+          fi
+
+          # Never trust github.sha for a release event (see file header) —
+          # resolve the real commit from the checkout above, now sitting at
+          # the release's own tag.
+          resolved_sha="$(git rev-parse HEAD)"
+
+          echo "Moving '$target_tag' -> $resolved_sha (release $tag)"
+          git push --force origin "${resolved_sha}:refs/tags/${target_tag}"
+          echo "Moved '$target_tag' to $resolved_sha (release $tag)."
