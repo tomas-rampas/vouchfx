@@ -39,9 +39,12 @@
 #     • variable VOUCHFX_TELEMETRY_INSTALL_ID — any GUID you choose once (e.g. `uuidgen`)
 #     • secret   VOUCHFX_TELEMETRY_TOKEN      — the bearer ingest token (SECRET — it
 #       authenticates uploads; the other two are plain variables)
-#   then pass them through as in the worked example. Any of the three missing → the
-#   engine stays inert (nothing sent). To force telemetry off regardless, set
-#   VOUCHFX_NO_TELEMETRY=1 in the caller job — it always wins.
+#   then pass them through as in the worked example. Any of the three missing →
+#   environment-configured telemetry stays inactive and the engine falls back to its
+#   normal store-based consent model; on ephemeral hosted runners (no consent store)
+#   that means nothing is sent, but a persistent/self-hosted runner whose local
+#   consent is Enabled may still emit via the store-based path. To force telemetry
+#   off regardless, set VOUCHFX_NO_TELEMETRY=1 in the caller job — it always wins.
 #
 # ── Worked example (caller) ─────────────────────────────────────────────────────────
 #   jobs:
@@ -140,9 +143,10 @@ on:
       telemetry-endpoint:
         description: >-
           OPTIONAL vouchfx-telemetry ingest base URL (see the telemetry header block).
-          Not sensitive — typically passed from a caller repository VARIABLE. Telemetry
-          activates only when this, `telemetry-install-id`, AND the `telemetry-token`
-          secret are all provided; otherwise the engine stays inert.
+          Not sensitive — typically passed from a caller repository VARIABLE.
+          Environment-configured telemetry activates only when this,
+          `telemetry-install-id`, AND the `telemetry-token` secret are all provided;
+          otherwise it stays inactive and the engine's store-based consent model applies.
         type: string
         required: false
         default: ""

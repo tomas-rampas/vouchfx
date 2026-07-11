@@ -98,7 +98,8 @@ internal sealed class TelemetryRunHook
             // Invalid id: warn once (redaction-safe — never echo the raw value) and fall
             // through to the store-based behaviour; telemetry must never break a run.
             _diagnostics.WriteLine(
-                $"telemetry: {TelemetryInstallId.EnvVar} is not a valid GUID — ignored.");
+                $"telemetry: {TelemetryInstallId.EnvVar} must be a non-empty, "
+                + "non-all-zero GUID — ignored.");
         }
         else if (envId is { } && transportConfigured)
         {

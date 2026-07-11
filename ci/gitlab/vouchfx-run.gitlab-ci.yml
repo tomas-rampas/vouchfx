@@ -131,7 +131,10 @@
 #                                              `uuidgen`). Reusing the same GUID every run
 #                                              is the point. An invalid value is ignored by
 #                                              the engine with a warning, never a failure.
-#   Any of the three missing → the engine stays inert (nothing sent). To force telemetry
+#   Any of the three missing → environment-configured telemetry stays inactive and the
+#   engine falls back to its normal store-based consent model; on ephemeral runners (no
+#   consent store) that means nothing is sent, but a persistent/self-hosted runner whose
+#   local consent is Enabled may still emit via the store-based path. To force telemetry
 #   off regardless, set VOUCHFX_NO_TELEMETRY=1 — it always wins.
 
 # ── Hidden base job: all the behaviour, none of the pipeline-stage assumptions. ────────
