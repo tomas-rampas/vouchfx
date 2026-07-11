@@ -227,6 +227,118 @@ public sealed class TelemetryCliTests
     }
 
     [Fact]
+    public async Task Hook_EnvironmentConfigured_EmitsWithSuppliedId_WithoutStoreConsent()
+    {
+        using var temp = new TempPathsCli();
+        // A FRESH store: consent Undecided, no install id — env-configured mode must
+        // not need it (this is the CI path on an ephemeral runner).
+        var store = new TelemetryConsentStore(temp);
+        var sink = new RecordingSinkCli();
+        var suppliedId = Guid.Parse("8f7c2f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a");
+
+        var hook = new TelemetryRunHook(
+            store, temp, sink, noTelemetryFlag: false, TextWriter.Null,
+            environmentInstallIdRaw: suppliedId.ToString(),
+            transportConfigured: true);
+
+        var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
+        Assert.NotNull(eventsPath);
+        await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
+        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+
+        // The event carries the SUPPLIED id (stable per repo), and nothing was
+        // written to the local consent store — env mode bypasses it entirely.
+        Assert.Single(sink.Sent);
+        Assert.Equal(suppliedId, sink.Sent[0].InstallId);
+        Assert.False(File.Exists(temp.ConsentStorePath));
+    }
+
+    [Fact]
+    public async Task Hook_EnvironmentId_WithoutConfiguredTransport_FallsBackToStore()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);   // Undecided
+        var sink = new RecordingSinkCli();
+
+        // Install id supplied but endpoint/token NOT configured → not env mode; the
+        // store (Undecided) governs, so nothing is collected or emitted.
+        var hook = new TelemetryRunHook(
+            store, temp, sink, noTelemetryFlag: false, TextWriter.Null,
+            environmentInstallIdRaw: Guid.NewGuid().ToString(),
+            transportConfigured: false);
+
+        var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
+        Assert.Null(eventsPath);
+        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        Assert.Empty(sink.Sent);
+    }
+
+    [Fact]
+    public async Task Hook_EnvironmentConfigured_StillSuppressedByNoTelemetryFlag()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        var sink = new RecordingSinkCli();
+
+        // The suppression conjunction keeps absolute precedence over env-configured
+        // opt-in (--no-telemetry here; VOUCHFX_NO_TELEMETRY goes through the same gate).
+        var hook = new TelemetryRunHook(
+            store, temp, sink, noTelemetryFlag: true, TextWriter.Null,
+            environmentInstallIdRaw: Guid.NewGuid().ToString(),
+            transportConfigured: true);
+
+        var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
+        Assert.Null(eventsPath);
+        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        Assert.Empty(sink.Sent);
+    }
+
+    [Fact]
+    public async Task Hook_InvalidEnvironmentId_WarnsOnce_AndFallsBackToStore()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        var enabled = store.Enable();                  // local consent with a store id
+        var sink = new RecordingSinkCli();
+        var diagnostics = new StringWriter();
+
+        var hook = new TelemetryRunHook(
+            store, temp, sink, noTelemetryFlag: false, diagnostics,
+            environmentInstallIdRaw: "not-a-guid",
+            transportConfigured: true);
+
+        var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
+        Assert.NotNull(eventsPath);
+        await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
+        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+
+        // The invalid env id was ignored with a single warning naming the variable
+        // (never echoing the raw value into an event), and the STORE id was used.
+        Assert.Single(sink.Sent);
+        Assert.Equal(enabled.InstallId, sink.Sent[0].InstallId);
+        var warning = diagnostics.ToString();
+        Assert.Contains(TelemetryInstallId.EnvVar, warning, StringComparison.Ordinal);
+        Assert.Equal(1, warning.Split(TelemetryInstallId.EnvVar).Length - 1);
+    }
+
+    [Fact]
+    public void Hook_EnvironmentConfigured_SuppressesFirstRunNotice()
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);   // Undecided → notice would show
+        var hook = new TelemetryRunHook(
+            store, temp, new RecordingSinkCli(), noTelemetryFlag: false, TextWriter.Null,
+            environmentInstallIdRaw: Guid.NewGuid().ToString(),
+            transportConfigured: true);
+
+        // Env-configured telemetry is active: the store-based "undecided" notice would
+        // be misleading and would nag on every ephemeral CI run — it must not appear.
+        var stderr = new StringWriter();
+        hook.MaybeShowFirstRunNotice(stderr);
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
     public void Hook_FirstRunNotice_ShownOnceWhenUndecided()
     {
         using var temp = new TempPathsCli();
