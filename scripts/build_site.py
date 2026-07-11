@@ -14,11 +14,13 @@ Requires: markdown, pygments  (pip install markdown pygments)
 from __future__ import annotations
 
 import html
+import json
 import os
 import posixpath
 import re
 import shutil
 import sys
+import urllib.request
 from pathlib import Path
 
 import markdown
@@ -128,6 +130,84 @@ def sidebar(active_rel: str, root: str) -> str:
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Fact injection — self-healing volatile facts
+#
+# A handful of numbers on the landing page (the latest engine release, the
+# published SDK/community-provider versions, the community registry size)
+# change on a cadence this repository doesn't control. Rather than let them
+# silently drift out of date in hand-written HTML, any page can carry a
+# {{fact:KEY}} token that fetch_facts() resolves at build time. Each source
+# is independently best-effort: a network hiccup or API shape change falls
+# back to the last known-good value in site/facts-fallback.json rather than
+# failing the build — a stale fact is a much smaller problem than a broken
+# Pages deploy.
+# ---------------------------------------------------------------------------
+
+FACT_TOKEN = re.compile(r"\{\{fact:([A-Za-z0-9_]+)\}\}")
+FACTS: dict[str, str] = {}
+
+
+def _fetch_json(url: str, headers: dict[str, str] | None = None):
+    req = urllib.request.Request(url, headers=headers or {"User-Agent": "vouchfx-build-site"})
+    with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed https URLs only
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_facts() -> dict[str, str]:
+    fallback = json.loads((SITE / "facts-fallback.json").read_text(encoding="utf-8"))
+    facts = dict(fallback)
+    live: list[str] = []
+
+    try:
+        gh_headers = {"User-Agent": "vouchfx-build-site", "Accept": "application/vnd.github+json"}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            gh_headers["Authorization"] = f"Bearer {token}"
+        releases = _fetch_json("https://api.github.com/repos/tomas-rampas/vouchfx/releases", gh_headers)
+        # Deliberately keeps pre-releases (the whole alpha series IS the release
+        # line today); only drafts are skipped. Do not add a prerelease filter.
+        facts["engine_release"] = next(r["tag_name"] for r in releases if not r.get("draft"))
+        live.append("engine_release")
+    except Exception:
+        pass
+
+    try:
+        data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.sdk/index.json")
+        facts["sdk_version"] = data["versions"][-1]
+        live.append("sdk_version")
+    except Exception:
+        pass
+
+    try:
+        data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.community.jsonrpc/index.json")
+        facts["community_jsonrpc_version"] = data["versions"][-1]
+        live.append("community_jsonrpc_version")
+    except Exception:
+        pass
+
+    try:
+        data = _fetch_json(
+            "https://raw.githubusercontent.com/tomas-rampas/vouchfx-providers/main/registry/community-providers.json"
+        )
+        if not isinstance(data, list):
+            raise ValueError("registry JSON is no longer a top-level array")
+        facts["community_provider_count"] = str(len(data))
+        live.append("community_provider_count")
+    except Exception:
+        pass
+
+    fallback_used = sorted(set(facts) - set(live))
+    print(f"facts: live={sorted(live) or ['-']} fallback={fallback_used or ['-']}")
+    return facts
+
+
+def apply_facts(text: str) -> str:
+    """Substitute {{fact:KEY}} tokens. Called on site/ HTML right after it is
+    copied, and on every rendered page's HTML before it is written."""
+    return FACT_TOKEN.sub(lambda m: html.escape(FACTS[m.group(1)]) if m.group(1) in FACTS else m.group(0), text)
+
+
 PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -206,19 +286,17 @@ def render_markdown(rel: str, label: str) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     root = rel_root(dst)
     desc = f"vouchfx documentation — {label}"
-    dst.write_text(
-        PAGE.format(
-            title=html.escape(label),
-            desc=html.escape(desc),
-            root=root,
-            sidebar=sidebar(rel, root),
-            crumb=html.escape(label),
-            body=body,
-            toc=toc,
-            mermaid_script=mermaid_script,
-        ),
-        encoding="utf-8",
+    page = PAGE.format(
+        title=html.escape(label),
+        desc=html.escape(desc),
+        root=root,
+        sidebar=sidebar(rel, root),
+        crumb=html.escape(label),
+        body=body,
+        toc=toc,
+        mermaid_script=mermaid_script,
     )
+    dst.write_text(apply_facts(page), encoding="utf-8")
     print(f"  rendered {rel} -> {dst.relative_to(OUT)}")
 
 
@@ -315,6 +393,8 @@ PORTAL = """<!DOCTYPE html>
   <section class="portal__group">
     <h2>Ecosystem</h2>
     <p>Community providers, sample applications, and related projects.</p>
+    <p class="note">Live: engine {{fact:engine_release}} · <code>Vouchfx.Sdk</code> {{fact:sdk_version}} on NuGet ·
+      the hub registry lists {{fact:community_provider_count}} community provider(s).</p>
     <div class="doc-cards">
       <a class="doc-card" href="docs/ecosystem.html"><span class="doc-card__k">MAP</span><h3>The ecosystem</h3><p>One engine, four repositories: what each is for, where its site lives, and where to ask questions.</p></a>
       <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-providers/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge, with conformance testing, examples, and the provider authoring rubric.</p></a>
@@ -360,7 +440,7 @@ PORTAL = """<!DOCTYPE html>
 
 
 def build_portal() -> None:
-    (OUT / "docs.html").write_text(PORTAL, encoding="utf-8")
+    (OUT / "docs.html").write_text(apply_facts(PORTAL), encoding="utf-8")
     print("  built docs.html portal")
 
 
@@ -381,6 +461,16 @@ def main() -> None:
         shutil.rmtree(OUT)
     shutil.copytree(SITE, OUT)
     print(f"copied {SITE.relative_to(ROOT)}/ -> {OUT.name}/")
+
+    # Resolve facts, then substitute {{fact:KEY}} tokens into whatever HTML
+    # site/ just copied verbatim (index.html). site/facts-fallback.json itself
+    # is build tooling, not a page — it ships inside site/ so it copies above,
+    # but has no business being served, so remove the copy once read.
+    global FACTS
+    FACTS = fetch_facts()
+    for html_file in OUT.glob("*.html"):
+        html_file.write_text(apply_facts(html_file.read_text(encoding="utf-8")), encoding="utf-8")
+    (OUT / "facts-fallback.json").unlink(missing_ok=True)
 
     # Pygments stylesheet (dark) for fenced code blocks.
     (OUT / "pygments.css").write_text(

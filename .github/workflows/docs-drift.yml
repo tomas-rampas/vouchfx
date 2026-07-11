@@ -1,0 +1,87 @@
+# .github/workflows/docs-drift.yml — the ecosystem drift sentinel
+#
+# Runs scripts/check_docs_drift.py across the four live project sites
+# (engine, provider hub, samples, telemetry backend): broken internal/
+# cross-site links, leaked internal-planning terminology, and facts that
+# have drifted out of sync with their live source. On a finding, the
+# sentinel's report is filed to a single tracking issue labelled
+# `docs-drift` — created if none is open, otherwise commented on, so
+# repeated runs don't spam new issues.
+
+name: Docs drift sentinel
+
+on:
+  schedule:
+    - cron: '47 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Run the sentinel
+        id: sentinel
+        run: |
+          set +e
+          python scripts/check_docs_drift.py | tee drift-report.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure the docs-drift label exists
+        if: steps.sentinel.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create docs-drift \
+            --color B60205 \
+            --description "Ecosystem documentation drift sentinel findings" \
+            --force
+
+      - name: File or update the tracking issue
+        if: steps.sentinel.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Keep the issue body/comment to a sane length.
+          BODY_FILE=$(mktemp)
+          {
+            echo "The docs drift sentinel found issues in the vouchfx ecosystem's published sites."
+            echo ""
+            echo "Run: $RUN_URL"
+            echo ""
+            echo '```'
+            head -c 6000 drift-report.txt
+            if [ "$(wc -c < drift-report.txt)" -gt 6000 ]; then
+              echo ""
+              echo "... (truncated; see the run log for the full report)"
+            fi
+            echo '```'
+          } > "$BODY_FILE"
+
+          existing=$(gh issue list --label docs-drift --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$BODY_FILE"
+            echo "commented on existing issue #$existing" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh issue create \
+              --title "Ecosystem docs drift detected" \
+              --label docs-drift \
+              --body-file "$BODY_FILE"
+            echo "opened a new docs-drift issue" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail the job on findings
+        if: steps.sentinel.outputs.exit_code != '0'
+        run: exit 1
