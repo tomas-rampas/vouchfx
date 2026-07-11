@@ -226,7 +226,7 @@ Core providers are bundled with the engine, versioned together, and fully suppor
 - The provider declares a `MinEngineVersion` compatible with the engine's current major version.
 - At least one platform-team maintainer has read the emitted CSX for the provider's representative steps and confirmed it follows the CsxFragment composition contract in the architecture blueprint's section 13.3.1.
 
-Hub-hosted Community providers will be published as individual NuGet packages from the hub's packaging pipeline (pack gate + tag-driven publish workflow). Provider packages publish once the SDK is restorable from NuGet.org. Authors whose provider does not yet meet the rubric remain listed but unbadged, and the rubric itself is the actionable feedback for earning the Vouched badge.
+Hub-hosted Community providers are published as individual NuGet packages from the hub's packaging pipeline (pack gate + tag-driven publish workflow); the SDK is restorable from NuGet.org and the first community package (`Vouchfx.Community.JsonRpc`) is published, with the rest following as maintainers cut release tags. Authors whose provider does not yet meet the rubric remain listed but unbadged, and the rubric itself is the actionable feedback for earning the Vouched badge.
 
 ### Submitting Your Provider
 

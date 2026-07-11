@@ -52,14 +52,15 @@ Governance structure is simplified to two tiers (Core / Community) and the Provi
 
 ### Added
 
-- The release pipeline now packs and publishes the five-package Provider SDK closure (`Vouchfx.Sdk`,
-  `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, `Vouchfx.Engine.Compilation`)
-  alongside the CLI, enabling provider authors to consume the published NuGet packages.
+- The release pipeline now packs and publishes the five-package Provider SDK closure (published under the
+  `Platform.*` IDs at the time — `Platform.Sdk`, `Platform.Sdk.Testing` and the `Platform.Engine.*` closure —
+  renamed to `Vouchfx.*` in alpha.4) alongside the CLI, enabling provider authors to consume the published
+  NuGet packages.
 
 ### Fixed
 
-- Docker integration suite repaired against current dependency images: RabbitMQ 4.x queue behaviour,
-  Elasticsearch 8.17 request handling, and container startup failure classification.
+- The mailpit SMTP docker test repaired: correct CRLF line endings in the SMTP conversation, assertions on
+  the server's response codes, and clearer CI diagnostics on failure.
 
 ## [1.0.0-alpha.2] — 2026-07-08
 
@@ -190,6 +191,9 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   `.github/workflows/move-floating-tag.yml` (force-moved to each published release's commit) — a zero-SHA-hunting
   quick start alongside the still-recommended SHA-pinned production tier. README documents the Dependabot
   `github-actions` (GitHub) / Renovate (GitLab) automation that keeps a SHA pin current without manual lookups.
+- Environment-configured telemetry for CI: setting `VOUCHFX_TELEMETRY_INSTALL_ID` alongside the endpoint and
+  token variables emits runs under one stable, repository-chosen install identifier, so ephemeral CI runners
+  no longer mint a fresh install id per job (see `docs/telemetry.md`).
 
 **Editor**
 
