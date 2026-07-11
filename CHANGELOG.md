@@ -136,6 +136,10 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   taxonomy-aware exit codes with `--fail-on-env-error` / `--fail-on-inconclusive` opt-in gates.
 - A reusable GitHub Actions workflow and an `include`-able GitLab CI template (static-validated), both
   publishing JUnit and HTML artefacts with identical gating semantics.
+- `v1-alpha`/`v1` floating convenience tags for consumers of the reusable workflow/template, maintained by
+  `.github/workflows/move-floating-tag.yml` (force-moved to each published release's commit) — a zero-SHA-hunting
+  quick start alongside the still-recommended SHA-pinned production tier. README documents the Dependabot
+  `github-actions` (GitHub) / Renovate (GitLab) automation that keeps a SHA pin current without manual lookups.
 
 **Editor**
 
