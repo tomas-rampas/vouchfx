@@ -125,7 +125,7 @@ public sealed class RespawnResetProofTests
         Dictionary<string, object?> vars)
     {
         var provider = new ScriptCsharpProvider();
-        var model = new ScriptCsharpModel(Code: code);
+        var model = new ScriptCsharpModel(Code: code, File: null);
 
         // StubCompileContext mirrors the one in DbAssertPostgresDockerTests.
         var ctx = new StubCtx(stepId);
@@ -160,6 +160,9 @@ public sealed class RespawnResetProofTests
     /// <summary>Minimal <see cref="ICompileContext"/> stub.</summary>
     private sealed class StubCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCtx(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";

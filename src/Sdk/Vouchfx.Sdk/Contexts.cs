@@ -1,8 +1,9 @@
 // Vouchfx.Sdk — provider-authoring contract surface (§13).
 // This file declares the provider context interfaces passed to each provider stage.
-// IBindingContext and IProjectContext remain marker interfaces this sprint;
-// ICompileContext carries the step-identity surface (StepId + SuiteNamespace)
-// introduced in Sprint 2.
+// IBindingContext remains a marker interface. IProjectContext carries
+// DeclaredDependencies (Sprint 4) and SuiteDirectory. ICompileContext carries
+// the step-identity surface (StepId + SuiteNamespace, Sprint 2), Captures/
+// CaptureExprs (Sprint 4/7), and SuiteDirectory.
 namespace Vouchfx.Sdk;
 
 /// <summary>
@@ -42,6 +43,11 @@ public interface IBindingContext { }
 /// </para>
 /// <para>
 /// Sprint-4 addition: <see cref="DeclaredDependencies"/>.
+/// Later addition: <see cref="SuiteDirectory"/>, added so providers whose
+/// fields reference an external file (e.g. <c>script.csharp</c>'s <c>file</c>
+/// field) can validate the file exists relative to the scenario's own
+/// directory, without inventing a second path convention alongside
+/// <c>environment.seed</c>'s existing <c>seedBaseDirectory</c>.
 /// </para>
 /// </remarks>
 public interface IProjectContext
@@ -59,6 +65,18 @@ public interface IProjectContext
     /// infrastructure (dependency reconciliation, §13).
     /// </remarks>
     IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <summary>
+    /// Gets the directory that relative file paths in step fields (e.g.
+    /// <c>script.csharp</c>'s <c>file</c> field) are resolved against.
+    /// </summary>
+    /// <remarks>
+    /// This is the same base directory the engine already uses to resolve
+    /// <c>environment.seed</c> fixture paths (<c>seedBaseDirectory</c>) — the
+    /// scenario's own <c>.e2e.yaml</c> directory when known, falling back to
+    /// the process's current directory otherwise.
+    /// </remarks>
+    string SuiteDirectory { get; }
 }
 
 /// <summary>
@@ -82,6 +100,10 @@ public interface IProjectContext
 /// Sprint-4 addition: <see cref="Captures"/> (S04-B-02).
 /// Sprint-7 addition: <see cref="CaptureExprs"/> (S07-B-01a) — the
 /// format-aware view that supersedes <see cref="Captures"/>.
+/// Later addition: <see cref="SuiteDirectory"/>, mirroring the identically
+/// named member on <see cref="IProjectContext"/> so a provider's <c>Emit</c>
+/// stage can resolve the same external file it validated at bind/validate
+/// time (e.g. <c>script.csharp</c>'s <c>file</c> field).
 /// </para>
 /// </remarks>
 public interface ICompileContext
@@ -99,6 +121,18 @@ public interface ICompileContext
     /// across suites must be avoided.
     /// </summary>
     string SuiteNamespace { get; }
+
+    /// <summary>
+    /// Gets the directory that relative file paths in step fields (e.g.
+    /// <c>script.csharp</c>'s <c>file</c> field) are resolved against.
+    /// </summary>
+    /// <remarks>
+    /// See <see cref="IProjectContext.SuiteDirectory"/> — same base directory,
+    /// exposed here too because <c>Emit</c> runs in a separate stage from
+    /// <c>Validate</c> and needs to resolve the same path again to read the
+    /// file's content for splicing.
+    /// </remarks>
+    string SuiteDirectory { get; }
 
     /// <summary>
     /// Gets the map of variable names to capture <em>expression strings</em>

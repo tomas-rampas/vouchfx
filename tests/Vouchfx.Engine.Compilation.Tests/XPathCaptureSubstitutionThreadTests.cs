@@ -136,6 +136,9 @@ public sealed class XPathCaptureSubstitutionThreadTests
 
     private sealed class StubCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCtx(string stepId, IReadOnlyDictionary<string, CaptureExpr> captureExprs)
         {
             StepId = stepId;

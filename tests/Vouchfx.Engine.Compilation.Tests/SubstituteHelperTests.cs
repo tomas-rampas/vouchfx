@@ -31,6 +31,9 @@ public sealed class SubstituteHelperTests
 
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(
             string stepId,
             IReadOnlyDictionary<string, string>? captures = null)

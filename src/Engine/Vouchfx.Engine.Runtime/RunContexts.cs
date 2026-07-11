@@ -5,6 +5,12 @@
 // Sprint-4 addition: RunProjectContext now carries DeclaredDependencies, derived
 // from the scenario AST's environment.dependencies section and passed in by
 // ProviderPipeline.Compile.
+//
+// Later addition: RunProjectContext and RunCompileContext both carry
+// SuiteDirectory — the same base directory environment.seed already resolves
+// relative fixture paths against — so a provider field that references an
+// external file (e.g. script.csharp's `file`) can be validated and emitted
+// consistently.
 namespace Vouchfx.Engine.Runtime;
 
 /// <summary>
@@ -27,37 +33,54 @@ internal sealed class RunBindingContext : Vouchfx.Sdk.IBindingContext { }
 /// <c>environment.dependencies</c> in the scenario AST.  The map is empty when
 /// the scenario omits that section.
 /// </para>
+/// <para>
+/// Later addition: carries <see cref="SuiteDirectory"/>, the base directory
+/// relative file-path fields (e.g. <c>script.csharp</c>'s <c>file</c>) are
+/// resolved against.
+/// </para>
 /// </remarks>
 internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
 {
-    // ── Singleton representing an absent environment section ──────────────────
-
-    /// <summary>
-    /// A <see cref="RunProjectContext"/> with no declared dependencies, used
-    /// when the scenario file omits the <c>environment.dependencies</c> section.
-    /// </summary>
-    internal static readonly RunProjectContext Empty =
-        new(new Dictionary<string, string>(StringComparer.Ordinal));
-
     // ── Constructor ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Initialises a <see cref="RunProjectContext"/> with the given dependency map.
+    /// Initialises a <see cref="RunProjectContext"/> with the given dependency map
+    /// and suite directory.
     /// </summary>
     /// <param name="declaredDependencies">
     /// Map of dependency name to type (e.g. <c>"orders-db" → "postgres"</c>).
     /// Must not be <see langword="null"/>; use an empty dictionary when there
     /// are no dependencies.
     /// </param>
-    internal RunProjectContext(IReadOnlyDictionary<string, string> declaredDependencies)
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path fields are resolved against.
+    /// </param>
+    internal RunProjectContext(
+        IReadOnlyDictionary<string, string> declaredDependencies,
+        string suiteDirectory)
     {
         DeclaredDependencies = declaredDependencies;
+        SuiteDirectory = suiteDirectory;
     }
+
+    /// <summary>
+    /// Creates a <see cref="RunProjectContext"/> with no declared dependencies,
+    /// used when the scenario file omits the <c>environment.dependencies</c>
+    /// section.
+    /// </summary>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path fields are resolved against.
+    /// </param>
+    internal static RunProjectContext Empty(string suiteDirectory) =>
+        new(new Dictionary<string, string>(StringComparer.Ordinal), suiteDirectory);
 
     // ── IProjectContext ───────────────────────────────────────────────────────
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 }
 
 /// <summary>
@@ -81,6 +104,11 @@ internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
 /// order-preserving expression-string projection so that JSONPath-only providers
 /// keep working unchanged.
 /// </para>
+/// <para>
+/// Later addition: carries <see cref="SuiteDirectory"/>, the base directory
+/// relative file-path fields (e.g. <c>script.csharp</c>'s <c>file</c>) are
+/// resolved against.
+/// </para>
 /// </remarks>
 internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
 {
@@ -93,13 +121,16 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
 
     /// <summary>
     /// Initialises a new <see cref="RunCompileContext"/> with the given step
-    /// identifier, suite namespace, and capture map.
+    /// identifier, suite namespace, capture map, and suite directory.
     /// </summary>
     /// <param name="stepId">
     /// The identifier of the step currently being compiled.
     /// </param>
     /// <param name="suiteNamespace">
     /// The C# namespace into which the compiled suite is emitted.
+    /// </param>
+    /// <param name="suiteDirectory">
+    /// The base directory relative file-path fields are resolved against.
     /// </param>
     /// <param name="captures">
     /// The step's <c>capture</c> map (varName → <see cref="Vouchfx.Sdk.CaptureExpr"/>).
@@ -108,10 +139,12 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
     public RunCompileContext(
         string stepId,
         string suiteNamespace,
+        string suiteDirectory,
         IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr>? captures = null)
     {
         StepId = stepId;
         SuiteNamespace = suiteNamespace;
+        SuiteDirectory = suiteDirectory;
         CaptureExprs = captures ?? s_empty;
         Captures = ProjectExpressions(CaptureExprs);
     }
@@ -121,6 +154,9 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
 
     /// <inheritdoc />
     public string SuiteNamespace { get; }
+
+    /// <inheritdoc />
+    public string SuiteDirectory { get; }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> Captures { get; }

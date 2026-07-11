@@ -1,0 +1,28 @@
+# vouchfx fixture — demonstrates the `script.csharp` step's `file:` field, the
+# alternative to an inline `code:` block scalar.
+#
+# `file:` points at `scripts/compute.csx`, resolved relative to this .e2e.yaml
+# file's own directory. It is read once at compile time and spliced verbatim
+# into the compiled submission — same trust boundary, same lack of
+# placeholder/secret substitution as an inline `code:` body (docs/02 §5.6).
+# Open scripts/compute.csx directly to see the full C#/OmniSharp editing
+# experience an external file gets, which a `code:` block scalar does not.
+metadata:
+  name: script-csharp-external-file-demo
+  owner: tooling
+  tags: [demo, vscode]
+
+variables:
+  greeting: hello
+
+steps:
+  - id: compute
+    type: script.csharp
+    file: scripts/compute.csx
+
+  - id: assert-shape
+    type: db-assert.postgres
+    target: appdb
+    query: SELECT 1
+    expect:
+      rowCount: 1

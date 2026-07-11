@@ -626,6 +626,13 @@ internal static class RunCommand
             var names = parsed.Select(ScenarioName).ToList();
             var yamlTexts = parsed.Select(p => p.YamlText).ToList();
 
+            // Base directory for relative paths in step/seed fields (e.g. script.csharp's
+            // `file`, environment.seed fixtures) — the first scenario's own directory, matching
+            // WatchRunner's Path.GetDirectoryName(filePath) convention. All scenarios in a suite
+            // already share one `environment` block (validated below in ScenarioRunner), so
+            // sharing one base directory here is consistent with that invariant.
+            var suiteBaseDirectory = Path.GetDirectoryName(parsed[0].AbsolutePath);
+
             // appHostAssemblyName = THIS executable's name ("vouchfx"): the Aspire host that
             // carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost). Passing
             // it explicitly avoids the GetEntryAssembly fallback (CLAUDE.md §"Aspire").
@@ -644,7 +651,7 @@ internal static class RunCommand
                     appHostAssemblyName,
                     output,
                     maxConcurrency: parallelDegree,
-                    seedBaseDirectory: null,
+                    seedBaseDirectory: suiteBaseDirectory,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,
@@ -657,7 +664,7 @@ internal static class RunCommand
                     ProviderRegistryFactory.CoreProviderAssemblies(),
                     appHostAssemblyName,
                     output,
-                    seedBaseDirectory: null,
+                    seedBaseDirectory: suiteBaseDirectory,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,

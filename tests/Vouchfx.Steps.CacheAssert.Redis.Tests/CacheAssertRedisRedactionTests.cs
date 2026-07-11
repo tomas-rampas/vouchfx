@@ -22,6 +22,9 @@ public sealed class CacheAssertRedisRedactionTests
 {
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";

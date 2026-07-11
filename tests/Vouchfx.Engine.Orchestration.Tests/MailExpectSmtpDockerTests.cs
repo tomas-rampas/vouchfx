@@ -347,6 +347,9 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
     /// </summary>
     private sealed class StubCompileCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileCtx(string stepId) => StepId = stepId;
         public string StepId { get; }
         public string SuiteNamespace => "Generated";

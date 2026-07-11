@@ -52,6 +52,9 @@ public sealed class HttpRestBodyTests
     /// </summary>
     private sealed class StubCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCtx(
             string stepId,
             IReadOnlyDictionary<string, string>? captures = null)

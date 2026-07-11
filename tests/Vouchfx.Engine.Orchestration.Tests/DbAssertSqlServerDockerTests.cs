@@ -80,6 +80,9 @@ public sealed class DbAssertSqlServerDockerTests
     /// <summary>Minimal <see cref="ICompileContext"/> for emit tests.</summary>
     private sealed class StubCompileContext : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCompileContext(string stepId) => StepId = stepId;
 
         /// <inheritdoc />

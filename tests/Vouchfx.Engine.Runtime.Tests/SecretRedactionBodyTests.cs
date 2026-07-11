@@ -306,6 +306,9 @@ public sealed class SecretRedactionBodyTests
 
     private sealed class StubCtx : ICompileContext
     {
+        /// <inheritdoc />
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
         public StubCtx(string stepId) => StepId = stepId;
 
         public string StepId { get; }
