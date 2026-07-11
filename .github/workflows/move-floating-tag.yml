@@ -101,10 +101,13 @@ jobs:
             exit 0
           fi
 
-          if [[ "$version" == *-* ]]; then
+          if [[ "$version" == 1.0.0-* ]]; then
             target_tag="v1-alpha"
-          else
+          elif [[ "$version" != *-* ]]; then
             target_tag="v1"
+          else
+            echo "Release '$tag' is a pre-release outside the v1.0.0 pre-GA line — v1-alpha only tracks v1.0.0-*, and v1 only tracks GA releases. Skipping."
+            exit 0
           fi
 
           # Never trust github.sha for a release event (see file header) —

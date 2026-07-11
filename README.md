@@ -147,7 +147,7 @@ jobs:
       fail-on-env-error: false
 ```
 
-`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alphaN`/`-betaN` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml), which force-moves them to each published release's commit; they are convenience refs, not production-grade pins.
+`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml), which force-moves them to each published release's commit; they are convenience refs, not production-grade pins.
 
 **Workflow inputs.** The reusable workflow accepts these configuration inputs:
 
@@ -241,7 +241,7 @@ vouchfx-run:
     VOUCHFX_FAIL_ON_ENV_ERROR: "false"
 ```
 
-`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alphaN`/`-betaN` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml) — convenience refs, not production-grade pins.
+`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml) — convenience refs, not production-grade pins.
 
 **Configuration variables.** The template accepts these configuration variables (the GitLab analogue of GitHub workflow inputs):
 
