@@ -54,6 +54,19 @@ on:
   release:
     types: [published]
 
+# Serialise runs: back-to-back release publications queue instead of racing, so
+# publish order — not run-completion order — decides where the floating tags
+# land (without this, the LAST-FINISHING of two concurrent runs would win and
+# could force-move a tag to the OLDER release). cancel-in-progress stays FALSE
+# deliberately: two adjacent releases can target DIFFERENT tags (a beta moves
+# v1-alpha, a GA moves v1), and cancelling the in-flight older run would skip
+# one tag move entirely. Residual (accepted): with 3+ releases inside one job
+# window GitHub supersedes the middle PENDING run — re-run it manually if that
+# ever happens; the run log is the audit trail.
+concurrency:
+  group: move-floating-tag
+  cancel-in-progress: false
+
 # Minimum workflow-level permission; the job below declares the write access
 # it actually needs.
 permissions:
