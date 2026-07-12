@@ -236,7 +236,12 @@ re-resolves DCP from the executing machine's own NuGet cache using the
 executing machine's RID (see the DCP prerequisite above).  The
 `smoke-test-packaged-tool` job in `release.yml` simulates exactly this
 cross-machine hand-off — dead baked path, populated user cache — and gates
-`publish-release`, so a portability regression can no longer ship.
+`publish-release`, so a portability regression can no longer ship.  Operator
+note: that smoke job stands up a live Docker topology, so a rare
+infrastructure flake there can block a legitimate release; because
+publishing is idempotent (`--skip-duplicate`), the remedy is simply to
+re-run the workflow — only investigate a portability regression if the
+smoke failure reproduces.
 
 **Single-file executables are NOT produced** (e.g. `PublishSingleFile=true`
 is not used).  The Roslyn compiler in the engine uses `Assembly.Location` to
