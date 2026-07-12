@@ -4,6 +4,7 @@
 // verdict counts (step + scenario), step family / provider counts, startup time and
 // time-to-first-test.  All from a synthetic stream — no run, no container.
 
+using System.Reflection;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Xunit;
@@ -225,6 +226,150 @@ public sealed class TelemetryEventBuilderTests
         // The genuine Core step is still counted under its real family/provider.
         Assert.Equal(1, ev.StepFamilies["http"]);
         Assert.Equal(1, ev.StepProviders["http.rest"]);
+    }
+
+    [Fact]
+    public void Build_PostExpansionCoreProviderIds_AreTalliedUnderRealKeys()
+    {
+        // Regression for the frozen v1 Core catalogue expanding from 6 providers/6
+        // families (S10-G-04 era) to 25 providers across 11 families (2026-07-08,
+        // engine #174-177): a representative sample of POST-EXPANSION Core ids must be
+        // tallied under their REAL family/provider keys, not mis-bucketed as "custom".
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted("a1", "cache-assert.redis", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a2", "mq-expect.rabbitmq", T0.AddMilliseconds(20)),
+            SyntheticEvents.StepStarted("a3", "storage-assert.s3", T0.AddMilliseconds(30)),
+            SyntheticEvents.StepStarted("a4", "trace-expect.otlp", T0.AddMilliseconds(40)),
+            SyntheticEvents.StepStarted("a5", "http.soap", T0.AddMilliseconds(50)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 5 }, T0.AddMilliseconds(60)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.StepProviders["cache-assert.redis"]);
+        Assert.Equal(1, ev.StepProviders["mq-expect.rabbitmq"]);
+        Assert.Equal(1, ev.StepProviders["storage-assert.s3"]);
+        Assert.Equal(1, ev.StepProviders["trace-expect.otlp"]);
+        Assert.Equal(1, ev.StepProviders["http.soap"]);
+
+        Assert.Equal(1, ev.StepFamilies["cache-assert"]);
+        Assert.Equal(1, ev.StepFamilies["mq-expect"]);
+        Assert.Equal(1, ev.StepFamilies["storage-assert"]);
+        Assert.Equal(1, ev.StepFamilies["trace-expect"]);
+        Assert.Equal(1, ev.StepFamilies["http"]);
+
+        // None of the above may have landed in "custom" — if any were mis-bucketed the
+        // counts above would undercount and this key would be non-zero instead.
+        Assert.False(ev.StepFamilies.ContainsKey("custom"));
+        Assert.False(ev.StepProviders.ContainsKey("custom"));
+    }
+
+    [Fact]
+    public void Build_CoreTaxonomy_MatchesFrozenV1CoreCatalogue()
+    {
+        // Hardcoded here to MIRROR the frozen v1 Core catalogue: 25 provider ids across
+        // 11 families (Table 5.1 / docs §13), current since the 2026-07-08 provider-batch
+        // expansion (engine #174-177: bare aliases retired, 7 providers added, 18 -> 25).
+        // This test pins TelemetryEventBuilder's private CoreFamilies/CoreFullIds sets
+        // via reflection so the NEXT provider expansion fails HERE, loudly, instead of
+        // silently mis-bucketing new Core providers under "custom" forever.
+        var expectedFamilies = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "http",
+            "db-assert",
+            "mq-publish",
+            "mq-expect",
+            "cache-assert",
+            "mail-expect",
+            "webhook-listen",
+            "metrics-assert",
+            "storage-assert",
+            "trace-expect",
+            "script",
+        };
+
+        var expectedFullIds = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "http.rest",
+            "http.soap",
+            "db-assert.postgres",
+            "db-assert.mysql",
+            "db-assert.sqlserver",
+            "db-assert.mongodb",
+            "db-assert.dynamodb",
+            "mq-publish.kafka",
+            "mq-publish.rabbitmq",
+            "mq-publish.nats",
+            "mq-publish.azureservicebus",
+            "mq-publish.redis",
+            "mq-expect.kafka",
+            "mq-expect.rabbitmq",
+            "mq-expect.nats",
+            "mq-expect.azureservicebus",
+            "mq-expect.redis",
+            "cache-assert.redis",
+            "cache-assert.elasticsearch",
+            "mail-expect.smtp",
+            "webhook-listen.http",
+            "metrics-assert.prometheus",
+            "storage-assert.s3",
+            "trace-expect.otlp",
+            "script.csharp",
+        };
+
+        var actualFamilies = GetCoreTaxonomyField("CoreFamilies");
+        var actualFullIds = GetCoreTaxonomyField("CoreFullIds");
+
+        Assert.Equal(
+            expectedFamilies.OrderBy(x => x, StringComparer.Ordinal),
+            actualFamilies.OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(11, actualFamilies.Count);
+
+        Assert.Equal(
+            expectedFullIds.OrderBy(x => x, StringComparer.Ordinal),
+            actualFullIds.OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(25, actualFullIds.Count);
+    }
+
+    [Fact]
+    public void Build_CommunityAndUnknownProviderIds_StillBucketAsCustom()
+    {
+        // The closed-Core-taxonomy privacy design is UNCHANGED by the expansion: a
+        // Community-tier provider id (rpc.json-rpc, hosted on the provider hub — never
+        // part of the frozen Core catalogue) and an arbitrary unknown/customer id
+        // (acme.widget) must still never become dictionary keys — both bucket under
+        // "custom" for BOTH the family and provider maps.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted("a1", "rpc.json-rpc", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a2", "acme.widget", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 2 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(2, ev.StepFamilies["custom"]);
+        Assert.Equal(2, ev.StepProviders["custom"]);
+
+        Assert.False(ev.StepFamilies.ContainsKey("rpc"));
+        Assert.False(ev.StepFamilies.ContainsKey("acme"));
+        Assert.False(ev.StepProviders.ContainsKey("rpc.json-rpc"));
+        Assert.False(ev.StepProviders.ContainsKey("acme.widget"));
+    }
+
+    private static HashSet<string> GetCoreTaxonomyField(string fieldName)
+    {
+        var field = typeof(TelemetryEventBuilder).GetField(
+            fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        var value = (HashSet<string>?)field!.GetValue(null);
+        Assert.NotNull(value);
+        return value!;
     }
 
     private static TelemetryEvent Build(IReadOnlyList<string> lines) =>
