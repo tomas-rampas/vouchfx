@@ -183,9 +183,10 @@ public sealed class TelemetryDenylistScanTests
     public void BuiltEvent_CustomProviderKind_BucketsAsCustom_AndNeverLeaksTheAuthorChosenId()
     {
         // The `kind` of a step-started event is the ONE field the builder copies from a
-        // MEASURED event type.  For the six Core providers it is a frozen built-in token,
-        // but a custom/non-Core provider (which the S10-F-01 Echo example proves customers
-        // can ship) has an AUTHOR-CHOSEN `kind` id.  This test seeds a measured
+        // MEASURED event type.  For the twenty-five Core providers (frozen v1 Core
+        // catalogue, eleven families) it is a frozen built-in token, but a custom/non-Core
+        // provider (which the S10-F-01 Echo example proves customers can ship) has an
+        // AUTHOR-CHOSEN `kind` id.  This test seeds a measured
         // StepStartedEvent with a deliberately sensitive-looking custom id and proves the
         // builder buckets it as "custom" so neither the family nor the provider fragment of
         // that author-chosen id is ever written into the serialised telemetry event.

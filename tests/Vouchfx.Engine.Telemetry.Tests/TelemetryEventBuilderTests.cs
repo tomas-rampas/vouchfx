@@ -4,6 +4,9 @@
 // verdict counts (step + scenario), step family / provider counts, startup time and
 // time-to-first-test.  All from a synthetic stream — no run, no container.
 
+using System.Reflection;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Xunit;
@@ -225,6 +228,178 @@ public sealed class TelemetryEventBuilderTests
         // The genuine Core step is still counted under its real family/provider.
         Assert.Equal(1, ev.StepFamilies["http"]);
         Assert.Equal(1, ev.StepProviders["http.rest"]);
+    }
+
+    [Fact]
+    public void Build_PostExpansionCoreProviderIds_AreTalliedUnderRealKeys()
+    {
+        // Regression for the frozen v1 Core catalogue expanding from 6 providers/6
+        // families (S10-G-04 era) to 25 providers across 11 families (2026-07-08,
+        // engine #174-177): a representative sample of POST-EXPANSION Core ids must be
+        // tallied under their REAL family/provider keys, not mis-bucketed as "custom".
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted("a1", "cache-assert.redis", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a2", "mq-expect.rabbitmq", T0.AddMilliseconds(20)),
+            SyntheticEvents.StepStarted("a3", "storage-assert.s3", T0.AddMilliseconds(30)),
+            SyntheticEvents.StepStarted("a4", "trace-expect.otlp", T0.AddMilliseconds(40)),
+            SyntheticEvents.StepStarted("a5", "http.soap", T0.AddMilliseconds(50)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 5 }, T0.AddMilliseconds(60)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.StepProviders["cache-assert.redis"]);
+        Assert.Equal(1, ev.StepProviders["mq-expect.rabbitmq"]);
+        Assert.Equal(1, ev.StepProviders["storage-assert.s3"]);
+        Assert.Equal(1, ev.StepProviders["trace-expect.otlp"]);
+        Assert.Equal(1, ev.StepProviders["http.soap"]);
+
+        Assert.Equal(1, ev.StepFamilies["cache-assert"]);
+        Assert.Equal(1, ev.StepFamilies["mq-expect"]);
+        Assert.Equal(1, ev.StepFamilies["storage-assert"]);
+        Assert.Equal(1, ev.StepFamilies["trace-expect"]);
+        Assert.Equal(1, ev.StepFamilies["http"]);
+
+        // None of the above may have landed in "custom" — if any were mis-bucketed the
+        // counts above would undercount and this key would be non-zero instead.
+        Assert.False(ev.StepFamilies.ContainsKey("custom"));
+        Assert.False(ev.StepProviders.ContainsKey("custom"));
+    }
+
+    [Fact]
+    public void Build_CoreTaxonomy_MatchesFrozenV1CoreCatalogue()
+    {
+        // ANCHORED to the engine's frozen v1 JSON Schema golden artifact — NOT a second
+        // hardcoded twin list.  A hardcoded twin only catches drift between two copies
+        // edited together; it stays green if a 26th provider ships while BOTH the schema
+        // gains it AND TelemetryEventBuilder's CoreFamilies/CoreFullIds are left
+        // untouched — precisely the drift that shipped this bug in the first place.
+        //
+        // Instead, this test reads Golden/composed-schema.v1.json — linked into this
+        // project (see the .csproj) from its owning project,
+        // Vouchfx.Engine.Compilation.Tests, where it is the SAME file:
+        //   • SchemaFreezeTests (S08-F-01) diffs SchemaComposer's live output against it
+        //     byte-for-byte — any schema change (including a new provider's fragment)
+        //     must regenerate and re-commit this file;
+        //   • VsCodeShippedSchemaSyncTests keeps the VSCode extension's shipped schema
+        //     byte-for-byte identical to that same composed output.
+        // So this file is the actual frozen v1 contract of "which step-kind ids exist" —
+        // a provider that reaches the schema but is forgotten in the telemetry allowlist
+        // now fails HERE, for real, because the expected set comes from the schema
+        // itself, not from a second manually-maintained list.
+        var schemaPath = Path.Combine(AppContext.BaseDirectory, "Golden", "composed-schema.v1.json");
+        Assert.True(
+            File.Exists(schemaPath),
+            $"Frozen v1 schema golden artifact not found at '{schemaPath}'. Check the "
+            + "Content/Link item in Vouchfx.Engine.Telemetry.Tests.csproj.");
+
+        using var schemaDoc = JsonDocument.Parse(File.ReadAllText(schemaPath));
+
+        // Every step-kind id in the schema is a dotted "family.provider" token: the
+        // family half is letters/hyphens only (e.g. "db-assert"), the provider half may
+        // also contain digits (none currently do, but the pattern allows it).  Anchored
+        // full-string match so a quoted prose fragment (e.g. the `type` field's
+        // description, which MENTIONS "http.rest" mid-sentence) can never match — only a
+        // JSON string value that IS exactly such a token counts.
+        var stepKindIdPattern = new Regex("^[a-z-]+\\.[a-z0-9-]+$", RegexOptions.None);
+        var stepKindIds = new HashSet<string>(StringComparer.Ordinal);
+        CollectMatchingStrings(schemaDoc.RootElement, stepKindIdPattern, stepKindIds);
+
+        // Sanity on the extraction itself: exactly the 25 frozen v1 ids, spot-checking
+        // one from the 2026-07-08 expansion batch that must NOT have been missed.
+        Assert.Equal(25, stepKindIds.Count);
+        Assert.Contains("storage-assert.s3", stepKindIds);
+
+        var expectedFamilies = new HashSet<string>(
+            stepKindIds.Select(id => id[..id.IndexOf('.', StringComparison.Ordinal)]),
+            StringComparer.Ordinal);
+
+        var actualFamilies = GetCoreTaxonomyField("CoreFamilies");
+        var actualFullIds = GetCoreTaxonomyField("CoreFullIds");
+
+        Assert.Equal(
+            stepKindIds.OrderBy(x => x, StringComparer.Ordinal),
+            actualFullIds.OrderBy(x => x, StringComparer.Ordinal));
+
+        Assert.Equal(
+            expectedFamilies.OrderBy(x => x, StringComparer.Ordinal),
+            actualFamilies.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Recursively walks every string value in the parsed schema document and adds it
+    /// to <paramref name="results"/> when it fully matches <paramref name="pattern"/>.
+    /// </summary>
+    private static void CollectMatchingStrings(JsonElement element, Regex pattern, HashSet<string> results)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectMatchingStrings(property.Value, pattern, results);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectMatchingStrings(item, pattern, results);
+                }
+
+                break;
+
+            case JsonValueKind.String:
+                var value = element.GetString();
+                if (value is not null && pattern.IsMatch(value))
+                {
+                    results.Add(value);
+                }
+
+                break;
+        }
+    }
+
+    [Fact]
+    public void Build_CommunityAndUnknownProviderIds_StillBucketAsCustom()
+    {
+        // The closed-Core-taxonomy privacy design is UNCHANGED by the expansion: a
+        // Community-tier provider id (rpc.json-rpc, hosted on the provider hub — never
+        // part of the frozen Core catalogue) and an arbitrary unknown/customer id
+        // (acme.widget) must still never become dictionary keys — both bucket under
+        // "custom" for BOTH the family and provider maps.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted("a1", "rpc.json-rpc", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a2", "acme.widget", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 2 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(2, ev.StepFamilies["custom"]);
+        Assert.Equal(2, ev.StepProviders["custom"]);
+
+        Assert.False(ev.StepFamilies.ContainsKey("rpc"));
+        Assert.False(ev.StepFamilies.ContainsKey("acme"));
+        Assert.False(ev.StepProviders.ContainsKey("rpc.json-rpc"));
+        Assert.False(ev.StepProviders.ContainsKey("acme.widget"));
+    }
+
+    private static HashSet<string> GetCoreTaxonomyField(string fieldName)
+    {
+        var field = typeof(TelemetryEventBuilder).GetField(
+            fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        var value = (HashSet<string>?)field!.GetValue(null);
+        Assert.NotNull(value);
+        return value!;
     }
 
     private static TelemetryEvent Build(IReadOnlyList<string> lines) =>

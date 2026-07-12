@@ -8,6 +8,27 @@
          TargetFramework / IsPackable come from the root + tests Directory.Build.props. -->
   </PropertyGroup>
 
+  <ItemGroup Label="Frozen v1 schema golden artifact — Core-taxonomy tripwire anchor">
+    <!--
+      TelemetryEventBuilderTests.Build_CoreTaxonomy_MatchesFrozenV1CoreCatalogue derives
+      its expected step-kind-id/family sets from the ENGINE's frozen v1 JSON Schema
+      golden artifact, rather than a second hardcoded twin list (a twin list only
+      catches drift between two copies edited together, not a provider that reaches the
+      schema while the telemetry allowlist is left behind).
+      Linked (not duplicated) from its owning project, Vouchfx.Engine.Compilation.Tests,
+      where the SAME physical file is the target of two CI gates: SchemaFreezeTests
+      (byte-for-byte vs. SchemaComposer's live output, S08-F-01) and
+      VsCodeShippedSchemaSyncTests (byte-for-byte vs. the VSCode extension's shipped
+      copy). No ProjectReference to Vouchfx.Engine.Compilation or any provider assembly
+      is needed — this project only reads the committed JSON as plain content, it never
+      composes a registry.
+    -->
+    <Content Include="..\Vouchfx.Engine.Compilation.Tests\Golden\composed-schema.v1.json">
+      <Link>Golden\composed-schema.v1.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

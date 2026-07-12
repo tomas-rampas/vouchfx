@@ -70,35 +70,65 @@ public static class TelemetryEventBuilder
     private const string CustomBucket = "custom";
 
     /// <summary>
-    /// The FROZEN v1 Core step-FAMILY taxonomy — the six built-in Core families.  A
-    /// step-started <c>kind</c> whose family is in this closed set is counted under that
-    /// real family name; any other (custom/non-Core) family is bucketed as
-    /// <see cref="CustomBucket"/> so an author-chosen family id never leaves the machine.
+    /// The FROZEN v1 Core step-FAMILY taxonomy — the eleven built-in Core families
+    /// (Table 5.1 / docs §13), current since the 2026-07-08 provider-batch expansion
+    /// (engine #174-177: bare aliases retired, 18 → 25 providers).  A step-started
+    /// <c>kind</c> whose family is in this closed set is counted under that real family
+    /// name; any other (custom/non-Core) family is bucketed as <see cref="CustomBucket"/>
+    /// so an author-chosen family id never leaves the machine.
     /// </summary>
     private static readonly HashSet<string> CoreFamilies = new(StringComparer.Ordinal)
     {
         "http",
         "db-assert",
-        "script",
         "mq-publish",
         "mq-expect",
+        "cache-assert",
+        "mail-expect",
         "webhook-listen",
+        "metrics-assert",
+        "storage-assert",
+        "trace-expect",
+        "script",
     };
 
     /// <summary>
-    /// The FROZEN v1 Core step-PROVIDER taxonomy — the six built-in Core
-    /// <c>family.provider</c> ids.  A step-started <c>kind</c> in this closed set is
-    /// counted under that real id; any other (custom/non-Core) id is bucketed as
-    /// <see cref="CustomBucket"/> so an author-chosen provider id never leaves the machine.
+    /// The FROZEN v1 Core step-PROVIDER taxonomy — the twenty-five built-in Core
+    /// <c>family.provider</c> ids across the eleven families above, current since the
+    /// 2026-07-08 provider-batch expansion (engine #174-177: bare aliases retired,
+    /// 18 → 25 providers).  A step-started <c>kind</c> in this closed set is counted
+    /// under that real id; any other (custom/non-Core, including Community-tier hub
+    /// provider ids such as <c>rpc.json-rpc</c>) id is bucketed as
+    /// <see cref="CustomBucket"/> so an author-chosen provider id never leaves the
+    /// machine.
     /// </summary>
     private static readonly HashSet<string> CoreFullIds = new(StringComparer.Ordinal)
     {
         "http.rest",
+        "http.soap",
         "db-assert.postgres",
-        "script.csharp",
+        "db-assert.mysql",
+        "db-assert.sqlserver",
+        "db-assert.mongodb",
+        "db-assert.dynamodb",
         "mq-publish.kafka",
+        "mq-publish.rabbitmq",
+        "mq-publish.nats",
+        "mq-publish.azureservicebus",
+        "mq-publish.redis",
         "mq-expect.kafka",
+        "mq-expect.rabbitmq",
+        "mq-expect.nats",
+        "mq-expect.azureservicebus",
+        "mq-expect.redis",
+        "cache-assert.redis",
+        "cache-assert.elasticsearch",
+        "mail-expect.smtp",
         "webhook-listen.http",
+        "metrics-assert.prometheus",
+        "storage-assert.s3",
+        "trace-expect.otlp",
+        "script.csharp",
     };
 
     /// <summary>
