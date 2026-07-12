@@ -5,6 +5,8 @@
 // time-to-first-test.  All from a synthetic stream — no run, no container.
 
 using System.Reflection;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Xunit;
@@ -270,68 +272,96 @@ public sealed class TelemetryEventBuilderTests
     [Fact]
     public void Build_CoreTaxonomy_MatchesFrozenV1CoreCatalogue()
     {
-        // Hardcoded here to MIRROR the frozen v1 Core catalogue: 25 provider ids across
-        // 11 families (Table 5.1 / docs §13), current since the 2026-07-08 provider-batch
-        // expansion (engine #174-177: bare aliases retired, 7 providers added, 18 -> 25).
-        // This test pins TelemetryEventBuilder's private CoreFamilies/CoreFullIds sets
-        // via reflection so the NEXT provider expansion fails HERE, loudly, instead of
-        // silently mis-bucketing new Core providers under "custom" forever.
-        var expectedFamilies = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "http",
-            "db-assert",
-            "mq-publish",
-            "mq-expect",
-            "cache-assert",
-            "mail-expect",
-            "webhook-listen",
-            "metrics-assert",
-            "storage-assert",
-            "trace-expect",
-            "script",
-        };
+        // ANCHORED to the engine's frozen v1 JSON Schema golden artifact — NOT a second
+        // hardcoded twin list.  A hardcoded twin only catches drift between two copies
+        // edited together; it stays green if a 26th provider ships while BOTH the schema
+        // gains it AND TelemetryEventBuilder's CoreFamilies/CoreFullIds are left
+        // untouched — precisely the drift that shipped this bug in the first place.
+        //
+        // Instead, this test reads Golden/composed-schema.v1.json — linked into this
+        // project (see the .csproj) from its owning project,
+        // Vouchfx.Engine.Compilation.Tests, where it is the SAME file:
+        //   • SchemaFreezeTests (S08-F-01) diffs SchemaComposer's live output against it
+        //     byte-for-byte — any schema change (including a new provider's fragment)
+        //     must regenerate and re-commit this file;
+        //   • VsCodeShippedSchemaSyncTests keeps the VSCode extension's shipped schema
+        //     byte-for-byte identical to that same composed output.
+        // So this file is the actual frozen v1 contract of "which step-kind ids exist" —
+        // a provider that reaches the schema but is forgotten in the telemetry allowlist
+        // now fails HERE, for real, because the expected set comes from the schema
+        // itself, not from a second manually-maintained list.
+        var schemaPath = Path.Combine(AppContext.BaseDirectory, "Golden", "composed-schema.v1.json");
+        Assert.True(
+            File.Exists(schemaPath),
+            $"Frozen v1 schema golden artifact not found at '{schemaPath}'. Check the "
+            + "Content/Link item in Vouchfx.Engine.Telemetry.Tests.csproj.");
 
-        var expectedFullIds = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "http.rest",
-            "http.soap",
-            "db-assert.postgres",
-            "db-assert.mysql",
-            "db-assert.sqlserver",
-            "db-assert.mongodb",
-            "db-assert.dynamodb",
-            "mq-publish.kafka",
-            "mq-publish.rabbitmq",
-            "mq-publish.nats",
-            "mq-publish.azureservicebus",
-            "mq-publish.redis",
-            "mq-expect.kafka",
-            "mq-expect.rabbitmq",
-            "mq-expect.nats",
-            "mq-expect.azureservicebus",
-            "mq-expect.redis",
-            "cache-assert.redis",
-            "cache-assert.elasticsearch",
-            "mail-expect.smtp",
-            "webhook-listen.http",
-            "metrics-assert.prometheus",
-            "storage-assert.s3",
-            "trace-expect.otlp",
-            "script.csharp",
-        };
+        using var schemaDoc = JsonDocument.Parse(File.ReadAllText(schemaPath));
+
+        // Every step-kind id in the schema is a dotted "family.provider" token: the
+        // family half is letters/hyphens only (e.g. "db-assert"), the provider half may
+        // also contain digits (none currently do, but the pattern allows it).  Anchored
+        // full-string match so a quoted prose fragment (e.g. the `type` field's
+        // description, which MENTIONS "http.rest" mid-sentence) can never match — only a
+        // JSON string value that IS exactly such a token counts.
+        var stepKindIdPattern = new Regex("^[a-z-]+\\.[a-z0-9-]+$", RegexOptions.None);
+        var stepKindIds = new HashSet<string>(StringComparer.Ordinal);
+        CollectMatchingStrings(schemaDoc.RootElement, stepKindIdPattern, stepKindIds);
+
+        // Sanity on the extraction itself: exactly the 25 frozen v1 ids, spot-checking
+        // one from the 2026-07-08 expansion batch that must NOT have been missed.
+        Assert.Equal(25, stepKindIds.Count);
+        Assert.Contains("storage-assert.s3", stepKindIds);
+
+        var expectedFamilies = new HashSet<string>(
+            stepKindIds.Select(id => id[..id.IndexOf('.', StringComparison.Ordinal)]),
+            StringComparer.Ordinal);
 
         var actualFamilies = GetCoreTaxonomyField("CoreFamilies");
         var actualFullIds = GetCoreTaxonomyField("CoreFullIds");
 
         Assert.Equal(
-            expectedFamilies.OrderBy(x => x, StringComparer.Ordinal),
-            actualFamilies.OrderBy(x => x, StringComparer.Ordinal));
-        Assert.Equal(11, actualFamilies.Count);
+            stepKindIds.OrderBy(x => x, StringComparer.Ordinal),
+            actualFullIds.OrderBy(x => x, StringComparer.Ordinal));
 
         Assert.Equal(
-            expectedFullIds.OrderBy(x => x, StringComparer.Ordinal),
-            actualFullIds.OrderBy(x => x, StringComparer.Ordinal));
-        Assert.Equal(25, actualFullIds.Count);
+            expectedFamilies.OrderBy(x => x, StringComparer.Ordinal),
+            actualFamilies.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Recursively walks every string value in the parsed schema document and adds it
+    /// to <paramref name="results"/> when it fully matches <paramref name="pattern"/>.
+    /// </summary>
+    private static void CollectMatchingStrings(JsonElement element, Regex pattern, HashSet<string> results)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectMatchingStrings(property.Value, pattern, results);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectMatchingStrings(item, pattern, results);
+                }
+
+                break;
+
+            case JsonValueKind.String:
+                var value = element.GetString();
+                if (value is not null && pattern.IsMatch(value))
+                {
+                    results.Add(value);
+                }
+
+                break;
+        }
     }
 
     [Fact]
