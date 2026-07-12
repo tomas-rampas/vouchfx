@@ -236,6 +236,27 @@ def main() -> int:
     if leaked == 0:
         print("  none found")
 
+    print("\n== hand-drawn diagrams in rendered code blocks ==")
+    # Hand-aligned box-drawing diagrams render broken (misaligned columns) and
+    # are banned on the published sites — structured diagrams use ```mermaid
+    # fences instead. A <pre> block with four or more box-drawing lines is
+    # diagram-scale; short CLI-output excerpts (tree glyphs etc.) stay legal.
+    broken_art = 0
+    # The whole Unicode Box Drawing block (U+2500-U+257F): single/double/heavy/
+    # dashed lines, all corners and intersections.
+    box_chars = re.compile("[─-╿]")
+    pre_block = re.compile(r"<pre[^>]*>.*?</pre>", re.DOTALL)
+    for name, pages in all_pages.items():
+        for url, body in pages.items():
+            for block in pre_block.findall(body):
+                art_lines = sum(1 for line in block.splitlines() if box_chars.search(line))
+                if art_lines >= 4:
+                    broken_art += 1
+                    findings += 1
+                    print(f"  DIAGRAM [{name}] {url}: a rendered code block has {art_lines} box-drawing lines (convert to a mermaid fence)")
+    if broken_art == 0:
+        print("  none found")
+
     print("\n== live facts vs. rendered landing status lines ==")
     live_facts = fetch_live_facts()
     stale = 0
