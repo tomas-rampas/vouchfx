@@ -235,11 +235,30 @@ internal static class DcpPathResolver
                 packageId: null, version: null, probedPath: null, metadataDcpCliPath));
         }
 
-        var cacheRoot = ResolveCacheRoot(nugetPackagesEnvironmentVariable, userProfileDirectory);
-        var packageId = DcpPackageIdPrefix + runtimeIdentifier.ToLowerInvariant();
-        var exeName = IsWindowsRid(runtimeIdentifier) ? "dcp.exe" : "dcp";
-        var candidate = Path.Combine(cacheRoot, packageId, version, "tools", exeName);
+var cacheRoot = ResolveCacheRoot(nugetPackagesEnvironmentVariable, userProfileDirectory);
 
+// Normalize to portable RIDs (RuntimeInformation.RuntimeIdentifier can be OS-version/distro-specific).
+var rid = runtimeIdentifier.Trim().ToLowerInvariant();
+if (rid.StartsWith("win", StringComparison.Ordinal))
+{
+    rid = rid.Contains("arm64", StringComparison.Ordinal) ? "win-arm64"
+        : rid.Contains("x86", StringComparison.Ordinal) ? "win-x86"
+        : "win-x64";
+}
+else if (rid.StartsWith("osx", StringComparison.Ordinal))
+{
+    rid = rid.Contains("arm64", StringComparison.Ordinal) ? "osx-arm64" : "osx-x64";
+}
+else if (rid.Contains('.') &&
+         (rid.EndsWith("-x64", StringComparison.Ordinal) || rid.EndsWith("-arm64", StringComparison.Ordinal)))
+{
+    // Typical distro-specific Linux RIDs look like "ubuntu.22.04-x64"; Aspire packages are "linux-x64"/"linux-arm64".
+    rid = rid.EndsWith("-arm64", StringComparison.Ordinal) ? "linux-arm64" : "linux-x64";
+}
+
+var packageId = DcpPackageIdPrefix + rid;
+var exeName = IsWindowsRid(rid) ? "dcp.exe" : "dcp";
+var candidate = Path.Combine(cacheRoot, packageId, version, "tools", exeName);
         return fileExists(candidate)
             ? DcpPathResolution.Override(candidate)
             : DcpPathResolution.Unresolvable(
