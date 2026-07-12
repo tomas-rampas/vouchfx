@@ -244,8 +244,8 @@ def main() -> int:
     broken_art = 0
     # The whole Unicode Box Drawing block (U+2500-U+257F): single/double/heavy/
     # dashed lines, all corners and intersections.
-    box_chars = re.compile("[─-╿]")
-    pre_block = re.compile(r"<pre[^>]*>.*?</pre>", re.DOTALL)
+    box_chars = re.compile("[\u2500-\u257f]")
+    pre_block = re.compile(r"<pre[^>]*>.*?</pre>", re.DOTALL | re.IGNORECASE)
     for name, pages in all_pages.items():
         for url, body in pages.items():
             for block in pre_block.findall(body):
