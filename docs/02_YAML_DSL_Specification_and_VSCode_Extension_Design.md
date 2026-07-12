@@ -248,7 +248,7 @@ This section defines the language's step types. The first six subsections descri
 
 The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author always writes the dotted form — `type: db-assert.postgres` — there is no bare-family shorthand, even for a family with only one registered provider today: a family gaining a second provider later must never change the meaning of a step type an existing file already uses. The editor and error messages likewise only ever render the dotted name. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
 
-Together the eight shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
+Together the eleven shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
 
 ## 5.1 The http family
 
@@ -348,7 +348,7 @@ Example (a successful call with an XPath assertion and capture, and a SOAP Fault
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. The dotted form is always required; a bare `type: mq-publish` is not a valid step type.
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has five Core providers: `mq-publish.kafka` (with full schema-registry and Avro support), `mq-publish.rabbitmq`, `mq-publish.nats`, `mq-publish.azureservicebus`, and `mq-publish.redis` (Redis Streams). The dotted form is always required; a bare `type: mq-publish` is not a valid step type.
 
 ### 5.2.1 mq-publish.kafka: plain payload
 

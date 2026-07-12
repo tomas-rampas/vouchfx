@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Aspire.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -29,6 +31,18 @@ namespace Vouchfx.Engine.Orchestration;
 /// to the name of an assembly that carries the DCP metadata attributes — typically the calling
 /// test-or-AppHost assembly that references <c>Aspire.Hosting.AppHost</c> directly with
 /// <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c> and the <c>Aspire.AppHost.Sdk</c>.
+/// </para>
+/// <para>
+/// Packaged-tool DCP path self-heal: the embedded <c>dcpclipath</c> metadata is an ABSOLUTE,
+/// machine-specific path baked in at build time. A <c>vouchfx</c> global tool packed on CI
+/// carries the CI runner's path, which does not exist on a user's machine even when their
+/// own NuGet cache holds the matching <c>aspire.hosting.orchestration.&lt;their-rid&gt;</c>
+/// package. Before <c>builder.Build()</c>, <see cref="StartAsync"/> probes whether the
+/// embedded path exists here and, if not, overrides <c>DcpPublisher:CliPath</c> with the
+/// equivalent package resolved from the current machine's own cache — UNLESS the user has
+/// set <c>ASPIRE_DCP_PATH</c> themselves, in which case this self-heal steps aside entirely
+/// and lets Aspire's own (higher-precedence-than-metadata) resolution of that variable run
+/// untouched. See <see cref="DcpPathResolver"/> for the full rationale and decision logic.
 /// </para>
 /// <para>
 /// This type is intentionally minimal for S01-A-01. The full Postgres / Kafka / service topology
@@ -87,6 +101,11 @@ public sealed class HeadlessTopology : IAsyncDisposable
 
         var builder = DistributedApplication.CreateBuilder(options);
 
+        // Packaged-tool DCP path self-heal (see the class remarks and DcpPathResolver for
+        // the full rationale). Must run before builder.Build() so the DcpPublisher:CliPath
+        // override (when applied) is visible to Aspire's own DcpOptions configuration pass.
+        ApplyDcpPathSelfHeal(builder, options.AssemblyName);
+
         // Make DCP's stop synchronous so it deletes containers/networks before the host exits
         // (§4.5 teardown discipline). The default is false: DCP fires a "Stopping" PATCH and
         // returns immediately, so the detached DCP apiserver finishes deletion AFTER the process
@@ -118,6 +137,91 @@ public sealed class HeadlessTopology : IAsyncDisposable
         }
 
         return new HeadlessTopology(app);
+    }
+
+    /// <summary>
+    /// Applies the packaged-tool DCP path self-heal (see the class remarks and
+    /// <see cref="DcpPathResolver"/>). Resolves the same host assembly Aspire itself will
+    /// resolve from <paramref name="appHostAssemblyName"/>, reads its <c>DcpCliPath</c>
+    /// metadata, and — only when that path does not exist on THIS machine — overrides
+    /// <c>DcpPublisher:CliPath</c> with the equivalent package found under this machine's
+    /// own NuGet cache, or throws a classified <see cref="OrchestrationException"/> when
+    /// no fallback can be found either.
+    /// </summary>
+    /// <remarks>
+    /// Any failure to resolve the host assembly itself (bad name, load failure, no entry
+    /// assembly) is deliberately swallowed: it preserves today's behaviour and lets
+    /// Aspire's own <c>OptionsValidationException</c> surface exactly as it did before
+    /// this self-heal existed, rather than risking a NEW failure mode in a path this
+    /// method cannot itself diagnose.
+    /// </remarks>
+    private static void ApplyDcpPathSelfHeal(IDistributedApplicationBuilder builder, string? appHostAssemblyName)
+    {
+        Assembly? hostAssembly;
+        try
+        {
+            hostAssembly = appHostAssemblyName is null
+                ? Assembly.GetEntryAssembly()
+                : Assembly.Load(new AssemblyName(appHostAssemblyName));
+        }
+        catch
+        {
+            hostAssembly = null;
+        }
+
+        if (hostAssembly is null)
+        {
+            return;
+        }
+
+        var metadataDcpCliPath = hostAssembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(m => string.Equals(m.Key, "DcpCliPath", StringComparison.OrdinalIgnoreCase))
+            ?.Value;
+
+        var aspireHostingVersion = typeof(DistributedApplication).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        var resolution = DcpPathResolver.Resolve(
+            metadataDcpCliPath: metadataDcpCliPath,
+            fileExists: File.Exists,
+            nugetPackagesEnvironmentVariable: Environment.GetEnvironmentVariable("NUGET_PACKAGES"),
+            userProfileDirectory: Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            runtimeIdentifier: RuntimeInformation.RuntimeIdentifier,
+            aspireHostingInformationalVersion: aspireHostingVersion,
+            // Read BEFORE any of the above are consulted (DcpPathResolver checks it first):
+            // ASPIRE_DCP_PATH is the user's own escape hatch, honoured by Aspire itself at
+            // priority 2 — this self-heal must never pre-empt it with an Unresolvable throw
+            // nor outrank it with a DcpPublisher:CliPath override. See DcpPathResolver's
+            // "DO NOT SHADOW" remarks.
+            aspireDcpPathEnvironmentVariable: Environment.GetEnvironmentVariable("ASPIRE_DCP_PATH"));
+
+        switch (resolution.Kind)
+        {
+            case DcpPathResolutionKind.Override:
+                // ExtensionsPath is auto-derived by Aspire's own ConfigureDefaultDcpOptions
+                // from CliPath's directory once this key is set — no need to set it here.
+                builder.Configuration["DcpPublisher:CliPath"] = resolution.OverridePath;
+                break;
+
+            case DcpPathResolutionKind.Unresolvable:
+                // A structurally-known failure (no message-heuristic guesswork needed): the
+                // embedded path is dead and no local fallback exists. Kind=Provision — this
+                // is neither an image pull, a health gate, nor a discovery failure; it is an
+                // infrastructure-provisioning problem with the orchestrator itself. Always an
+                // Environment error (§12.1), never a test Fail.
+                throw new OrchestrationException(new OrchestrationErrorInfo(
+                    Kind: OrchestrationErrorKind.Provision,
+                    ResourceName: "dcp",
+                    RegistryHost: null,
+                    AuthStatus: null,
+                    Detail: resolution.UnresolvableDetail!));
+
+            case DcpPathResolutionKind.UseEmbedded:
+            default:
+                break;
+        }
     }
 
     /// <inheritdoc />

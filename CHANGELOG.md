@@ -230,3 +230,15 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
   Verified tier endorsement is replaced by the **Vouched badge** — a maintainer-awarded registry metadata entry
   (`vouched: true` + `vouchedVersion` = exact reviewed version) awarded after conformance review; one hygiene-gated
   contribution flow on the hub; no engine code or contract change.
+
+### Fixed
+
+- **The NuGet-installed `vouchfx` tool now works on machines other than the release build runner.** Packages up
+  to and including 1.0.0-alpha.5 located Aspire's DCP orchestrator only through the absolute path the
+  `Aspire.AppHost.Sdk` baked into assembly metadata at pack time (`/home/runner/.nuget/packages/…linux-x64…` for
+  NuGet.org packages), so every cross-machine install failed its first `vouchfx run` with an infrastructure
+  error. The engine now self-heals at topology start: when the baked path does not exist, it re-resolves the
+  platform- and version-exact `aspire.hosting.orchestration.<rid>` package from the executing machine's NuGet
+  cache (`NUGET_PACKAGES`, else `~/.nuget/packages`) via the `DcpPublisher:CliPath` configuration override, and
+  otherwise fails with an actionable environment error naming the missing package and remedy. A
+  cross-machine smoke test in the release pipeline now gates publishing.

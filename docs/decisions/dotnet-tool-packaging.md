@@ -1,6 +1,6 @@
 # Decision record: dotnet tool packaging for the vouchfx CLI
 
-**Status:** Decided  
+**Status:** Decided — amended 2026-07-12 (see Addendum)  
 **Date:** 2026-06-25
 
 ## Context
@@ -64,7 +64,13 @@ The nupkg is ~61 MB (framework-dependent; all transitive dependencies bundled). 
 
 - **Gain:** developers can `dotnet tool install -g vouchfx` without cloning or building the repository.
 - **Loss:** requires the presence of Aspire orchestration packages in the NuGet cache, which is not guaranteed on a completely fresh system.
-- **Mitigation:** document the DCP cache caveat; provide the self-contained native executable as the portable fallback for machines without a .NET SDK or the Aspire workload.
+- **Mitigation:** document the DCP cache caveat; provide the self-contained native executable as the portable fallback for machines without a .NET SDK.
+
+## Addendum (2026-07-12): the "decisive result" above did not hold cross-machine
+
+The empirical pass recorded under Evidence was a **same-machine** result: the tool was packed and executed on the same Windows machine, so the absolute DCP path the Aspire.AppHost.Sdk baked into `AssemblyMetadata` (`dcpclipath`) happened to exist. The published NuGet.org packages are packed on `ubuntu-latest`, so they carry `/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp` — a path (and RID) that cannot exist on any user machine. Every install of `vouchfx` 1.0.0-alpha.5 and earlier from NuGet.org therefore failed its first `vouchfx run` with `FileNotFoundException: The Aspire orchestration component is not installed at "/home/runner/..."`, regardless of the user's NuGet cache contents. Reproduced deterministically by packing against an alternate `NUGET_PACKAGES` root and hiding it before execution.
+
+**Resolution:** the engine now self-heals at topology start. `DcpPathResolver` (in `Vouchfx.Engine.Orchestration`) checks the baked `DcpCliPath` metadata; when the path does not exist it re-resolves `aspire.hosting.orchestration.<executing-machine-RID>/<pinned Aspire version>/tools/dcp` from the executing machine's NuGet cache (`NUGET_PACKAGES`, else `~/.nuget/packages`) and injects it via the `DcpPublisher:CliPath` configuration key, which Aspire 13.4.2 gives precedence over assembly metadata (`ConfigureDefaultDcpOptions` in upstream `DcpOptions.cs`; `ExtensionsPath` is auto-derived). If the cache lacks the package, topology start fails with an actionable environment error naming the exact package, version, probed path, and remedy. The `smoke-test-packaged-tool` job in `release.yml` now simulates the cross-machine hand-off (dead baked path, populated user cache) and gates `publish-release`. A mention of the retired Aspire *workload* as a fallback has been removed throughout: the workload was discontinued with Aspire 9 and installs Aspire 8.2.x packs to the SDK packs directory, so it can never satisfy the version-exact NuGet-cache requirement.
 
 ## Related Documents
 

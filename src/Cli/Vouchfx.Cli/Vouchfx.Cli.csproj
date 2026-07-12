@@ -24,14 +24,31 @@
   <!-- dotnet tool packaging (S11-D-03).
        PackAsTool=true causes `dotnet pack` to produce a tool nupkg runnable via
        `dotnet tool install -g vouchfx`. The tool is framework-dependent (net8.0);
-       DCP binaries are NOT bundled — they are resolved at runtime from the NuGet
-       package cache via the dcpclipath AssemblyMetadata that the Aspire.AppHost.Sdk
-       bakes in at build time. On the build machine this works out of the box (the
-       NuGet cache path matches what was embedded). For cross-machine distribution
-       the user must have the matching Aspire workload or NuGet packages installed so
-       the DCP binaries are present; the embedded paths resolve into the standard
-       per-user NuGet cache (~/.nuget/packages/aspire.hosting.orchestration.<RID>/).
-       See docs/decisions/S11-D-03-dotnet-tool-packaging.md for the full analysis. -->
+       DCP binaries are NOT bundled — Aspire.AppHost.Sdk bakes an ABSOLUTE,
+       machine-specific dcpclipath (and aspiredashboardpath) AssemblyMetadata path
+       onto THIS assembly at build time, pointing at the PACKAGING machine's own
+       NuGet cache (e.g. the GitHub Actions runner's
+       /home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp).
+       That literal path does NOT "resolve into the standard per-user NuGet cache" on a
+       different machine — it is a dead path there, wrong root AND (usually) wrong RID.
+       Historically this broke the packaged tool on every machine other than the one
+       that built it, even when the user's OWN cache held the matching
+       aspire.hosting.orchestration.<their-rid> package.
+       FIX (fix/packaged-tool-dcp-resolution): HeadlessTopology.StartAsync
+       (Vouchfx.Engine.Orchestration) now self-heals this at run time — before
+       builder.Build() it probes whether the embedded path exists on the CURRENT
+       machine, and if not, recomputes the same package/version under the current
+       machine's own NuGet cache (NUGET_PACKAGES, else ~/.nuget/packages) and RID, and
+       overrides DcpPublisher:CliPath via IConfiguration (a legitimate, higher-precedence
+       channel Aspire itself already exposes). See DcpPathResolver for the full decision
+       logic. So the tool now works on any machine that has PREVIOUSLY restored an
+       Aspire project (any developer or CI environment that has built an Aspire app) —
+       the caveat is narrower than before: only a machine that has NEVER restored the
+       matching Aspire.AppHost.Sdk package still needs `git clone
+       https://github.com/tomas-rampas/vouchfx && dotnet restore vouchfx/vouchfx.sln`
+       (or ASPIRE_DCP_PATH) first; the self-heal then throws an actionable, classified
+       Environment-error explaining exactly that.
+       See docs/decisions/dotnet-tool-packaging.md for the full analysis. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
