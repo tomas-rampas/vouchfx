@@ -183,12 +183,28 @@ public sealed class HeadlessTopology : IAsyncDisposable
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion;
 
+        static string ResolvePortableRid()
+        {
+            var arch = RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64 => "x64",
+                Architecture.X86 => "x86",
+                Architecture.Arm64 => "arm64",
+                _ => RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
+            };
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return $"win-{arch}";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return $"osx-{arch}";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return $"linux-{arch}";
+            return RuntimeInformation.RuntimeIdentifier;
+        }
+
         var resolution = DcpPathResolver.Resolve(
             metadataDcpCliPath: metadataDcpCliPath,
             fileExists: File.Exists,
             nugetPackagesEnvironmentVariable: Environment.GetEnvironmentVariable("NUGET_PACKAGES"),
             userProfileDirectory: Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            runtimeIdentifier: RuntimeInformation.RuntimeIdentifier,
+            runtimeIdentifier: ResolvePortableRid(),
             aspireHostingInformationalVersion: aspireHostingVersion,
             // Read BEFORE any of the above are consulted (DcpPathResolver checks it first):
             // ASPIRE_DCP_PATH is the user's own escape hatch, honoured by Aspire itself at
