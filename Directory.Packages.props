@@ -5,6 +5,12 @@
   </PropertyGroup>
   <ItemGroup Label="Roslyn scripting (memory model, §5)">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
+    <!-- Microsoft.CodeAnalysis.CSharp (the plain compiler, not the Scripting layer above) is
+         also referenced directly by Vouchfx.Engine.Orchestration.Tests: HeadlessTopologySelfHealTests
+         compiles tiny synthetic host assemblies at test time (a fake AssemblyMetadata("DcpCliPath", …)
+         carrier) to pin the DCP-path self-heal GLUE without touching Docker/DCP. Same version as the
+         Scripting package above — they ship in lockstep from the same Roslyn release. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
   <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
     <PackageVersion Include="Aspire.Hosting" Version="13.4.2" />

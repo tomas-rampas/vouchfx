@@ -62,7 +62,7 @@ dotnet restore vouchfx/vouchfx.sln
 
 Without the cached orchestration package, `vouchfx run` reports an environment error — never a test verdict — whose message names the exact missing package and this remedy. If you keep DCP somewhere non-standard, point the `ASPIRE_DCP_PATH` environment variable at the directory containing the `dcp` executable instead.
 
-> **Known defect in 1.0.0-alpha.5 and earlier:** those pre-releases resolve DCP only through a path baked in on the release build machine, so the NuGet-installed tool fails with `The Aspire orchestration component is not installed at "/home/runner/..."` on every other machine regardless of your cache. Upgrade to a newer pre-release, or run from source (below), until then.
+> **Known defect in 1.0.0-alpha.5 and earlier:** those pre-releases resolve DCP only through a path baked in on the release build machine, so the NuGet-installed tool fails with `The Aspire orchestration component is not installed at "/home/runner/..."` on every other machine regardless of your cache. Fixed in **1.0.0-alpha.6** — upgrade (`dotnet tool update --global vouchfx --prerelease`), or run from source (below). Full write-up: [KB: DCP orchestrator not found](kb/dcp-orchestrator-portability.md).
 
 ## Building vouchfx from source
 

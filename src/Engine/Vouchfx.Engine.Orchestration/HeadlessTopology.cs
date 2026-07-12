@@ -155,7 +155,16 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// this self-heal existed, rather than risking a NEW failure mode in a path this
     /// method cannot itself diagnose.
     /// </remarks>
-    private static void ApplyDcpPathSelfHeal(IDistributedApplicationBuilder builder, string? appHostAssemblyName)
+    /// <remarks>
+    /// <c>internal</c> (not <c>private</c>) so the Orchestration test project
+    /// (<c>HeadlessTopologySelfHealTests</c>, granted access via the assembly-level
+    /// <c>InternalsVisibleTo</c> in this project's .csproj) can pin the GLUE between
+    /// <see cref="DcpPathResolver"/>'s pure decision core and this method's real
+    /// assembly-metadata / environment-variable reads and its <c>builder.Configuration</c>
+    /// write — without starting Docker, DCP, or an Aspire host. No production caller outside
+    /// <see cref="StartAsync"/> exists; the signature and behaviour are otherwise unchanged.
+    /// </remarks>
+    internal static void ApplyDcpPathSelfHeal(IDistributedApplicationBuilder builder, string? appHostAssemblyName)
     {
         Assembly? hostAssembly;
         try

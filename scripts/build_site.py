@@ -44,6 +44,7 @@ DOCS: list[tuple[str, str, str]] = [
     ("docs/language-reference.md", "User guides", "Language reference (generated)"),
     ("docs/memory-harness.md", "User guides", "The memory-leak harness"),
     ("docs/accessibility.md", "User guides", "Accessibility"),
+    ("docs/kb/dcp-orchestrator-portability.md", "Knowledge base", "KB: DCP orchestrator not found"),
     ("docs/ecosystem.md", "Ecosystem", "The ecosystem"),
     ("docs/roadmap.md", "Project", "Roadmap"),
     ("CHANGELOG.md", "Project", "Changelog"),
@@ -386,6 +387,17 @@ PORTAL = """<!DOCTYPE html>
       <a class="doc-card" href="docs/accessibility.html">
         <span class="doc-card__k">A11Y</span><h3>Accessibility</h3>
         <p>The WCAG 2.1 AA conformance record for the terminal and HTML report renderers — the audit, findings, and remediation.</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="portal__group">
+    <h2>Knowledge base</h2>
+    <p>Incident write-ups for notable defects: symptom, root cause, resolution, and how regression is prevented.</p>
+    <div class="doc-cards">
+      <a class="doc-card" href="docs/kb/dcp-orchestrator-portability.html">
+        <span class="doc-card__k">KB</span><h3>DCP orchestrator not found</h3>
+        <p>Why every NuGet install of the tool up to 1.0.0-alpha.5 failed its first run — the baked build-machine DCP path, the same-machine smoke-test blind spot, and the runtime self-heal that fixed it.</p>
       </a>
     </div>
   </section>
