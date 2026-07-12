@@ -149,13 +149,14 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// no fallback can be found either.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Any failure to resolve the host assembly itself (bad name, load failure, no entry
     /// assembly) is deliberately swallowed: it preserves today's behaviour and lets
     /// Aspire's own <c>OptionsValidationException</c> surface exactly as it did before
     /// this self-heal existed, rather than risking a NEW failure mode in a path this
     /// method cannot itself diagnose.
-    /// </remarks>
-    /// <remarks>
+    /// </para>
+    /// <para>
     /// <c>internal</c> (not <c>private</c>) so the Orchestration test project
     /// (<c>HeadlessTopologySelfHealTests</c>, granted access via the assembly-level
     /// <c>InternalsVisibleTo</c> in this project's .csproj) can pin the GLUE between
@@ -163,6 +164,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// assembly-metadata / environment-variable reads and its <c>builder.Configuration</c>
     /// write — without starting Docker, DCP, or an Aspire host. No production caller outside
     /// <see cref="StartAsync"/> exists; the signature and behaviour are otherwise unchanged.
+    /// </para>
     /// </remarks>
     internal static void ApplyDcpPathSelfHeal(IDistributedApplicationBuilder builder, string? appHostAssemblyName)
     {

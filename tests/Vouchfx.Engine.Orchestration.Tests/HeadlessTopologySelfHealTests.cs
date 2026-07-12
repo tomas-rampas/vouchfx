@@ -40,7 +40,10 @@
 // internally) then finds directly. Assembly.Load(byte[]) does NOT get cached the same way: a
 // later by-name lookup for that same simple name throws FileNotFoundException. Each synthetic
 // assembly is given a fresh Guid-suffixed simple name, so no AssemblyLoadContext.Resolving handler
-// is ever needed — nothing to register or leak between tests.
+// is ever needed — nothing to register or leak between tests. (The synthetic assemblies themselves
+// DO stay resident in the non-collectible Default ALC for the process lifetime — intentional and
+// bounded at one tiny assembly per test, and inert: each unique Guid-suffixed name is resolved by
+// nothing else in the process.)
 //
 // For the "metadata already resolves on this machine" (UseEmbedded) scenario, no synthetic
 // assembly is needed at all: THIS test project itself carries <IsAspireHost>true</IsAspireHost> +

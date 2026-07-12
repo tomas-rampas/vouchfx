@@ -29,7 +29,7 @@ The run reports an **Environment error** (infrastructure), never a test verdict,
 vouchfx orchestrates container topologies through .NET Aspire's DCP (Developer Control Plane). DCP's binaries are not part of Aspire's ordinary NuGet dependency graph; they ship in a platform-specific package, `aspire.hosting.orchestration.<rid>`, and Aspire locates them through metadata that the `Aspire.AppHost.Sdk` **bakes into the host assembly at build time**:
 
 - `DcpCliPath` — the **absolute** path of the `dcp` executable inside the **build machine's** NuGet cache, for the **build machine's** RID;
-- `DcpExtensionsPath`, `aspiredashboardpath` — companions with the same property.
+- `DcpExtensionsPath`, `aspiredashboardpath` — companions carrying the same build-machine-baked absolute paths.
 
 At run time, Aspire 13.4.2 resolves the DCP location in this precedence order (upstream `Aspire.Hosting/Dcp/DcpOptions.cs`):
 
