@@ -51,13 +51,18 @@ dotnet tool update --global vouchfx --prerelease
 
 From the v1.0 GA release onwards the plain commands (without `--prerelease`) work too.
 
-**The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator, whose binaries are resolved from the per-user NuGet package cache (`~/.nuget/packages/`). Any machine that has ever built or restored a .NET Aspire project already has them. On a completely fresh machine, populate the cache once before your first run — either restore any project that references Aspire (for example, clone this repository and run `dotnet restore vouchfx.sln`), or install the Aspire workload:
+**The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator. At run time the engine locates the DCP binaries in your per-user NuGet package cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`), in the `aspire.hosting.orchestration.<rid>` package matching your machine's platform and the engine's pinned Aspire version (currently 13.4.2). Any machine that has restored a project carrying `Aspire.AppHost.Sdk` 13.4.2 already has it. On a completely fresh machine, populate the cache once before your first run — clone this repository and restore it:
 
 ```bash
-dotnet workload install aspire
+git clone https://github.com/tomas-rampas/vouchfx.git
+dotnet restore vouchfx/vouchfx.sln
 ```
 
-Without the cached Aspire orchestration packages, the first `vouchfx run` fails with an infrastructure error rather than a test verdict; a `dotnet restore` against an Aspire-referencing project always resolves it.
+(Restoring any other project that carries `Aspire.AppHost.Sdk` at the same version works equally well. Do **not** use the retired `dotnet workload install aspire` command — the Aspire workload was discontinued with Aspire 9, installs the wrong version to the wrong location, and cannot satisfy this prerequisite.)
+
+Without the cached orchestration package, `vouchfx run` reports an environment error — never a test verdict — whose message names the exact missing package and this remedy. If you keep DCP somewhere non-standard, point the `ASPIRE_DCP_PATH` environment variable at the directory containing the `dcp` executable instead.
+
+> **Known defect in 1.0.0-alpha.5 and earlier:** those pre-releases resolve DCP only through a path baked in on the release build machine, so the NuGet-installed tool fails with `The Aspire orchestration component is not installed at "/home/runner/..."` on every other machine regardless of your cache. Upgrade to a newer pre-release, or run from source (below), until then.
 
 ## Building vouchfx from source
 
@@ -281,7 +286,7 @@ To run vouchfx tests in GitHub Actions or GitLab CI/CD, see the [README](../READ
 
 ### Writing a custom provider
 
-Once you're comfortable with the built-in steps, you can write your own. See the [provider hub's implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for the complete journey from contract to conformance. To use someone else's community provider, see the [consuming guide](https://tomas-rampas.github.io/vouchfx-providers/docs/consuming-a-provider.html). For platform-engine details and the frozen v1 contract, see [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the [`examples/Example.Steps.Echo`](../examples/Example.Steps.Echo) worked example — walk through its contributor friction log and README to understand the author's journey.
+Once you're comfortable with the built-in steps, you can write your own. See the [provider hub's implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for the complete journey from contract to conformance. To use someone else's community provider, see the [consuming guide](https://tomas-rampas.github.io/vouchfx-providers/docs/consuming-a-provider.html). For platform-engine details and the frozen v1 contract, see [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the [`examples/Example.Steps.Echo`](../examples/Example.Steps.Echo) worked example — walk through its README, including the contributor friction log it contains, to understand the author's journey.
 
 ## Summary
 

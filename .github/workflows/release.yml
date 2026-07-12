@@ -61,15 +61,36 @@
 # --------------------------------------------------------------------------
 # The vouchfx CLI carries Aspire.AppHost.Sdk 13.4.2, which embeds the DCP
 # binary path (dcpclipath AssemblyMetadata) at build time from the runner's
-# NuGet cache.  The embedded path is ABSOLUTE and machine-specific.
+# NuGet cache.  The embedded path is ABSOLUTE and machine-specific — e.g.
+# /home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp
+# on this pipeline's runner — and that literal path does NOT exist on a
+# user's machine (wrong absolute root and, on non-Linux, the wrong RID too).
 #
-# - nupkg (primary distribution): works on machines whose ~/.nuget/packages/
-#   already contains aspire.hosting.orchestration.<rid>/13.4.2 — any developer
-#   who has previously built/restored an Aspire project.
+# FIXED at runtime (fix/packaged-tool-dcp-resolution):
+# HeadlessTopology.StartAsync (Vouchfx.Engine.Orchestration) now self-heals
+# this before DistributedApplication.Build() — it probes whether the embedded
+# path exists on the CURRENT machine and, if not, recomputes the same
+# package/version under the current machine's own NuGet cache (NUGET_PACKAGES,
+# else ~/.nuget/packages) and RuntimeInformation.RuntimeIdentifier, then
+# overrides DcpPublisher:CliPath via IConfiguration. See DcpPathResolver for
+# the decision logic and the smoke-test-packaged-tool job above for the CI
+# proof (installs the packed nupkg, then runs it against a SECOND, non-default
+# NuGet cache with the default cache moved out of the way, to genuinely
+# simulate a different machine rather than coincidentally reusing this
+# runner's own default cache path).
+#
+# - nupkg (primary distribution): now works on ANY machine whose NuGet cache
+#   (NUGET_PACKAGES, or the default ~/.nuget/packages) contains
+#   aspire.hosting.orchestration.<their-rid>/<matching-version> ANYWHERE —
+#   any developer who has previously built/restored an Aspire project. A
+#   machine that has NEVER restored the matching Aspire.AppHost.Sdk package
+#   still needs one restore first (see DcpPathResolver's actionable error
+#   message) or the ASPIRE_DCP_PATH environment variable.
 #
 # - Self-contained exes (secondary): include the .NET runtime but NOT the DCP
-#   binary.  The embedded DCP path resolves only when the user's NuGet cache
-#   is at the standard path and contains the matching Aspire package.
+#   binary. The same runtime self-heal applies — the embedded DCP path is
+#   resolved the same way regardless of which distribution channel launched
+#   the assembly.
 #
 # - PublishSingleFile is NEVER set: Assembly.Location returns an empty string
 #   for embedded assemblies; Vouchfx.Engine.Compilation uses it to discover
@@ -333,6 +354,201 @@ jobs:
           path: artifacts/sbom/*.bom.json
           if-no-files-found: error
           retention-days: 30
+
+  # ===========================================================================
+  # smoke-test-packaged-tool
+  # Proves the packaged-tool DCP path self-heal (fix/packaged-tool-dcp-resolution) on a
+  # SIMULATED user machine — not the machine that packed the tool.
+  #
+  # WHY the previous approach proved nothing
+  # -----------------------------------------
+  # There was no job that actually installed the packed nupkg as a `dotnet tool` and ran
+  # it; the closest thing was build-dotnet building/testing from source, which never
+  # exercises the packaging step at all. Even a naive "install the nupkg and run it" smoke
+  # test on ubuntu-latest would still be misleading: build-dotnet ALSO runs on
+  # ubuntu-latest, so the ABSOLUTE dcpclipath baked into the tool
+  # (/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp)
+  # uses the SAME conventional $HOME as every other ubuntu-latest job. A plain `dotnet
+  # restore` anywhere in this job would silently repopulate that exact path and the smoke
+  # test would pass whether or not the self-heal fix worked — the DCP portability bug
+  # (reproduced locally with NUGET_PACKAGES=D:\nuget-alt and the real cache hidden) would
+  # never be caught here.
+  #
+  # WHAT this job actually does
+  # ----------------------------
+  #   1. Installs the EXACT nupkg build-dotnet just packed as a real global tool
+  #      (`dotnet tool install --global`), not `dotnet run --project` (every other
+  #      workflow in this repo builds-from-source, which cannot exercise this bug).
+  #   2. Restores an Aspire.AppHost.Sdk-carrying project into a SECOND, non-default NuGet
+  #      cache (NUGET_PACKAGES=$RUNNER_TEMP/user-cache) — standing in for "the user's own
+  #      machine cache", which DOES hold the matching orchestration package on any machine
+  #      that has ever restored an Aspire project.
+  #   3. Moves the DEFAULT NuGet cache (~/.nuget/packages) out of the way — killing the
+  #      baked-in path for real, so only the runtime fallback (DcpPathResolver, probing
+  #      NUGET_PACKAGES / the user-profile default) can make the run succeed.
+  #   4. Runs the reference suite (examples/ci-reference) through the INSTALLED tool with
+  #      NUGET_PACKAGES pointed at the second cache. Before the fix this reproduced the
+  #      reported FileNotFoundException even though the package WAS present, just at a
+  #      different path than the one baked into the assembly metadata.
+  #   5. Restores the original cache afterwards (defensive; nothing currently follows this
+  #      job on the same runner, but keeps it side-effect-free for future edits).
+  #
+  # Gates the actual publish: added to publish-release's `needs` below, so a packaged-tool
+  # portability regression blocks the NuGet/GitHub Release publish, not just a from-source
+  # build.
+  # ===========================================================================
+  smoke-test-packaged-tool:
+    name: Smoke-test packaged tool on a simulated user machine
+    runs-on: ubuntu-latest
+    needs: build-dotnet
+
+    permissions:
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+
+    steps:
+      - name: Checkout (for examples/ci-reference and the Aspire.AppHost.Sdk project to restore)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download nupkg
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: release-nuget/
+
+      # Install the EXACT packed tool as a real end user would — from a local feed built
+      # from the just-packed nupkg. Mirrors the pattern documented and empirically
+      # verified in docs/decisions/dotnet-tool-packaging.md ("dotnet tool install
+      # --tool-path <dir> --add-source <feed> vouchfx").
+      #
+      # PATH robustness (MINOR 3, gatekeeper review): `dotnet tool install --global` places
+      # the shim under ~/.dotnet/tools, which is NOT guaranteed to already be on PATH for
+      # every step's shell on every runner image — relying on a bare `vouchfx` later in this
+      # job would be fragile. Append it to $GITHUB_PATH (applies to every SUBSEQUENT step)
+      # right here, and invoke the just-installed shim by its full path for the immediate
+      # --version smoke check within THIS SAME step (a $GITHUB_PATH append never affects the
+      # step that wrote it).
+      - name: Install packed vouchfx tool (global, from the release nupkg)
+        run: |
+          set -euo pipefail
+          dotnet tool install --global --add-source "$PWD/release-nuget" --version "$VERSION" vouchfx
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          "$HOME/.dotnet/tools/vouchfx" --version
+
+      # Populate the stand-in for "the user's own machine cache" BEFORE hiding the
+      # default cache below — restoring the CLI project (it carries Aspire.AppHost.Sdk)
+      # is sufficient to pull aspire.hosting.orchestration.linux-x64 into this alternate,
+      # non-default location.
+      - name: Restore an Aspire.AppHost.Sdk project into a SECOND NuGet cache
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/user-cache"
+          NUGET_PACKAGES="$RUNNER_TEMP/user-cache" dotnet restore src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj
+
+      # Kill the baked-in path for real (see the job header comment for why this is
+      # necessary even on the "same" runner image as build-dotnet).
+      - name: Hide the default NuGet cache (simulate a machine that never built vouchfx)
+        run: |
+          set -euo pipefail
+          if [ -d "$HOME/.nuget/packages" ]; then
+            mv "$HOME/.nuget/packages" "$RUNNER_TEMP/original-nuget-packages"
+          fi
+
+      # Pre-warm the one image the smoke suite needs (mirrors build.yml / vouchfx-run.yml).
+      - name: Pre-pull traefik/whoami (best-effort, non-fatal)
+        continue-on-error: true
+        run: docker pull traefik/whoami:latest
+
+      # Run the reference suite through the INSTALLED global tool — NOT `dotnet run` —
+      # with NUGET_PACKAGES pointed at the second cache. This is what exercises
+      # DcpPathResolver's fallback inside HeadlessTopology.StartAsync: the embedded
+      # dcpclipath metadata is dead (step above), so the tool must recompute the DCP path
+      # from NUGET_PACKAGES and find it there instead.
+      #
+      # --fail-on-env-error / --fail-on-inconclusive (BLOCKER 1, gatekeeper review): by
+      # DEFAULT `vouchfx run` exits 0 for an EnvironmentError or Inconclusive verdict — only
+      # a genuine product Fail breaks CI without opting in (§12.1, ExitCodes.FromVerdict).
+      # Without these flags, a REGRESSED DcpPathResolver (topology never starts → the
+      # suite's own verdict is EnvironmentError, NOT this step failing) would still exit 0,
+      # the gate would stay green, and a broken packaged tool would publish. These flags
+      # make ANY non-Pass verdict fail this step outright, so a DCP-resolution regression
+      # actually blocks the release.
+      - name: Run reference suite via the installed tool (simulated user machine)
+        env:
+          NUGET_PACKAGES: ${{ runner.temp }}/user-cache
+        run: |
+          set -euo pipefail
+          vouchfx run examples/ci-reference \
+            --junit "$RUNNER_TEMP/smoke-results.xml" \
+            --html "$RUNNER_TEMP/smoke-report.html" \
+            --fail-on-env-error \
+            --fail-on-inconclusive
+
+      # Independently verify a GENUINE pass (BLOCKER 1, gatekeeper review) — belt-and-braces
+      # beyond the exit code above. Two exit-0 paths could otherwise slip through even with
+      # the --fail-on-* flags: (a) a future flag/verdict-mapping regression in the CLI
+      # itself, and (b) `vouchfx run` printing "No *.e2e.yaml scenarios found under '<path>'"
+      # and exiting 0 WITHOUT ever writing a JUnit file at all when scenario discovery finds
+      # nothing (e.g. a typo'd path) — see RunCommand.cs's discovered.Count == 0 branch.
+      # Parse the JUnit root <testsuites> aggregate attributes that JunitXmlRenderer always
+      # writes on one line (tests="N" failures="N" errors="N" skipped="N") and require
+      # tests>0, failures=0, errors=0, skipped=0. A missing/unparseable file fails this step
+      # outright, which is exactly what case (b) needs guarded.
+      - name: Verify the smoke suite genuinely passed (parse JUnit XML)
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/smoke-results.xml"
+          if [ ! -f "$results" ]; then
+            echo "::error::$results was not written — the run produced no report (see the 'no scenarios found' exit-0 path in RunCommand.cs)."
+            exit 1
+          fi
+          root_line=$(grep -m1 '<testsuites ' "$results" || true)
+          if [ -z "$root_line" ]; then
+            echo "::error::No <testsuites> root element found in $results"
+            exit 1
+          fi
+          tests=$(echo "$root_line" | sed -nE 's/.*tests="([0-9]+)".*/\1/p')
+          failures=$(echo "$root_line" | sed -nE 's/.*failures="([0-9]+)".*/\1/p')
+          errors=$(echo "$root_line" | sed -nE 's/.*errors="([0-9]+)".*/\1/p')
+          skipped=$(echo "$root_line" | sed -nE 's/.*skipped="([0-9]+)".*/\1/p')
+          if [ -z "$tests" ] || [ -z "$failures" ] || [ -z "$errors" ] || [ -z "$skipped" ]; then
+            echo "::error::Could not parse tests/failures/errors/skipped attributes from $results"
+            exit 1
+          fi
+          echo "JUnit summary: tests=$tests failures=$failures errors=$errors skipped=$skipped"
+          if [ "$tests" -eq 0 ] || [ "$failures" -ne 0 ] || [ "$errors" -ne 0 ] || [ "$skipped" -ne 0 ]; then
+            echo "::error::Smoke suite did not genuinely pass (tests=$tests failures=$failures errors=$errors skipped=$skipped) — see $results"
+            exit 1
+          fi
+          echo "Smoke suite genuinely passed: $tests test(s), 0 failures, 0 errors, 0 skipped."
+
+      # Restore the original cache in case a later step (now, or added in future) needs
+      # it — keeps this job side-effect-free beyond its own working directory.
+      - name: Restore original NuGet cache
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/original-nuget-packages" ]; then
+            rm -rf "$HOME/.nuget/packages"
+            mv "$RUNNER_TEMP/original-nuget-packages" "$HOME/.nuget/packages"
+          fi
+
+      - name: Upload smoke-test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-test-packaged-tool-reports
+          path: |
+            ${{ runner.temp }}/smoke-results.xml
+            ${{ runner.temp }}/smoke-report.html
+          retention-days: 7
+          if-no-files-found: warn
 
   # ===========================================================================
   # build-vsix
@@ -856,7 +1072,7 @@ jobs:
   publish-release:
     name: Publish artifacts to GitHub Release and NuGet
     runs-on: ubuntu-latest
-    needs: [build-dotnet, sign-and-attest]
+    needs: [build-dotnet, sign-and-attest, smoke-test-packaged-tool]
     # Smoke-test: dispatch runs never publish (every step below is
     # tag/release-gated), but the artifact downloads used to run
     # unconditionally and failed hard because the cosign/GPG steps skip on

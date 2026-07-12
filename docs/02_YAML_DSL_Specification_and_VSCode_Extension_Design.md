@@ -244,11 +244,11 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 
 # 5. Step Types and the Provider Model
 
-This section defines the language's step types. The first six subsections describe the families the platform actually ships in the MVP, with worked YAML examples. A seventh family — rpc — is recognised by the language and reserved in the schema but has no Core provider in the MVP; it is covered alongside the others in subsection 5.7, where the provider model is introduced and the full community catalogue is tabulated. The dotted naming convention used throughout this section is best understood once that model is on the table.
+This section defines the language's step types. The subsections that follow describe the shipped families with worked YAML examples. One further family — rpc — is recognised by the language and reserved in the schema but has no Core provider; it is covered alongside the others in subsection 5.7, where the provider model is introduced and the full community catalogue is tabulated. The dotted naming convention used throughout this section is best understood once that model is on the table.
 
 The vocabulary used here is precise. A **family** names what is being done at the level of intent: `http` issues a request and asserts on a response; `db-assert` queries a store and asserts on the result. A **provider** names the concrete technology that implements the family: `http.rest` is a REST-over-HTTP provider; `db-assert.postgres` is a PostgreSQL provider. An author always writes the dotted form — `type: db-assert.postgres` — there is no bare-family shorthand, even for a family with only one registered provider today: a family gaining a second provider later must never change the meaning of a step type an existing file already uses. The editor and error messages likewise only ever render the dotted name. The full provider model, including how new providers are added by community contribution at the source level, is described in section 5.7 below and at architectural depth in section 13 of the companion Technical Architecture & Engineering Blueprint.
 
-Together the eight shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
+Together the eleven shipped families are sufficient to express the platform's reference scenario — a transaction crossing REST, Kafka, a database, and a webhook — end to end, and the provider model below makes each family extensible to whichever concrete technology a given microservices estate actually uses. The rpc family is reserved for the gRPC and similar typed-RPC scenarios that the community catalogue will fill in post-MVP.
 
 ## 5.1 The http family
 
@@ -348,7 +348,7 @@ Example (a successful call with an XPath assertion and capture, and a SOAP Fault
 
 ## 5.2 The mq-publish family
 
-A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has two Core providers: `mq-publish.kafka` (with full schema-registry and Avro support) and `mq-publish.rabbitmq`. The dotted form is always required; a bare `type: mq-publish` is not a valid step type.
+A `mq-publish` step produces a message onto a broker. It is most often used to drive a test by injecting an event that the system under test is expected to react to. The mq-publish family has five Core providers: `mq-publish.kafka` (with full schema-registry and Avro support), `mq-publish.rabbitmq`, `mq-publish.nats`, `mq-publish.azureservicebus`, and `mq-publish.redis` (Redis Streams). The dotted form is always required; a bare `type: mq-publish` is not a valid step type.
 
 ### 5.2.1 mq-publish.kafka: plain payload
 
@@ -443,7 +443,7 @@ Example:
 
 ## 5.3 The mq-expect family
 
-An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has two Core providers: `mq-expect.kafka` and `mq-expect.rabbitmq`. The dotted form is always required; a bare `type: mq-expect` is not a valid step type.
+An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has five Core providers: `mq-expect.kafka`, `mq-expect.rabbitmq`, `mq-expect.nats`, `mq-expect.azureservicebus`, and `mq-expect.redis` (Redis Streams). The dotted form is always required; a bare `type: mq-expect` is not a valid step type.
 
 ### 5.3.1 mq-expect.kafka: plain payload
 
@@ -538,9 +538,9 @@ Example (with RETRY):
 
 ## 5.4 The db-assert family
 
-A `db-assert` step queries a data store and asserts properties of the result. This is the family where the value of the provider model is most visible: PostgreSQL, SQL Server, Oracle, MySQL, MongoDB, Elasticsearch, and Redis all have genuinely different query languages and assertion semantics, and each is implemented by its own provider with its own schema fragment. Like every family, the bare `type: db-assert` form is not accepted; the author must always choose a provider — `db-assert.postgres`, `db-assert.mongodb`, and so on. Like `mq-expect`, db-assert steps are commonly run with `verifyMode: RETRY` because a materialised view may take a moment to update.
+A `db-assert` step queries a data store and asserts properties of the result. This is the family where the value of the provider model is most visible: PostgreSQL, SQL Server, MySQL, MongoDB, and DynamoDB all have genuinely different query languages and assertion semantics, and each is implemented by its own provider with its own schema fragment. Like every family, the bare `type: db-assert` form is not accepted; the author must always choose a provider — `db-assert.postgres`, `db-assert.mongodb`, and so on. Like `mq-expect`, db-assert steps are commonly run with `verifyMode: RETRY` because a materialised view may take a moment to update.
 
-The example below uses `db-assert.postgres`, the Core provider that ships with the MVP. It takes a SQL string with a parameter dictionary; the equivalent `db-assert.sqlserver` step would look almost identical, `db-assert.mongodb` would supply a collection name and a filter document instead, `db-assert.elasticsearch` would carry a query-DSL body, and `db-assert.redis` a key pattern. Each provider's reference documentation describes its precise field set; the common fields below are shared by every provider in the family.
+The example below uses `db-assert.postgres`. It takes a SQL string with a parameter dictionary; the equivalent `db-assert.sqlserver` and `db-assert.mysql` steps look almost identical, `db-assert.mongodb` supplies a collection name and a filter document instead, and `db-assert.dynamodb` a table name and key condition. (Elasticsearch and Redis assertions live in the separate `cache-assert` family — `cache-assert.elasticsearch` and `cache-assert.redis`.) Each provider's reference documentation describes its precise field set; the common fields below are shared by every provider in the family.
 
 | Field | Meaning |
 |---|---|

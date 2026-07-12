@@ -67,6 +67,36 @@ vouchfx orchestrates containers via Docker (Aspire + Testcontainers). If the Doc
 
 ---
 
+## The Aspire orchestration component is not installed / could not be located
+
+**Symptom:**
+```
+System.IO.FileNotFoundException: The Aspire orchestration component is not installed
+at "/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp".
+```
+or, from current engine versions:
+```
+EnvironmentError: The Aspire DCP orchestration component could not be located. …
+no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at '…'.
+```
+
+**What it means:** vouchfx orchestrates containers through .NET Aspire's DCP binary, which ships in the `aspire.hosting.orchestration.<rid>` NuGet package and is looked up in your per-user NuGet cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`). The message means that package — at the exact pinned Aspire version and for *your* machine's platform — is not in your cache.
+
+**Fix:** populate the cache once by restoring any project that carries `Aspire.AppHost.Sdk` at the pinned version, most simply this repository:
+
+```bash
+git clone https://github.com/tomas-rampas/vouchfx.git
+dotnet restore vouchfx/vouchfx.sln
+```
+
+Version exactness matters: having restored some other Aspire version leaves a different version folder in the cache and does not resolve this error. The retired `dotnet workload install aspire` command does **not** help either — it installs Aspire 8.2.x packs outside the NuGet cache. If you keep DCP in a non-standard location, set the `ASPIRE_DCP_PATH` environment variable to the directory containing the `dcp` executable.
+
+**If the message shows a `/home/runner/...` path (first variant above):** you are running `vouchfx` 1.0.0-alpha.5 or earlier from NuGet.org. Those pre-releases only consult a path baked in on the release build machine, so they fail on every other machine even with a fully populated cache. Upgrade to a newer pre-release (`dotnet tool update --global vouchfx --prerelease`), or build and run from source.
+
+This failure is always classified as an **EnvironmentError** — infrastructure, not a product defect — so by default it does not break CI (see "Understanding the four verdicts" below).
+
+---
+
 ## EnvironmentError: HealthGate timeout of 00:00:20
 
 **Symptom:**
