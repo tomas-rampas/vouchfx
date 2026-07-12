@@ -170,10 +170,9 @@ internal static class DcpPathResolver
     /// <paramref name="nugetPackagesEnvironmentVariable"/> is unset.
     /// </param>
     /// <param name="runtimeIdentifier">
-    /// The CURRENT machine's runtime identifier (production callers pass
-    /// <c>System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier</c>, e.g.
-    /// <c>"win-x64"</c>), used both to pick the DCP executable name (<c>dcp.exe</c> for a
-    /// <c>win-*</c> rid, <c>dcp</c> otherwise) and to compute the candidate package id.
+    /// The CURRENT machine's *portable* runtime identifier (e.g. <c>"win-x64"</c>, <c>"linux-x64"</c>),
+    /// used both to pick the DCP executable name (<c>dcp.exe</c> for a <c>win-*</c> rid, <c>dcp</c> otherwise)
+    /// and to compute the candidate package id. (Production callers should normalize this before calling.)
     /// </param>
     /// <param name="aspireHostingInformationalVersion">
     /// The <see cref="System.Reflection.AssemblyInformationalVersionAttribute"/> value of
