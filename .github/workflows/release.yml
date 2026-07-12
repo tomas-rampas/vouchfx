@@ -514,10 +514,10 @@ jobs:
             echo "::error::No <testsuites> root element found in $results"
             exit 1
           fi
-          tests=$(echo "$root_line" | grep -oP 'tests="\K[0-9]+' || true)
-          failures=$(echo "$root_line" | grep -oP 'failures="\K[0-9]+' || true)
-          errors=$(echo "$root_line" | grep -oP 'errors="\K[0-9]+' || true)
-          skipped=$(echo "$root_line" | grep -oP 'skipped="\K[0-9]+' || true)
+          tests=$(echo "$root_line" | sed -nE 's/.*tests="([0-9]+)".*/\1/p')
+          failures=$(echo "$root_line" | sed -nE 's/.*failures="([0-9]+)".*/\1/p')
+          errors=$(echo "$root_line" | sed -nE 's/.*errors="([0-9]+)".*/\1/p')
+          skipped=$(echo "$root_line" | sed -nE 's/.*skipped="([0-9]+)".*/\1/p')
           if [ -z "$tests" ] || [ -z "$failures" ] || [ -z "$errors" ] || [ -z "$skipped" ]; then
             echo "::error::Could not parse tests/failures/errors/skipped attributes from $results"
             exit 1
