@@ -91,9 +91,11 @@ dotnet restore vouchfx/vouchfx.sln
 
 Version exactness matters: having restored some other Aspire version leaves a different version folder in the cache and does not resolve this error. The retired `dotnet workload install aspire` command does **not** help either — it installs Aspire 8.2.x packs outside the NuGet cache. If you keep DCP in a non-standard location, set the `ASPIRE_DCP_PATH` environment variable to the directory containing the `dcp` executable.
 
-**If the message shows a `/home/runner/...` path (first variant above):** you are running `vouchfx` 1.0.0-alpha.5 or earlier from NuGet.org. Those pre-releases only consult a path baked in on the release build machine, so they fail on every other machine even with a fully populated cache. Upgrade to a newer pre-release (`dotnet tool update --global vouchfx --prerelease`), or build and run from source.
+**If the message shows a `/home/runner/...` path (first variant above):** you are running `vouchfx` 1.0.0-alpha.5 or earlier from NuGet.org. Those pre-releases only consult a path baked in on the release build machine, so they fail on every other machine even with a fully populated cache. Fixed in 1.0.0-alpha.6 — upgrade (`dotnet tool update --global vouchfx --prerelease`), or build and run from source.
 
 This failure is always classified as an **EnvironmentError** — infrastructure, not a product defect — so by default it does not break CI (see "Understanding the four verdicts" below).
+
+For the full incident write-up — root cause, why the release pipeline missed it, and how regression is prevented — see the knowledge-base article [KB: DCP orchestrator not found](kb/dcp-orchestrator-portability.md).
 
 ---
 

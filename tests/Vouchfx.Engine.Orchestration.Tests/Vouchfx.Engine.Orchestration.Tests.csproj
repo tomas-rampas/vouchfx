@@ -48,6 +48,11 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" />
     <!-- AWSSDK.S3: required by StorageAssertS3DockerTests (compile-ref + seed). -->
     <PackageReference Include="AWSSDK.S3" />
+    <!-- Microsoft.CodeAnalysis.CSharp: HeadlessTopologySelfHealTests compiles tiny synthetic
+         host assemblies at test time to pin the DCP-path self-heal GLUE (fix/packaged-tool-dcp-resolution,
+         PR #206) without touching Docker/DCP. Same technique already established in
+         tests/Vouchfx.Engine.Compilation.Tests/ReservedNamespaceGuardTests.cs. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <ItemGroup>

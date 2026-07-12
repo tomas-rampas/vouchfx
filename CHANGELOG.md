@@ -12,6 +12,21 @@ section remains the cumulative delivered-capability record that seeds the v1.0.0
 pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alpha.3 and v1.0.0-alpha.4 were
 left in draft status at the time of publication; packages shipped to NuGet.org regardless.
 
+## [1.0.0-alpha.6] — 2026-07-12
+
+The packaged-tool portability release: the NuGet-installed tool now works on machines other than the
+release build runner.
+
+### Fixed
+
+- **The NuGet-installed `vouchfx` tool failed its first run on every machine other than the CI runner
+  that packed it** (all earlier pre-releases). The engine now self-heals the Aspire DCP path at topology
+  start — when the build-time baked path does not exist, it re-resolves the platform- and version-exact
+  `aspire.hosting.orchestration.<rid>` package from the executing machine's NuGet cache, honours a
+  user-set `ASPIRE_DCP_PATH`, and otherwise fails with an actionable environment error. A cross-machine
+  smoke test now gates every release publish. See the knowledge-base article
+  `docs/kb/dcp-orchestrator-portability.md` for the full write-up.
+
 ## [1.0.0-alpha.5] — 2026-07-11
 
 The alpha series continues with minor feature additions and dependency updates.
