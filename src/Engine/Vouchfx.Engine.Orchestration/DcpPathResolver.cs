@@ -383,7 +383,7 @@ var candidate = Path.Combine(cacheRoot, packageId, version, "tools", exeName);
         string? packageId, string? version, string? probedPath, string staleMetadataPath)
     {
         var fallbackDescription = packageId is null || version is null || probedPath is null
-            ? "the Aspire.Hosting package version could not be determined, so no fallback " +
+            ? "the Aspire.Hosting informational version could not be determined, so no fallback " +
               "path could be probed"
             : $"no '{packageId}' version '{version}' package was found at '{probedPath}'";
 
