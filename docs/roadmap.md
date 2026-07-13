@@ -52,9 +52,13 @@ not promoted from draft):
 dotnet tool install --global vouchfx --prerelease
 ```
 
-The alphas exist for pilot validation. What remains for GA is validation and packaging, not construction:
+The alphas exist for real-world validation. What remains for GA is validation and packaging, not construction:
 
-- Validation of the end-to-end experience with pilot teams.
+- Validation of the end-to-end experience in real use — gathered in the open through the published
+  [sample applications](https://tomas-rampas.github.io/vouchfx-samples/), the
+  [migration guide](https://tomas-rampas.github.io/vouchfx-samples/docs/migrating.html) (worked Postman,
+  xUnit and SpecFlow ports), and the [community provider hub](https://tomas-rampas.github.io/vouchfx-providers/),
+  rather than a formal pilot cohort.
 - The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published to NuGet.org through the release pipeline; the GA task narrows to stabilising the SDK at 1.0.0 final.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
