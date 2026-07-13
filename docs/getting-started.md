@@ -24,7 +24,7 @@ vouchfx targets **.NET 8 LTS**. Check your SDK version:
 dotnet --version
 ```
 
-You should see an `8.0.x` version (8.0.400 or later). A newer major SDK alone (9.x or later) is **not** sufficient: the repository pins an 8.0.x SDK via `global.json`, and the published tool runs on the .NET 8 runtime. If you only have a newer version, [install .NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) alongside it — SDKs and runtimes install side by side.
+You should see an `8.0.x` version (8.0.400 or later). Building from source requires an 8.0.x SDK — `global.json` pins it — and the packaged tool needs the .NET 8 *runtime* (included with the SDK); a newer major SDK alone (9.x or later) satisfies neither. If you only have a newer version, [install .NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) alongside it — SDKs and runtimes install side by side.
 
 ### Docker daemon
 
