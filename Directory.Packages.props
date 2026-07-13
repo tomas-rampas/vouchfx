@@ -32,6 +32,17 @@
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.6.6" />
   </ItemGroup>
+  <ItemGroup Label="Transitive security pins (Dependabot alerts) — CentralPackageTransitivePinningEnabled">
+    <!-- Pulled in via Aspire.Hosting -> StreamJsonRpc 2.22.23 (>= 2.5.192); pinned to the
+         advisory-fixed 2.5.x build. -->
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
+    <!-- Aspire.Hosting.MongoDB 13.4.2 transitively requires >= 1.0.0; pin to the exact
+         required minimum to avoid NU1109 downgrade errors under
+         CentralPackageTransitivePinningEnabled. 1.0.0 also covers the Dependabot
+         advisory (fixed in 0.48.0), which is why Dependabot's own 0.48.0 pin in #213
+         could not restore. -->
+    <PackageVersion Include="SharpCompress" Version="1.0.0" />
+  </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
     <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
          DefaultValueFactory properties; Command(name, description); SetAction(Func&lt;ParseResult,
