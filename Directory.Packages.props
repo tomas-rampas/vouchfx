@@ -4,6 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup Label="Roslyn scripting (memory model, §5)">
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
     <!-- Microsoft.CodeAnalysis.CSharp (the plain compiler, not the Scripting layer above) is
          also referenced directly by Vouchfx.Engine.Orchestration.Tests: HeadlessTopologySelfHealTests
@@ -31,6 +32,7 @@
   </ItemGroup>
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.6.6" />
+    <PackageVersion Include="SharpCompress" Version="0.48.0" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
     <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
