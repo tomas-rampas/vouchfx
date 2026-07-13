@@ -7,29 +7,26 @@ matches the landing page. The markdown files remain the single source of truth;
 this generates their HTML on every run, so a CI deploy keeps the published docs
 current with every push.
 
+The rendering machinery is shared with the other three vouchfx sites — see
+scripts/site-tools/ (the vouchfx-site-tools package, vouchfx issue #200). This
+file only carries what is specific to the engine's own site: the doc set, the
+page/portal HTML, and the publication scoping. It needs no pip install: the
+package is imported straight from this checkout.
+
     python scripts/build_site.py [output_dir]   # default: _site
 
 Requires: markdown, pygments  (pip install markdown pygments)
 """
 from __future__ import annotations
 
-import html
-import json
-import os
-import posixpath
-import re
-import shutil
 import sys
-import urllib.request
 from pathlib import Path
 
-import markdown
-from markdown.extensions.codehilite import CodeHiliteExtension
-from markdown.extensions.toc import TocExtension
-from pygments.formatters import HtmlFormatter
+sys.path.insert(0, str(Path(__file__).resolve().parent / "site-tools" / "src"))
+
+from vouchfx_site_tools import SiteConfig, build  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SITE = ROOT / "site"
 OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "_site"
 
 # Markdown files to render, in sidebar order. (source path relative to ROOT, nav group, label)
@@ -60,154 +57,6 @@ EXTRA: list[str] = []
 # disk (internal planning/review material kept out of the public site).
 SKIP = {"docs/03_MVP_Project_Plan.md"}
 SKIP_PREFIXES = ("docs/reviews/",)
-
-def out_path(rel: str) -> Path:
-    """Mirror the repo layout under OUT, with .html extension."""
-    return OUT / (rel[:-3] + ".html")
-
-
-def rel_root(target: Path) -> str:
-    """Relative path from a generated file back to OUT root, e.g. '../'.
-    Forward slashes always, so Windows and CI builds emit identical HTML."""
-    rp = os.path.relpath(OUT, target.parent).replace(os.sep, "/")
-    return "" if rp == "." else rp + "/"
-
-
-GITHUB_URL = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'tomas-rampas/vouchfx')}/"
-PUBLISHED: set[str] = set()
-
-
-def compute_published() -> set[str]:
-    rels = {rel for rel, _group, _label in DOCS} | set(EXTRA)
-    for src in ROOT.glob("docs/**/*.md"):
-        rel = src.relative_to(ROOT).as_posix()
-        if rel not in SKIP and not rel.startswith(SKIP_PREFIXES):
-            rels.add(rel)
-    return rels
-
-
-def rewrite_links(body: str, src_rel: str) -> str:
-    """Rewrite relative links: published .md pages become .html; any other
-    repo-relative target becomes an absolute GitHub URL (it has no page on the
-    site). Absolute URLs, anchors and mailto links pass through untouched."""
-    src_dir = posixpath.dirname(src_rel)
-
-    def repl(m: re.Match) -> str:
-        href = m.group(1)
-        if re.match(r"[a-z]+://", href) or href.startswith("#") or href.startswith("mailto:"):
-            return m.group(0)
-        path, sep, frag = href.partition("#")
-        target = posixpath.normpath(posixpath.join(src_dir, path))
-        if path.endswith(".md") and target in PUBLISHED:
-            return f'href="{path[:-3] + ".html"}{sep}{frag}"'
-        kind = "tree" if (ROOT / target).is_dir() else "blob"
-        return f'href="{GITHUB_URL}{kind}/main/{target}{sep}{frag}"'
-
-    return re.sub(r'href="([^"]+)"', repl, body)
-
-
-def extract_mermaid(text: str) -> tuple[str, list[str]]:
-    """Pull ```mermaid fenced blocks out before markdown processing."""
-    blocks: list[str] = []
-
-    def grab(m: re.Match) -> str:
-        blocks.append(m.group(1))
-        return f"\n@@MERMAID{len(blocks) - 1}@@\n"
-
-    text = re.sub(r"```mermaid\n(.*?)```", grab, text, flags=re.DOTALL)
-    return text, blocks
-
-
-def sidebar(active_rel: str, root: str) -> str:
-    groups: dict[str, list[str]] = {}
-    for rel, group, label in DOCS:
-        href = root + rel[:-3] + ".html"
-        cls = ' class="active"' if rel == active_rel else ""
-        groups.setdefault(group, []).append(f'<a href="{href}"{cls}>{html.escape(label)}</a>')
-    parts = [f'<a href="{root}docs.html">← All documentation</a>']
-    for group, links in groups.items():
-        parts.append(f"<h4>{html.escape(group)}</h4>")
-        parts.extend(links)
-    return "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Fact injection — self-healing volatile facts
-#
-# A handful of numbers on the landing page (the latest engine release, the
-# published SDK/community-provider versions, the community registry size)
-# change on a cadence this repository doesn't control. Rather than let them
-# silently drift out of date in hand-written HTML, any page can carry a
-# {{fact:KEY}} token that fetch_facts() resolves at build time. Each source
-# is independently best-effort: a network hiccup or API shape change falls
-# back to the last known-good value in site/facts-fallback.json rather than
-# failing the build — a stale fact is a much smaller problem than a broken
-# Pages deploy.
-# ---------------------------------------------------------------------------
-
-FACT_TOKEN = re.compile(r"\{\{fact:([A-Za-z0-9_]+)\}\}")
-FACTS: dict[str, str] = {}
-
-
-def _fetch_json(url: str, headers: dict[str, str] | None = None):
-    req = urllib.request.Request(url, headers=headers or {"User-Agent": "vouchfx-build-site"})
-    with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed https URLs only
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def fetch_facts() -> dict[str, str]:
-    fallback = json.loads((SITE / "facts-fallback.json").read_text(encoding="utf-8"))
-    facts = dict(fallback)
-    live: list[str] = []
-
-    try:
-        gh_headers = {"User-Agent": "vouchfx-build-site", "Accept": "application/vnd.github+json"}
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            gh_headers["Authorization"] = f"Bearer {token}"
-        releases = _fetch_json("https://api.github.com/repos/tomas-rampas/vouchfx/releases", gh_headers)
-        # Deliberately keeps pre-releases (the whole alpha series IS the release
-        # line today); only drafts are skipped. Do not add a prerelease filter.
-        facts["engine_release"] = next(r["tag_name"] for r in releases if not r.get("draft"))
-        live.append("engine_release")
-    except Exception:
-        pass
-
-    try:
-        data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.sdk/index.json")
-        facts["sdk_version"] = data["versions"][-1]
-        live.append("sdk_version")
-    except Exception:
-        pass
-
-    try:
-        data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.community.jsonrpc/index.json")
-        facts["community_jsonrpc_version"] = data["versions"][-1]
-        live.append("community_jsonrpc_version")
-    except Exception:
-        pass
-
-    try:
-        data = _fetch_json(
-            "https://raw.githubusercontent.com/tomas-rampas/vouchfx-providers/main/registry/community-providers.json"
-        )
-        if not isinstance(data, list):
-            raise ValueError("registry JSON is no longer a top-level array")
-        facts["community_provider_count"] = str(len(data))
-        live.append("community_provider_count")
-    except Exception:
-        pass
-
-    fallback_used = sorted(set(facts) - set(live))
-    print(f"facts: live={sorted(live) or ['-']} fallback={fallback_used or ['-']}")
-    return facts
-
-
-def apply_facts(text: str) -> str:
-    """Substitute {{fact:KEY}} tokens. Called on site/ HTML right after it is
-    copied, and on every rendered page's HTML before it is written."""
-    return FACT_TOKEN.sub(lambda m: html.escape(FACTS[m.group(1)]) if m.group(1) in FACTS else m.group(0), text)
-
 
 PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -250,56 +99,6 @@ PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
-
-
-def render_markdown(rel: str, label: str) -> None:
-    src = ROOT / rel
-    text = src.read_text(encoding="utf-8")
-    text, mermaid = extract_mermaid(text)
-
-    md = markdown.Markdown(
-        extensions=[
-            "extra",
-            "sane_lists",
-            "admonition",
-            TocExtension(permalink=True, permalink_class="headerlink", permalink_title="", baselevel=2),
-            CodeHiliteExtension(css_class="codehilite", guess_lang=False),
-        ]
-    )
-    body = md.convert(text)
-    body = rewrite_links(body, rel)
-
-    # Re-insert mermaid blocks as divs.
-    for i, block in enumerate(mermaid):
-        body = body.replace(f"<p>@@MERMAID{i}@@</p>", f'<div class="mermaid">{html.escape(block)}</div>')
-        body = body.replace(f"@@MERMAID{i}@@", f'<div class="mermaid">{html.escape(block)}</div>')
-
-    toc = getattr(md, "toc", "") or ""
-    has_mermaid = bool(mermaid)
-    mermaid_script = (
-        '<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";'
-        'mermaid.initialize({startOnLoad:true,theme:"dark"});</script>'
-        if has_mermaid
-        else ""
-    )
-
-    dst = out_path(rel)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    root = rel_root(dst)
-    desc = f"vouchfx documentation — {label}"
-    page = PAGE.format(
-        title=html.escape(label),
-        desc=html.escape(desc),
-        root=root,
-        sidebar=sidebar(rel, root),
-        crumb=html.escape(label),
-        body=body,
-        toc=toc,
-        mermaid_script=mermaid_script,
-    )
-    dst.write_text(apply_facts(page), encoding="utf-8")
-    print(f"  rendered {rel} -> {dst.relative_to(OUT)}")
-
 
 PORTAL = """<!DOCTYPE html>
 <html lang="en">
@@ -450,71 +249,21 @@ PORTAL = """<!DOCTYPE html>
 </html>
 """
 
-
-def build_portal() -> None:
-    (OUT / "docs.html").write_text(apply_facts(PORTAL), encoding="utf-8")
-    print("  built docs.html portal")
-
-
-def derive_label(src: Path) -> str:
-    """Best-effort page label from the first heading, else the file stem."""
-    for line in src.read_text(encoding="utf-8").splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
-    return src.stem
+CONFIG = SiteConfig(
+    root=ROOT,
+    default_repo="tomas-rampas/vouchfx",
+    docs=DOCS,
+    page_template=PAGE,
+    portal_html=PORTAL,
+    meta_description_prefix="vouchfx documentation",
+    extra=EXTRA,
+    skip=SKIP,
+    skip_prefixes=SKIP_PREFIXES,
+)
 
 
 def main() -> None:
-    # Safety: only ever build into a subdirectory of the repo, never ROOT or an
-    # outside path — main() removes OUT with rmtree before rebuilding.
-    if OUT == ROOT or ROOT not in OUT.parents:
-        raise SystemExit(f"refusing to build into {OUT}: must be a subdirectory of {ROOT}")
-    if OUT.exists():
-        shutil.rmtree(OUT)
-    shutil.copytree(SITE, OUT)
-    print(f"copied {SITE.relative_to(ROOT)}/ -> {OUT.name}/")
-
-    # Resolve facts, then substitute {{fact:KEY}} tokens into whatever HTML
-    # site/ just copied verbatim (index.html). site/facts-fallback.json itself
-    # is build tooling, not a page — it ships inside site/ so it copies above,
-    # but has no business being served, so remove the copy once read.
-    global FACTS
-    FACTS = fetch_facts()
-    for html_file in OUT.glob("*.html"):
-        html_file.write_text(apply_facts(html_file.read_text(encoding="utf-8")), encoding="utf-8")
-    (OUT / "facts-fallback.json").unlink(missing_ok=True)
-
-    # Pygments stylesheet (dark) for fenced code blocks.
-    (OUT / "pygments.css").write_text(
-        HtmlFormatter(style="monokai").get_style_defs(".codehilite") + "\n.codehilite{background:transparent}",
-        encoding="utf-8",
-    )
-
-    PUBLISHED.update(compute_published())
-
-    rendered: set[str] = set()
-    for rel, _group, label in DOCS:
-        render_markdown(rel, label)
-        rendered.add(rel)
-    for rel in EXTRA:
-        if (ROOT / rel).exists():
-            render_markdown(rel, derive_label(ROOT / rel))
-            rendered.add(rel)
-
-    # Auto-render any markdown under docs/ not explicitly listed, so a newly
-    # added file is published (linkable) rather than silently omitted. SKIP and
-    # SKIP_PREFIXES hold internal material that must never reach the site, even
-    # when the files exist on a maintainer's disk.
-    for src in sorted(ROOT.glob("docs/**/*.md")):
-        rel = src.relative_to(ROOT).as_posix()
-        if rel in rendered or rel in SKIP or rel.startswith(SKIP_PREFIXES):
-            continue
-        print(f"  (auto) {rel} not in DOCS — rendering with derived label")
-        render_markdown(rel, derive_label(src))
-        rendered.add(rel)
-
-    build_portal()
-    print(f"done -> {OUT}")
+    build(CONFIG, OUT)
 
 
 if __name__ == "__main__":
