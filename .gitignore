@@ -121,6 +121,13 @@ desktop.ini
 
 # Generated GitHub Pages output (built by scripts/build_site.py)
 _site/
+_site_*/
+
+## Python (scripts/site-tools shared site generator)
+__pycache__/
+*.pyc
+*.egg-info/
+scripts/site-tools/build/
 
 # Maintainer-local delivery/planning material — deliberately not published
 # (internal: sprint plans, commercial planning, human-only checklists, review evidence)

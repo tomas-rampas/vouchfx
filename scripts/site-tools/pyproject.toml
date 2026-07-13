@@ -1,0 +1,18 @@
+[project]
+name = "vouchfx-site-tools"
+version = "1.0.0"
+description = "Shared static-site generator for the vouchfx ecosystem's GitHub Pages sites."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "markdown",
+    "pygments",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
