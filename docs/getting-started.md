@@ -24,7 +24,7 @@ vouchfx targets **.NET 8 LTS**. Check your SDK version:
 dotnet --version
 ```
 
-You should see `8.0.x` or later. If not, [install .NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0).
+You should see an `8.0.x` version (8.0.400 or later). A newer major SDK alone (9.x or later) is **not** sufficient: the repository pins an 8.0.x SDK via `global.json`, and the published tool runs on the .NET 8 runtime. If you only have a newer version, [install .NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) alongside it — SDKs and runtimes install side by side.
 
 ### Docker daemon
 
@@ -110,7 +110,8 @@ metadata:
   description: >-
     The first vouchfx test — a single http.rest GET against traefik/whoami.
     Asserts the response is HTTP 200 and captures the container hostname
-    via JSONPath for demonstration.
+    via JSONPath for demonstration; any later step could use the captured
+    value via {hostname} placeholder substitution.
 
 environment:
   services:
@@ -143,11 +144,11 @@ steps:
 | `type: http.rest` | The step family and provider: make an HTTP request. |
 | `target: whoami` | Which service to call (matches a name in `environment.services`). |
 | `method: GET` | HTTP verb (GET, POST, PUT, DELETE, etc.). |
-| `path: /api` | The URL path. The full URL is built as `http://<target>:<httpPort><path>`. |
+| `path: /api` | The URL path. Logically the request goes to `http://<target>:<httpPort><path>`; in practice the engine calls the endpoint Aspire discovers for the container, so reports show `localhost` and an ephemeral proxy port. |
 | `expect.status: 200` | Assert the response is HTTP 200. If the status code differs, the step fails. |
 | `capture.hostname: "$.hostname"` | JSONPath expression. Extracts the `hostname` field from the JSON response body and stores it in `Vars["hostname"]`. Any later step can reference this as `{hostname}`. |
 
-The `traefik/whoami` container is a tiny utility that responds to any HTTP request with a JSON object describing itself, including a `hostname` field. This makes it a perfect pedagogical system under test: it is guaranteed to respond, requires no configuration, and the response contains extractable data.
+The `traefik/whoami` container is a tiny utility that responds to any HTTP request with a description of itself: on the `/api` path the response is a JSON object, including a `hostname` field (other paths return a plain-text equivalent). This makes it a perfect pedagogical system under test: it is guaranteed to respond, requires no configuration, and the response contains extractable data.
 
 **Where to save your test file:**
 
@@ -266,7 +267,7 @@ The `docs/recipes.md` file collects common testing patterns: capturing and reusi
 
 For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
 
-- Every step family across twenty-five Core providers: eleven families including HTTP (REST, SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), caching (Redis, Elasticsearch), email, metrics (Prometheus), storage (S3), distributed tracing (OTLP), and scripts.
+- Every step family across twenty-five Core providers: eleven families — HTTP (REST, SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), messaging (publish and expect: Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), caching (Redis, Elasticsearch), email, metrics (Prometheus), storage (S3), distributed tracing (OTLP), webhooks, and scripts.
 - Capture and placeholder syntax: threading state forward.
 - Verifymode: `IMMEDIATE` (assert now) vs. `RETRY` (engine-owned polling with backoff).
 - Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/path}`), resolved at execution time.
