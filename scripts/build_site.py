@@ -209,7 +209,7 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/ecosystem.html"><span class="doc-card__k">MAP</span><h3>The ecosystem</h3><p>One engine, four repositories: what each is for, where its site lives, and where to ask questions.</p></a>
       <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-providers/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">PROVIDERS</span><h3>Community Provider Hub</h3><p>The community provider registry and the Vouched badge, with conformance testing, examples, and the provider authoring rubric.</p></a>
-      <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-samples/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Four production-grade sample applications in C#, Python, Node.js and Java with complete end-to-end test suites demonstrating vouchfx patterns.</p></a>
+      <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-samples/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>Sample Applications</h3><p>Four production-grade sample applications in C#, Python, Node.js and Java with complete end-to-end test suites, plus worked migration examples porting Postman, xUnit and SpecFlow assets onto vouchfx.</p></a>
       <a class="doc-card" href="https://tomas-rampas.github.io/vouchfx-telemetry-backend/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">TELEMETRY</span><h3>Telemetry Backend</h3><p>Optional, privacy-first, self-hostable telemetry ingest — why telemetry, deployment, outbox verification, and privacy guarantees.</p></a>
     </div>
   </section>

@@ -10,7 +10,7 @@ vouchfx is a coordinated ecosystem of four repositories and associated documenta
 |---|---|---|---|
 | **vouchfx** (main) | The engine: compiler, orchestration, CLI, provider SDK, core providers, and documentation | [https://tomas-rampas.github.io/vouchfx/](https://tomas-rampas.github.io/vouchfx/) | [github.com/tomas-rampas/vouchfx](https://github.com/tomas-rampas/vouchfx) |
 | **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://tomas-rampas.github.io/vouchfx-providers/](https://tomas-rampas.github.io/vouchfx-providers/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
-| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java | [https://tomas-rampas.github.io/vouchfx-samples/](https://tomas-rampas.github.io/vouchfx-samples/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
+| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://tomas-rampas.github.io/vouchfx-samples/](https://tomas-rampas.github.io/vouchfx-samples/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
 | **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://tomas-rampas.github.io/vouchfx-telemetry-backend/](https://tomas-rampas.github.io/vouchfx-telemetry-backend/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
 
 ## The vouchfx engine
@@ -50,6 +50,7 @@ Real microservices in C#, Python, Node.js and Java with complete end-to-end test
 
 **Start here:**
 - **[Run a sample](https://tomas-rampas.github.io/vouchfx-samples/docs/RUNNING.html)** — Clone and run any sample in minutes
+- **[Migrating to vouchfx](https://tomas-rampas.github.io/vouchfx-samples/docs/migrating.html)** — Worked examples porting a Postman collection, an xUnit integration test and a SpecFlow feature, each with a field-by-field mapping table
 - **[Custom runner](https://tomas-rampas.github.io/vouchfx-samples/docs/custom-runner.html)** — How the Ledger sample uses a custom runner to consume the Community provider
 
 ## The telemetry backend
