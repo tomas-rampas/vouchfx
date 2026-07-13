@@ -267,7 +267,7 @@ The `docs/recipes.md` file collects common testing patterns: capturing and reusi
 
 For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
 
-- Every step family across twenty-five Core providers: eleven families — HTTP (REST, SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), messaging (publish and expect: Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), caching (Redis, Elasticsearch), email, metrics (Prometheus), storage (S3), distributed tracing (OTLP), webhooks, and scripts.
+- Every step family across twenty-five Core providers — eleven families: HTTP calls (`http`: REST, SOAP), database assertions (`db-assert`: PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message publishing (`mq-publish`) and message expectations (`mq-expect`) — both over Kafka, RabbitMQ, NATS, Azure Service Bus, and Redis Streams — cache assertions (`cache-assert`: Redis, Elasticsearch), email (`mail-expect`: SMTP), metrics (`metrics-assert`: Prometheus), storage (`storage-assert`: S3), distributed tracing (`trace-expect`: OTLP), webhooks (`webhook-listen`), and scripts (`script`: C#).
 - Capture and placeholder syntax: threading state forward.
 - Verifymode: `IMMEDIATE` (assert now) vs. `RETRY` (engine-owned polling with backoff).
 - Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/path}`), resolved at execution time.
