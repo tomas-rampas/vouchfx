@@ -30,6 +30,13 @@
 #               compiler + JsonSchema.Net + YamlDotNet onto every consumer's
 #               transitive graph).  It deliberately NEVER gates merge: a
 #               newly-published upstream CVE must not break unrelated PRs.
+#
+#  coverage-badge
+#               Cosmetic, non-blocking: converts the `build` job's Cobertura
+#               coverage into badge files via ReportGenerator and force-pushes
+#               them to the orphan `badges` branch, which feeds the README's
+#               shields.io/endpoint coverage badge.  Main pushes + the weekly
+#               schedule only — PR runs never move the published badge.
 
 name: CI
 
@@ -109,8 +116,10 @@ jobs:
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
-      # Upload coverage artefacts so they are available to coverage services
-      # (e.g. Codecov, SonarCloud) that may be wired up later.
+      # Upload coverage artefacts.  On main pushes and the weekly schedule the
+      # `coverage-badge` job downloads this artifact and turns it into the
+      # README's self-hosted coverage badge; the artifact also remains handy
+      # for local inspection of a CI run's coverage.
       - name: Upload coverage artefacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -433,3 +442,89 @@ jobs:
           path: tools/vscode-vouchfx/*.vsix
           retention-days: 7
           if-no-files-found: ignore
+
+  # ── Coverage badge — self-hosted, cosmetic, NON-BLOCKING ─────────────────────
+  # Turns the Cobertura XML produced by the `build` job into a shields.io
+  # endpoint JSON + SVG via ReportGenerator and force-pushes them to the orphan
+  # `badges` branch (single commit — no history growth).  The README renders the
+  # JSON through img.shields.io/endpoint, so the coverage number stays entirely
+  # self-hosted (no coverage service, no new credentials).
+  #
+  # Runs only for main pushes and the weekly schedule — PR runs must never move
+  # the published badge.  The badge reflects UNIT coverage only (the blocking
+  # `build` job); folding in the non-blocking docker `integration` job would
+  # make the number fluctuate with an advisory job's availability.  A red
+  # `build` skips this job via `needs`, so the last good badge is retained.
+  coverage-badge:
+    name: Coverage badge (main only)
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
+    continue-on-error: true            # cosmetic — must never redden CI
+    permissions:
+      contents: write                  # push to the `badges` branch (this job only)
+
+    steps:
+      - name: Download coverage artefacts
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage
+          path: TestResults
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      # Exact-version pin per repo convention for third-party tooling.
+      - name: Install ReportGenerator
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.10
+
+      # Merges every per-project Cobertura file into one number.  JsonSummary
+      # yields Summary.json (machine-readable percentages); Badges yields
+      # badge_linecoverage.svg, kept alongside the endpoint JSON as a
+      # zero-third-party fallback.  Assembly filters keep the measured surface
+      # to product code — test helpers must not inflate the percentage.
+      # (Verified on 5.5.10: Badges does NOT emit a shields endpoint JSON —
+      # only pre-coloured SVGs — hence the compose step below.)
+      - name: Generate coverage summary + badge SVG
+        run: >
+          reportgenerator
+          -reports:"TestResults/**/coverage.cobertura.xml"
+          -targetdir:badge-out
+          -reporttypes:"Badges;JsonSummary"
+          -assemblyfilters:"+Vouchfx.*;-*.Tests;-*.TestSupport"
+
+      # Compose the shields.io endpoint JSON
+      # (https://shields.io/badges/endpoint-badge) the README renders via
+      # img.shields.io/endpoint.  Colour thresholds are deliberate: red below
+      # 60 %, yellow to 75 %, green to 90 %, brightgreen above.
+      - name: Compose shields endpoint JSON
+        run: |
+          pct=$(jq -r '.summary.linecoverage' badge-out/Summary.json)
+          jq -n --argjson pct "$pct" '{
+            schemaVersion: 1,
+            label: "coverage",
+            message: "\($pct)%",
+            color: (if $pct >= 90 then "brightgreen"
+                    elif $pct >= 75 then "green"
+                    elif $pct >= 60 then "yellow"
+                    else "red" end)
+          }' > badge-out/coverage-endpoint.json
+          cat badge-out/coverage-endpoint.json
+
+      # Orphan single-commit publish: git init + force-push replaces the branch
+      # wholesale each run.  `badges` matches none of this workflow's branch
+      # triggers, so this push cannot re-trigger CI.  The token reaches git via
+      # env, never interpolated into the script text.
+      - name: Publish to badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd badge-out
+          git init -b badges
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage-endpoint.json badge_linecoverage.svg
+          git commit -m "coverage badge for ${GITHUB_SHA}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges

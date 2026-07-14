@@ -1,5 +1,13 @@
 # vouchfx
 
+[![CI](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml?query=branch%3Amain)
+[![CodeQL](https://github.com/tomas-rampas/vouchfx/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tomas-rampas/vouchfx/actions/workflows/codeql.yml?query=branch%3Amain)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftomas-rampas%2Fvouchfx%2Fbadges%2Fcoverage-endpoint.json)](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml?query=branch%3Amain)
+[![NuGet (prerelease)](https://img.shields.io/nuget/vpre/vouchfx)](https://www.nuget.org/packages/vouchfx)
+[![Core providers](https://img.shields.io/badge/providers-25_core-blue)](https://github.com/tomas-rampas/vouchfx-providers)
+[![Docs](https://img.shields.io/badge/docs-GitHub_Pages-blue)](https://tomas-rampas.github.io/vouchfx/)
+[![License](https://img.shields.io/github/license/tomas-rampas/vouchfx)](https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE)
+
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
 ## About
@@ -23,7 +31,7 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 
 ## Status
 
-> **vouchfx is in public pre-release: `v1.0.0-alpha.x` builds (currently `v1.0.0-alpha.5`) are live on [NuGet.org](https://www.nuget.org/packages/vouchfx/) and [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases), and v1.0 GA is in preparation.** Install the CLI with `dotnet tool install --global vouchfx --prerelease`. The engine compiles `.e2e.yaml` declarative integration
+> **vouchfx is in public pre-release: `v1.0.0-alpha.x` builds are live on [NuGet.org](https://www.nuget.org/packages/vouchfx/) and [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases), and v1.0 GA is in preparation.** Install the CLI with `dotnet tool install --global vouchfx --prerelease`. The engine compiles `.e2e.yaml` declarative integration
 > tests into memory-safe, Turing-complete C# (CSX) via Roslyn, orchestrates distributed topologies
 > with Aspire and Testcontainers, executes all twenty-five Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB, DynamoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), metrics (Prometheus), storage (S3), HTTP (REST, SOAP), distributed tracing (OTLP), webhooks, and scripts end-to-end with
