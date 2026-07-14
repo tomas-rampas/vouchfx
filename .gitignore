@@ -45,6 +45,10 @@ coverage*.xml
 coverage*.info
 TestResults/
 
+## Local `vouchfx run` output (the CLI's default --junit / --html file names)
+report.html
+results.xml
+
 ## Visual Studio
 .vs/
 *.user
