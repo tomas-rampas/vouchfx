@@ -564,8 +564,10 @@ jobs:
     permissions:
       contents: read
 
-    # Secrets are not allowed directly in a step-level `if:`; surface presence
-    # as a job-level env bool (same pattern as HAS_CODESIGN / HAS_GPG).
+    # Secret presence is surfaced as a job-level env bool rather than testing
+    # the secrets context inside the step `if:` directly — matching this
+    # pipeline's established HAS_CODESIGN / HAS_GPG pattern so every
+    # secret-gated step reads the same way.
     env:
       HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
 
