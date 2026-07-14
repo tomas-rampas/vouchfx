@@ -476,9 +476,15 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      # Exact-version pin per repo convention for third-party tooling.
+      # Exact-version pin per repo convention for third-party tooling.  The
+      # global-tool shim lands under ~/.dotnet/tools, which is NOT guaranteed
+      # to be on PATH for subsequent steps (same rationale as the release.yml
+      # smoke-test job) — append it to $GITHUB_PATH so the next steps can
+      # invoke `reportgenerator` bare.
       - name: Install ReportGenerator
-        run: dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.10
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.10
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       # Merges every per-project Cobertura file into one number.  JsonSummary
       # yields Summary.json (machine-readable percentages); Badges yields
