@@ -56,6 +56,10 @@
 #   Authenticode (Windows)  CODESIGN_PFX_BASE64 + CODESIGN_PFX_PASSWORD
 #   GPG signing (nupkg)     GPG_SIGNING_KEY + GPG_PASSPHRASE
 #   Apple notarisation      APPLE_ID + APPLE_TEAM_ID + APPLE_APP_SPECIFIC_PASSWORD
+#   VS Code Marketplace     VSCE_PAT (publisher "vouchfx" — see #121; until the
+#                           secret exists the extension ships only as the .vsix
+#                           attached to the GitHub Release, and the skip is
+#                           announced loudly in the run log)
 #
 # DCP portability caveat — read before expecting self-contained exes to work
 # --------------------------------------------------------------------------
@@ -560,6 +564,13 @@ jobs:
     permissions:
       contents: read
 
+    # Secret presence is surfaced as a job-level env bool rather than testing
+    # the secrets context inside the step `if:` directly — matching this
+    # pipeline's established HAS_CODESIGN / HAS_GPG pattern so every
+    # secret-gated step reads the same way.
+    env:
+      HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
+
     defaults:
       run:
         working-directory: tools/vscode-vouchfx
@@ -590,6 +601,26 @@ jobs:
           path: tools/vscode-vouchfx/*.vsix
           if-no-files-found: error
           retention-days: 30
+
+      # ── VS Code Marketplace publish (#121) ─────────────────────────────────
+      # Publishes the .vsix built above; vsce reads the PAT from the VSCE_PAT
+      # environment variable. Guarded three ways: the secret must exist, the
+      # run must be a real release/tag event (workflow_dispatch is the
+      # non-publishing smoke lane), and only the canonical repo may publish
+      # (forks with a stray VSCE_PAT must not). Marketplace publishes are
+      # idempotent per version — re-running a tag whose version is already
+      # live fails this step rather than silently double-publishing; ship a
+      # new extension version instead.
+      - name: Publish to VS Code Marketplace (vsce publish)
+        if: ${{ env.HAS_VSCE_PAT == 'true' && github.event_name != 'workflow_dispatch' && github.repository == 'tomas-rampas/vouchfx' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath ./*.vsix
+
+      - name: Marketplace publish skipped (VSCE_PAT not configured)
+        if: ${{ env.HAS_VSCE_PAT != 'true' }}
+        run: |
+          echo "::notice title=VS Code Marketplace publish SKIPPED::VSCE_PAT is not configured. On release/tag runs the extension ships only as the .vsix attached to the GitHub Release (on workflow_dispatch smoke runs it is only a workflow artifact). To activate the Marketplace channel (#121): create the 'vouchfx' publisher on marketplace.visualstudio.com, mint a Marketplace-scoped PAT, and add it as the VSCE_PAT repo secret."
 
   # ===========================================================================
   # sign-and-attest
