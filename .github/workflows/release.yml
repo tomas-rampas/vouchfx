@@ -620,7 +620,7 @@ jobs:
       - name: Marketplace publish skipped (VSCE_PAT not configured)
         if: ${{ env.HAS_VSCE_PAT != 'true' }}
         run: |
-          echo "::notice title=VS Code Marketplace publish SKIPPED::VSCE_PAT is not configured. The extension ships only as the .vsix attached to the GitHub Release. To activate the Marketplace channel (#121): create the 'vouchfx' publisher on marketplace.visualstudio.com, mint a Marketplace-scoped PAT, and add it as the VSCE_PAT repo secret."
+          echo "::notice title=VS Code Marketplace publish SKIPPED::VSCE_PAT is not configured. On release/tag runs the extension ships only as the .vsix attached to the GitHub Release (on workflow_dispatch smoke runs it is only a workflow artifact). To activate the Marketplace channel (#121): create the 'vouchfx' publisher on marketplace.visualstudio.com, mint a Marketplace-scoped PAT, and add it as the VSCE_PAT repo secret."
 
   # ===========================================================================
   # sign-and-attest
