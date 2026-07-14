@@ -10,7 +10,28 @@ evolution is additive only.
 The first public pre-releases shipped beginning 2026-07-08: see the version entries below. The `Unreleased`
 section remains the cumulative delivered-capability record that seeds the v1.0.0 GA release notes; the alpha
 pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alpha.3 and v1.0.0-alpha.4 were
-left in draft status at the time of publication; packages shipped to NuGet.org regardless.
+left in draft status at the time of publication (packages shipped to NuGet.org regardless) and were promoted
+to published pre-releases on 2026-07-14.
+
+## [1.0.0-alpha.7] — 2026-07-13
+
+A hardening and housekeeping release: no engine, DSL or contract changes.
+
+### Security
+
+- Transitive security dependencies are now pinned centrally via `CentralPackageTransitivePinningEnabled`
+  (MessagePack 2.5.301, SharpCompress 1.0.0), so vulnerable transitive versions cannot resolve silently.
+- The VS Code extension's `undici` development dependency was bumped to 7.28.0 (Dependabot).
+
+### Changed
+
+- The GitHub Pages site generator was extracted into the shared `vouchfx-site-tools` package, now consumed
+  by all four ecosystem repositories instead of four diverging copies.
+- `pages.yml` actions are SHA-pinned and the ecosystem notify dispatch `curl` was repaired ahead of
+  cross-repo docs fan-out activation.
+- Documentation truth-up after the pilot-programme discontinuation, with migration-guide cross-links, and a
+  new knowledge-base article on DCP orchestrator portability backed by regression tests over the self-heal
+  glue.
 
 ## [1.0.0-alpha.6] — 2026-07-12
 
