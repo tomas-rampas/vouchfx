@@ -115,7 +115,7 @@ The environment variable doubles as the **production-run exclusion** — CI/auto
 
 ## Where data is stored (v1)
 
-In v1, telemetry events are **persisted locally only** by default — they are appended to a JSON Lines file on your machine. A future hosted pilot backend is out of scope in this release.
+In v1, telemetry events are **persisted locally only** by default — they are appended to a JSON Lines file on your machine. There is no maintainer-hosted backend, and none is planned; the [reference backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) exists for self-hosting.
 
 However, you can optionally configure vouchfx to drain the local outbox to a backend telemetry endpoint. See [Sending telemetry to a backend (opt-in transport)](#sending-telemetry-to-a-backend-opt-in-transport) below.
 
@@ -212,7 +212,7 @@ Each line is a complete telemetry event.
 
 ### "Why is telemetry written to disk, not sent immediately?"
 
-In v1, the local outbox is the only transport. This is intentional — telemetry is fully under your control and visible on your machine. A future hosted backend (out of scope for v1) will consume this outbox format, but will be optional and will respect the same opt-in / opt-out controls.
+In v1, the local outbox is the only default transport. This is intentional — telemetry is fully under your control and visible on your machine. A backend you self-host (see the [reference implementation](https://github.com/tomas-rampas/vouchfx-telemetry-backend)) consumes this outbox format; sending is optional and respects the same opt-in / opt-out controls.
 
 ### "What happens if I disable telemetry mid-run?"
 
@@ -304,7 +304,7 @@ If the backend is unreachable, the forget request is silently skipped — the lo
 
 This is the **client-side transport layer**. When you point `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` at a compatible ingest endpoint, the transport **is fully live and will drain your outbox to it** over HTTP.
 
-An official vouchfx telemetry backend implementing the frozen `/v1/telemetry` and `/v1/telemetry/forget` contract is publicly available at [https://tomas-rampas.github.io/vouchfx-telemetry-backend/](https://tomas-rampas.github.io/vouchfx-telemetry-backend/) ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend)) — source-complete and CI-tested for self-hosting. Before sending any data, you can [verify exactly what would be sent using the local outbox](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/why-telemetry.html#verify-exactly-what-would-be-sent-the-local-outbox). A hosted pilot instance is not yet running, so telemetry remains local-only by default unless you self-host the backend. Any HTTP service implementing the frozen contract works as a backend. **Until you configure both environment variables, telemetry remains local-only.** When you are ready to send telemetry to a backend, obtain the endpoint URL and authentication token from the backend operator (or from your [self-hosted deployment](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/self-hosting.html)), then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
+An official vouchfx telemetry backend implementing the frozen `/v1/telemetry` and `/v1/telemetry/forget` contract is publicly available at [https://tomas-rampas.github.io/vouchfx-telemetry-backend/](https://tomas-rampas.github.io/vouchfx-telemetry-backend/) ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend)) — source-complete and CI-tested for self-hosting. Before sending any data, you can [verify exactly what would be sent using the local outbox](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/why-telemetry.html#verify-exactly-what-would-be-sent-the-local-outbox). No maintainer-hosted instance is running or planned, so telemetry remains local-only by default unless you self-host the backend. Any HTTP service implementing the frozen contract works as a backend. **Until you configure both environment variables, telemetry remains local-only.** When you are ready to send telemetry to a backend, obtain the endpoint URL and authentication token from the backend operator (or from your [self-hosted deployment](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/self-hosting.html)), then set the environment variables above. **HTTPS is strongly recommended for production** — the Bearer token and aggregate payload would otherwise traverse cleartext.
 
 ## Questions and feedback
 
