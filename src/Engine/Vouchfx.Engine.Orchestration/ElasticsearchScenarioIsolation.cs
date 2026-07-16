@@ -176,8 +176,11 @@ public sealed class ElasticsearchScenarioIsolation : IScenarioIsolation, IAsyncD
 
     /// <summary>
     /// Parses the endpoint URL, extracts any userinfo into a cached Basic <c>Authorization</c>
-    /// header, rebuilds the base URL as <c>scheme://host:port</c> (never retaining credentials),
-    /// and creates the shared <see cref="HttpClient"/> once. A no-op once the client exists.
+    /// header (rebuilding the base URL as <c>scheme://host:port</c>, never retaining
+    /// credentials), and creates the shared <see cref="HttpClient"/> once. A credential-free
+    /// endpoint is used as-is (trailing <c>/</c> trimmed), preserving any path prefix —
+    /// byte-for-byte the branching CacheAssertElasticsearchProvider applies. A no-op once the
+    /// client exists.
     /// </summary>
     private void EnsureClient()
     {
@@ -218,9 +221,13 @@ public sealed class ElasticsearchScenarioIsolation : IScenarioIsolation, IAsyncD
                 new AuthenticationHeaderValue("Basic", authHeader);
         }
 
-        // Base URL rebuilt WITHOUT credentials — the raw endpoint URL (which may carry
-        // userinfo) is never retained beyond this method (§17).
-        _baseUrl = parsed.Scheme + "://" + parsed.Host + ":" + parsed.Port;
+        // Mirror CacheAssertElasticsearchProvider's branching exactly: when userinfo is
+        // present the base URL is rebuilt WITHOUT credentials (dropping any path — the
+        // raw URL is never retained beyond this method, §17); a credential-free endpoint
+        // is used as-is so a path prefix (e.g. a reverse proxy) survives.
+        _baseUrl = authHeader is not null
+            ? parsed.Scheme + "://" + parsed.Host + ":" + parsed.Port
+            : _endpointUrl.TrimEnd('/');
         _http = http;
     }
 
