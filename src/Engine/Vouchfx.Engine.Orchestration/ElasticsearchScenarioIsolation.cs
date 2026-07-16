@@ -31,9 +31,12 @@
 //     default — the very first scenario's EndScenarioAsync is therefore never a special case.
 //   • Auth/URL handling mirrors CacheAssertElasticsearchProvider: any URL userinfo is extracted
 //     once and used ONLY to build a Basic Authorization header; the base URL retained and reused
-//     for every request is rebuilt as scheme://host:port, so no credential or the raw endpoint
-//     URL is ever retained beyond that extraction (§17 — never a URL, connection string, or
-//     response body in an error Detail; a non-2xx Detail carries only the HTTP status code).
+//     for every request is rebuilt as scheme://host:port, so no credential is ever retained
+//     beyond that extraction (§17 — never credential-bearing material or a response body in an
+//     error Detail; a non-2xx Detail carries only the HTTP status code; the URL-parse stage
+//     sanitises its own failure message).  A transport-level driver message (e.g. a connection
+//     refusal) may name the credential-free host:port, matching the engine-wide infra-error
+//     pattern.
 //   • One lazily created HttpClient per topology (~30 s timeout), cached for the lifetime of the
 //     topology and disposed in DisposeAsync. A cached HttpClient is correct here — this is engine
 //     code running in the Default ALC; the "new HttpClient per invocation" rule in the provider
