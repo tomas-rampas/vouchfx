@@ -1050,11 +1050,13 @@ public static class ScenarioRunner
         //      across ALL data (relational DELETE orders, Mongo document deletion, Redis FLUSHDB,
         //      Elasticsearch delete_by_query — the right reset for unseeded dependencies and
         //      for data a prior run's script.csharp step created).
-        //   2. topology.ReseedAsync — for SEEDED dependencies, resets the baseline and re-applies
-        //      the seed: for Postgres, drops and recreates the public schema; for other stores
-        //      (MongoDB, Redis, Elasticsearch), the prior isolation already cleared them, so only
-        //      the seed re-applies. Re-applies so the author's (non-idempotent) seed re-runs
-        //      cleanly and the seeded baseline is restored; a no-op when the scenario declares no seed.
+        //   2. topology.ReseedAsync — for SEEDED Postgres dependencies, drops and recreates the
+        //      public schema then re-applies the seed, so the author's (non-idempotent) seed SQL
+        //      re-runs cleanly and the seeded baseline is restored. Non-Postgres stores are
+        //      skipped: there is no row-applied non-Postgres seed to restore (document-store and
+        //      broker seeds are content-recorded via deferred seams; Redis has no seed path), and
+        //      the isolation reset in step 1 already cleared them. A no-op when the scenario
+        //      declares no seed.
         // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
         // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
         // relational reset throws on a schema-via-script.csharp DB that has no user tables yet —

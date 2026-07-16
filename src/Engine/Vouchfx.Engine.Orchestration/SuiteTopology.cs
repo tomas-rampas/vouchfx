@@ -350,9 +350,10 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// the freshly-built-and-seeded baseline (S08-T10, watch-mode reuse path).  For seeded
     /// Postgres dependencies, each database's <c>public</c> schema is reset to empty, then
     /// the declarative <c>environment.seed</c> is re-applied — exactly reproducing the
-    /// fresh-container-then-seed sequence a plain <c>vouchfx run</c> performs. For seeded
-    /// non-Postgres stores (MongoDB, Redis, Elasticsearch), the prior reset has already
-    /// cleared those stores, so only the seed is re-applied.
+    /// fresh-container-then-seed sequence a plain <c>vouchfx run</c> performs. Non-Postgres
+    /// stores are skipped: there is no row-applied non-Postgres seed to restore (document-store
+    /// and broker seeds are content-recorded via deferred seams; Redis has no seed path at all),
+    /// and the caller's preceding isolation reset has already cleared their data.
     /// </summary>
     /// <param name="cancellationToken">Propagated to the schema reset and the seed applier.</param>
     /// <returns>A task that completes once the seed has been re-applied (a no-op when the
