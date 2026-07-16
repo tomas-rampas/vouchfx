@@ -1010,11 +1010,11 @@ state reset (postgres) reset failed for dependency 'orders-db': …
 ```
 
 **What it means:**
-The engine attempted to clear state from a dependency before running a scenario (in a sequential multi-scenario suite), but the reset operation failed. This is an **environment error** — a failure of the test infrastructure, not a failure of the system under test. Possible causes:
+The engine attempted to clear a dependency's state between scenarios (the reset runs after each scenario completes in a sequential multi-scenario suite), but the reset operation failed. This is an **environment error** — a failure of the test infrastructure, not a failure of the system under test. Possible causes:
 
 1. **Store became unhealthy mid-suite** — a container crashed, lost network connectivity, or hit a resource limit. Check Docker logs: `docker logs <container-id>`.
-2. **SQL Server with temporal tables or exotic schemas** — Respawn may fail on certain table patterns; verify the schema is supported.
-3. **MongoDB capped or time-series collections** — these collections cannot be cleared by Respawn's standard delete mechanism; remove them from the seeded data or use uncapped collections.
+2. **SQL Server with exotic schemas** — temporal (system-versioned) tables are handled, but Respawn may fail on other unusual patterns (cross-database foreign keys, graph tables); consult Respawn's documented limitations.
+3. **MongoDB capped or time-series collections** — these collections reject the document deletion the reset performs; remove them from the seeded data or use standard collections.
 4. **Elasticsearch reporting per-document failures** — a delete-by-query partially failed; check Elasticsearch logs and ensure the cluster has sufficient resources.
 5. **Connection/authentication lost** — the test infrastructure's credentials or network path to the store changed between scenarios.
 
@@ -1034,14 +1034,12 @@ The engine attempted to clear state from a dependency before running a scenario 
 
 3. **For MongoDB**, remove capped and time-series collections from the test data or switch to standard collections.
 
-4. **For SQL Server**, verify that no temporal tables or other exotic schemas are in use; consult Respawn's documented limitations.
+4. **For SQL Server**, temporal tables are handled automatically; if the reset still fails, look for other exotic schema patterns (cross-database foreign keys, graph tables) and consult Respawn's documented limitations.
 
 5. **For Elasticsearch**, ensure the cluster is healthy and has sufficient resources; check the cluster health status:
    ```bash
    curl http://localhost:9200/_cluster/health
    ```
-
-6. **Increase suite timeout** — if the reset fails due to a slow or resource-constrained store, increasing the per-dependency health-check timeout may help (contact the maintainer if this is needed for your environment).
 
 ---
 

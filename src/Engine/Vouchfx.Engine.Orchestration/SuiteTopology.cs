@@ -301,9 +301,10 @@ public sealed class SuiteTopology : IAsyncDisposable
             // Step 4½: Apply declarative seed data — AFTER discovery, BEFORE the
             // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01/A-02).
             // SeedApplier dispatches each seeded dependency on its declared type
-            // (postgres/sqlserver/mysql → SQL now; mongodb/redis/elasticsearch →
-            // content-hash + record via deferred seams, no actual write in M2;
-            // broker/document store → content-hash + record via deferred seams)
+            // (postgres + sql → apply SQL now — SQL seeds for any OTHER store type
+            // are rejected as a type mismatch; document stores (mongodb,
+            // elasticsearch) and brokers → content-hash + record via deferred
+            // seams, no actual write in M2; redis has no seed path at all)
             // and throws OrchestrationException (Provision kind) on any failure;
             // the outer catch below disposes the topology so containers do not
             // leak, and the failure surfaces as an Environment error (§12.1) —
@@ -380,10 +381,12 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <c>CREATE TABLE</c> would collide.
     /// </para>
     /// <para>
-    /// For <strong>non-Postgres stores</strong> (MongoDB, Redis, Elasticsearch), the preceding
-    /// <c>ScenarioIsolationFactory</c> reset has already cleared those stores via
-    /// content-recorded deferred seams, so only the re-seed applies. Non-Postgres seeds are
-    /// content-recorded at initial seed time and re-applied identically on watch re-runs.
+    /// <strong>Non-Postgres stores</strong> (SQL Server, MySQL, MongoDB, Redis, Elasticsearch)
+    /// are skipped here: the preceding per-store isolation reset has already cleared their data
+    /// (real deletes — Respawn, <c>DeleteMany</c>, <c>FLUSHDB</c>, <c>_delete_by_query</c>), and
+    /// there is no row-applied non-Postgres seed state to restore — document-store and broker
+    /// seeds are content-recorded via deferred seams (no actual write in M2), and Redis has no
+    /// seed path at all.
     /// </para>
     /// </remarks>
     public async Task ReseedAsync(CancellationToken cancellationToken = default)

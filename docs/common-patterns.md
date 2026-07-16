@@ -783,8 +783,8 @@ Between **sequential** scenarios that share a single topology, the engine automa
 | Dependency kind | Reset mechanism | Details |
 |---|---|---|
 | `postgres` | Respawn DELETE order | Tables and schemas preserved; identity/sequence values NOT reset |
-| `sqlserver` | Respawn DELETE order | Temporal tables and scoped schemas handled; identity values NOT reset |
-| `mysql` | Respawn DELETE order | Configured for proper authentication; identity values NOT reset |
+| `sqlserver` | Respawn DELETE order | Temporal (system-versioned) tables handled; identity values NOT reset |
+| `mysql` | Respawn DELETE order | Reset scoped to the dependency's own database; auto-increment values NOT reset |
 | `mongodb` | Document deletion per collection | Collections and indexes preserved; capped and time-series collections fail reset (environment error) |
 | `redis` | FLUSHDB on designated database | Only the discovered database cleared; other databases on the same instance untouched |
 | `elasticsearch` | Delete-by-query across open indices | Mappings, settings and hidden indices preserved; per-document failures fail the reset |
