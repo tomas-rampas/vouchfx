@@ -223,11 +223,18 @@ public static class EnvironmentMapper
                         serverBuilder = serverBuilder.WithImageTag(spec.Version);
                     // Stability environment variables: single-node discovery, security
                     // disabled (avoids TLS/credential setup in test environments), and
-                    // bounded JVM heap to prevent OOM on CI runners.
+                    // bounded JVM heap to prevent OOM on CI runners.  Disk-watermark
+                    // allocation thresholds are disabled because CI runners routinely
+                    // exceed the default ~90% high watermark after pulling this suite's
+                    // images — above it Elasticsearch accepts index creation but never
+                    // allocates the primary shard, so every write 503s while the rest of
+                    // the topology looks healthy.  The data is ephemeral test state on a
+                    // throwaway container, so the safeguard protects nothing here.
                     serverBuilder = serverBuilder
                         .WithEnvironment("discovery.type", "single-node")
                         .WithEnvironment("xpack.security.enabled", "false")
-                        .WithEnvironment("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
+                        .WithEnvironment("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
+                        .WithEnvironment("cluster.routing.allocation.disk.threshold_enabled", "false");
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
                     return (retained, retained);
                 },
