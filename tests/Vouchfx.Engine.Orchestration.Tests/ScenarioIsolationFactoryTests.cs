@@ -270,7 +270,11 @@ public sealed class ScenarioIsolationFactoryTests
             types,
             services);
 
-        Assert.IsType<CompositeScenarioIsolation>(result);
+        var composite = Assert.IsType<CompositeScenarioIsolation>(result);
+        Assert.Collection(
+            composite.Children,
+            first => Assert.Equal("auditdb", Assert.IsType<RespawnRelationalIsolation>(first).DependencyName),
+            second => Assert.Equal("ordersdb", Assert.IsType<RespawnRelationalIsolation>(second).DependencyName));
     }
 
     // ── Constructor / argument validation ─────────────────────────────────────

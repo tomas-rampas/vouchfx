@@ -33,6 +33,12 @@ public sealed class CompositeScenarioIsolation : IScenarioIsolation, IAsyncDispo
     private bool _disposed;
 
     /// <summary>
+    /// The ordered children, exposed for tests (InternalsVisibleTo) so the factory's
+    /// declaration-order guarantee can be asserted rather than assumed.
+    /// </summary>
+    internal IReadOnlyList<IScenarioIsolation> Children => _children;
+
+    /// <summary>
     /// Initialises a new <see cref="CompositeScenarioIsolation"/> over the given
     /// children, invoked in the supplied order.
     /// </summary>

@@ -154,14 +154,17 @@ public sealed class EnvironmentErrorClassificationTests
         var envelope = EventStreamJson.FromLine(line);
         Assert.Equal("environment-error", envelope.Type);
 
-        if (envelope.Extra?.TryGetValue("resourceName", out var resourceNameElement) == true)
-        {
-            Assert.Equal(dependencyName, resourceNameElement.GetString());
-        }
+        // Unconditional: the wire line MUST carry both fields — a silently absent
+        // key would otherwise let this test pass without checking anything.
+        Assert.NotNull(envelope.Extra);
+        Assert.True(
+            envelope.Extra.TryGetValue("resourceName", out var resourceNameElement),
+            "event line carries no resourceName field");
+        Assert.Equal(dependencyName, resourceNameElement.GetString());
 
-        if (envelope.Extra?.TryGetValue("verdict", out var verdictElement) == true)
-        {
-            Assert.Equal("ENV_ERROR", verdictElement.GetString());
-        }
+        Assert.True(
+            envelope.Extra.TryGetValue("verdict", out var verdictElement),
+            "event line carries no verdict field");
+        Assert.Equal("ENV_ERROR", verdictElement.GetString());
     }
 }

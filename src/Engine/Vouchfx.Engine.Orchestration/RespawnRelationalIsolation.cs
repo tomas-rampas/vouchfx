@@ -101,6 +101,12 @@ public sealed class RespawnRelationalIsolation : IScenarioIsolation, IAsyncDispo
     private bool _disposed;
 
     /// <summary>
+    /// The logical dependency name, exposed for tests (InternalsVisibleTo) so
+    /// factory dispatch and composite ordering can be asserted per dependency.
+    /// </summary>
+    internal string DependencyName => _dependencyName;
+
+    /// <summary>
     /// Initialises a new <see cref="RespawnRelationalIsolation"/> for the given
     /// relational dependency.  Never opens a connection — construction is pure
     /// validation.
@@ -210,8 +216,15 @@ public sealed class RespawnRelationalIsolation : IScenarioIsolation, IAsyncDispo
         {
             await conn.OpenAsync(ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Genuine caller cancellation propagates raw — it is neither a product
+            // Fail nor an EnvironmentError (§12.1), and the runner releases this
+            // isolation in a finally regardless of how EndScenarioAsync exits. A
+            // driver-thrown OperationCanceledException WITHOUT a cancelled token
+            // (e.g. a command timeout surfaced as OCE) falls through to the general
+            // wrap below and is classified as an EnvironmentError like any other
+            // infrastructure failure.
             conn.Dispose();
             throw;
         }
@@ -296,14 +309,26 @@ public sealed class RespawnRelationalIsolation : IScenarioIsolation, IAsyncDispo
     /// </summary>
     private string ResolveMySqlDatabaseName()
     {
+        // The Database key is guaranteed by the topology contract: EnvironmentMapper
+        // provisions MySQL dependencies via AddDatabase(name + "db"), so the discovered
+        // connection string always targets a single database. This method is the
+        // belt-and-braces check on that contract.
         string? database;
         try
         {
             database = new MySqlConnector.MySqlConnectionStringBuilder(_connectionString).Database;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            throw ScenarioIsolationErrors.Wrap(StoreKindToken(), "create", _dependencyName, ex);
+            // Deliberately NOT the parse exception itself: a malformed-connection-string
+            // message can echo fragments of the string (§17 discipline — never let
+            // credential-bearing material reach an observation).
+            throw ScenarioIsolationErrors.Wrap(
+                StoreKindToken(),
+                "create",
+                _dependencyName,
+                new InvalidOperationException(
+                    "connection string could not be parsed to resolve the Database for schema scoping."));
         }
 
         if (string.IsNullOrWhiteSpace(database))
