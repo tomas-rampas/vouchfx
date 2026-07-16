@@ -1,8 +1,9 @@
-// Vouchfx.Engine.Orchestration — ScenarioIsolation (S04-A-01).
+// Vouchfx.Engine.Orchestration — ScenarioIsolation (S04-A-01, generalised).
 //
 // Per-scenario state-reset seam.  The suite runner calls BeginScenarioAsync before
-// each scenario and EndScenarioAsync after each scenario.  The concrete implementation
-// selects the appropriate reset strategy for the declared topology.
+// each scenario and EndScenarioAsync after each scenario.  ScenarioIsolationFactory
+// dispatches on each declared dependency's name + type to build the concrete
+// implementation(s) for the declared topology.
 //
 // Design notes:
 //   • IScenarioIsolation is placed in the Orchestration project — the only project
@@ -10,14 +11,20 @@
 //     in Abstractions would pull Respawn into a low-level shared contract, which is
 //     undesirable.
 //   • NullScenarioIsolation is the default: it preserves the existing single-scenario
-//     RunAsync behaviour unchanged (the invariant §4 / MVP §8.2).
-//   • RespawnPostgresIsolation uses Respawn 6.x (Respawner.CreateAsync /
-//     respawner.ResetAsync) to truncate and reseed all user-created tables between
-//     scenarios without dropping the schema.
-//   • Any Respawn or Npgsql failure is wrapped in OrchestrationException (§12.1):
-//     isolation failure is always an Environment error, never a test Fail.
-
-using Respawn;
+//     RunAsync behaviour unchanged (the invariant §4 / MVP §8.2) — used when a
+//     topology has no resettable dependency.
+//   • RespawnRelationalIsolation (RespawnRelationalIsolation.cs) covers every
+//     relational store the engine ships a db-assert provider for — PostgreSQL, SQL
+//     Server, MySQL — via Respawn 6.x (Respawner.CreateAsync / respawner.ResetAsync).
+//     Mongo/Redis/Elasticsearch resetters land in a later chunk.
+//   • CompositeScenarioIsolation (CompositeScenarioIsolation.cs) fans Begin/End out to
+//     every resettable dependency when a topology declares more than one, so ALL of
+//     them are reset between scenarios — not just the first one found.
+//   • ScenarioIsolationFactory (ScenarioIsolationFactory.cs) is the single dispatch
+//     point: name+type lookup, never a connection-string-shape sniff.
+//   • Any driver or Respawn failure is wrapped in OrchestrationException (§12.1) whose
+//     ResourceName names the failing dependency: isolation failure is always an
+//     Environment error, never a test Fail.
 
 namespace Vouchfx.Engine.Orchestration;
 
@@ -84,235 +91,4 @@ public sealed class NullScenarioIsolation : IScenarioIsolation
 
     /// <inheritdoc />
     public Task EndScenarioAsync(CancellationToken ct) => Task.CompletedTask;
-}
-
-// ---------------------------------------------------------------------------
-// RespawnPostgresIsolation
-// ---------------------------------------------------------------------------
-
-/// <summary>
-/// Per-scenario isolation implementation that uses Respawn 6.x to reset all
-/// user-created Postgres tables between scenarios without dropping the schema
-/// (S04-A-01).
-/// </summary>
-/// <remarks>
-/// <para>
-/// <strong>Respawn API used (6.x):</strong>
-/// <code>
-/// var respawner = await Respawner.CreateAsync(connection,
-///     new RespawnerOptions { DbAdapter = DbAdapter.Postgres });
-/// await respawner.ResetAsync(connection);
-/// </code>
-/// </para>
-/// <para>
-/// <strong>Lazy initialisation:</strong> the <see cref="Npgsql.NpgsqlConnection"/>
-/// and <see cref="Respawner"/> are created on the first call to
-/// <see cref="EndScenarioAsync"/> — not <see cref="BeginScenarioAsync"/> — and
-/// reused for the lifetime of the topology.  This deferral is deliberate: a
-/// freshly-started Aspire topology yields a clean Postgres container, so no
-/// pre-scenario reset is needed, and (critically) <see cref="Respawner.CreateAsync"/>
-/// under Respawn 6.x throws on a database with no user tables.  By deferring
-/// creation to the first <see cref="EndScenarioAsync"/>, the first scenario has
-/// had a chance to establish its schema (via <c>seed</c> or an early
-/// <c>script.csharp</c> step), so Respawn always finds tables to checkpoint.
-/// </para>
-/// <para>
-/// <strong>§12.1 invariant:</strong> any Npgsql or Respawn failure is wrapped
-/// in <see cref="OrchestrationException"/> with kind
-/// <see cref="OrchestrationErrorKind.Provision"/> so the runner classifies it as
-/// <c>EnvironmentError</c>, never as <c>Fail</c>.
-/// </para>
-/// <para>
-/// <strong>Disposal:</strong> call <see cref="DisposeAsync"/> once the topology
-/// is torn down to release the underlying Npgsql connection.
-/// </para>
-/// </remarks>
-public sealed class RespawnPostgresIsolation : IScenarioIsolation, IAsyncDisposable
-{
-    private readonly string _connectionString;
-
-    // Guard: connection and respawner are created once, lazily, on first reset.
-    private Npgsql.NpgsqlConnection? _connection;
-    private Respawner? _respawner;
-    private bool _disposed;
-
-    /// <summary>
-    /// Initialises a new <see cref="RespawnPostgresIsolation"/> for the
-    /// given Postgres connection string (obtained from
-    /// <see cref="SuiteTopology.DiscoveredServices"/> after
-    /// <see cref="SuiteTopology.StartAsync"/> completes).
-    /// </summary>
-    /// <param name="connectionString">
-    /// The Postgres ADO.NET connection string for the managed dependency.
-    /// Must not be <see langword="null"/> or empty.
-    /// </param>
-    public RespawnPostgresIsolation(string connectionString)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(connectionString);
-        _connectionString = connectionString;
-    }
-
-    // ── IScenarioIsolation ────────────────────────────────────────────────────
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// This is a no-op.  A freshly-started Aspire topology yields a clean
-    /// Postgres container, so no pre-scenario reset is required — and under
-    /// Respawn 6.x, <see cref="Respawner.CreateAsync"/> on an empty database
-    /// throws.  The <see cref="Respawner"/> is therefore created lazily, and
-    /// state reset performed, in <see cref="EndScenarioAsync"/>; the next
-    /// scenario always begins from a known-clean baseline.
-    /// </remarks>
-    public Task BeginScenarioAsync(CancellationToken ct)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// <para>
-    /// Opens the connection on first use, then <em>re-creates</em> the
-    /// <see cref="Respawner"/> checkpoint and resets all user-created Postgres
-    /// tables via <c>respawner.ResetAsync(connection)</c>.  Any failure is
-    /// wrapped in <see cref="OrchestrationException"/> (§12.1: Environment error,
-    /// never Fail).
-    /// </para>
-    /// <para>
-    /// The checkpoint is re-created on <em>every</em> call (not cached) because
-    /// Respawn computes its table-reset set at checkpoint time: a scenario may
-    /// create new tables (via <c>seed</c> or an early <c>script.csharp</c> step),
-    /// and those tables would escape a checkpoint taken after an earlier scenario.
-    /// Re-checkpointing keeps the reset set current, so no row created by any
-    /// scenario bleeds into the next.  <see cref="Respawner.CreateAsync"/> is a
-    /// cheap <c>information_schema</c> introspection relative to the topology build.
-    /// </para>
-    /// </remarks>
-    public async Task EndScenarioAsync(CancellationToken ct)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        await EnsureConnectionAsync(ct).ConfigureAwait(false);
-        await CreateRespawnerAsync(ct).ConfigureAwait(false);
-        await ResetAsync(ct).ConfigureAwait(false);
-    }
-
-    // ── IAsyncDisposable ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Disposes the underlying <see cref="Npgsql.NpgsqlConnection"/>.
-    /// Safe to call multiple times.
-    /// </summary>
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-
-        if (_connection is not null)
-        {
-            await _connection.DisposeAsync().ConfigureAwait(false);
-            _connection = null;
-        }
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Opens the shared <see cref="Npgsql.NpgsqlConnection"/> once and caches it
-    /// for the lifetime of the topology.  A no-op once the connection is open.
-    /// </summary>
-    private async Task EnsureConnectionAsync(CancellationToken ct)
-    {
-        if (_connection is not null)
-        {
-            return;
-        }
-
-        var conn = new Npgsql.NpgsqlConnection(_connectionString);
-        try
-        {
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // Dispose the connection on any failure so we don't leak it.
-            conn.Dispose();
-            var info = new OrchestrationErrorInfo(
-                Kind: OrchestrationErrorKind.Provision,
-                ResourceName: "respawn-init",
-                RegistryHost: null,
-                AuthStatus: null,
-                Detail: TrimDetail(ex.Message));
-            throw new OrchestrationException(info, ex);
-        }
-
-        _connection = conn;
-    }
-
-    /// <summary>
-    /// (Re-)creates the <see cref="Respawner"/> checkpoint over the current
-    /// schema, so any table created since the previous reset is included in the
-    /// reset set.  The connection must already be open.
-    /// </summary>
-    private async Task CreateRespawnerAsync(CancellationToken ct)
-    {
-        _ = ct; // Respawner.CreateAsync does not accept a CancellationToken in v6.
-        try
-        {
-            _respawner = await Respawner.CreateAsync(
-                _connection!,
-                new RespawnerOptions { DbAdapter = DbAdapter.Postgres })
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            var info = new OrchestrationErrorInfo(
-                Kind: OrchestrationErrorKind.Provision,
-                ResourceName: "respawn-create",
-                RegistryHost: null,
-                AuthStatus: null,
-                Detail: TrimDetail(ex.Message));
-            throw new OrchestrationException(info, ex);
-        }
-    }
-
-    /// <summary>
-    /// Calls <c>respawner.ResetAsync(connection)</c>, wrapping any failure
-    /// in an <see cref="OrchestrationException"/> (§12.1).
-    /// </summary>
-    private async Task ResetAsync(CancellationToken ct)
-    {
-        // Respawner.ResetAsync does not accept a CancellationToken in v6;
-        // the operation is fast (truncation, not drop+recreate) so the
-        // omission is acceptable.
-        _ = ct; // suppress unused-parameter warning
-
-        try
-        {
-            await _respawner!.ResetAsync(_connection!).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            var info = new OrchestrationErrorInfo(
-                Kind: OrchestrationErrorKind.Provision,
-                ResourceName: "respawn-reset",
-                RegistryHost: null,
-                AuthStatus: null,
-                Detail: TrimDetail(ex.Message));
-            throw new OrchestrationException(info, ex);
-        }
-    }
-
-    /// <summary>
-    /// Returns a trimmed, single-line summary of <paramref name="message"/>
-    /// capped at 200 characters for display in event streams and logs.
-    /// </summary>
-    private static string TrimDetail(string message) =>
-        (message ?? string.Empty).ReplaceLineEndings(" ").Trim() is { Length: > 200 } s
-            ? s[..200]
-            : (message ?? string.Empty).ReplaceLineEndings(" ").Trim();
 }

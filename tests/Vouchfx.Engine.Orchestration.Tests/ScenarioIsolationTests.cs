@@ -1,7 +1,12 @@
-// Tests for S04-A-01: IScenarioIsolation, NullScenarioIsolation, RespawnPostgresIsolation.
+// Tests for S04-A-01 (generalised): IScenarioIsolation, NullScenarioIsolation,
+// RespawnRelationalIsolation.
 //
-// Non-docker tests cover the no-op NullScenarioIsolation and basic parameter validation.
-// Docker-gated tests for RespawnPostgresIsolation are in RespawnResetProofTests.cs.
+// Non-docker tests cover the no-op NullScenarioIsolation and basic parameter validation
+// for all three RelationalStoreKind values (Postgres, SqlServer, MySql) — construction
+// must never open a connection, so these run without Docker.
+// Docker-gated tests for RespawnRelationalIsolation's actual reset behaviour are in
+// RespawnResetProofTests.cs (Postgres), SqlServerResetProofTests.cs, and
+// MySqlResetProofTests.cs.
 //
 // Run non-docker tests:
 //   dotnet test --filter "requires!=docker&FullyQualifiedName~ScenarioIsolation"
@@ -13,7 +18,8 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="IScenarioIsolation"/>, <see cref="NullScenarioIsolation"/>,
-/// and the <see cref="RespawnPostgresIsolation"/> constructor contract (S04-A-01).
+/// and the <see cref="RespawnRelationalIsolation"/> constructor contract across all
+/// three <see cref="RelationalStoreKind"/> values (S04-A-01, generalised).
 /// </summary>
 public sealed class ScenarioIsolationTests
 {
@@ -64,41 +70,91 @@ public sealed class ScenarioIsolationTests
         }
     }
 
-    // ── RespawnPostgresIsolation — constructor contract ───────────────────────
+    // ── RespawnRelationalIsolation — constructor contract (all three kinds) ───
 
     /// <summary>
-    /// <see cref="RespawnPostgresIsolation"/> rejects a <see langword="null"/>
-    /// connection string at construction time.
+    /// Syntactically valid but unreachable connection strings, one per
+    /// <see cref="RelationalStoreKind"/>, so the ctor-validation and lazy-no-connect
+    /// cases below can be run identically across all three kinds.
     /// </summary>
-    [Fact]
-    public void RespawnPostgresIsolation_NullConnectionString_Throws()
+    public static TheoryData<RelationalStoreKind, string> UnreachableConnectionStrings() => new()
+    {
+        { RelationalStoreKind.Postgres, "Host=unreachable;Database=test;Username=u;Password=p" },
+        { RelationalStoreKind.SqlServer, "Server=unreachable;Database=test;User Id=u;Password=p;TrustServerCertificate=true" },
+        { RelationalStoreKind.MySql, "Server=unreachable;Database=test;User=u;Password=p" },
+    };
+
+    /// <summary>
+    /// <see cref="RespawnRelationalIsolation"/> rejects a <see langword="null"/>
+    /// dependency name at construction time.
+    /// </summary>
+    [Theory]
+    [InlineData(RelationalStoreKind.Postgres)]
+    [InlineData(RelationalStoreKind.SqlServer)]
+    [InlineData(RelationalStoreKind.MySql)]
+    public void RespawnRelationalIsolation_NullDependencyName_Throws(RelationalStoreKind kind)
     {
         Assert.Throws<ArgumentNullException>(
-            () => new RespawnPostgresIsolation(null!));
+            () => new RespawnRelationalIsolation(null!, kind, "Host=unreachable;Database=test"));
     }
 
     /// <summary>
-    /// <see cref="RespawnPostgresIsolation"/> rejects an empty connection string
-    /// at construction time.
+    /// <see cref="RespawnRelationalIsolation"/> rejects an empty dependency name at
+    /// construction time.
     /// </summary>
-    [Fact]
-    public void RespawnPostgresIsolation_EmptyConnectionString_Throws()
+    [Theory]
+    [InlineData(RelationalStoreKind.Postgres)]
+    [InlineData(RelationalStoreKind.SqlServer)]
+    [InlineData(RelationalStoreKind.MySql)]
+    public void RespawnRelationalIsolation_EmptyDependencyName_Throws(RelationalStoreKind kind)
     {
         Assert.Throws<ArgumentException>(
-            () => new RespawnPostgresIsolation(string.Empty));
+            () => new RespawnRelationalIsolation(string.Empty, kind, "Host=unreachable;Database=test"));
     }
 
     /// <summary>
-    /// <see cref="RespawnPostgresIsolation"/> is constructed successfully for a
-    /// non-empty connection string and implements <see cref="IScenarioIsolation"/>
-    /// and <see cref="IAsyncDisposable"/>.
+    /// <see cref="RespawnRelationalIsolation"/> rejects a <see langword="null"/>
+    /// connection string at construction time.
     /// </summary>
-    [Fact]
-    public async Task RespawnPostgresIsolation_ConstructsSuccessfully_ImplementsInterface()
+    [Theory]
+    [InlineData(RelationalStoreKind.Postgres)]
+    [InlineData(RelationalStoreKind.SqlServer)]
+    [InlineData(RelationalStoreKind.MySql)]
+    public void RespawnRelationalIsolation_NullConnectionString_Throws(RelationalStoreKind kind)
     {
-        // Use a syntactically valid but unreachable connection string.
-        // The constructor must not open a connection (lazy initialisation).
-        var sut = new RespawnPostgresIsolation("Host=unreachable;Database=test;Username=u;Password=p");
+        Assert.Throws<ArgumentNullException>(
+            () => new RespawnRelationalIsolation("dep", kind, null!));
+    }
+
+    /// <summary>
+    /// <see cref="RespawnRelationalIsolation"/> rejects an empty connection string
+    /// at construction time.
+    /// </summary>
+    [Theory]
+    [InlineData(RelationalStoreKind.Postgres)]
+    [InlineData(RelationalStoreKind.SqlServer)]
+    [InlineData(RelationalStoreKind.MySql)]
+    public void RespawnRelationalIsolation_EmptyConnectionString_Throws(RelationalStoreKind kind)
+    {
+        Assert.Throws<ArgumentException>(
+            () => new RespawnRelationalIsolation("dep", kind, string.Empty));
+    }
+
+    /// <summary>
+    /// <see cref="RespawnRelationalIsolation"/> is constructed successfully for a
+    /// non-empty dependency name and connection string, for every
+    /// <see cref="RelationalStoreKind"/>, and implements <see cref="IScenarioIsolation"/>
+    /// and <see cref="IAsyncDisposable"/>.  Construction must not open a connection
+    /// (lazy initialisation) — the connection string is unreachable, so any eager
+    /// connect attempt would hang or throw here instead of at
+    /// <c>EndScenarioAsync</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnreachableConnectionStrings))]
+    public async Task RespawnRelationalIsolation_ConstructsSuccessfully_ImplementsInterface(
+        RelationalStoreKind kind, string connectionString)
+    {
+        var sut = new RespawnRelationalIsolation("dep", kind, connectionString);
 
         Assert.IsAssignableFrom<IScenarioIsolation>(sut);
         Assert.IsAssignableFrom<IAsyncDisposable>(sut);
@@ -108,29 +164,70 @@ public sealed class ScenarioIsolationTests
     }
 
     /// <summary>
-    /// Double-dispose of <see cref="RespawnPostgresIsolation"/> is idempotent
-    /// and does not throw.
+    /// Double-dispose of <see cref="RespawnRelationalIsolation"/> is idempotent
+    /// and does not throw, for every <see cref="RelationalStoreKind"/>.
     /// </summary>
-    [Fact]
-    public async Task RespawnPostgresIsolation_DoubleDispose_IsIdempotent()
+    [Theory]
+    [MemberData(nameof(UnreachableConnectionStrings))]
+    public async Task RespawnRelationalIsolation_DoubleDispose_IsIdempotent(
+        RelationalStoreKind kind, string connectionString)
     {
-        var sut = new RespawnPostgresIsolation("Host=unreachable;Database=test;Username=u;Password=p");
+        var sut = new RespawnRelationalIsolation("dep", kind, connectionString);
 
         await sut.DisposeAsync();
         await sut.DisposeAsync(); // Must not throw.
     }
 
     /// <summary>
-    /// <see cref="RespawnPostgresIsolation.BeginScenarioAsync"/> throws
-    /// <see cref="ObjectDisposedException"/> after disposal.
+    /// <see cref="RespawnRelationalIsolation.BeginScenarioAsync"/> throws
+    /// <see cref="ObjectDisposedException"/> after disposal, for every
+    /// <see cref="RelationalStoreKind"/>.
     /// </summary>
-    [Fact]
-    public async Task RespawnPostgresIsolation_BeginAfterDispose_ThrowsObjectDisposedException()
+    [Theory]
+    [MemberData(nameof(UnreachableConnectionStrings))]
+    public async Task RespawnRelationalIsolation_BeginAfterDispose_ThrowsObjectDisposedException(
+        RelationalStoreKind kind, string connectionString)
     {
-        var sut = new RespawnPostgresIsolation("Host=unreachable;Database=test;Username=u;Password=p");
+        var sut = new RespawnRelationalIsolation("dep", kind, connectionString);
         await sut.DisposeAsync();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(
             () => sut.BeginScenarioAsync(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// <see cref="RespawnRelationalIsolation.EndScenarioAsync"/> throws
+    /// <see cref="ObjectDisposedException"/> after disposal, for every
+    /// <see cref="RelationalStoreKind"/> — mirrors the Begin case above so both
+    /// entry points are proven guarded.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnreachableConnectionStrings))]
+    public async Task RespawnRelationalIsolation_EndAfterDispose_ThrowsObjectDisposedException(
+        RelationalStoreKind kind, string connectionString)
+    {
+        var sut = new RespawnRelationalIsolation("dep", kind, connectionString);
+        await sut.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            () => sut.EndScenarioAsync(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// <see cref="RespawnRelationalIsolation.BeginScenarioAsync"/> is a validated
+    /// no-op before any reset has happened, for every <see cref="RelationalStoreKind"/>
+    /// — it must not attempt to connect (the connection string is unreachable).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnreachableConnectionStrings))]
+    public async Task RespawnRelationalIsolation_BeginScenarioAsync_DoesNotConnect(
+        RelationalStoreKind kind, string connectionString)
+    {
+        var sut = new RespawnRelationalIsolation("dep", kind, connectionString);
+
+        // Should not throw and should not attempt to open the unreachable connection.
+        await sut.BeginScenarioAsync(CancellationToken.None);
+
+        await sut.DisposeAsync();
     }
 }

@@ -43,14 +43,21 @@
     <PackageReference Include="Aspire.Hosting.Elasticsearch" />
     <PackageReference Include="Aspire.Hosting.RabbitMQ" />
     <PackageReference Include="Aspire.Hosting.Nats" />
-    <!-- Respawn: per-scenario Postgres state reset (S04-A-01).
-         Brings Npgsql adapter support. -->
+    <!-- Respawn: per-scenario relational state reset (S04-A-01, generalised to
+         Postgres + SQL Server + MySQL). Brings the Npgsql/SqlServer/MySql adapters. -->
     <PackageReference Include="Respawn" />
     <!-- Npgsql: explicit reference for SeedApplier (S05-A-01) — applies seed SQL
          against Postgres dependencies after the topology is healthy. Previously
          resolved transitively via Respawn; pinned directly so the dependency is
          not silently lost if Respawn's transitive graph changes. -->
     <PackageReference Include="Npgsql" />
+    <!-- Microsoft.Data.SqlClient: RespawnRelationalIsolation's SQL Server adapter
+         (per-scenario state reset generalisation) opens a plain SqlConnection for
+         Respawn to reset via DbAdapter.SqlServer. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <!-- MySqlConnector: RespawnRelationalIsolation's MySQL adapter opens a plain
+         MySqlConnection for Respawn to reset via DbAdapter.MySql. -->
+    <PackageReference Include="MySqlConnector" />
   </ItemGroup>
 
   <ItemGroup>

@@ -83,6 +83,7 @@ public sealed class SuiteTopology : IAsyncDisposable
         _inner = inner;
         DiscoveredServices = discoveredServices;
         DependencyNames = dependencyNames;
+        DependencyTypes = BuildDependencyTypeMap(environment);
         _environment = environment;
         _seedBaseDirectory = seedBaseDirectory;
     }
@@ -120,6 +121,22 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// service endpoint entries (staged under <c>svc::&lt;name&gt;</c>).
     /// </remarks>
     public IReadOnlyList<string> DependencyNames { get; }
+
+    /// <summary>
+    /// Gets the logical-dependency-name → declared-<c>type</c> map for every
+    /// dependency declared in <c>environment.dependencies</c> (e.g. <c>"postgres"</c>,
+    /// <c>"sqlserver"</c>, <c>"kafka"</c>).
+    /// </summary>
+    /// <remarks>
+    /// Populated once, at construction, via the same <see cref="BuildDependencyTypeMap"/>
+    /// helper <see cref="ApplySeedAsync"/> and <see cref="ReseedAsync"/> already use for
+    /// seed dispatch — so this map can never disagree with the seed applier about a
+    /// dependency's declared type. Consumed by <c>ScenarioIsolationFactory.Create</c> to
+    /// dispatch each dependency to its reset implementation by name+type rather than by
+    /// sniffing the shape of its discovered connection string. Empty when the scenario
+    /// declares no dependencies.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> DependencyTypes { get; }
 
     /// <summary>
     /// Gets the underlying <see cref="DistributedApplication"/> instance.
@@ -294,7 +311,7 @@ public sealed class SuiteTopology : IAsyncDisposable
             // Respawn / multi-scenario note: this seeding runs ONCE at suite
             // startup.  For a SINGLE-scenario run the seeded rows are present for
             // step 1.  For a MULTI-scenario suite sharing one topology,
-            // RespawnPostgresIsolation truncates the ROWS of all user tables
+            // RespawnRelationalIsolation truncates the ROWS of all user tables
             // between scenarios (schema persists), so seeded reference rows are
             // also truncated after the first scenario — persisting reference data
             // across scenarios is a future enhancement, OUT OF SCOPE for A-01.

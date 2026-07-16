@@ -41,7 +41,7 @@
 // Respawn / multi-scenario limitation (documented for A-01, out of scope to fix):
 //   Suite-startup seeding runs ONCE.  For a SINGLE-scenario run (the M2 case)
 //   seeded rows are present for step 1.  For a MULTI-scenario suite sharing one
-//   topology, RespawnPostgresIsolation.EndScenarioAsync truncates the ROWS of all
+//   topology, RespawnRelationalIsolation.EndScenarioAsync truncates the ROWS of all
 //   user tables between scenarios (schema/tables persist) — so seeded REFERENCE
 //   rows are also truncated after the first scenario.  Persisting reference data
 //   across scenarios (Respawn TablesToIgnore, or re-seeding in BeginScenarioAsync)
@@ -69,7 +69,7 @@ namespace Vouchfx.Engine.Orchestration;
 /// dependency, Npgsql connection/execution error) is wrapped in an
 /// <see cref="OrchestrationException"/> with kind
 /// <see cref="OrchestrationErrorKind.Provision"/> — the same kind
-/// <c>RespawnPostgresIsolation</c> uses for state-reset failures.
+/// <c>RespawnRelationalIsolation</c> uses for state-reset failures.
 /// </para>
 /// </remarks>
 internal static class SeedApplier
