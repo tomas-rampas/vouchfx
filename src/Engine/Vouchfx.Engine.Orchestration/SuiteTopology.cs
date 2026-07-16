@@ -300,12 +300,12 @@ public sealed class SuiteTopology : IAsyncDisposable
             // ----------------------------------------------------------------
             // Step 4½: Apply declarative seed data — AFTER discovery, BEFORE the
             // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01/A-02).
-            // SeedApplier dispatches each seeded dependency on its declared type
-            // (postgres + sql → apply SQL now — SQL seeds for any OTHER store type
-            // are rejected as a type mismatch; document stores (mongodb,
-            // elasticsearch) and brokers → content-hash + record via deferred
-            // seams, no actual write in M2; redis has no seed path at all)
-            // and throws OrchestrationException (Provision kind) on any failure;
+            // SeedApplier dispatches each seeded dependency on its declared type:
+            // a postgres dependency's sql seed is applied now (a sql seed on any
+            // OTHER dependency type is rejected as a type mismatch); document
+            // stores (mongodb, elasticsearch) and brokers → content-hash + record
+            // via deferred seams, no actual write in M2; redis has no seed path at
+            // all. Throws OrchestrationException (Provision kind) on any failure;
             // the outer catch below disposes the topology so containers do not
             // leak, and the failure surfaces as an Environment error (§12.1) —
             // never a misattributed assertion Fail.

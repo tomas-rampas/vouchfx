@@ -993,8 +993,13 @@ DynamoDB and MinIO are not cleared between sequential scenarios — any writes o
        type: script.csharp
        description: Clear DynamoDB tables for this scenario.
        code: |
-         var client = new AmazonDynamoDBClient();
-         // Delete items you wrote in the prior scenario (application-specific logic)
+         var config = new Amazon.DynamoDBv2.AmazonDynamoDBConfig { ServiceURL = (string)Vars["conn::dynamo"] };
+         var client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(config);
+         try
+         {
+             // Delete items you wrote in the prior scenario (application-specific logic)
+         }
+         finally { client.Dispose(); }
    ```
 
 3. **Use scenario-scoped keys.** Prefix your test data with a scenario identifier, then delete by prefix pattern rather than table-wide flush.
