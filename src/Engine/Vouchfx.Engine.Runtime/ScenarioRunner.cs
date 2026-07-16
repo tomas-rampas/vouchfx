@@ -1009,13 +1009,14 @@ public static class ScenarioRunner
     /// <strong>Reset+reseed semantics (S08-T10):</strong> on the build path
     /// (<paramref name="resetAndReseed"/> = <see langword="false"/>) there is NO pre-reset and NO
     /// re-seed — matching <see cref="RunSuiteAsync"/>'s first scenario, whose <c>Begin</c> is a
-    /// Respawn no-op against a just-seeded topology.  On the reuse path
+    /// per-store isolation no-op against a just-seeded topology.  On the reuse path
     /// (<paramref name="resetAndReseed"/> = <see langword="true"/>) the kept topology is reset via
-    /// <see cref="IScenarioIsolation.EndScenarioAsync"/> (Respawn truncates the prior run's writes
-    /// — INCLUDING the seed rows, the documented "Respawn-truncates-seed" behaviour) and then
-    /// RE-SEEDED via <see cref="SuiteTopology.ReseedAsync"/>, so the run sees the freshly-seeded
-    /// baseline — identical to a fresh <c>vouchfx run</c>.  A reset or re-seed failure surfaces as
-    /// <see cref="Verdict.EnvironmentError"/> (§12.1), never a Fail.
+    /// <see cref="IScenarioIsolation.EndScenarioAsync"/> (clearing the prior run's writes via
+    /// store-specific resets — relational DELETE orders, Mongo document deletion, Redis FLUSHDB,
+    /// Elasticsearch delete_by_query — INCLUDING the seed rows, the documented "reset-clears-seed"
+    /// behaviour) and then RE-SEEDED via <see cref="SuiteTopology.ReseedAsync"/>, so the run sees
+    /// the freshly-seeded baseline — identical to a fresh <c>vouchfx run</c>.  A reset or re-seed
+    /// failure surfaces as <see cref="Verdict.EnvironmentError"/> (§12.1), never a Fail.
     /// </para>
     /// </remarks>
     public static async Task<Verdict> RunScenarioAgainstKeptTopologyAsync(
@@ -1045,18 +1046,22 @@ public static class ScenarioRunner
         // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────
         // ONLY on the reuse path, where the kept topology carries the previous re-run's writes.
         // Two complementary resets restore the SAME initial state a fresh `vouchfx run` sees:
-        //   1. isolation.EndScenarioAsync — Respawn truncates the prior run's row-level writes
-        //      across ALL user tables (the right reset for an UNSEEDED postgres dependency, and
-        //      for tables a prior run's script.csharp step created).
-        //   2. topology.ReseedAsync — for SEEDED postgres dependencies, resets each seeded
-        //      database's public schema to empty and re-applies the seed, so the author's
-        //      (non-idempotent) seed SQL re-runs cleanly and the seeded baseline is restored;
-        //      a no-op when the scenario declares no seed.
+        //   1. isolation.EndScenarioAsync — per-store isolation clears the prior run's writes
+        //      across ALL data (relational DELETE orders, Mongo document deletion, Redis FLUSHDB,
+        //      Elasticsearch delete_by_query — the right reset for unseeded dependencies and
+        //      for data a prior run's script.csharp step created).
+        //   2. topology.ReseedAsync — for SEEDED Postgres dependencies, drops and recreates the
+        //      public schema then re-applies the seed, so the author's (non-idempotent) seed SQL
+        //      re-runs cleanly and the seeded baseline is restored. Non-Postgres stores are
+        //      skipped: there is no row-applied non-Postgres seed to restore (document-store and
+        //      broker seeds are content-recorded via deferred seams; Redis has no seed path), and
+        //      the isolation reset in step 1 already cleared them. A no-op when the scenario
+        //      declares no seed.
         // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
         // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
-        // Respawn throws on a schema-via-script.csharp DB that has no user tables yet — exactly
-        // why the normal path defers the reset to AFTER the first run).  A reset or re-seed
-        // failure is an Environment error (§12.1), never a Fail — and we render before returning
+        // relational reset throws on a schema-via-script.csharp DB that has no user tables yet —
+        // exactly why the normal path defers the reset to AFTER the first run).  A reset or
+        // re-seed failure is an Environment error (§12.1), never a Fail — and we render before returning
         // so the verdict is still reported.
         if (resetAndReseed)
         {

@@ -969,19 +969,15 @@ Common causes:
 
 ---
 
-## Cross-scenario state bleed (sequential suites on non-Postgres stores)
+## Cross-scenario state bleed on non-reset stores (DynamoDB, MinIO)
 
 **Symptom:**
-When you run multiple scenarios sequentially on the same topology, data from one scenario is visible in the next scenario. This happens with datastores other than PostgreSQL (MySQL, SQL Server, MongoDB, Redis, Elasticsearch, etc.).
+When you run multiple scenarios sequentially on the same topology, data from one scenario is visible in the next scenario. This happens with datastores that are not automatically reset (DynamoDB and MinIO).
 
 **What it means:**
-In v1, only PostgreSQL is automatically reset between scenarios via the Respawn library. Other datastores accumulate data across scenarios, causing test isolation failures:
+DynamoDB and MinIO are not cleared between sequential scenarios — any writes one scenario makes persist into the next. This is a deliberate limitation (out of scope). Other datastores (PostgreSQL, SQL Server, MySQL, MongoDB, Redis, Elasticsearch) are automatically reset between scenarios.
 
-1. **Scenario A** writes data to Redis or MongoDB.
-2. **Scenario B** runs and expects clean state — but sees data from Scenario A.
-3. Test fails unexpectedly or produces false passes.
-
-**Workaround:**
+**Solutions:**
 
 1. **Run scenarios in parallel (preferred).** Parallel execution isolates each scenario in its own topology, avoiding any cross-scenario state:
    ```bash
@@ -993,20 +989,62 @@ In v1, only PostgreSQL is automatically reset between scenarios via the Respawn 
    ```yaml
    steps:
      # Scenario 2: start fresh
-     - id: cleanup-redis
+     - id: cleanup-dynamodb
        type: script.csharp
-       description: Flush all data from Redis for this scenario.
+       description: Clear DynamoDB tables for this scenario.
        code: |
-         var connStr = (string)Vars[VarKeys.Connection("cache")];
-         var options = StackExchange.Redis.ConfigurationOptions.Parse(connStr);
-         options.AllowAdmin = true;  // FlushDatabase is an admin command
-         var redis = StackExchange.Redis.ConnectionMultiplexer.Connect(options);
-         try {
-           redis.GetServer(redis.GetEndPoints().First()).FlushDatabase();
-         } finally { redis.Dispose(); }
+         var config = new Amazon.DynamoDBv2.AmazonDynamoDBConfig { ServiceURL = (string)Vars["conn::dynamo"] };
+         var client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(config);
+         try
+         {
+             // Delete items you wrote in the prior scenario (application-specific logic)
+         }
+         finally { client.Dispose(); }
    ```
 
-3. **Understand the per-store reset status.** The engine plans to add automatic reset for non-Postgres stores in a future release (v2). Until then, parallel isolation or manual cleanup is the solution. See the [public roadmap](roadmap.md) for details.
+3. **Use scenario-scoped keys.** Prefix your test data with a scenario identifier, then delete by prefix pattern rather than table-wide flush.
+
+---
+
+## State reset failed (environment error naming a dependency)
+
+**Symptom:**
+A scenario fails during the reset phase (between scenarios in a sequential suite) with an environment error message like:
+```
+state reset (postgres) reset failed for dependency 'orders-db': …
+```
+
+**What it means:**
+The engine attempted to clear a dependency's state between scenarios (the reset runs after each scenario completes in a sequential multi-scenario suite), but the reset operation failed. This is an **environment error** — a failure of the test infrastructure, not a failure of the system under test. Possible causes:
+
+1. **Store became unhealthy mid-suite** — a container crashed, lost network connectivity, or hit a resource limit. Check Docker logs: `docker logs <container-id>`.
+2. **SQL Server with exotic schemas** — temporal (system-versioned) tables are handled, but Respawn may fail on other unusual patterns (cross-database foreign keys, graph tables); consult Respawn's documented limitations.
+3. **MongoDB capped or time-series collections** — these collections reject the document deletion the reset performs; remove them from the seeded data or use standard collections.
+4. **Elasticsearch reporting per-document failures** — a delete-by-query partially failed; check Elasticsearch logs and ensure the cluster has sufficient resources.
+5. **Connection/authentication lost** — the test infrastructure's credentials or network path to the store changed between scenarios.
+
+**Solutions:**
+
+1. **Check the event stream** for the full reset error message — it names the dependency and the specific failure stage (`init`, `create`, or `reset`):
+   ```bash
+   vouchfx run tests/my-scenario.e2e.yaml --events my-events.jsonl
+   # Read the failure details from the environment-error event
+   ```
+
+2. **Inspect container health** — if a Docker container reset failed:
+   ```bash
+   docker ps | grep <dependency-name>
+   docker logs <container-id>
+   ```
+
+3. **For MongoDB**, remove capped and time-series collections from the test data or switch to standard collections.
+
+4. **For SQL Server**, temporal tables are handled automatically; if the reset still fails, look for other exotic schema patterns (cross-database foreign keys, graph tables) and consult Respawn's documented limitations.
+
+5. **For Elasticsearch**, ensure the cluster is healthy and has sufficient resources; check the cluster health status:
+   ```bash
+   curl http://localhost:9200/_cluster/health
+   ```
 
 ---
 

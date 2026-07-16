@@ -13,6 +13,16 @@ pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alph
 left in draft status at the time of publication (packages shipped to NuGet.org regardless) and were promoted
 to published pre-releases on 2026-07-14.
 
+## [Unreleased]
+
+### Added
+
+- **Automatic state reset between sequential scenarios** — SQL Server, MySQL, MongoDB, Redis and Elasticsearch
+  dependencies now join PostgreSQL with automatic state reset between sequential scenarios sharing one
+  topology. Data is cleared whilst structure (tables, indexes, mappings) is preserved. A failed reset surfaces
+  as an environment error naming the dependency — never as a test failure. Brokers and DynamoDB/MinIO are not
+  reset; add explicit cleanup steps for those. Language, SDK and event-wire contracts remain frozen.
+
 ## [1.0.0-alpha.7] — 2026-07-13
 
 A hardening and housekeeping release: no engine, DSL or contract changes.
