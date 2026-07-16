@@ -58,6 +58,13 @@
     <!-- MySqlConnector: RespawnRelationalIsolation's MySQL adapter opens a plain
          MySqlConnection for Respawn to reset via DbAdapter.MySql. -->
     <PackageReference Include="MySqlConnector" />
+    <!-- MongoDB.Driver: MongoScenarioIsolation deletes all documents from every
+         non-system collection (DeleteManyAsync) between scenarios, preserving
+         collections and their indexes. -->
+    <PackageReference Include="MongoDB.Driver" />
+    <!-- StackExchange.Redis: RedisScenarioIsolation issues FLUSHDB against the
+         dependency's designated database between scenarios. -->
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
   <ItemGroup>

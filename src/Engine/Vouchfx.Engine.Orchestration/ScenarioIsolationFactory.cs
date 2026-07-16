@@ -7,8 +7,10 @@
 // dependency) so it is unit-testable without a topology or Docker.
 //
 // Dispatch table (case-insensitive on the declared type string):
-//   postgres, sqlserver, mysql        → RespawnRelationalIsolation (this chunk).
-//   mongodb, redis, elasticsearch     → SKIPPED — wired in the follow-up chunk.
+//   postgres, sqlserver, mysql        → RespawnRelationalIsolation.
+//   mongodb                           → MongoScenarioIsolation.
+//   redis                             → RedisScenarioIsolation.
+//   elasticsearch                     → ElasticsearchScenarioIsolation.
 //   kafka, rabbitmq, nats, mailpit,
 //   azureservicebus, dynamodb, minio  → SKIPPED — no mutable dependency state to
 //                                        reset between scenarios.
@@ -16,6 +18,10 @@
 //    connection string)               → SKIPPED defensively (mirrors the pre-existing
 //                                        BuildIsolation behaviour of silently ignoring
 //                                        anything it cannot positively identify).
+//
+// Every resettable store dependency a topology declares now participates — all six
+// stores (postgres, sqlserver, mysql, mongodb, redis, elasticsearch) with a Core
+// db-assert/cache-assert provider have a resetter wired here.
 
 namespace Vouchfx.Engine.Orchestration;
 
@@ -77,14 +83,14 @@ public static class ScenarioIsolationFactory
                 continue;
             }
 
-            var kind = MapRelationalKind(declaredType);
-            if (kind is null)
+            var isolation = BuildIsolation(name, declaredType, connectionString);
+            if (isolation is null)
             {
                 continue;
             }
 
             resettable ??= new List<IScenarioIsolation>();
-            resettable.Add(new RespawnRelationalIsolation(name, kind.Value, connectionString));
+            resettable.Add(isolation);
         }
 
         return resettable switch
@@ -96,9 +102,45 @@ public static class ScenarioIsolationFactory
     }
 
     /// <summary>
+    /// Builds the <see cref="IScenarioIsolation"/> for a single dependency given its declared
+    /// <c>type</c> string and discovered connection string / endpoint, or <see langword="null"/>
+    /// when the type has no mutable dependency state to reset between scenarios.
+    /// </summary>
+    private static IScenarioIsolation? BuildIsolation(
+        string name,
+        string declaredType,
+        string connectionString)
+    {
+        var relationalKind = MapRelationalKind(declaredType);
+        if (relationalKind is not null)
+        {
+            return new RespawnRelationalIsolation(name, relationalKind.Value, connectionString);
+        }
+
+        if (string.Equals(declaredType, "mongodb", StringComparison.OrdinalIgnoreCase))
+        {
+            return new MongoScenarioIsolation(name, connectionString);
+        }
+
+        if (string.Equals(declaredType, "redis", StringComparison.OrdinalIgnoreCase))
+        {
+            return new RedisScenarioIsolation(name, connectionString);
+        }
+
+        if (string.Equals(declaredType, "elasticsearch", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ElasticsearchScenarioIsolation(name, connectionString);
+        }
+
+        // kafka / rabbitmq / nats / mailpit / azureservicebus / dynamodb / minio:
+        // no mutable dependency state to reset between scenarios.
+        return null;
+    }
+
+    /// <summary>
     /// Maps a declared dependency <c>type</c> string to the <see cref="RelationalStoreKind"/>
     /// <see cref="RespawnRelationalIsolation"/> resets it with, or <see langword="null"/>
-    /// when the type is not (yet) a resettable relational store.
+    /// when the type is not a relational store.
     /// </summary>
     private static RelationalStoreKind? MapRelationalKind(string declaredType)
     {
@@ -117,9 +159,6 @@ public static class ScenarioIsolationFactory
             return RelationalStoreKind.MySql;
         }
 
-        // mongodb / redis / elasticsearch: wired in the follow-up chunk.
-        // kafka / rabbitmq / nats / mailpit / azureservicebus / dynamodb / minio:
-        // no mutable dependency state to reset between scenarios.
         return null;
     }
 }

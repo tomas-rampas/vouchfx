@@ -103,49 +103,63 @@ public sealed class ScenarioIsolationFactoryTests
         Assert.IsType<RespawnRelationalIsolation>(result);
     }
 
-    // ── Not-yet-wired store types (mongodb / redis / elasticsearch) ───────────
+    // ── Single resettable document/cache-store dependency (mongodb / redis / elasticsearch) ──
 
-    // NOTE (follow-up chunk): mongodb/redis/elasticsearch resetters are NOT wired in
-    // this chunk — ScenarioIsolationFactory deliberately skips them for now, so a
-    // topology whose only dependency is one of these three currently yields
-    // NullScenarioIsolation (no reset happens between scenarios).  When the follow-up
-    // chunk lands their resetters, these three assertions flip to the store-specific
-    // isolation type, mirroring the relational assertions above.
-
-    /// <summary>A MongoDB-only topology currently yields Null (resetter lands in a later chunk).</summary>
+    /// <summary>A single MongoDB dependency yields a <see cref="MongoScenarioIsolation"/> directly.</summary>
     [Fact]
-    public void MongoDbOnlyTopology_CurrentlySkipped_ReturnsNullScenarioIsolation()
+    public void MongoDbOnlyTopology_ReturnsMongoScenarioIsolation()
     {
         var result = ScenarioIsolationFactory.Create(
             new List<string> { "docs" },
             Types(("docs", "mongodb")),
-            Services(("docs", "mongodb://localhost:27017")));
+            Services(("docs", "mongodb://localhost:27017/docsdb")));
 
-        Assert.IsType<NullScenarioIsolation>(result);
+        Assert.IsType<MongoScenarioIsolation>(result);
     }
 
-    /// <summary>A Redis-only topology currently yields Null (resetter lands in a later chunk).</summary>
+    /// <summary>A single Redis dependency yields a <see cref="RedisScenarioIsolation"/> directly.</summary>
     [Fact]
-    public void RedisOnlyTopology_CurrentlySkipped_ReturnsNullScenarioIsolation()
+    public void RedisOnlyTopology_ReturnsRedisScenarioIsolation()
     {
         var result = ScenarioIsolationFactory.Create(
             new List<string> { "cache" },
             Types(("cache", "redis")),
             Services(("cache", "localhost:6379")));
 
-        Assert.IsType<NullScenarioIsolation>(result);
+        Assert.IsType<RedisScenarioIsolation>(result);
     }
 
-    /// <summary>An Elasticsearch-only topology currently yields Null (resetter lands in a later chunk).</summary>
+    /// <summary>
+    /// A single Elasticsearch dependency yields an <see cref="ElasticsearchScenarioIsolation"/>
+    /// directly.
+    /// </summary>
     [Fact]
-    public void ElasticsearchOnlyTopology_CurrentlySkipped_ReturnsNullScenarioIsolation()
+    public void ElasticsearchOnlyTopology_ReturnsElasticsearchScenarioIsolation()
     {
         var result = ScenarioIsolationFactory.Create(
             new List<string> { "search" },
             Types(("search", "elasticsearch")),
             Services(("search", "http://localhost:9200")));
 
-        Assert.IsType<NullScenarioIsolation>(result);
+        Assert.IsType<ElasticsearchScenarioIsolation>(result);
+    }
+
+    /// <summary>Type matching for the document/cache stores is also case-insensitive.</summary>
+    [Theory]
+    [InlineData("MongoDB")]
+    [InlineData("MONGODB")]
+    [InlineData("Redis")]
+    [InlineData("REDIS")]
+    [InlineData("Elasticsearch")]
+    [InlineData("ELASTICSEARCH")]
+    public void DocumentCacheStoreTypeMatching_IsCaseInsensitive(string declaredType)
+    {
+        var result = ScenarioIsolationFactory.Create(
+            new List<string> { "dep" },
+            Types(("dep", declaredType)),
+            Services(("dep", "some-connection-value")));
+
+        Assert.False(result is NullScenarioIsolation);
     }
 
     // ── Composite (more than one resettable dependency) ───────────────────────
@@ -275,6 +289,40 @@ public sealed class ScenarioIsolationFactoryTests
             composite.Children,
             first => Assert.Equal("auditdb", Assert.IsType<RespawnRelationalIsolation>(first).DependencyName),
             second => Assert.Equal("ordersdb", Assert.IsType<RespawnRelationalIsolation>(second).DependencyName));
+    }
+
+    /// <summary>
+    /// A five-store topology (postgres + sqlserver + mongodb + redis + elasticsearch) yields a
+    /// <see cref="CompositeScenarioIsolation"/> with all five children, each of the correct
+    /// store-specific type, in <c>dependencyNames</c> declaration order — proving every
+    /// resettable store now participates via the same factory/composite dispatch.
+    /// </summary>
+    [Fact]
+    public void FiveStoreTopology_ReturnsCompositeWithFiveChildrenInDeclarationOrder()
+    {
+        var result = ScenarioIsolationFactory.Create(
+            new List<string> { "pg", "sql", "mongo", "cache", "search" },
+            Types(
+                ("pg", "postgres"),
+                ("sql", "sqlserver"),
+                ("mongo", "mongodb"),
+                ("cache", "redis"),
+                ("search", "elasticsearch")),
+            Services(
+                ("pg", "Host=localhost;Database=pg"),
+                ("sql", "Server=localhost;Database=sql"),
+                ("mongo", "mongodb://localhost:27017/mongodb"),
+                ("cache", "localhost:6379"),
+                ("search", "http://localhost:9200")));
+
+        var composite = Assert.IsType<CompositeScenarioIsolation>(result);
+        Assert.Collection(
+            composite.Children,
+            first => Assert.Equal("pg", Assert.IsType<RespawnRelationalIsolation>(first).DependencyName),
+            second => Assert.Equal("sql", Assert.IsType<RespawnRelationalIsolation>(second).DependencyName),
+            third => Assert.Equal("mongo", Assert.IsType<MongoScenarioIsolation>(third).DependencyName),
+            fourth => Assert.Equal("cache", Assert.IsType<RedisScenarioIsolation>(fourth).DependencyName),
+            fifth => Assert.Equal("search", Assert.IsType<ElasticsearchScenarioIsolation>(fifth).DependencyName));
     }
 
     // ── Constructor / argument validation ─────────────────────────────────────
