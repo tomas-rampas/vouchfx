@@ -152,7 +152,9 @@ public sealed class MySqlResetProofTests
         var connStr = suite.DiscoveredServices[DepName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
-        _output.WriteLine($"MySQL conn string: {connStr}");
+        // Deliberately NOT logging the connection string — Aspire-provisioned strings
+        // carry credentials, and test output lands in CI logs/artifacts (§17).
+        _output.WriteLine("MySQL connection string discovered (redacted).");
 
         await CreateSchemaAsync(connStr!);
         _output.WriteLine("Schema created: orders table, empty.");

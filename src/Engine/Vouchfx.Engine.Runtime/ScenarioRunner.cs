@@ -880,6 +880,13 @@ public static class ScenarioRunner
                     }
                     catch (OrchestrationException oex)
                     {
+                        // Emit the structured environment-error observation into the
+                        // event stream (the scenario's own events are already in
+                        // allBuffers), so every renderer sees WHICH dependency's
+                        // reset failed — parity with the BeginScenarioAsync path.
+                        allBuffers.Add(EnvironmentErrorEvents.ToLine(
+                            oex.Info, runId, DateTimeOffset.UtcNow));
+
                         await output.WriteLineAsync(
                             $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
                             "aborting suite — subsequent scenarios may run against unclean state.")

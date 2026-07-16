@@ -57,8 +57,10 @@ public sealed class CompositeScenarioIsolation : IScenarioIsolation, IAsyncDispo
     /// <inheritdoc />
     /// <remarks>
     /// Invokes each child's <see cref="IScenarioIsolation.BeginScenarioAsync"/>
-    /// sequentially, in declaration order. Fails fast on the first
-    /// <see cref="OrchestrationException"/> — later children are not invoked.
+    /// sequentially, in declaration order. Nothing is caught here, so the first
+    /// exception a child throws — an <see cref="OrchestrationException"/> from a
+    /// reset failure, or a genuine cancellation — fails fast: later children are
+    /// not invoked.
     /// </remarks>
     public async Task BeginScenarioAsync(CancellationToken ct)
     {
@@ -73,10 +75,11 @@ public sealed class CompositeScenarioIsolation : IScenarioIsolation, IAsyncDispo
     /// <inheritdoc />
     /// <remarks>
     /// Invokes each child's <see cref="IScenarioIsolation.EndScenarioAsync"/>
-    /// sequentially, in declaration order. Fails fast on the first
-    /// <see cref="OrchestrationException"/> — later children are not invoked, so a
-    /// suite with (say) Postgres + SQL Server dependencies never resets SQL Server
-    /// after Postgres has already reported a failure.
+    /// sequentially, in declaration order. Nothing is caught here, so the first
+    /// exception a child throws — an <see cref="OrchestrationException"/> from a
+    /// reset failure, or a genuine cancellation — fails fast: later children are
+    /// not invoked, so a suite with (say) Postgres + SQL Server dependencies never
+    /// resets SQL Server after Postgres has already reported a failure.
     /// </remarks>
     public async Task EndScenarioAsync(CancellationToken ct)
     {
