@@ -75,14 +75,20 @@ public sealed class RedisResetProofTests
         }
     }
 
-    /// <summary>Returns DBSIZE for database 0 via a fresh multiplexer.</summary>
+    /// <summary>
+    /// Returns DBSIZE for the database the connection string designates
+    /// (<c>DefaultDatabase ?? 0</c> — the same index the resetter flushes), via a
+    /// fresh multiplexer.
+    /// </summary>
     private static async Task<long> CountKeysAsync(string connStr)
     {
-        var mux = await ConnectionMultiplexer.ConnectAsync(connStr).ConfigureAwait(false);
+        var options = ConfigurationOptions.Parse(connStr);
+        var databaseIndex = options.DefaultDatabase ?? 0;
+        var mux = await ConnectionMultiplexer.ConnectAsync(options).ConfigureAwait(false);
         try
         {
             var server = mux.GetServer(mux.GetEndPoints()[0]);
-            return await server.DatabaseSizeAsync().ConfigureAwait(false);
+            return await server.DatabaseSizeAsync(databaseIndex).ConfigureAwait(false);
         }
         finally
         {
