@@ -2,9 +2,10 @@
 //
 // Single shared helper that formats every IScenarioIsolation reset failure into a
 // byte-consistent OrchestrationException (§12.1: Environment error, never a test Fail).
-// RespawnRelationalIsolation is the first consumer; the Mongo/Redis/Elasticsearch
-// resetters landing in a later chunk reuse this SAME helper so the detail wording
-// never diverges between store implementations.
+// All six wired stores share this SAME helper so the detail wording never diverges
+// between store implementations: RespawnRelationalIsolation (Postgres, SQL Server,
+// MySQL), MongoScenarioIsolation, RedisScenarioIsolation, and
+// ElasticsearchScenarioIsolation.
 
 namespace Vouchfx.Engine.Orchestration;
 

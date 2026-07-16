@@ -16,7 +16,12 @@
 //   • RespawnRelationalIsolation (RespawnRelationalIsolation.cs) covers every
 //     relational store the engine ships a db-assert provider for — PostgreSQL, SQL
 //     Server, MySQL — via Respawn 6.x (Respawner.CreateAsync / respawner.ResetAsync).
-//     Mongo/Redis/Elasticsearch resetters land in a later chunk.
+//   • MongoScenarioIsolation, RedisScenarioIsolation, ElasticsearchScenarioIsolation
+//     (one file each) cover the three remaining stores with a per-scenario resettable
+//     dependency: MongoDB (DeleteMany per non-system collection), Redis (FLUSHDB), and
+//     Elasticsearch (_delete_by_query). Every one of them preserves structure and
+//     deletes only data — "delete the data, preserve the structure" is the semantic
+//     every resetter in this project shares.
 //   • CompositeScenarioIsolation (CompositeScenarioIsolation.cs) fans Begin/End out to
 //     every resettable dependency when a topology declares more than one, so ALL of
 //     them are reset between scenarios — not just the first one found.
