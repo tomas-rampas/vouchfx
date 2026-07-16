@@ -24,6 +24,10 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   external `file` reference).
 - **Engine-owned asynchronous verification** — `verifyMode: RETRY` with bounded exponential backoff (Polly v8);
   authors never write `Thread.Sleep`.
+- **Automatic state reset between sequential scenarios** — PostgreSQL, SQL Server, MySQL, MongoDB, Redis and
+  Elasticsearch dependencies are automatically reset (data cleared, structure preserved) after each scenario
+  completes; broker and DynamoDB/MinIO dependencies are not reset; a failed reset surfaces as an environment
+  error naming the dependency.
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
   frozen byte-for-byte, each enforced by a golden-file CI gate. Evolution within v1.x is additive only.
 - **The Provider SDK** (`Vouchfx.Sdk`) with worked example providers, a conformance test harness, and the
@@ -109,10 +113,6 @@ Two items are explicitly parked for v2, and the reasons are part of the trust st
 - **Per-file telemetry opt-out** (`metadata.telemetry: false`) — deliberately *not* added in v1.x because it
   would mutate the frozen v1 schema. The v1 suppression surface (global consent, `--no-telemetry`,
   `VOUCHFX_NO_TELEMETRY`) already covers the privacy requirement; telemetry remains opt-in and off by default.
-- **Per-scenario state reset for non-Postgres stores** — sequential scenarios sharing one topology are
-  auto-reset only for PostgreSQL today. Parallel runs (`--parallel`) are isolated by construction, and the
-  [common patterns guide](common-patterns.md) documents per-store workarounds. Automatic reset for
-  SQL Server, MySQL, MongoDB, Redis and Elasticsearch is planned for v2.
 - **Richer control flow** — the DSL models a single linear sequence by design; conditional and parallel steps
   are a deliberate post-v1 language decision, taken slowly because language mistakes are forever.
 

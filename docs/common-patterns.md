@@ -778,16 +778,22 @@ Each step threads state forward via captures and placeholders. The verdict is **
 
 ## State isolation per store
 
-Between **sequential** scenarios that share a single topology, the engine automatically resets only Postgres; every other store keeps whatever state earlier scenarios wrote. **Parallel** scenarios are unaffected — each receives its own topology and fresh containers, so isolation holds by construction.
+Between **sequential** scenarios that share a single topology, the engine automatically resets the following dependency types. Each uses a store-appropriate mechanism that clears data whilst preserving structure (tables, indexes, mappings). **Parallel** scenarios are unaffected — each receives its own topology and fresh containers, so isolation holds by construction.
 
-| Dependency kind | Reset between sequential scenarios | What to do instead |
+| Dependency kind | Reset mechanism | Details |
 |---|---|---|
-| `postgres` | **Automatic** — Respawn flushes tables after each scenario | Nothing; rely on it |
-| `sqlserver`, `mysql`, `mongodb` | None in v1 | Run scenarios in parallel, or begin each scenario with an explicit cleanup step (`script.csharp` or a targeted DELETE) |
-| `redis`, `elasticsearch` | None in v1 | As above; for Redis, key-prefix your test data per scenario so cleanup is a single pattern delete |
-| Brokers (`kafka`, `rabbitmq`, `nats`, `azureservicebus`) | Not applicable — messages are consumed/scanned per step | Scope topics/queues/subjects per suite; `mq-expect` matching on captured values tolerates residual traffic |
+| `postgres` | Respawn DELETE order | Tables and schemas preserved; identity/sequence values NOT reset |
+| `sqlserver` | Respawn DELETE order | Temporal tables and scoped schemas handled; identity values NOT reset |
+| `mysql` | Respawn DELETE order | Configured for proper authentication; identity values NOT reset |
+| `mongodb` | Document deletion per collection | Collections and indexes preserved; capped and time-series collections fail reset (environment error) |
+| `redis` | FLUSHDB on designated database | Only the discovered database cleared; other databases on the same instance untouched |
+| `elasticsearch` | Delete-by-query across open indices | Mappings, settings and hidden indices preserved; per-document failures fail the reset |
+| Brokers (`kafka`, `rabbitmq`, `nats`, `azureservicebus`) | Not applicable | Messages are consumed/scanned per step; scope topics/queues/subjects per suite to avoid cross-scenario message leakage |
+| `dynamodb`, `minio` | Not reset | Add explicit cleanup steps (e.g. `script.csharp` with AWS SDK calls) to clear state between scenarios |
 
-The symptom of missing isolation is a **second or later scenario failing on data the first one wrote** — nondeterministic if scenario order varies. This is a documented v1 limitation — automatic reset for the non-Postgres stores is a planned improvement on the [public roadmap](roadmap.md); the [troubleshooting guide](troubleshooting.md) has the failure-mode entry.
+A failed reset surfaces as an **environment error naming the dependency** — never a test failure. This distinction is critical: if a dependency became unhealthy mid-suite, the user sees `EnvironmentError`, not a false test failure. Check the event stream to diagnose reset failures.
+
+Seed applies to the first scenario only; subsequent scenarios receive cleared data (seeded reference rows are also cleared). See the [troubleshooting guide](troubleshooting.md) for reset failure diagnostic details.
 
 ---
 

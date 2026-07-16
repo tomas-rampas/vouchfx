@@ -301,20 +301,24 @@ public sealed class SuiteTopology : IAsyncDisposable
             // Step 4½: Apply declarative seed data — AFTER discovery, BEFORE the
             // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01/A-02).
             // SeedApplier dispatches each seeded dependency on its declared type
-            // (postgres → SQL now; broker/document store → content-hash + record
-            // via deferred seams, no actual publish/write in M2) and throws
-            // OrchestrationException (Provision kind) on any failure; the outer
-            // catch below disposes the topology so containers do not leak, and the
-            // failure surfaces as an Environment error (§12.1) — never a
-            // misattributed assertion Fail.
+            // (postgres/sqlserver/mysql → SQL now; mongodb/redis/elasticsearch →
+            // content-hash + record via deferred seams, no actual write in M2;
+            // broker/document store → content-hash + record via deferred seams)
+            // and throws OrchestrationException (Provision kind) on any failure;
+            // the outer catch below disposes the topology so containers do not
+            // leak, and the failure surfaces as an Environment error (§12.1) —
+            // never a misattributed assertion Fail.
             //
-            // Respawn / multi-scenario note: this seeding runs ONCE at suite
-            // startup.  For a SINGLE-scenario run the seeded rows are present for
-            // step 1.  For a MULTI-scenario suite sharing one topology,
-            // RespawnRelationalIsolation truncates the ROWS of all user tables
-            // between scenarios (schema persists), so seeded reference rows are
-            // also truncated after the first scenario — persisting reference data
-            // across scenarios is a future enhancement, OUT OF SCOPE for A-01.
+            // Multi-scenario note: this seeding runs ONCE at suite startup.  For
+            // a SINGLE-scenario run the seeded rows are present for step 1.  For
+            // a MULTI-scenario suite sharing one topology, the per-store isolation
+            // (RespawnRelationalIsolation for postgres/sqlserver/mysql,
+            // MongoScenarioIsolation, RedisScenarioIsolation, or
+            // ElasticsearchScenarioIsolation) clears data between scenarios
+            // (structure — tables, indexes, mappings — persists), so seeded
+            // reference rows are also cleared after the first scenario. Persisting
+            // reference data across scenarios is a future enhancement, OUT OF SCOPE
+            // for A-01.
             // ----------------------------------------------------------------
             var resolvedSeedBaseDirectory = seedBaseDirectory ?? Directory.GetCurrentDirectory();
             await ApplySeedAsync(
@@ -341,11 +345,13 @@ public sealed class SuiteTopology : IAsyncDisposable
     }
 
     /// <summary>
-    /// Returns this <strong>already-running</strong> topology's seeded Postgres dependencies to
-    /// the freshly-built-and-seeded baseline (S08-T10, watch-mode reuse path): each seeded
-    /// Postgres database's <c>public</c> schema is reset to empty, then the declarative
-    /// <c>environment.seed</c> is re-applied — exactly reproducing the fresh-container-then-seed
-    /// sequence a plain <c>vouchfx run</c> performs.
+    /// Returns this <strong>already-running</strong> topology's seeded dependencies to
+    /// the freshly-built-and-seeded baseline (S08-T10, watch-mode reuse path).  For seeded
+    /// Postgres dependencies, each database's <c>public</c> schema is reset to empty, then
+    /// the declarative <c>environment.seed</c> is re-applied — exactly reproducing the
+    /// fresh-container-then-seed sequence a plain <c>vouchfx run</c> performs. For seeded
+    /// non-Postgres stores (MongoDB, Redis, Elasticsearch), the prior reset has already
+    /// cleared those stores, so only the seed is re-applied.
     /// </summary>
     /// <param name="cancellationToken">Propagated to the schema reset and the seed applier.</param>
     /// <returns>A task that completes once the seed has been re-applied (a no-op when the
@@ -360,20 +366,24 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <remarks>
     /// <para>
     /// Watch mode keeps ONE topology alive across re-runs.  Between reuse runs the kept topology
-    /// carries the previous run's writes AND the previous seed's rows.  A plain
-    /// <c>vouchfx run</c> always starts from a fresh, EMPTY container and then applies the seed —
-    /// so the seed SQL is written assuming an empty database (bare <c>CREATE TABLE</c>, not
-    /// <c>CREATE TABLE IF NOT EXISTS</c>).  To match that initial state without rebuilding the
-    /// container, this method first DROPS the <c>public</c> schema of each seeded Postgres
-    /// dependency and recreates it empty (clearing both the prior run's writes and the prior
-    /// seed's tables), then re-applies the seed against the now-empty schema — so the author's
-    /// non-idempotent seed SQL re-runs cleanly, exactly as on a fresh build.
+    /// carries the previous run's writes. A plain <c>vouchfx run</c> always starts from a fresh,
+    /// EMPTY container and then applies the seed — so the seed SQL is written assuming an empty
+    /// database (bare <c>CREATE TABLE</c>, not <c>CREATE TABLE IF NOT EXISTS</c>).  To match that
+    /// initial state without rebuilding the container:
     /// </para>
     /// <para>
-    /// This is why the watch reuse path does NOT rely on the Respawn truncate alone to restore
-    /// the baseline: Respawn preserves the schema (keeping the seed's tables), so a re-applied
-    /// <c>CREATE TABLE</c> would collide.  Dropping the schema is the faithful "fresh container"
-    /// reset for the seeded case.
+    /// For <strong>Postgres</strong> dependencies, this method first DROPS the <c>public</c> schema
+    /// of each seeded database and recreates it empty (clearing both the prior run's writes and the
+    /// prior seed's tables), then re-applies the seed against the now-empty schema — so the
+    /// author's non-idempotent seed SQL re-runs cleanly, exactly as on a fresh build. This is
+    /// necessary because Respawn preserves the schema (keeping the seed's tables), so a re-applied
+    /// <c>CREATE TABLE</c> would collide.
+    /// </para>
+    /// <para>
+    /// For <strong>non-Postgres stores</strong> (MongoDB, Redis, Elasticsearch), the preceding
+    /// <c>ScenarioIsolationFactory</c> reset has already cleared those stores via
+    /// content-recorded deferred seams, so only the re-seed applies. Non-Postgres seeds are
+    /// content-recorded at initial seed time and re-applied identically on watch re-runs.
     /// </para>
     /// </remarks>
     public async Task ReseedAsync(CancellationToken cancellationToken = default)

@@ -204,14 +204,14 @@ Isolation between tests is achieved by per-store cleanup invoked during the runn
 
 | Store type | Reset mechanism |
 |---|---|
-| PostgreSQL, SQL Server | Respawn: inspects relational metadata, computes a deletion order respecting foreign-key constraints, and issues DELETE statements. Returns to baseline in milliseconds. |
-| MySQL | Respawn with a known caveat around some auth modes; the orchestration provider supplies the working configuration. |
-| MongoDB | Provider-supplied: drop the per-suite collections and recreate from the seed block's document fixtures. Mongo collections drop in milliseconds and are cheaper to recreate than to scrub. |
-| Redis | Provider-supplied: FLUSHDB against the per-scenario database number (Redis supports 16 numbered databases by default, which the runner uses for namespace isolation in parallel mode). |
-| Elasticsearch / OpenSearch | Provider-supplied: delete the per-suite indexes and reseed. |
-| Kafka | Topic state is reset by recreating the topics or by advancing the consumer-group offset to the high-water mark, depending on what the seed block declared. The provider chooses based on whether the suite is mutating broker-side state or only consumer-side state. |
+| PostgreSQL, SQL Server, MySQL | Respawn: inspects relational metadata, computes a deletion order respecting foreign-key constraints, and issues DELETE statements. Tables and schemas are preserved; identity and sequence values are not reset. Returns to baseline in milliseconds. |
+| MongoDB | Delete per-collection via `deleteMany` with no filter; system collections and views are skipped; collection indexes are preserved. Capped and time-series collections fail the reset (environment error). |
+| Redis | FLUSHDB against the database designated by the discovered connection string; other databases on the same instance are untouched. |
+| Elasticsearch | Delete via `_delete_by_query` matching all documents across open indices with `conflicts=proceed&refresh=true&expand_wildcards=open`. Mappings and settings are preserved; hidden and system indices are excluded. Per-document failures or timeout fail the reset. |
+| Kafka, RabbitMQ, NATS, Azure Service Bus | Not applicable — messages are consumed per step; scope topics/queues/subjects per suite. |
+| DynamoDB, MinIO | Not reset — add explicit cleanup steps. |
 
-All of these are invoked through the same runner hook and produce the same verdict-taxonomy classification on failure (a reset failure is an environment error, never a test failure). The orchestration appendix lists the precise commands per store; the architectural point is that **container lifetime** and **state lifetime** are separately managed, and conflating them — for example, recreating containers to get a clean database — destroys the latency optimisation and is explicitly disallowed.
+All of these resets are invoked through the same runner hook and produce the same verdict-taxonomy classification on failure (a reset failure is an environment error, never a test failure). The architectural point is that **container lifetime** and **state lifetime** are separately managed, and conflating them — for example, recreating containers to get a clean database — destroys the latency optimisation and is explicitly disallowed.
 
 ## 4.5 Teardown discipline
 
