@@ -180,7 +180,9 @@ public sealed class ElasticsearchResetProofTests
         Assert.False(string.IsNullOrWhiteSpace(esUrl),
             $"DiscoveredServices['{DepName}'] must be a non-empty URL string.");
         var baseUrl = esUrl!.TrimEnd('/');
-        _output.WriteLine($"Elasticsearch URL: {esUrl}");
+        // Deliberately NOT logging the endpoint URL — redacted for consistency with the
+        // other proof tests, even though Elasticsearch security is disabled here (§17).
+        _output.WriteLine("Elasticsearch endpoint discovered (redacted).");
 
         await CreateIndexWithMappingAsync(baseUrl);
         _output.WriteLine("Index created with an explicit mapping on 'status'.");

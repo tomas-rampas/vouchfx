@@ -346,6 +346,26 @@ public sealed class ScenarioIsolationTests
         await sut.DisposeAsync();
     }
 
+    /// <summary>
+    /// <see cref="MongoScenarioIsolation.EndScenarioAsync"/> throws a wrapped
+    /// <see cref="OrchestrationException"/> (§12.1: <see cref="OrchestrationErrorKind.Provision"/>,
+    /// naming the dependency) when the connection string has no database name. This is a
+    /// deterministic, no-I/O failure: <c>EnsureDatabase</c>'s <c>MongoUrl</c> parse stage rejects
+    /// the missing database name before a <see cref="MongoDB.Driver.MongoClient"/> is ever
+    /// constructed, so this runs without Docker.
+    /// </summary>
+    [Fact]
+    public async Task MongoScenarioIsolation_NoDatabaseNameInConnectionString_ThrowsWrappedProvisionError()
+    {
+        await using var sut = new MongoScenarioIsolation("dep", "mongodb://localhost:27017");
+
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(
+            () => sut.EndScenarioAsync(CancellationToken.None));
+
+        Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
+        Assert.Equal("dep", ex.Info.ResourceName);
+    }
+
     // ── RedisScenarioIsolation — constructor contract ─────────────────────────
 
     /// <summary>Syntactically valid but unreachable connection string for lazy-no-connect tests.</summary>
@@ -571,5 +591,24 @@ public sealed class ScenarioIsolationTests
         await sut.BeginScenarioAsync(CancellationToken.None);
 
         await sut.DisposeAsync();
+    }
+
+    /// <summary>
+    /// <see cref="ElasticsearchScenarioIsolation.EndScenarioAsync"/> throws a wrapped
+    /// <see cref="OrchestrationException"/> (§12.1: <see cref="OrchestrationErrorKind.Provision"/>,
+    /// naming the dependency) when the endpoint URL cannot be parsed. This is a deterministic,
+    /// no-I/O failure: <c>EnsureClient</c>'s <see cref="Uri"/> parse stage rejects the malformed
+    /// URL before an <see cref="HttpClient"/> ever issues a request, so this runs without Docker.
+    /// </summary>
+    [Fact]
+    public async Task ElasticsearchScenarioIsolation_UnparseableEndpointUrl_ThrowsWrappedProvisionError()
+    {
+        await using var sut = new ElasticsearchScenarioIsolation("dep", "not a url");
+
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(
+            () => sut.EndScenarioAsync(CancellationToken.None));
+
+        Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
+        Assert.Equal("dep", ex.Info.ResourceName);
     }
 }

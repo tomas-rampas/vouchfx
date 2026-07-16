@@ -18,6 +18,13 @@
 //     at risk.
 //   • Collections whose name starts with "system." are skipped defensively (Mongo itself
 //     forbids writes to most system collections; this guards the general case).
+//   • Views are skipped: enumeration uses ListCollectionsAsync (not ListCollectionNamesAsync),
+//     whose per-entry BSON document carries a "type" discriminator, and any entry with
+//     type == "view" is excluded before DeleteMany is attempted.  A view holds no data of its
+//     own — resetting its source collection(s) already resets what the view exposes — and
+//     DeleteMany against a view fails outright (CommandNotSupportedOnView, error 166), which
+//     would otherwise fail EVERY reset for a store with nothing dirty.  Deliberately NOT
+//     filtered to type == "collection": that would also silently skip time-series collections.
 //   • KNOWN LIMITATION: a capped or time-series collection rejects DeleteMany outright.  This is
 //     deliberate — there is no silent "drop and let the SUT recreate it" fallback, because that
 //     would hit the same index-loss trap DeleteMany-not-drop exists to avoid.  Such a collection
@@ -56,6 +63,12 @@ namespace Vouchfx.Engine.Orchestration;
 /// and <see cref="OrchestrationErrorInfo.ResourceName"/> set to the logical dependency name
 /// supplied at construction, so the runner classifies it as <c>EnvironmentError</c> — never as
 /// <c>Fail</c> — and names the offending dependency.
+/// </para>
+/// <para>
+/// <strong>Views are skipped:</strong> a view holds no data of its own — resetting its source
+/// collection(s) already resets what the view exposes — and <c>DeleteMany</c> against a view
+/// fails outright (<c>CommandNotSupportedOnView</c>). Enumeration therefore uses
+/// <c>ListCollectionsAsync</c> and excludes any entry whose <c>type</c> is <c>"view"</c>.
 /// </para>
 /// <para>
 /// <strong>Known limitation:</strong> a capped or time-series collection rejects
@@ -215,29 +228,42 @@ public sealed class MongoScenarioIsolation : IScenarioIsolation, IAsyncDisposabl
     }
 
     /// <summary>
-    /// Deletes every document from every non-<c>system.</c> collection in the resolved database
-    /// via an empty-filter <c>DeleteManyAsync</c>, preserving collections and their indexes.  The
-    /// collection list is re-enumerated on EVERY call (not cached) so a collection created
-    /// mid-suite is always included in the reset set — mirroring why
+    /// Deletes every document from every non-<c>system.</c>, non-view collection in the resolved
+    /// database via an empty-filter <c>DeleteManyAsync</c>, preserving collections and their
+    /// indexes.  The collection list is re-enumerated on EVERY call (not cached) so a collection
+    /// created mid-suite is always included in the reset set — mirroring why
     /// <see cref="RespawnRelationalIsolation"/> re-creates its Respawn checkpoint on every call.
     /// </summary>
     private async Task ResetAsync(CancellationToken ct)
     {
         try
         {
-            var collectionNames = new List<string>();
-            using (var cursor = await _database!.ListCollectionNamesAsync(cancellationToken: ct)
+            var collectionInfos = new List<BsonDocument>();
+            using (var cursor = await _database!.ListCollectionsAsync(cancellationToken: ct)
                 .ConfigureAwait(false))
             {
                 while (await cursor.MoveNextAsync(ct).ConfigureAwait(false))
                 {
-                    collectionNames.AddRange(cursor.Current);
+                    collectionInfos.AddRange(cursor.Current);
                 }
             }
 
-            foreach (var name in collectionNames)
+            foreach (var info in collectionInfos)
             {
+                var name = info["name"].AsString;
+
                 if (name.StartsWith("system.", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                // A view holds no data of its own — resetting its source collection(s) already
+                // resets what the view exposes — and DeleteMany against a view fails outright
+                // (CommandNotSupportedOnView). Deliberately NOT filtered to type == "collection":
+                // that would also silently skip time-series collections, which stay eligible
+                // (and deliberately error, per the class remarks, if capped/time-series).
+                var type = info.TryGetValue("type", out var typeValue) ? typeValue.AsString : null;
+                if (string.Equals(type, "view", StringComparison.Ordinal))
                 {
                     continue;
                 }

@@ -109,7 +109,9 @@ public sealed class RedisResetProofTests
         var connStr = suite.DiscoveredServices[DepName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
-        _output.WriteLine($"Redis conn string: {connStr}");
+        // Deliberately NOT logging the connection string — Aspire-provisioned strings
+        // carry credentials, and test output lands in CI logs/artifacts (§17).
+        _output.WriteLine("Redis connection string discovered (redacted).");
 
         await using var isolation = new RedisScenarioIsolation(DepName, connStr!);
 

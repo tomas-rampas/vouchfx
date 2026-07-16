@@ -12,6 +12,10 @@
 //   • Scenario 2: asserts count == 0, then inserts again, resets again, and asserts count == 0
 //     a second time — proving the collection enumeration is re-derived on every
 //     EndScenarioAsync (mirrors why RespawnRelationalIsolation re-creates its checkpoint).
+//   • A view over 'orders' is also created before any scenario runs (review finding #2): the
+//     reset must complete without throwing despite the view's presence, AND the view must still
+//     exist afterwards — pinning that MongoScenarioIsolation SKIPS views (a view holds no data
+//     of its own; DeleteMany against a view fails outright with CommandNotSupportedOnView).
 //
 // Run with:  dotnet test --filter "requires=docker&FullyQualifiedName~MongodbResetProof"
 // Excluded from non-Docker CI: dotnet test --filter "requires!=docker"
@@ -64,6 +68,9 @@ public sealed class MongodbResetProofTests
 
     /// <summary>Name of the explicit index created before any scenario runs.</summary>
     private const string IndexName = "status_idx";
+
+    /// <summary>Name of the view over 'orders' created before any scenario runs (finding #2).</summary>
+    private const string ViewName = "orders_view";
 
     public MongodbResetProofTests(ITestOutputHelper output) => _output = output;
 
@@ -136,6 +143,64 @@ public sealed class MongodbResetProofTests
         }
     }
 
+    /// <summary>
+    /// Creates a view over 'orders' via the raw <c>create</c> command — the simplest possible
+    /// view, avoiding the driver's generic pipeline-definition API. Pins review finding #2:
+    /// <see cref="MongoScenarioIsolation"/> must SKIP views during reset (a view holds no data
+    /// of its own; <c>DeleteMany</c> against a view fails outright).
+    /// </summary>
+    private static async Task CreateViewAsync(string connStr)
+    {
+        var client = new MongoClient(connStr);
+        try
+        {
+            var db = client.GetDatabase(DbName);
+            var command = new BsonDocument
+            {
+                { "create", ViewName },
+                { "viewOn", CollectionName },
+                { "pipeline", new BsonArray() },
+            };
+            await db.RunCommandAsync<BsonDocument>(command).ConfigureAwait(false);
+        }
+        finally
+        {
+            client.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Returns whether the view still exists (via <c>ListCollectionsAsync</c>, filtered to
+    /// <c>type == "view"</c>) — proving the reset did not attempt (and fail) a DeleteMany
+    /// against it, nor drop it.
+    /// </summary>
+    private static async Task<bool> ViewExistsAsync(string connStr)
+    {
+        var client = new MongoClient(connStr);
+        try
+        {
+            var db = client.GetDatabase(DbName);
+
+            var collectionInfos = new List<BsonDocument>();
+            using (var cursor = await db.ListCollectionsAsync().ConfigureAwait(false))
+            {
+                while (await cursor.MoveNextAsync().ConfigureAwait(false))
+                {
+                    collectionInfos.AddRange(cursor.Current);
+                }
+            }
+
+            return collectionInfos.Any(info =>
+                info["name"].AsString == ViewName &&
+                info.TryGetValue("type", out var type) &&
+                type.AsString == "view");
+        }
+        finally
+        {
+            client.Dispose();
+        }
+    }
+
     /// <summary>Returns whether the explicit index still exists on 'orders'.</summary>
     private static async Task<bool> IndexExistsAsync(string connStr)
     {
@@ -181,10 +246,15 @@ public sealed class MongodbResetProofTests
         var connStr = suite.DiscoveredServices[DepName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
-        _output.WriteLine($"Mongo conn string: {connStr}");
+        // Deliberately NOT logging the connection string — Aspire-provisioned strings
+        // carry credentials, and test output lands in CI logs/artifacts (§17).
+        _output.WriteLine("Mongo connection string discovered (redacted).");
 
         await CreateIndexAsync(connStr!);
         _output.WriteLine("Explicit index created on 'status'.");
+
+        await CreateViewAsync(connStr!);
+        _output.WriteLine("View 'orders_view' created over 'orders' (review finding #2).");
 
         await using var isolation = new MongoScenarioIsolation(DepName, connStr!);
 
@@ -204,6 +274,10 @@ public sealed class MongodbResetProofTests
         Assert.True(
             await IndexExistsAsync(connStr!),
             "Explicit index must survive the reset (DeleteMany, not drop).");
+        Assert.True(
+            await ViewExistsAsync(connStr!),
+            "The view must survive the reset — EndScenarioAsync must SKIP it, not attempt " +
+            "(and fail) a DeleteMany against it (review finding #2).");
 
         // ── ROUND 2 — proves the collection enumeration is RE-DERIVED on every call ──
         await isolation.BeginScenarioAsync(CancellationToken.None);
@@ -218,9 +292,11 @@ public sealed class MongodbResetProofTests
         var countAfterReset2 = await CountDocumentsAsync(connStr!);
         Assert.Equal(0L, countAfterReset2);
         Assert.True(await IndexExistsAsync(connStr!));
+        Assert.True(await ViewExistsAsync(connStr!));
 
         _output.WriteLine(
-            "Reset-proof PASS: documents deleted and explicit index preserved across two " +
-            "independent reset round-trips.");
+            "Reset-proof PASS: documents deleted, explicit index preserved, and the view " +
+            "(never DeleteMany'd nor dropped) survived, across two independent reset " +
+            "round-trips.");
     }
 }

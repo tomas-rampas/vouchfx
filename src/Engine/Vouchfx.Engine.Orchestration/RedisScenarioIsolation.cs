@@ -115,8 +115,8 @@ public sealed class RedisScenarioIsolation : IScenarioIsolation, IAsyncDisposabl
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        await EnsureConnectionAsync().ConfigureAwait(false);
-        await ResetAsync().ConfigureAwait(false);
+        await EnsureConnectionAsync(ct).ConfigureAwait(false);
+        await ResetAsync(ct).ConfigureAwait(false);
     }
 
     // ── IAsyncDisposable ──────────────────────────────────────────────────────
@@ -145,8 +145,14 @@ public sealed class RedisScenarioIsolation : IScenarioIsolation, IAsyncDisposabl
     /// the shared <see cref="ConnectionMultiplexer"/> once, and caches it — plus the resolved
     /// database index — for the lifetime of the topology. A no-op once connected.
     /// </summary>
-    private async Task EnsureConnectionAsync()
+    private async Task EnsureConnectionAsync(CancellationToken ct)
     {
+        // Neither ConnectAsync nor FlushDatabaseAsync accepts a CancellationToken in
+        // StackExchange.Redis 2.x (see the comments below), so ct cannot be propagated into the
+        // driver itself. This explicit check is the seam that still honours a caller cancelling
+        // before — or between — the connect and reset steps, consistent with the other stores.
+        ct.ThrowIfCancellationRequested();
+
         if (_muxer is not null)
         {
             return;
@@ -190,8 +196,12 @@ public sealed class RedisScenarioIsolation : IScenarioIsolation, IAsyncDisposabl
     /// Issues <c>FLUSHDB</c> against the resolved database index via the first configured
     /// endpoint's <see cref="IServer"/>.
     /// </summary>
-    private async Task ResetAsync()
+    private async Task ResetAsync(CancellationToken ct)
     {
+        // See EnsureConnectionAsync — the same seam, honoured again immediately before the
+        // reset itself so a cancellation raised between connect and reset is not missed.
+        ct.ThrowIfCancellationRequested();
+
         try
         {
             // FlushDatabaseAsync does not accept a CancellationToken in StackExchange.Redis
