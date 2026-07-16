@@ -62,7 +62,7 @@ public static class ScenarioIsolationFactory
         foreach (var name in dependencyNames)
         {
             if (!dependencyTypes.TryGetValue(name, out var declaredType) ||
-                string.IsNullOrEmpty(declaredType))
+                string.IsNullOrWhiteSpace(declaredType))
             {
                 // No declared type: nothing to dispatch on — skip defensively.
                 continue;
@@ -70,7 +70,7 @@ public static class ScenarioIsolationFactory
 
             if (!discoveredServices.TryGetValue(name, out var value) ||
                 value is not string connectionString ||
-                string.IsNullOrEmpty(connectionString))
+                string.IsNullOrWhiteSpace(connectionString))
             {
                 // No discovered connection string: skip defensively (mirrors the
                 // pre-existing BuildIsolation behaviour).

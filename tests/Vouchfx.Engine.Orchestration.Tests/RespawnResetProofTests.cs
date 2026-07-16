@@ -203,7 +203,9 @@ public sealed class RespawnResetProofTests
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
 
-        _output.WriteLine($"Postgres conn string: {connStr}");
+        // Deliberately NOT logging the connection string — Aspire-provisioned strings
+        // carry credentials, and test output lands in CI logs/artifacts (§17).
+        _output.WriteLine("Postgres connection string discovered (redacted).");
 
         // ── Seed the schema (table only, no rows) ─────────────────────────────
         await SeedSchemaAsync(connStr!);
