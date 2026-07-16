@@ -1002,6 +1002,12 @@ DynamoDB and MinIO are not cleared between sequential scenarios — any writes o
          finally { client.Dispose(); }
    ```
 
+   > **Note:** `script.csharp` contributes no compile references of its own — the AWS SDK types
+   > above compile only because a step from a provider that contributes them (such as
+   > `db-assert.dynamodb`) appears somewhere in the same scenario. A scenario whose only DynamoDB
+   > interaction is this cleanup script will fail to compile; include at least one
+   > `db-assert.dynamodb` step, or perform the cleanup through your SUT's own API instead.
+
 3. **Use scenario-scoped keys.** Prefix your test data with a scenario identifier, then delete by prefix pattern rather than table-wide flush.
 
 ---
