@@ -3,10 +3,12 @@
 // Test proves:
 //   • Topology built once via SuiteTopology.StartAsync.
 //   • Scenario 1 (script.csharp): inserts a row into the 'orders' table, asserts COUNT == 1.
-//   • Respawn reset occurs between scenarios via RespawnPostgresIsolation.
+//   • Respawn reset occurs between scenarios via RespawnRelationalIsolation (Postgres kind).
 //   • Scenario 2 (script.csharp): asserts COUNT == 0, proving Respawn wiped scenario 1's insert.
 //
 // This is the core A-01 + A-02 reset-proof: without Respawn, scenario 2 would see 1 row and fail.
+// This is the Postgres non-regression gate for the RespawnPostgresIsolation → RespawnRelationalIsolation
+// generalisation — the assertions are unchanged; only the isolation type name/ctor shape moved.
 //
 // Run with:  dotnet test --filter "requires=docker&FullyQualifiedName~RespawnResetProof"
 // Excluded from non-Docker CI: dotnet test --filter "requires!=docker"
@@ -24,14 +26,15 @@ using Xunit.Abstractions;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Docker-gated proof that <see cref="RespawnPostgresIsolation"/> resets Postgres
+/// Docker-gated proof that <see cref="RespawnRelationalIsolation"/> resets Postgres
 /// state between scenarios (S04-A-01 + S04-A-02).
 /// </summary>
 /// <remarks>
 /// <para>
 /// The topology is built <em>once</em> via <see cref="SuiteTopology.StartAsync"/>.
-/// <see cref="RespawnPostgresIsolation"/> is used to bracket each scenario so that
-/// mutations made in scenario 1 are completely wiped before scenario 2 runs.
+/// <see cref="RespawnRelationalIsolation"/> (with <see cref="RelationalStoreKind.Postgres"/>)
+/// is used to bracket each scenario so that mutations made in scenario 1 are completely
+/// wiped before scenario 2 runs.
 /// </para>
 /// <para>
 /// The test uses the <c>script.csharp</c> provider to emit inline C# that issues
@@ -180,7 +183,7 @@ public sealed class RespawnResetProofTests
     ///   <item>Topology built once (one Postgres container).</item>
     ///   <item>Schema seeded: <c>orders</c> table, zero rows.</item>
     ///   <item>Scenario 1: INSERTs one row; asserts COUNT == 1 → Pass.</item>
-    ///   <item><see cref="RespawnPostgresIsolation.EndScenarioAsync"/> resets the DB.</item>
+    ///   <item><see cref="RespawnRelationalIsolation.EndScenarioAsync"/> resets the DB.</item>
     ///   <item>Scenario 2: asserts COUNT == 0 → Pass (proving Respawn wiped scenario 1's data).</item>
     /// </list>
     /// </summary>
@@ -200,14 +203,16 @@ public sealed class RespawnResetProofTests
         Assert.False(string.IsNullOrWhiteSpace(connStr),
             $"DiscoveredServices['{DepName}'] must be a non-empty connection string.");
 
-        _output.WriteLine($"Postgres conn string: {connStr}");
+        // Deliberately NOT logging the connection string — Aspire-provisioned strings
+        // carry credentials, and test output lands in CI logs/artifacts (§17).
+        _output.WriteLine("Postgres connection string discovered (redacted).");
 
         // ── Seed the schema (table only, no rows) ─────────────────────────────
         await SeedSchemaAsync(connStr!);
         _output.WriteLine("Seed: orders table created (empty).");
 
         // ── Construct isolation ────────────────────────────────────────────────
-        await using var isolation = new RespawnPostgresIsolation(connStr!);
+        await using var isolation = new RespawnRelationalIsolation(DepName, RelationalStoreKind.Postgres, connStr!);
 
         // ─────────────────────────────────────────────────────────────────────
         // SCENARIO 1 — INSERT a row, assert COUNT == 1

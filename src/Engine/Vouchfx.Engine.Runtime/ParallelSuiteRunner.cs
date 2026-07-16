@@ -4,8 +4,9 @@
 // builds, owns, and disposes its OWN SuiteTopology by fanning the existing no-render core
 // ScenarioRunner.RunScenarioOwningTopologyAsync across a bounded pool.  Because each scenario
 // gets a fresh topology (and therefore a fresh, clean database), isolation is by construction —
-// there is NO RespawnPostgresIsolation here (that holds a single shared connection and is NOT
-// concurrency-safe).  The shared-environment validation and isolation-failure abort that
+// there is NO RespawnRelationalIsolation (or any IScenarioIsolation) here: the resetters hold a
+// single shared connection each and are NOT concurrency-safe.  The shared-environment validation
+// and isolation-failure abort that
 // RunSuiteAsync performs are deliberately NOT ported: both are shared-topology concerns and
 // would be wrong for independent per-scenario topologies.
 //

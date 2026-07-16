@@ -21,7 +21,8 @@
 //   • RunScenarioAgainstTopologyAsync — private helper with the per-scenario execution body.
 //     RunAsync delegates to it so all behaviour is preserved byte-for-byte.
 //   • RunSuiteAsync — builds the topology ONCE, iterates scenarios, calls
-//     RespawnPostgresIsolation (or NullScenarioIsolation) between each.
+//     ScenarioIsolationFactory.Create's result (RespawnRelationalIsolation /
+//     CompositeScenarioIsolation / NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
 using System.Text.Json;
@@ -538,7 +539,8 @@ public static class ScenarioRunner
     /// <summary>
     /// Executes many scenarios against a topology that is built <strong>once</strong>
     /// and torn down after all scenarios complete, resetting mutable dependency state
-    /// (Postgres) between scenarios via <see cref="RespawnPostgresIsolation"/> (S04-A-02).
+    /// between scenarios via <see cref="BuildIsolation"/>'s result — every resettable
+    /// dependency the topology declares (S04-A-02, generalised beyond Postgres).
     /// </summary>
     /// <param name="scenarios">
     /// The ordered list of fully-parsed scenario ASTs to execute.  All scenarios
@@ -771,123 +773,141 @@ public static class ScenarioRunner
         await using (suite.ConfigureAwait(false))
         {
             // ── Construct isolation ────────────────────────────────────────────
-            // If a postgres dependency is present, use RespawnPostgresIsolation.
-            // Otherwise NullScenarioIsolation preserves the existing behaviour.
+            // Resets EVERY resettable dependency the topology declares (composed
+            // when there is more than one). NullScenarioIsolation preserves the
+            // existing behaviour when none is resettable.
             IScenarioIsolation isolation = BuildIsolation(suite);
 
             var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
             var suiteAggregate = Verdict.Pass;
             var allBuffers = new List<string>();
 
-            for (int i = 0; i < compilations.Count; i++)
+            try
             {
-                var (name, ast, pipeline, earlyVerdict, earlyMessage) = compilations[i];
-                var runId = Guid.NewGuid().ToString("n");
-                var buffer = new List<string>();
-
-                // Handle early-exit scenarios (validation / RETRY / pipeline failure).
-                if (earlyVerdict is not null)
+                for (int i = 0; i < compilations.Count; i++)
                 {
-                    var now = DateTimeOffset.UtcNow;
-                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    var (name, ast, pipeline, earlyVerdict, earlyMessage) = compilations[i];
+                    var runId = Guid.NewGuid().ToString("n");
+                    var buffer = new List<string>();
+
+                    // Handle early-exit scenarios (validation / RETRY / pipeline failure).
+                    if (earlyVerdict is not null)
                     {
-                        RunId = runId,
-                        Timestamp = now,
-                        ScenarioId = name,
-                    }));
-                    buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                    {
-                        RunId = runId,
-                        Timestamp = now,
-                        ScenarioId = name,
-                        Verdict = earlyVerdict.Value,
-                        Counts = new VerdictCounts { Inconclusive = 1 },
-                    }));
-                    if (!string.IsNullOrEmpty(earlyMessage))
-                    {
-                        await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+                        var now = DateTimeOffset.UtcNow;
+                        buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                        {
+                            RunId = runId,
+                            Timestamp = now,
+                            ScenarioId = name,
+                        }));
+                        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                        {
+                            RunId = runId,
+                            Timestamp = now,
+                            ScenarioId = name,
+                            Verdict = earlyVerdict.Value,
+                            Counts = new VerdictCounts { Inconclusive = 1 },
+                        }));
+                        if (!string.IsNullOrEmpty(earlyMessage))
+                        {
+                            await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+                        }
+
+                        results.Add((name, earlyVerdict.Value));
+                        suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
+                        allBuffers.AddRange(buffer);
+                        continue;
                     }
 
-                    results.Add((name, earlyVerdict.Value));
-                    suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
-                    allBuffers.AddRange(buffer);
-                    continue;
-                }
-
-                // ── BeginScenario (isolation) ──────────────────────────────────
-                try
-                {
-                    await isolation.BeginScenarioAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OrchestrationException oex)
-                {
-                    var now = DateTimeOffset.UtcNow;
-                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    // ── BeginScenario (isolation) ──────────────────────────────────
+                    try
                     {
-                        RunId = runId,
-                        Timestamp = now,
-                        ScenarioId = name,
-                    }));
-                    buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, now));
-                    buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                        await isolation.BeginScenarioAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OrchestrationException oex)
                     {
-                        RunId = runId,
-                        Timestamp = now,
-                        ScenarioId = name,
-                        Verdict = Verdict.EnvironmentError,
-                        Counts = new VerdictCounts { EnvError = 1 },
-                    }));
-                    results.Add((name, Verdict.EnvironmentError));
-                    suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
+                        var now = DateTimeOffset.UtcNow;
+                        buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                        {
+                            RunId = runId,
+                            Timestamp = now,
+                            ScenarioId = name,
+                        }));
+                        buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, now));
+                        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
+                        {
+                            RunId = runId,
+                            Timestamp = now,
+                            ScenarioId = name,
+                            Verdict = Verdict.EnvironmentError,
+                            Counts = new VerdictCounts { EnvError = 1 },
+                        }));
+                        results.Add((name, Verdict.EnvironmentError));
+                        suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
+                        allBuffers.AddRange(buffer);
+
+                        // Isolation failure → abort the suite (subsequent scenarios
+                        // would run against an unknown DB state).
+                        await output.WriteLineAsync(
+                            $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
+                            "aborting suite.").ConfigureAwait(false);
+                        break;
+                    }
+
+                    // ── Run scenario ───────────────────────────────────────────────
+                    var scenarioVerdict = await RunScenarioAgainstTopologyAsync(
+                        ast,
+                        name,
+                        runId,
+                        suite,
+                        pipeline!.Assembled!,
+                        pipeline.CompileReferencePaths,
+                        pipeline.HostResourcePlan,
+                        buffer,
+                        new NullScenarioIsolation(), // isolation already handled above/below
+                        output,
+                        seedBaseDirectory,
+                        cancellationToken).ConfigureAwait(false);
+
+                    results.Add((name, scenarioVerdict));
+                    suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
                     allBuffers.AddRange(buffer);
 
-                    // Isolation failure → abort the suite (subsequent scenarios
-                    // would run against an unknown DB state).
-                    await output.WriteLineAsync(
-                        $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
-                        "aborting suite.").ConfigureAwait(false);
-                    break;
+                    // ── EndScenario (isolation / reset) ────────────────────────────
+                    try
+                    {
+                        await isolation.EndScenarioAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OrchestrationException oex)
+                    {
+                        // Emit the structured environment-error observation into the
+                        // event stream (the scenario's own events are already in
+                        // allBuffers), so every renderer sees WHICH dependency's
+                        // reset failed — parity with the BeginScenarioAsync path.
+                        allBuffers.Add(EnvironmentErrorEvents.ToLine(
+                            oex.Info, runId, DateTimeOffset.UtcNow));
+
+                        await output.WriteLineAsync(
+                            $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
+                            "aborting suite — subsequent scenarios may run against unclean state.")
+                            .ConfigureAwait(false);
+                        suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
+                        break;
+                    }
                 }
 
-                // ── Run scenario ───────────────────────────────────────────────
-                var scenarioVerdict = await RunScenarioAgainstTopologyAsync(
-                    ast,
-                    name,
-                    runId,
-                    suite,
-                    pipeline!.Assembled!,
-                    pipeline.CompileReferencePaths,
-                    pipeline.HostResourcePlan,
-                    buffer,
-                    new NullScenarioIsolation(), // isolation already handled above/below
-                    output,
-                    seedBaseDirectory,
-                    cancellationToken).ConfigureAwait(false);
-
-                results.Add((name, scenarioVerdict));
-                suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
-                allBuffers.AddRange(buffer);
-
-                // ── EndScenario (isolation / reset) ────────────────────────────
-                try
-                {
-                    await isolation.EndScenarioAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OrchestrationException oex)
-                {
-                    await output.WriteLineAsync(
-                        $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
-                        "aborting suite — subsequent scenarios may run against unclean state.")
-                        .ConfigureAwait(false);
-                    suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
-                    break;
-                }
             }
-
-            // Dispose the isolation connection when the topology is torn down.
-            if (isolation is IAsyncDisposable disposable)
+            finally
             {
-                await disposable.DisposeAsync().ConfigureAwait(false);
+                // Dispose the isolation connection when the topology is torn down —
+                // in a finally so an exception escaping the scenario loop (e.g. a
+                // genuine cancellation out of Begin/End or the scenario body, which
+                // is deliberately NOT wrapped as an OrchestrationException) can never
+                // leak the connection.
+                if (isolation is IAsyncDisposable disposable)
+                {
+                    await disposable.DisposeAsync().ConfigureAwait(false);
+                }
             }
 
             TerminalRenderer.Render(allBuffers, output, decorate, diffLookup);
@@ -932,11 +952,12 @@ public static class ScenarioRunner
         SerialiseEnvironment(environment);
 
     /// <summary>
-    /// Builds the per-topology isolation for watch mode (S08-C-01): a
-    /// <see cref="RespawnPostgresIsolation"/> when the kept topology has a Postgres
-    /// dependency, otherwise <see cref="NullScenarioIsolation"/>.  Watch mode keeps ONE
-    /// topology alive across re-runs, so it must reset mutable dependency state between
-    /// re-runs exactly as <see cref="RunSuiteAsync"/> does between scenarios.
+    /// Builds the per-topology isolation for watch mode (S08-C-01) via
+    /// <c>ScenarioIsolationFactory.Create</c> — every resettable dependency the kept
+    /// topology declares, composed when there is more than one, or
+    /// <see cref="NullScenarioIsolation"/> when none is resettable.  Watch mode keeps
+    /// ONE topology alive across re-runs, so it must reset mutable dependency state
+    /// between re-runs exactly as <see cref="RunSuiteAsync"/> does between scenarios.
     /// </summary>
     /// <param name="topology">The kept topology to build isolation for.</param>
     /// <returns>The isolation strategy appropriate to the topology's dependencies.</returns>
@@ -1752,26 +1773,18 @@ public static class ScenarioRunner
 
     /// <summary>
     /// Builds the appropriate <see cref="IScenarioIsolation"/> for the given
-    /// <paramref name="topology"/>.  Uses <see cref="RespawnPostgresIsolation"/>
-    /// when the topology has at least one Postgres dependency; otherwise falls
-    /// back to <see cref="NullScenarioIsolation"/>.
+    /// <paramref name="topology"/> via <c>ScenarioIsolationFactory.Create</c>: proper
+    /// name+type dispatch over <see cref="SuiteTopology.DependencyNames"/>,
+    /// <see cref="SuiteTopology.DependencyTypes"/>, and
+    /// <see cref="SuiteTopology.DiscoveredServices"/> — resetting EVERY resettable
+    /// dependency the topology declares (composed when there is more than one),
+    /// rather than sniffing the shape of a discovered connection string.
     /// </summary>
-    private static IScenarioIsolation BuildIsolation(SuiteTopology topology)
-    {
-        // Look for the first dependency name whose DiscoveredServices value looks
-        // like a Postgres connection string (contains "Host=" — ADO.NET convention).
-        foreach (var name in topology.DependencyNames)
-        {
-            if (topology.DiscoveredServices.TryGetValue(name, out var value) &&
-                value is string connStr &&
-                connStr.Contains("Host=", StringComparison.OrdinalIgnoreCase))
-            {
-                return new RespawnPostgresIsolation(connStr);
-            }
-        }
-
-        return new NullScenarioIsolation();
-    }
+    private static IScenarioIsolation BuildIsolation(SuiteTopology topology) =>
+        ScenarioIsolationFactory.Create(
+            topology.DependencyNames,
+            topology.DependencyTypes,
+            topology.DiscoveredServices);
 
     /// <summary>
     /// <see cref="JsonSerializerOptions"/> used by <see cref="SerialiseEnvironment"/>.

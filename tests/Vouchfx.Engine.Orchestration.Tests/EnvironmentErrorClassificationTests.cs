@@ -124,4 +124,47 @@ public sealed class EnvironmentErrorClassificationTests
 
         _output.WriteLine("BadImage_StartAsync_ThrowsOrchestrationException_NotFail: PASS");
     }
+
+    /// <summary>
+    /// Non-docker unit test (state-reset generalisation): a reset-failure
+    /// <see cref="OrchestrationErrorInfo"/> — as <c>ScenarioIsolationErrors.Wrap</c>
+    /// produces for a <see cref="RespawnRelationalIsolation"/> failure — yields an
+    /// event line whose <c>resourceName</c> equals the failing DEPENDENCY name (not a
+    /// fixed placeholder such as <c>"respawn-reset"</c>) and whose verdict is
+    /// <c>ENV_ERROR</c>, never <c>FAIL</c> (§12.1).
+    /// </summary>
+    [Fact]
+    public void ResetFailure_EventLine_NamesDependency_AndIsEnvError()
+    {
+        const string dependencyName = "ordersdb";
+
+        var info = new OrchestrationErrorInfo(
+            Kind: OrchestrationErrorKind.Provision,
+            ResourceName: dependencyName,
+            RegistryHost: null,
+            AuthStatus: null,
+            Detail: $"state reset (postgres) reset failed for dependency '{dependencyName}': connection refused");
+
+        var evt = EnvironmentErrorEvents.Create(info, "run", FixedTs);
+        Assert.Equal(Verdict.EnvironmentError, evt.Verdict);
+        Assert.NotEqual(Verdict.Fail, evt.Verdict);
+        Assert.Equal(dependencyName, evt.ResourceName);
+
+        var line = EnvironmentErrorEvents.ToLine(info, "run", FixedTs);
+        var envelope = EventStreamJson.FromLine(line);
+        Assert.Equal("environment-error", envelope.Type);
+
+        // Unconditional: the wire line MUST carry both fields — a silently absent
+        // key would otherwise let this test pass without checking anything.
+        Assert.NotNull(envelope.Extra);
+        Assert.True(
+            envelope.Extra.TryGetValue("resourceName", out var resourceNameElement),
+            "event line carries no resourceName field");
+        Assert.Equal(dependencyName, resourceNameElement.GetString());
+
+        Assert.True(
+            envelope.Extra.TryGetValue("verdict", out var verdictElement),
+            "event line carries no verdict field");
+        Assert.Equal("ENV_ERROR", verdictElement.GetString());
+    }
 }

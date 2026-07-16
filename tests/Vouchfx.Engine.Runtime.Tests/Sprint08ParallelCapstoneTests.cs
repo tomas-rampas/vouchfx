@@ -8,7 +8,7 @@
 //     Scenario A inserts sentinel row 'A' into its database and asserts EXACTLY one row (tag 'A')
 //     exists; scenario B does the same with 'B'.  If the two shared one database, each scenario's
 //     `rowCount: 1` assertion would see TWO rows and FAIL — so a Pass from BOTH is the proof that
-//     fresh-topology-per-scenario gives clean-database isolation with NO RespawnPostgresIsolation
+//     fresh-topology-per-scenario gives clean-database isolation with NO RespawnRelationalIsolation
 //     (containers, not a shared connection, provide the isolation).  The rendered report presents
 //     scenario A's block BEFORE scenario B's (declaration order), regardless of which finished
 //     first — the determinism guarantee.

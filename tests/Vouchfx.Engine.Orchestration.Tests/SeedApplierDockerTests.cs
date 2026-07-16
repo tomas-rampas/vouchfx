@@ -155,7 +155,7 @@ public sealed class SeedApplierDockerTests
             _output.WriteLine("Build path: seed present (1 row) — first watch run sees the seed.");
 
             // ── REUSE path: reset (Respawn) clears the seed rows too, then ReseedAsync restores.
-            await using var isolation = new RespawnPostgresIsolation(connStr!);
+            await using var isolation = new RespawnRelationalIsolation(DepName, RelationalStoreKind.Postgres, connStr!);
             await isolation.EndScenarioAsync(CancellationToken.None);
 
             // After the reset alone, the seed row is gone (the "Respawn-truncates-seed" behaviour).
