@@ -115,6 +115,14 @@ public sealed class HeadlessTopologyTests
                 b.Services.AddLogging(lb => lb.AddProvider(collector));
             });
 
+        // Guard against a vacuous pass: the collector must have received log traffic, and
+        // the deliberately-unfiltered Aspire.Hosting.Dcp.DcpHost category must still be
+        // visible — proving the capture pipeline is live AND pinning the decision that DCP
+        // diagnostics (this machine's resolved DCP path) survive the lifecycle filter.
+        Assert.NotEmpty(collector.Entries);
+        Assert.Contains(collector.Entries, e =>
+            e.Category.StartsWith("Aspire.Hosting.Dcp", StringComparison.OrdinalIgnoreCase));
+
         // Assert — no lifecycle-banner entry below Warning in the filtered category.
         var categoryViolations = collector.Entries
             .Where(e =>

@@ -4,7 +4,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 
 **Quick index:**
 - [Docker is not running or not reachable](#docker-is-not-running-or-not-reachable)
-- [Transient image pull corruption: "short read" / "unexpected EOF"](#transient-image-pull-corruption-short-read--unexpected-eof)
+- [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
@@ -68,7 +68,7 @@ vouchfx orchestrates containers via Docker (Aspire + Testcontainers). If the Doc
 
 ---
 
-## Transient image pull corruption: "short read" / "unexpected EOF"
+## Transient image pull corruption: "short read" or "unexpected EOF"
 
 **Symptom:**
 ```
@@ -97,7 +97,7 @@ vouchfx runs at all.
    ```bash
    docker builder prune
    ```
-3. **In CI**, re-run the job. To reduce exposure on cold runners, prewarm the images the
+3. **In CI**, re-run the job. To reduce exposure on cold runners, pre-warm the images the
    suite needs (the reusable workflow's `prewarm-images` input does this; each pull is
    best-effort and non-fatal).
 
