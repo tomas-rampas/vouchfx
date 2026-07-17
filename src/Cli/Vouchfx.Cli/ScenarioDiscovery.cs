@@ -160,10 +160,11 @@ internal static class ScenarioDiscovery
         {
             yamlText = File.ReadAllText(absolutePath);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // An unreadable file is captured, not thrown: discovery of the rest of the
-            // suite must proceed.  The empty YAML keeps the record well-formed.
+            // An unreadable file (I/O fault or access denied — the latter is NOT an
+            // IOException) is captured, not thrown: discovery of the rest of the suite
+            // must proceed.  The empty YAML keeps the record well-formed.
             return new DiscoveredScenario(absolutePath, string.Empty, Ast: null,
                 ParseError: $"Could not read file: {ex.Message}");
         }
