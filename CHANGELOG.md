@@ -23,11 +23,6 @@ to published pre-releases on 2026-07-14.
   as an environment error naming the dependency — never as a test failure. Brokers and DynamoDB/MinIO are not
   reset; add explicit cleanup steps for those. Language, SDK and event-wire contracts remain frozen.
 
-### Security
-
-- The CI workflow token now defaults to least privilege (`permissions: contents: read` at workflow level);
-  the coverage-badge job retains its job-scoped `contents: write`.
-
 ### Changed
 
 - GitHub Actions dependency upgrades via Dependabot across the CI workflows (setup-dotnet 6, setup-node 7,
@@ -35,6 +30,21 @@ to published pre-releases on 2026-07-14.
   the split-bump version-mismatch failure. The satellite repositories (providers, samples, telemetry backend)
   now carry the same weekly `github-actions` Dependabot configuration as the engine, so workflow SHA pins no
   longer rot silently anywhere in the fleet.
+
+### Fixed
+
+- **`vouchfx run <file>.e2e.yaml` now works** — the advertised single-file form (including
+  `vouchfx run <file> --watch`, which is single-file only) previously exited 2 with "Discovery root … does
+  not exist" because discovery accepted only directories. A root naming a single `*.e2e.yaml` file now
+  resolves to exactly that scenario; an existing file without the `.e2e.yaml` suffix is a precise usage
+  error (exit 2) rather than a silent false green. The CI reference workflow now gates both root forms on
+  every relevant push, and the reusable workflow's `scenario-path` input accepts a file (with a new
+  optional `artifact-name` input so one workflow run can invoke it more than once).
+
+### Security
+
+- The CI workflow token now defaults to least privilege (`permissions: contents: read` at workflow level);
+  the coverage-badge job retains its job-scoped `contents: write`.
 
 ## [1.0.0-alpha.7] — 2026-07-13
 

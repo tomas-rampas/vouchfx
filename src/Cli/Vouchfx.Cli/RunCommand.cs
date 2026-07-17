@@ -46,8 +46,8 @@ internal static class RunCommand
     {
         var command = new Command(
             "run",
-            "Discover *.e2e.yaml scenarios under <path> and run them end-to-end against an "
-            + "orchestrated topology.");
+            "Discover *.e2e.yaml scenarios under <path> (a directory, or a single "
+            + "*.e2e.yaml file) and run them end-to-end against an orchestrated topology.");
 
         var pathArgument = BuildPathArgument();
         command.Add(pathArgument);
@@ -394,7 +394,8 @@ internal static class RunCommand
     /// </remarks>
     internal static Argument<string> BuildPathArgument() => new("path")
     {
-        Description = "Directory to search for *.e2e.yaml scenarios (recursively). Defaults to '.'.",
+        Description = "Directory to search recursively for *.e2e.yaml scenarios, or a "
+            + "single *.e2e.yaml file. Defaults to '.'.",
         DefaultValueFactory = _ => ".",
     };
 
@@ -525,7 +526,7 @@ internal static class RunCommand
         {
             discovered = ScenarioDiscovery.Discover(path, registry);
         }
-        catch (DirectoryNotFoundException ex)
+        catch (Exception ex) when (ex is DirectoryNotFoundException or ScenarioDiscoveryException)
         {
             await output.WriteLineAsync(ex.Message).ConfigureAwait(false);
             return ExitCodes.UsageError;

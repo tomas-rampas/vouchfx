@@ -279,6 +279,104 @@ public sealed class ScenarioDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void Discover_FileRoot_ReturnsSingleParsedScenario()
+    {
+        var file = Path.Combine(_root, "one.e2e.yaml");
+        File.WriteAllText(file, MinimalValidScenario);
+
+        var discovered = ScenarioDiscovery.Discover(file, _registry);
+
+        var single = Assert.Single(discovered);
+        Assert.False(single.Failed);
+        Assert.NotNull(single.Ast);
+        Assert.Equal(Path.GetFullPath(file), single.AbsolutePath);
+        Assert.True(Path.IsPathFullyQualified(single.AbsolutePath));
+    }
+
+    [Fact]
+    public void Discover_FileRoot_UppercaseSuffix_IsAccepted()
+    {
+        // Explicit naming is not discovery: an existing file the user pointed at must not
+        // be rejected on suffix case (on Windows it literally is the file). The exact
+        // literal name is created here, so the test also passes on case-sensitive Linux.
+        var file = Path.Combine(_root, "UPPER.E2E.YAML");
+        File.WriteAllText(file, MinimalValidScenario);
+
+        var discovered = ScenarioDiscovery.Discover(file, _registry);
+
+        var single = Assert.Single(discovered);
+        Assert.False(single.Failed);
+    }
+
+    [Fact]
+    public void Discover_FileRoot_NormalisesRelativeSegments()
+    {
+        var file = Path.Combine(_root, "one.e2e.yaml");
+        File.WriteAllText(file, MinimalValidScenario);
+        Directory.CreateDirectory(Path.Combine(_root, "sub"));
+
+        // Dot-segment path to the same file: sub/../one.e2e.yaml.
+        var dotted = Path.Combine(_root, "sub", "..", "one.e2e.yaml");
+
+        var discovered = ScenarioDiscovery.Discover(dotted, _registry);
+
+        var single = Assert.Single(discovered);
+        Assert.Equal(Path.GetFullPath(file), single.AbsolutePath);
+    }
+
+    [Fact]
+    public void Discover_FileRoot_ParseFailure_IsCapturedNotThrown()
+    {
+        var bad = Path.Combine(_root, "broken.e2e.yaml");
+        File.WriteAllText(bad, "steps:\n  - id: x\n    type: not-a-real-provider\n");
+
+        var discovered = ScenarioDiscovery.Discover(bad, _registry);
+
+        var single = Assert.Single(discovered);
+        Assert.True(single.Failed);
+        Assert.Null(single.Ast);
+        Assert.NotNull(single.ParseError);
+    }
+
+    [Fact]
+    public void Discover_FileRoot_MissingFile_ThrowsDirectoryNotFound()
+    {
+        var missing = Path.Combine(_root, "does-not-exist.e2e.yaml");
+
+        var ex = Assert.Throws<DirectoryNotFoundException>(
+            () => ScenarioDiscovery.Discover(missing, _registry));
+
+        Assert.Contains("does not exist", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("or a single *.e2e.yaml file", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("notes.txt")]
+    [InlineData("scenario.yaml")]
+    [InlineData("scenario.e2e.yml")]
+    public void Discover_FileRoot_WrongExtension_ThrowsScenarioDiscoveryException(string fileName)
+    {
+        var file = Path.Combine(_root, fileName);
+        File.WriteAllText(file, MinimalValidScenario);
+
+        var ex = Assert.Throws<ScenarioDiscoveryException>(
+            () => ScenarioDiscovery.Discover(file, _registry));
+
+        Assert.Contains(".e2e.yaml", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Discover_DirectoryRoot_TrailingSeparator_StillDiscovers()
+    {
+        File.WriteAllText(Path.Combine(_root, "one.e2e.yaml"), MinimalValidScenario);
+
+        var discovered = ScenarioDiscovery.Discover(
+            _root + Path.DirectorySeparatorChar, _registry);
+
+        Assert.Single(discovered);
+    }
+
+    [Fact]
     public void ScenarioName_PrefersMetadataName_FallsBackToFileStem()
     {
         var named = Path.Combine(_root, "file-stem.e2e.yaml");
