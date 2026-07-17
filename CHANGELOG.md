@@ -40,6 +40,11 @@ to published pre-releases on 2026-07-14.
   error (exit 2) rather than a silent false green. The CI reference workflow now gates both root forms on
   every relevant push, and the reusable workflow's `scenario-path` input accepts a file (with a new
   optional `artifact-name` input so one workflow run can invoke it more than once).
+- **The CLI no longer prints the release build machine's path at startup** — the packaged tool logged
+  `Application host directory is: /home/runner/work/…` on every run (the `apphostprojectpath` assembly
+  metadata baked at build time). Aspire's `Aspire.Hosting.DistributedApplication` lifecycle banners are now
+  filtered below Warning, matching the existing health-check filter; the path was never used — scenario-relative
+  paths resolve against the suite's own directory. DCP diagnostics and all warnings/errors still surface.
 
 ### Security
 

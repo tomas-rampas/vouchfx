@@ -91,4 +91,58 @@ public sealed class HeadlessTopologyTests
 
         Assert.Empty(violations);
     }
+
+    /// <summary>
+    /// A2 sibling — asserts that Aspire's lifecycle banners (the
+    /// <c>Aspire.Hosting.DistributedApplication</c> category: version banner,
+    /// "Distributed application starting/started", and "Application host directory is:
+    /// &lt;build-machine path&gt;") are filtered below <see cref="LogLevel.Warning"/>.
+    /// The second assertion pins the customer-visible symptom directly — no sub-Warning
+    /// entry of ANY category may carry the "Application host directory" message — so the
+    /// gate survives the message moving category on a future Aspire bump.
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task StartAsync_AspireLifecycleLogsFiltered_NoBelowWarningEntries()
+    {
+        // Arrange
+        var collector = new CapturingLoggerProvider();
+
+        await using var topology = await HeadlessTopology.StartAsync(
+            appHostAssemblyName: AppHostAssemblyName,
+            configureResources: b =>
+            {
+                b.Services.AddLogging(lb => lb.AddProvider(collector));
+            });
+
+        // Guard against a vacuous pass: the collector must have received log traffic, and
+        // the deliberately-unfiltered Aspire.Hosting.Dcp.DcpHost category must still be
+        // visible — proving the capture pipeline is live AND pinning the decision that DCP
+        // diagnostics (this machine's resolved DCP path) survive the lifecycle filter.
+        Assert.NotEmpty(collector.Entries);
+        Assert.Contains(collector.Entries, e =>
+            e.Category.StartsWith("Aspire.Hosting.Dcp", StringComparison.OrdinalIgnoreCase));
+
+        // Assert — no lifecycle-banner entry below Warning in the filtered category.
+        var categoryViolations = collector.Entries
+            .Where(e =>
+                e.Category.StartsWith(
+                    "Aspire.Hosting.DistributedApplication",
+                    StringComparison.OrdinalIgnoreCase)
+                && e.Level < LogLevel.Warning)
+            .ToList();
+
+        Assert.Empty(categoryViolations);
+
+        // Assert — the baked build-machine path line is gone regardless of category.
+        var symptomViolations = collector.Entries
+            .Where(e =>
+                e.Level < LogLevel.Warning
+                && e.Message.Contains(
+                    "Application host directory",
+                    StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        Assert.Empty(symptomViolations);
+    }
 }

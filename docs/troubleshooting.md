@@ -4,6 +4,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 
 **Quick index:**
 - [Docker is not running or not reachable](#docker-is-not-running-or-not-reachable)
+- [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
@@ -64,6 +65,41 @@ vouchfx orchestrates containers via Docker (Aspire + Testcontainers). If the Doc
    ```
 
 **In CI:** Ensure the CI runner has Docker available. GitHub Actions' `ubuntu-latest` includes Docker by default. For GitLab, use `docker:dind` service or a socket-bind mount (see `README.md` § CI integration with GitLab CI).
+
+---
+
+## Transient image pull corruption: "short read" or "unexpected EOF"
+
+**Symptom:**
+```
+ERROR: failed to build: failed to solve: failed to compute cache key:
+short read: expected 12108405 bytes but got 11522155: unexpected EOF
+```
+or a `docker pull` / topology start failing with `unexpected EOF` or `failed to register layer`.
+
+**What it means:**
+A layer download was corrupted mid-transfer — a registry or network hiccup, not a vouchfx or
+Dockerfile defect. When it happens during topology start (DCP's cold pull of a dependency
+image), vouchfx reports it as an **EnvironmentError** — per the
+[verdict taxonomy](#understanding-the-four-verdicts), infrastructure breakage, never a test
+failure. When it happens while building your own application image, the build fails before
+vouchfx runs at all.
+
+**Fix:**
+
+1. **Retry the pull or build** — a plain retry almost always succeeds; the corrupted partial
+   layer is discarded and re-fetched.
+2. **If it persists**, pull the base image explicitly to isolate the failing layer:
+   ```bash
+   docker pull <image>
+   ```
+   then check free disk space, and clear a corrupt build-cache entry with:
+   ```bash
+   docker builder prune
+   ```
+3. **In CI**, re-run the job. To reduce exposure on cold runners, pre-warm the images the
+   suite needs (the reusable workflow's `prewarm-images` input does this; each pull is
+   best-effort and non-fatal).
 
 ---
 
