@@ -84,8 +84,17 @@ public sealed class ElasticsearchScenarioIsolation : IScenarioIsolation, IAsyncD
 {
     private const string StoreToken = "elasticsearch";
 
-    /// <summary>Request timeout for the delete-by-query call — generous but bounded.</summary>
-    private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// Request timeout for the delete-by-query call — generous but bounded. 120 s rather
+    /// than the 30 s transport convention providers use inside step bodies: this reset is
+    /// engine-internal (no step-attempt semantics to bound), it runs at most once per
+    /// scenario boundary, and a memory-pressured Elasticsearch (e.g. a saturated CI
+    /// runner half an hour into a serialised docker suite) can take well over 30 s to
+    /// answer while still being perfectly healthy. A spurious timeout here aborts the
+    /// whole suite as an environment error, so the cost asymmetry favours waiting; a
+    /// genuinely dead store still fails within the bound.
+    /// </summary>
+    private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(120);
 
     private readonly string _dependencyName;
     private readonly string _endpointUrl;

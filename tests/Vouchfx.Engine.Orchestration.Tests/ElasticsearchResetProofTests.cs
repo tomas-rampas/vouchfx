@@ -73,7 +73,10 @@ public sealed class ElasticsearchResetProofTests
 
     /// <summary>
     /// Creates the index with an explicit mapping (a 'status' keyword field), simulating a SUT
-    /// that maps its indices once at startup.
+    /// that maps its indices once at startup — then blocks until the index's primary shard is
+    /// active. Index creation returns before shard allocation completes; on a saturated host
+    /// (e.g. a CI runner deep into a serialised docker suite) the first write can otherwise
+    /// arrive while the shard is still INITIALISING and be rejected with a 503.
     /// </summary>
     private static async Task CreateIndexWithMappingAsync(string baseUrl)
     {
@@ -85,6 +88,14 @@ public sealed class ElasticsearchResetProofTests
                 $"{baseUrl}/{IndexName}",
                 new StringContent(body, Encoding.UTF8, "application/json")).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
+
+            // Server-side wait: returns as soon as the index reaches yellow (primary active),
+            // or after 60 s with "timed_out": true and a 408 — EnsureSuccessStatusCode then
+            // fails the arrange phase with a precise signal instead of a downstream 503.
+            var health = await http.GetAsync(
+                $"{baseUrl}/_cluster/health/{IndexName}?wait_for_status=yellow&timeout=60s")
+                .ConfigureAwait(false);
+            health.EnsureSuccessStatusCode();
         }
         finally
         {
