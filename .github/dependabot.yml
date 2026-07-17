@@ -1,5 +1,5 @@
 # Keeps GitHub Actions references in .github/workflows/ maintained.
-# Every workflow pins every action to a full commit SHA for supply-chain
+# Every workflow pins every third-party action to a full commit SHA for supply-chain
 # integrity; without this ecosystem entry those pins would silently rot.
 # Dependabot updates SHA pins and their trailing version comments together.
 version: 2
