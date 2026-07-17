@@ -6,6 +6,12 @@
 # and publishes its JUnit + HTML artefacts end-to-end — a living, executable example
 # for consumers to copy.
 #
+# It gates BOTH advertised forms of the discovery root: one job passes the suite
+# DIRECTORY, the other passes the single smoke *.e2e.yaml FILE (the regression gate for
+# `vouchfx run <file>`). The jobs run in parallel on separate runners (no DCP
+# contention) and upload under distinct artefact names (v4+ artefact names are
+# immutable within one run — see the reusable workflow's `artifact-name` input).
+#
 # Because the caller and the reusable workflow live in the SAME repository, the `uses:`
 # reference below is the LOCAL form `./.github/workflows/vouchfx-run.yml` and the
 # vouchfx source defaults to this repo at this ref — no cross-repo pin is needed here.
@@ -41,6 +47,8 @@ jobs:
   reference-suite:
     name: Reference suite (examples/ci-reference)
     # Call the reusable workflow against this repo's own minimal reference suite.
+    # Keeps the DEFAULT artifact name deliberately — proving the default stays
+    # back-compatible for existing consumers.
     uses: ./.github/workflows/vouchfx-run.yml
     with:
       # The minimal self-contained suite shipped in this repo.
@@ -51,3 +59,15 @@ jobs:
       # notes in the reusable workflow; the reference uses the tag for legibility.
       prewarm-images: |
         traefik/whoami:latest
+
+  reference-single-file:
+    name: Reference single file (examples/ci-reference/smoke.e2e.yaml)
+    # The SINGLE-FILE root form — the permanent regression gate for
+    # `vouchfx run <file>.e2e.yaml` (which the docs advertise, and which --watch
+    # requires). Same suite, same image; only the root form differs.
+    uses: ./.github/workflows/vouchfx-run.yml
+    with:
+      scenario-path: examples/ci-reference/smoke.e2e.yaml
+      prewarm-images: |
+        traefik/whoami:latest
+      artifact-name: vouchfx-reports-single-file

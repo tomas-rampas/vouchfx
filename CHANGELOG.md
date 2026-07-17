@@ -15,6 +15,16 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`vouchfx run <file>.e2e.yaml` now works** — the advertised single-file form (including
+  `vouchfx run <file> --watch`, which is single-file only) previously exited 2 with "Discovery root … does
+  not exist" because discovery accepted only directories. A root naming a single `*.e2e.yaml` file now
+  resolves to exactly that scenario; an existing file without the `.e2e.yaml` suffix is a precise usage
+  error (exit 2) rather than a silent false green. The CI reference workflow now gates both root forms on
+  every relevant push, and the reusable workflow's `scenario-path` input accepts a file (with a new
+  optional `artifact-name` input so one workflow run can invoke it more than once).
+
 ### Added
 
 - **Automatic state reset between sequential scenarios** — SQL Server, MySQL, MongoDB, Redis and Elasticsearch

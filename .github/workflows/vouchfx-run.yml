@@ -69,9 +69,9 @@ on:
     inputs:
       scenario-path:
         description: >-
-          Path to a DIRECTORY containing the consumer's *.e2e.yaml suite, relative to
-          the caller's checked-out repository root. The directory is searched
-          recursively for *.e2e.yaml files. Defaults to the repository root.
+          Path to a DIRECTORY containing the consumer's *.e2e.yaml suite (searched
+          recursively for *.e2e.yaml files), OR a single *.e2e.yaml file, relative to
+          the caller's checked-out repository root. Defaults to the repository root.
         type: string
         required: false
         default: "."
@@ -119,6 +119,16 @@ on:
         type: boolean
         required: false
         default: false
+
+      artifact-name:
+        description: >-
+          Name of the uploaded reports artefact. Override when ONE workflow run calls
+          this reusable workflow MORE THAN ONCE (e.g. once per suite): upload-artifact
+          v4+ artefact names are immutable within a run, so a second invocation with
+          the default name would fail the upload with a conflict.
+        type: string
+        required: false
+        default: "vouchfx-reports"
 
       prewarm-images:
         description: >-
@@ -283,7 +293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vouchfx-reports
+          name: ${{ inputs.artifact-name }}
           path: |
             results.xml
             report.html

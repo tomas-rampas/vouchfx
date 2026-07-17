@@ -1,6 +1,9 @@
 // Vouchfx.Cli — ScenarioDiscovery (S07-C-01).
 //
 // Walks a directory tree for *.e2e.yaml files and parses each into a ScenarioAst.
+// A single *.e2e.yaml file is also accepted as the root — `vouchfx run <file>` (the
+// advertised form, and the only form --watch can meaningfully target) resolves to a
+// one-element discovery result.
 // Parsing lives HERE (not deferred to the runner) so that a later task can select
 // scenarios by metadata (tag/owner/name) without re-reading or re-parsing the files.
 //
@@ -46,7 +49,22 @@ internal sealed record DiscoveredScenario(
 }
 
 /// <summary>
-/// Discovers and parses <c>.e2e.yaml</c> scenario files under a root directory.
+/// Thrown when the discovery root exists but cannot be used as one — today, an existing
+/// file whose name does not end in <c>.e2e.yaml</c>.  A usage error the caller maps to
+/// exit code 2 (accepting an arbitrary file would let a typo'd path parse-fail into an
+/// Inconclusive verdict, which exits 0 by default — a false green in CI).
+/// </summary>
+internal sealed class ScenarioDiscoveryException : Exception
+{
+    public ScenarioDiscoveryException(string message)
+        : base(message)
+    {
+    }
+}
+
+/// <summary>
+/// Discovers and parses <c>.e2e.yaml</c> scenario files under a root directory, or a
+/// single explicitly named <c>.e2e.yaml</c> file.
 /// </summary>
 internal static class ScenarioDiscovery
 {
@@ -55,11 +73,13 @@ internal static class ScenarioDiscovery
 
     /// <summary>
     /// Recursively finds every <c>*.e2e.yaml</c> file under <paramref name="root"/> and
-    /// parses each into a <see cref="DiscoveredScenario"/>.
+    /// parses each into a <see cref="DiscoveredScenario"/>; a root naming a single
+    /// <c>*.e2e.yaml</c> file yields exactly that scenario.
     /// </summary>
     /// <param name="root">
-    /// The directory to search.  A relative path is resolved against the current working
-    /// directory; <c>"."</c> means the working directory.
+    /// The directory to search, or a single <c>*.e2e.yaml</c> file.  A relative path is
+    /// resolved against the current working directory; <c>"."</c> means the working
+    /// directory.
     /// </param>
     /// <param name="registry">
     /// The frozen provider registry used to build the AST (the AST builder needs it to
@@ -74,16 +94,40 @@ internal static class ScenarioDiscovery
     /// Thrown when <paramref name="root"/> does not exist — a usage error the caller maps
     /// to exit code 2.
     /// </exception>
+    /// <exception cref="ScenarioDiscoveryException">
+    /// Thrown when <paramref name="root"/> is an existing file that does not end in
+    /// <c>.e2e.yaml</c> — a usage error the caller maps to exit code 2.
+    /// </exception>
     public static IReadOnlyList<DiscoveredScenario> Discover(string root, StepKindRegistry registry)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(registry);
 
         var fullRoot = Path.GetFullPath(root);
+
+        if (File.Exists(fullRoot))
+        {
+            // The suffix check is OrdinalIgnoreCase deliberately: a user explicitly naming
+            // an existing file (Login.E2E.YAML) must not be rejected on a case technicality
+            // — on Windows it literally is the file.  This is asymmetric with directory
+            // enumeration, whose glob is case-sensitive on Linux: explicit naming is not
+            // discovery.
+            if (!fullRoot.EndsWith(".e2e.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ScenarioDiscoveryException(
+                    $"Discovery root '{root}' is a file but not a {ScenarioGlob} scenario "
+                    + $"(resolved to '{fullRoot}'). Scenario files must end in '.e2e.yaml'.");
+            }
+
+            return new[] { ParseFile(fullRoot, registry) };
+        }
+
         if (!Directory.Exists(fullRoot))
         {
             throw new DirectoryNotFoundException(
-                $"Discovery root '{root}' does not exist (resolved to '{fullRoot}').");
+                $"Discovery root '{root}' does not exist (resolved to '{fullRoot}'). "
+                + $"Pass a directory to search recursively for {ScenarioGlob} scenarios, "
+                + "or a single *.e2e.yaml file.");
         }
 
         var files = Directory
