@@ -23,6 +23,19 @@ to published pre-releases on 2026-07-14.
   as an environment error naming the dependency — never as a test failure. Brokers and DynamoDB/MinIO are not
   reset; add explicit cleanup steps for those. Language, SDK and event-wire contracts remain frozen.
 
+### Security
+
+- The CI workflow token now defaults to least privilege (`permissions: contents: read` at workflow level);
+  the coverage-badge job retains its job-scoped `contents: write`.
+
+### Changed
+
+- GitHub Actions dependency upgrades via Dependabot across the CI workflows (setup-dotnet 6, setup-node 7,
+  github-script 9, codeql-action 4.37.1), with the codeql-action init/analyze pair landed together to avoid
+  the split-bump version-mismatch failure. The satellite repositories (providers, samples, telemetry backend)
+  now carry the same weekly `github-actions` Dependabot configuration as the engine, so workflow SHA pins no
+  longer rot silently anywhere in the fleet.
+
 ## [1.0.0-alpha.7] — 2026-07-13
 
 A hardening and housekeeping release: no engine, DSL or contract changes.

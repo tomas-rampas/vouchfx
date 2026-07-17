@@ -59,6 +59,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege default token for every job: checkout needs contents: read
+# and nothing else here touches the GITHUB_TOKEN. The coverage-badge job
+# re-declares its own block (contents: write) to push the `badges` branch.
+permissions:
+  contents: read
+
 env:
   DOTNET_NOLOGO:             "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
