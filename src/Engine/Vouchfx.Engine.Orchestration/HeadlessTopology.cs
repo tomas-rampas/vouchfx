@@ -114,10 +114,23 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // is the only teardown path in the box that does not leak.
         builder.Configuration["DcpPublisher:WaitForResourceCleanup"] = "true";
 
-        // Suppress HealthChecks log noise below Warning (§4 hard invariant).
-        builder.Services.AddLogging(lb =>
-            lb.AddFilter(
+        // Suppress HealthChecks log noise below Warning (§4 hard invariant), and Aspire's
+        // own lifecycle banners: the Aspire.Hosting.DistributedApplication category carries
+        // only the version banner, "Distributed application starting/started", and
+        // "Application host directory is: <path>" — where the path is the apphostprojectpath
+        // AssemblyMetadata baked at BUILD time, i.e. the release build machine's directory
+        // (/home/runner/work/...) on every customer run of the packaged tool. Nothing in the
+        // engine reads AppHostDirectory (scenario-relative paths resolve against the suite's
+        // own directory), so the line is pure misleading noise. Warning+ still passes.
+        // Aspire.Hosting.Dcp.DcpHost is deliberately NOT filtered: its "Starting DCP with
+        // arguments" line shows THIS machine's resolved DCP path — primary diagnostic
+        // evidence for the DCP-path support flow (docs/kb/dcp-orchestrator-portability.md).
+        builder.Services.AddLogging(lb => lb
+            .AddFilter(
                 "Microsoft.Extensions.Diagnostics.HealthChecks",
+                LogLevel.Warning)
+            .AddFilter(
+                "Aspire.Hosting.DistributedApplication",
                 LogLevel.Warning));
 
         configureResources?.Invoke(builder);
