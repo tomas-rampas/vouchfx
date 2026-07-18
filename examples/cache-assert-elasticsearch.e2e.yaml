@@ -65,7 +65,11 @@ steps:
     code: |
       var rawUrl = (string)Vars["conn::search"];
       var parsedUri = new Uri(rawUrl);
-      var baseUrl = parsedUri.GetLeftPart(UriPartial.Authority);
+      // Uri.Authority is host:port WITHOUT userinfo — credentials must never
+      // ride in the request URL (they would leak via logs/proxies); they go
+      // into the Authorization header below instead, exactly as the
+      // cache-assert.elasticsearch provider does.
+      var baseUrl = parsedUri.Scheme + "://" + parsedUri.Authority;
       string authHeader = null;
       if (!string.IsNullOrEmpty(parsedUri.UserInfo))
       {
@@ -94,24 +98,28 @@ steps:
           {
               var content = new System.Net.Http.StringContent(
                   body, System.Text.Encoding.UTF8, "application/json");
-              var response = await http.PutAsync(
-                  baseUrl + "/orders/_doc/" + orderId + "?refresh=true", content);
               try
               {
-                  if (response.IsSuccessStatusCode)
+                  var response = await http.PutAsync(
+                      baseUrl + "/orders/_doc/" + orderId + "?refresh=true", content);
+                  try
                   {
-                      indexed = true;
+                      if (response.IsSuccessStatusCode)
+                      {
+                          indexed = true;
+                      }
+                      else if ((int)response.StatusCode == 503 && attempt < 9)
+                      {
+                          await Task.Delay(TimeSpan.FromMilliseconds(500));
+                      }
+                      else
+                      {
+                          response.EnsureSuccessStatusCode();
+                      }
                   }
-                  else if ((int)response.StatusCode == 503 && attempt < 9)
-                  {
-                      await Task.Delay(TimeSpan.FromMilliseconds(500));
-                  }
-                  else
-                  {
-                      response.EnsureSuccessStatusCode();
-                  }
+                  finally { response.Dispose(); }
               }
-              finally { response.Dispose(); }
+              finally { content.Dispose(); }
           }
       }
       finally { http.Dispose(); }
