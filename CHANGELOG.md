@@ -15,6 +15,11 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.0-alpha.9] — 2026-07-18
+
+A single-fix correctness release: the step `timeout` field now does what the language reference has always
+said it does, for every verify mode. No language-schema shape, SDK or event-wire contract changes.
+
 ### Fixed
 
 - **Step `timeout` is now enforced for IMMEDIATE steps** (#232) — the DSL has always documented `timeout` as
