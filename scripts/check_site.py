@@ -21,7 +21,10 @@ user hits them in production:
   (d) nothing from four maintainer-local, confidential surfaces reached
       the build, in any path form or embedded in any built page's
       content — see `check_boundary` for the two-tier design;
-  (e) the key user-facing pages exist at their new directory-URL
+  (e) no published text-like output still carries an unresolved
+      {{fact:KEY}} token — see `check_no_unresolved_facts` for why this is
+      deliberately stricter than the fact-injection machinery it backstops;
+  (f) the key user-facing pages exist at their new directory-URL
       locations.
 
 Exit 0: the build is safe to publish. Exit 1: a check failed; the printed
@@ -126,6 +129,13 @@ TEXT_LIKE_SUFFIXES = {".html", ".js", ".json", ".xml", ".txt"}
 FINGERPRINT_WINDOW = 512
 FINGERPRINT_STRIDE = 128
 MAX_FINGERPRINTS_PER_SURFACE = 3000
+
+# Mirrors vouchfx_site_tools.FACT_TOKEN exactly (scripts/site-tools/src/
+# vouchfx_site_tools/__init__.py) — the same pattern scripts/site_hooks/
+# facts.py's apply_facts() call resolves at build time. Kept as a literal
+# copy, not an import, so this check has no runtime dependency on that
+# package to do its job of catching the package's own output going missing.
+FACT_TOKEN = re.compile(r"\{\{fact:([A-Za-z0-9_]+)\}\}")
 
 
 class CheckFailed(Exception):
@@ -537,6 +547,77 @@ def check_boundary(site_dir: Path) -> int:
     return skipped
 
 
+# --- unresolved {{fact:KEY}} token check (facts.py's backstop) -------------
+
+
+def check_no_unresolved_facts(site_dir: Path) -> int:
+    """No published text-like output may contain an unresolved {{fact:KEY}}
+    token.
+
+    scripts/site_hooks/facts.py substitutes these at build time using the
+    exact same machinery scripts/build_site.py has always used
+    (vouchfx_site_tools.apply_facts). That upstream function's own
+    behaviour for an UNKNOWN key is to leave the token untouched in the
+    output rather than fail the build — a deliberate, unchanged design
+    choice there (a typo'd or retired fact key degrading to visible
+    literal text beats a broken deploy).
+
+    This check is DELIBERATELY STRICTER than that upstream behaviour, and
+    that is a documented, intentional deviation, not an oversight: for
+    THIS site, any {{fact:KEY}} token surviving to the published output is
+    always a regression worth failing loudly for — either facts.py didn't
+    run at all, ran before landing.py (see facts.py's docstring on hook
+    ordering), or someone referenced a key that was never a real fact.
+    There is no equivalent of the old builder's "ship it as literal text
+    and move on" tolerance here; this check exists specifically so that
+    tolerance can never happen silently on this pipeline.
+
+    Scans the same text-like surface as `check_boundary`
+    (html/js/json/xml/txt), not just html: facts.py itself only ever
+    patches *.html (mirroring the old builder's own scope), but Material's
+    generated search_index.json serialises page text too, and a token
+    could in principle survive there even after facts.py has already fixed
+    the surrounding .html — see facts.py's own docstring, "Scope note",
+    for exactly this gap. Returns the number of built files that could not
+    be read (0 normally); callers surface this count rather than
+    swallowing it, matching `check_boundary`'s convention.
+    """
+    hits: list[tuple[str, str]] = []
+    skipped = 0
+    for file in _iter_text_like_files(site_dir):
+        try:
+            text = file.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            skipped += 1
+            print(
+                f"WARN [check_no_unresolved_facts]: could not read {file} ({exc}); "
+                "this built file was NOT checked and may hide an unresolved token.",
+                file=sys.stderr,
+            )
+            continue
+        rel = file.relative_to(site_dir).as_posix()
+        for match in FACT_TOKEN.finditer(text):
+            hits.append((rel, match.group(0)))
+
+    if hits:
+        lines = ["Unresolved {{fact:KEY}} token(s) survived to the published build:"]
+        for rel, token in sorted(set(hits)):
+            lines.append(f"  {rel}: {token}")
+        lines.append(
+            "This must never ship. Check that scripts/site_hooks/facts.py is "
+            "registered AFTER scripts/site_hooks/landing.py in mkdocs.yml's "
+            "`hooks:` list; that the key is spelled correctly and is one facts.py "
+            "actually resolves (see vouchfx_site_tools.DEFAULT_FACT_FETCHERS and "
+            "site/facts-fallback.json); and — if the token lives in "
+            "search_index.json rather than the page's own .html — that the "
+            "surrounding .html has already been fixed (see facts.py's docstring, "
+            "'Scope note')."
+        )
+        raise CheckFailed("\n".join(lines))
+
+    return skipped
+
+
 def check_key_pages(site_dir: Path) -> None:
     missing = [
         str(candidate)
@@ -555,6 +636,7 @@ CHECKS = (
     check_landing_page,
     check_nojekyll,
     check_boundary,
+    check_no_unresolved_facts,
     check_key_pages,
 )
 
@@ -582,9 +664,10 @@ def main(argv: list[str]) -> int:
     suffix = ""
     if skipped_total:
         suffix = (
-            f" ({skipped_total} file(s) could not be read during the confidential-content "
-            "scan — see WARN lines above; re-run after fixing the underlying read error "
-            "before trusting this result for those files)"
+            f" ({skipped_total} file(s) could not be read during a content scan "
+            "(check_boundary and/or check_no_unresolved_facts) — see WARN lines above; "
+            "re-run after fixing the underlying read error before trusting this result "
+            "for those files)"
         )
     print(f"OK: {site_dir} passed all publication checks.{suffix}")
     return 0

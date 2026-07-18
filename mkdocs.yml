@@ -20,8 +20,18 @@ exclude_docs: |
 # There is deliberately no docs/index.md — see scripts/site_hooks/landing.py,
 # which copies the bespoke site/ landing page over the root of the build
 # after MkDocs finishes writing every other page.
+#
+# ORDER MATTERS: MkDocs fires same-event hooks (both of these implement
+# on_post_build) in exactly the order listed here — verified against
+# mkdocs' own source (config_options.Hooks.post_validation appends each
+# hook module, in list order, into the same PluginCollection regular
+# plugins use) and empirically with throwaway hooks in both list orders.
+# facts.py substitutes {{fact:KEY}} tokens across every built .html page,
+# including the one landing.py just copied in (site/index.html) — it MUST
+# run after landing.py, or index.html won't exist yet to substitute into.
 hooks:
   - scripts/site_hooks/landing.py
+  - scripts/site_hooks/facts.py
 
 theme:
   name: material
