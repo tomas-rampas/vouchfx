@@ -14,8 +14,9 @@
 # vouchfx-run-reference.yml, and examples/reference requires the
 # VOUCHFX_REF_BEARER_TOKEN prerequisite its README documents.
 #
-# The roster is DISCOVERED dynamically (ls examples/*.e2e.yaml), so adding a new
-# example file automatically adds its gate — no hand-maintained matrix to rot.
+# The roster is DISCOVERED dynamically (find examples -maxdepth 1 -name
+# '*.e2e.yaml', flat files only), so adding a new example file automatically
+# adds its gate — no hand-maintained matrix to rot.
 # Each example runs on its own runner (no DCP contention) via the reusable
 # workflow, exercising the single-FILE discovery-root form 15× over.
 #
