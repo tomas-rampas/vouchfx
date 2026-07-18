@@ -162,7 +162,7 @@ The `v1-alpha` tag is a pre-release convenience tag: it moves to track the lates
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search for `.e2e.yaml` scenarios. Searched recursively. |
-| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or to pin a released version (e.g. the `v1.0.0-alpha.5` tag). |
+| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or to pin a released version (e.g. the `v1.0.0-alpha.9` tag). |
 | `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
 | `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
 | `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
@@ -190,13 +190,13 @@ The distinction lets CI systems handle each outcome independently: fail the buil
 
 1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
    ```yaml
-   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.5
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.9
    ```
    A branch/tag ref (including the `v1-alpha`/`v1` convenience tags above) lets the workflow definition change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative — it's what lets Dependabot (next) track and bump the pin automatically.
 
 2. **Pin `vouchfx-ref` to a commit SHA or release tag**, never a branch:
    ```yaml
-   vouchfx-ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.5
+   vouchfx-ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.9
    ```
 
 3. **Pin each `prewarm-images` entry to an immutable image digest**, not a floating tag:
@@ -221,10 +221,10 @@ updates:
 Dependabot resolves the trailing `# vX.Y.Z` comment on the SHA pin above, watches this repository's tags, and opens a PR bumping both the SHA and the comment whenever vouchfx cuts a new release — no one ever runs a lookup command by hand again, and the pin never drifts silently. If you'd rather resolve a SHA once yourself (the first pin, or if you don't run Dependabot), one command does it:
 
 ```bash
-git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.5
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.9
 ```
 
-Depending on how a release tag was created (RELEASING.md documents both kinds), `git ls-remote --tags` prints either *two* lines for it — `refs/tags/v1.0.0-alpha.5` (an annotated tag object's own SHA) and `refs/tags/v1.0.0-alpha.5^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the single line's SHA is the commit SHA to pin.
+Depending on how a release tag was created (RELEASING.md documents both kinds), `git ls-remote --tags` prints either *two* lines for it — `refs/tags/v1.0.0-alpha.9` (an annotated tag object's own SHA) and `refs/tags/v1.0.0-alpha.9^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the single line's SHA is the commit SHA to pin.
 
 **Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
 
@@ -285,7 +285,7 @@ Reports are stored under the job's default artefact path and include:
 
 1. **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch or tag (including the `v1-alpha`/`v1` convenience tags in the quick start above):
    ```yaml
-   ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.5
+   ref: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-alpha.9
    ```
 2. **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
 3. **Pin each `VOUCHFX_PREWARM_IMAGES` entry to an immutable image digest** (`name@sha256:…`), not a floating tag.
@@ -294,10 +294,10 @@ Reports are stored under the job's default artefact path and include:
 **Keeping the pin current.** GitLab has no built-in equivalent of GitHub's Dependabot `github-actions` ecosystem for `include: ref:` entries. The closest automation is a [Renovate](https://docs.renovatebot.com/) custom regex manager watching this repository's tags and opening an MR to bump the pinned SHA (and its trailing `# vX.Y.Z` comment) — set up per your own Renovate configuration. Absent that, resolve the SHA once by hand:
 
 ```bash
-git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.5
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.9
 ```
 
-Depending on how the release tag was created (RELEASING.md documents both kinds), this prints either *two* lines for it (an annotated tag) — take the `refs/tags/v1.0.0-alpha.5^{}` ("peeled") line's SHA, not the tag object's own — or a *single* line (a lightweight tag), whose SHA already **is** the commit to pin.
+Depending on how the release tag was created (RELEASING.md documents both kinds), this prints either *two* lines for it (an annotated tag) — take the `refs/tags/v1.0.0-alpha.9^{}` ("peeled") line's SHA, not the tag object's own — or a *single* line (a lightweight tag), whose SHA already **is** the commit to pin.
 
 **Verification status (important).** The GitLab template is **static-validated only** (yamllint + GitLab CI JSON schema + behavioural-equivalence cross-check against the GitHub workflow), but has **not been run on a live GitLab instance** — a live pipeline / `ci/lint` run is an infrastructure-gated follow-up. The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed containers are reachable under sibling Docker-in-Docker** (the template sets `TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw Testcontainers) — that dind-to-DCP networking is the primary unknown.
 
