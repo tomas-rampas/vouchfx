@@ -22,7 +22,18 @@
 # Strict gating is deliberate here, unlike the taxonomy's permissive CI default:
 # these suites are self-contained by construction, so an Environment error or
 # Inconclusive verdict means the example (or the engine) regressed — never that
-# a customer's infrastructure hiccuped.
+# a customer's infrastructure hiccuped. Dropping the strict flags would blind
+# the gate to exactly the regression class it exists to catch (a placeholder
+# image that cannot start surfaces as an Environment error, not a Fail).
+#
+# No prewarm-images are passed: the roster is dynamic and the dependency images
+# are implied by `type:`, not written in the YAML, so any prewarm list here
+# would be a hand-maintained drift hazard. Cold pulls on fresh runners are
+# absorbed by the health gate — the samples repository's CI matrix cold-pulls
+# heavier stacks (SQL Server, Kafka, MySQL) under the same strict gating and
+# stays green. If a heavy leg (mq-azureservicebus pulls the SQL Server sidecar)
+# ever proves pull-flaky in practice, add a per-leg prewarm map rather than
+# relaxing the gating.
 
 name: vouchfx examples
 

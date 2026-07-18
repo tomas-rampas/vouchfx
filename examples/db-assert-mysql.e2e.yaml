@@ -48,7 +48,14 @@ steps:
               await cmd.ExecuteNonQueryAsync();
               cmd.CommandText = "DELETE FROM orders";
               await cmd.ExecuteNonQueryAsync();
-              cmd.CommandText = "INSERT INTO orders (id, status) VALUES (42, 'PENDING')";
+              // Bind the id from the same 'orderId' variable the assertion
+              // below substitutes, so seed and assert cannot drift apart.
+              cmd.CommandText = "INSERT INTO orders (id, status) VALUES (@id, 'PENDING')";
+              var idParam = cmd.CreateParameter();
+              idParam.ParameterName = "@id";
+              idParam.Value = int.Parse(
+                  (string)Vars["orderId"], System.Globalization.CultureInfo.InvariantCulture);
+              cmd.Parameters.Add(idParam);
               await cmd.ExecuteNonQueryAsync();
           }
           finally { cmd.Dispose(); }

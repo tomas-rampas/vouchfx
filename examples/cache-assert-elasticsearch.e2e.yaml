@@ -84,15 +84,35 @@ steps:
 
           var orderId = (string)Vars["orderId"];
           var body = "{\"id\":\"" + orderId + "\",\"status\":\"fulfilled\",\"region\":\"EU\"}";
-          var content = new System.Net.Http.StringContent(
-              body, System.Text.Encoding.UTF8, "application/json");
-          var response = await http.PutAsync(
-              baseUrl + "/orders/_doc/" + orderId + "?refresh=true", content);
-          try
+
+          // Bounded retry: the health gate proves the cluster answers, but a
+          // just-started single node can still 503 its first index write while
+          // allocation settles (the same bounded-poll idiom the dynamodb
+          // example uses for table-ACTIVE).
+          var indexed = false;
+          for (var attempt = 0; attempt < 10 && !indexed; attempt++)
           {
-              response.EnsureSuccessStatusCode();
+              var content = new System.Net.Http.StringContent(
+                  body, System.Text.Encoding.UTF8, "application/json");
+              var response = await http.PutAsync(
+                  baseUrl + "/orders/_doc/" + orderId + "?refresh=true", content);
+              try
+              {
+                  if (response.IsSuccessStatusCode)
+                  {
+                      indexed = true;
+                  }
+                  else if ((int)response.StatusCode == 503 && attempt < 9)
+                  {
+                      await Task.Delay(TimeSpan.FromMilliseconds(500));
+                  }
+                  else
+                  {
+                      response.EnsureSuccessStatusCode();
+                  }
+              }
+              finally { response.Dispose(); }
           }
-          finally { response.Dispose(); }
       }
       finally { http.Dispose(); }
 

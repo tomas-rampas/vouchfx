@@ -685,7 +685,7 @@ steps:
 
 - **Queue ownership:** The queue (`orders-notifications` in the example) must exist before the test runs. If your SUT declares it at startup, the first HTTP step will trigger that declaration before the queue assertion runs. Alternatively, seed it explicitly in the `environment` config or via a `script.csharp` step.
 - **Routing key:** When publishing, messages are routed via the routing key (often matching or derived from the queue name in simple topologies). In `mq-expect`, the `queue` field specifies which queue to read from.
-- **Durability:** RabbitMQ queues can be transient (auto-deleted when empty) or durable (persist across broker restarts). For testing, transient queues are typical; your SUT image should declare them.
+- **Durability:** RabbitMQ queues can be transient or durable (persisting across broker restarts). Declare test queues **durable** unless they are exclusive: RabbitMQ 4.x deprecates transient non-exclusive queues and refuses the declaration outright (AMQP 541 `INTERNAL_ERROR`, `transient_nonexcl_queues`). Durability costs nothing in a throwaway test container.
 - **Message consumption:** The `mq-expect.rabbitmq` step peeks the queue without consuming (deleting) the message, so multiple assertions on the same queue in the same scenario will all see the same messages.
 
 **For a complete runnable example,** see [`examples/mq-rabbitmq.e2e.yaml`](../examples/mq-rabbitmq.e2e.yaml) and the inventory-python sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python).

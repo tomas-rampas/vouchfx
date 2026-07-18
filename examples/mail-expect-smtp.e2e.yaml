@@ -38,12 +38,32 @@ steps:
   - id: simulate-welcome-email
     type: script.csharp
     description: >
-      SIMULATES the SUT's own send path: parses the staged SMTP endpoint
-      (svc::mailpit-smtp — the tcp://host:port URL EnvironmentMapper's mailpit
-      registration stages alongside the conn:: HTTP API URL) and sends the
-      welcome email the assertion below expects via System.Net.Mail.  A real
-      suite would delete this step entirely — its SUT already sends this email.
+      SIMULATES the SUT's own send path: clears the mailbox via Mailpit's HTTP
+      API (so the exact-count assertion below is rerun-safe — Mailpit is not
+      covered by the automatic state reset), then parses the staged SMTP
+      endpoint (svc::mailpit-smtp — the tcp://host:port URL EnvironmentMapper's
+      mailpit registration stages alongside the conn:: HTTP API URL) and sends
+      the welcome email the assertion below expects via System.Net.Mail.  A
+      real suite would delete this step entirely — its SUT already sends this
+      email.
     code: |
+      // Clear the mailbox first so the exact count:1 assertion below stays true
+      // when the suite reruns against the same container (e.g. under --watch —
+      // Mailpit is not covered by the automatic state reset, so messages would
+      // otherwise accumulate across iterations).
+      var apiUrl = (string)Vars["conn::mailpit"];
+      var http = new System.Net.Http.HttpClient();
+      try
+      {
+          var clear = await http.DeleteAsync(apiUrl.TrimEnd('/') + "/api/v1/messages");
+          try
+          {
+              clear.EnsureSuccessStatusCode();
+          }
+          finally { clear.Dispose(); }
+      }
+      finally { http.Dispose(); }
+
       var raw = (string)Vars["svc::mailpit-smtp"];
       string host;
       int port;
