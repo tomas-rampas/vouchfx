@@ -33,15 +33,18 @@ steps:
   - id: trigger-order-event
     type: http.rest
     description: >
-      Trigger the system under test to publish an order event to NATS JetStream.
-      The SUT should publish to the 'orders.created' subject via the NATS URL it
-      receives at startup.
+      Drive the business transaction that (in a real SUT) publishes an order
+      event to the 'orders.created' subject via the NATS URL the SUT receives at
+      startup.  The whoami placeholder answers 200 to any request and does not
+      itself talk to NATS — replace it with your real SUT.  This example does
+      not depend on the placeholder publishing anything: the next step
+      (publish-order-event) publishes the asserted message explicitly.
     target: app
     method: POST
     path: /orders
     body: '{"customerId":"cust-1","amount":49.99}'
     expect:
-      status: 202
+      status: 200
 
   - id: publish-order-event
     type: mq-publish.nats

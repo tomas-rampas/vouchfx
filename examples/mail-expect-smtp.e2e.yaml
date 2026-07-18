@@ -23,14 +23,78 @@ steps:
   - id: trigger-welcome-email
     type: http.rest
     description: >
-      Trigger the system under test to send a welcome email.
-      The SUT should send email through mailpit's SMTP port 1025.
+      Drive the business transaction that (in a real SUT) sends a welcome email
+      through Mailpit's SMTP port.  The whoami placeholder answers 200 to any
+      request and does not itself send email — replace it with your real SUT.
+      This example does not depend on the placeholder sending anything: the next
+      step (simulate-welcome-email) sends the asserted message explicitly.
     target: app
     method: POST
     path: /send-welcome
     body: '{"to":"alice@example.com","name":"Alice"}'
     expect:
-      status: 202
+      status: 200
+
+  - id: simulate-welcome-email
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own send path: clears the mailbox via Mailpit's HTTP
+      API (so the exact-count assertion below is rerun-safe — Mailpit is not
+      covered by the automatic state reset), then parses the staged SMTP
+      endpoint (svc::mailpit-smtp — the tcp://host:port URL EnvironmentMapper's
+      mailpit registration stages alongside the conn:: HTTP API URL) and sends
+      the welcome email the assertion below expects via System.Net.Mail.  A
+      real suite would delete this step entirely — its SUT already sends this
+      email.
+    code: |
+      // Clear the mailbox first so the exact count:1 assertion below stays true
+      // when the suite reruns against the same container (e.g. under --watch —
+      // Mailpit is not covered by the automatic state reset, so messages would
+      // otherwise accumulate across iterations).
+      var apiUrl = (string)Vars["conn::mailpit"];
+      var http = new System.Net.Http.HttpClient();
+      try
+      {
+          var clear = await http.DeleteAsync(apiUrl.TrimEnd('/') + "/api/v1/messages");
+          try
+          {
+              clear.EnsureSuccessStatusCode();
+          }
+          finally { clear.Dispose(); }
+      }
+      finally { http.Dispose(); }
+
+      var raw = (string)Vars["svc::mailpit-smtp"];
+      string host;
+      int port;
+      if (raw.Contains("://"))
+      {
+          var uri = new Uri(raw);
+          host = uri.Host;
+          port = uri.Port;
+      }
+      else
+      {
+          var idx = raw.LastIndexOf(':');
+          host = raw.Substring(0, idx);
+          port = int.Parse(raw.Substring(idx + 1), System.Globalization.CultureInfo.InvariantCulture);
+      }
+
+      var smtp = new System.Net.Mail.SmtpClient(host, port);
+      try
+      {
+          var message = new System.Net.Mail.MailMessage(
+              "noreply@example.com",
+              "alice@example.com",
+              "Welcome to Example",
+              "Hello, Alice - welcome aboard!");
+          try
+          {
+              await smtp.SendMailAsync(message);
+          }
+          finally { message.Dispose(); }
+      }
+      finally { smtp.Dispose(); }
 
   - id: assert-welcome-email
     type: mail-expect.smtp

@@ -19,10 +19,10 @@ environment:
     # mq-publish.rabbitmq and mq-expect.rabbitmq via the 'target' field.
     #
     # NOTE: the 'orders' queue used in the steps below must already exist when the
-    # test runs.  If your SUT declares it on startup, the trigger-order-event step
-    # (HTTP call) will cause the queue to be created before the publish step runs.
-    # For standalone use (skipping trigger-order-event), declare the queue via a
-    # seed script or rely on your SUT image creating it at container-health time.
+    # publish step runs — publishes to the default exchange are silently dropped
+    # when no queue with a matching name exists.  In production your SUT declares
+    # it on startup; this standalone example declares it explicitly with the
+    # declare-orders-queue script step below.
     rmq:
       type: rabbitmq
 
@@ -30,15 +30,55 @@ steps:
   - id: trigger-order-event
     type: http.rest
     description: >
-      Trigger the system under test to publish an order event to RabbitMQ.
-      The SUT should publish to the 'orders' queue via the AMQP URI it receives
-      at startup.
+      Drive the business transaction that (in a real SUT) publishes an order
+      event to the 'orders' queue via the AMQP URI the SUT receives at startup.
+      The whoami placeholder answers 200 to any request and does not itself talk
+      to RabbitMQ — replace it with your real SUT.  This example does not depend
+      on the placeholder publishing anything: the publish-order-event step
+      publishes the asserted message explicitly.
     target: app
     method: POST
     path: /orders
     body: '{"customerId":"cust-1","amount":49.99}'
     expect:
-      status: 202
+      status: 200
+
+  - id: declare-orders-queue
+    type: script.csharp
+    description: >
+      Declares the 'orders' queue over the staged AMQP connection string (the
+      same RabbitMQ.Client v7 async API the mq-*.rabbitmq providers use).  In
+      production your SUT declares its own queues on startup and this step
+      disappears; standalone, the declaration must happen before the publish
+      step because publishes to the default exchange are silently dropped when
+      no matching queue exists (see the dependency NOTE above).  QueueDeclareAsync
+      is idempotent, so reruns against the same container are safe.
+    code: |
+      var connStr = (string)Vars["conn::rmq"];
+      var factory = new RabbitMQ.Client.ConnectionFactory { Uri = new Uri(connStr) };
+      RabbitMQ.Client.IConnection conn = null;
+      RabbitMQ.Client.IChannel channel = null;
+      try
+      {
+          conn = await factory.CreateConnectionAsync(System.Threading.CancellationToken.None);
+          channel = await conn.CreateChannelAsync(
+              cancellationToken: System.Threading.CancellationToken.None);
+          // durable: true is required — RabbitMQ 4.x deprecates transient
+          // non-exclusive queues (declaring one is refused with AMQP 541
+          // INTERNAL_ERROR "Feature `transient_nonexcl_queues` is deprecated").
+          await channel.QueueDeclareAsync(
+              queue: "orders",
+              durable: true,
+              exclusive: false,
+              autoDelete: false,
+              arguments: null,
+              cancellationToken: System.Threading.CancellationToken.None);
+      }
+      finally
+      {
+          if (channel != null) { await channel.DisposeAsync(); }
+          if (conn != null) { await conn.DisposeAsync(); }
+      }
 
   - id: publish-order-event
     type: mq-publish.rabbitmq

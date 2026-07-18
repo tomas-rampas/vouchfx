@@ -1,31 +1,73 @@
+# examples/db-assert-mysql.e2e.yaml — minimal db-assert.mysql suite.
+#
+# Demonstrates the db-assert.mysql step kind against a managed MySQL
+# dependency, including parameterised query binding (the @orderId parameter
+# below).  The script.csharp step seeds the orders table; db-assert.mysql then
+# asserts the inserted row is present — the same self-contained pattern as
+# db-assert-sqlserver.e2e.yaml.
+#
+# Run (full docker capstone — requires Docker + MySQL image):
+#   vouchfx run examples/db-assert-mysql.e2e.yaml
+
 metadata:
   name: db-assert-mysql-example
-  description: >
-    Example showing db-assert.mysql: POST to a REST service that creates an order,
-    then assert the row appears in MySQL with the expected status.
+  owner: vouchfx-core
+  tags: [db, mysql, example]
+  description: >-
+    Minimal example: seeds an orders table in a MySQL dependency via
+    script.csharp and asserts the row with db-assert.mysql using a
+    parameterised query.
 
 environment:
-  services:
-    orders-api:
-      image: "ghcr.io/example/orders-api:latest"
   dependencies:
     ordersdb:
       type: mysql
 
+variables:
+  orderId: "42"
+
 steps:
-  - id: create-order
-    type: http.rest
-    target: orders-api
-    method: POST
-    path: /orders
-    body: '{"item":"widget","qty":3}'
-    expect:
-      status: 201
-    capture:
-      orderId: "$.id"
+  - id: seed-order
+    type: script.csharp
+    description: >
+      Seeds the orders table over the staged connection string (which already
+      selects the dependency's database).  Statements run one at a time —
+      MySqlConnector does not batch multiple statements in a single command by
+      default.
+    code: |
+      var connStr = (string)Vars["conn::ordersdb"];
+      var conn = new MySqlConnector.MySqlConnection(connStr);
+      try
+      {
+          await conn.OpenAsync();
+          var cmd = conn.CreateCommand();
+          try
+          {
+              cmd.CommandText =
+                  "CREATE TABLE IF NOT EXISTS orders (id INT PRIMARY KEY, status VARCHAR(50) NOT NULL)";
+              await cmd.ExecuteNonQueryAsync();
+              cmd.CommandText = "DELETE FROM orders";
+              await cmd.ExecuteNonQueryAsync();
+              // Bind the id from the same 'orderId' variable the assertion
+              // below substitutes, so seed and assert cannot drift apart.
+              cmd.CommandText = "INSERT INTO orders (id, status) VALUES (@id, 'PENDING')";
+              var idParam = cmd.CreateParameter();
+              idParam.ParameterName = "@id";
+              idParam.Value = int.Parse(
+                  (string)Vars["orderId"], System.Globalization.CultureInfo.InvariantCulture);
+              cmd.Parameters.Add(idParam);
+              await cmd.ExecuteNonQueryAsync();
+          }
+          finally { cmd.Dispose(); }
+      }
+      finally { conn.Dispose(); }
 
   - id: assert-order-in-mysql
     type: db-assert.mysql
+    description: >
+      Assert the seeded row is present.  The @orderId parameter binds the
+      substituted {orderId} variable server-side — never string-splice values
+      into the query text.
     target: ordersdb
     query: "SELECT id, status FROM orders WHERE id = @orderId"
     parameters:

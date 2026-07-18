@@ -685,10 +685,10 @@ steps:
 
 - **Queue ownership:** The queue (`orders-notifications` in the example) must exist before the test runs. If your SUT declares it at startup, the first HTTP step will trigger that declaration before the queue assertion runs. Alternatively, seed it explicitly in the `environment` config or via a `script.csharp` step.
 - **Routing key:** When publishing, messages are routed via the routing key (often matching or derived from the queue name in simple topologies). In `mq-expect`, the `queue` field specifies which queue to read from.
-- **Durability:** RabbitMQ queues can be transient (auto-deleted when empty) or durable (persist across broker restarts). For testing, transient queues are typical; your SUT image should declare them.
+- **Durability:** RabbitMQ queues can be transient or durable (persisting across broker restarts). Declare test queues **durable** unless they are exclusive: RabbitMQ 4.x deprecates transient non-exclusive queues and refuses the declaration outright (AMQP 541 `INTERNAL_ERROR`, `transient_nonexcl_queues`). Durability costs nothing in a throwaway test container.
 - **Message consumption:** The `mq-expect.rabbitmq` step peeks the queue without consuming (deleting) the message, so multiple assertions on the same queue in the same scenario will all see the same messages.
 
-**For a complete runnable example,** see [`examples/mq-rabbitmq.e2e.yaml`](../examples/mq-rabbitmq.e2e.yaml) and the inventory-python sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python).
+**For a complete runnable example,** see [`examples/mq-rabbitmq.e2e.yaml`](../examples/mq-rabbitmq.e2e.yaml) and the inventory-python sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -768,7 +768,7 @@ steps:
 - **Message ordering:** JetStream guarantees FIFO ordering within a subject. If you publish multiple messages to the same subject, the consumer will see them in order.
 - **Cross-scenario isolation:** Because the retained log persists across assertions within a scenario, **do not reuse a single NATS dependency across multiple sequential scenarios on the same subject.** Use separate `nats` dependency declarations per scenario, or assign unique `stream` names if you must reuse the dependency.
 
-**For a complete runnable example,** see [`examples/mq-nats.e2e.yaml`](../examples/mq-nats.e2e.yaml) and the payments-java sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/payments-java).
+**For a complete runnable example,** see [`examples/mq-nats.e2e.yaml`](../examples/mq-nats.e2e.yaml) and the payments-java sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/payments-java). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -874,7 +874,7 @@ steps:
 - **Properties:** Custom application-level properties (key-value pairs) are set via the `properties` map on the publish step and matched via `expectProperties` on the assert step.
 - **Emulator setup:** The emulator requires Docker and automatically starts a SQL Server container for persistence. If using a live Azure Service Bus, provide a valid connection string via the `environment` or `${secret:}` injection.
 
-**For a complete runnable example,** see [`examples/mq-azureservicebus.e2e.yaml`](../examples/mq-azureservicebus.e2e.yaml).
+**For a complete runnable example,** see [`examples/mq-azureservicebus.e2e.yaml`](../examples/mq-azureservicebus.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -976,7 +976,7 @@ steps:
 - **Placeholders:** The `key`, `field`, and expected `value` may all contain `{placeholder}` tokens that are substituted at execution time.
 - **Exact-match vs. exists:** For string values (GET), `expect.value` is an ordinal equality check. For presence checks (EXISTS), use `expect.exists: true/false`.
 
-**For a complete runnable example,** see [`examples/cache-assert-redis.e2e.yaml`](../examples/cache-assert-redis.e2e.yaml).
+**For a complete runnable example,** see [`examples/cache-assert-redis.e2e.yaml`](../examples/cache-assert-redis.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -1048,7 +1048,7 @@ steps:
 - **Placeholders:** The `query` body may contain `{placeholder}` tokens, which are substituted into the JSON structure at execution time.
 - **Idempotent polling:** `verifyMode: RETRY` is ideal for indexing assertions, because newly indexed documents may take a moment to become searchable.
 
-**For a complete runnable example,** see [`examples/cache-assert-elasticsearch.e2e.yaml`](../examples/cache-assert-elasticsearch.e2e.yaml).
+**For a complete runnable example,** see [`examples/cache-assert-elasticsearch.e2e.yaml`](../examples/cache-assert-elasticsearch.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -1127,7 +1127,7 @@ steps:
 - **Polling:** `verifyMode: RETRY` is essential for email testing, because SMTP delivery is asynchronous.
 - **SUT configuration:** Ensure your system-under-test reads the SMTP host and port from the environment (e.g., `${conn:mail.host}` and `${conn:mail.port}` injected as env vars). Without this, the SUT cannot connect to Mailpit.
 
-**For a complete runnable example,** see [`examples/mail-expect-smtp.e2e.yaml`](../examples/mail-expect-smtp.e2e.yaml).
+**For a complete runnable example,** see [`examples/mail-expect-smtp.e2e.yaml`](../examples/mail-expect-smtp.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 

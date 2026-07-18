@@ -17,6 +17,11 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
+- **Examples run gate in CI** — a new `vouchfx examples` workflow discovers every flat `examples/*.e2e.yaml`
+  suite dynamically and CLI-runs each on its own runner with strict gating (`--fail-on-env-error
+  --fail-on-inconclusive`), so example run-rot is caught on every push to `main` that touches the examples or
+  the engine. The compile-only examples test proves the YAML compiles; this gate proves the suites actually
+  pass — and exercises the single-file discovery-root form across every provider family as a side effect.
 - **Automatic state reset between sequential scenarios** — SQL Server, MySQL, MongoDB, Redis and Elasticsearch
   dependencies now join PostgreSQL with automatic state reset between sequential scenarios sharing one
   topology. Data is cleared whilst structure (tables, indexes, mappings) is preserved. A failed reset surfaces
@@ -33,6 +38,16 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
+- **All fifteen per-provider examples now pass when run** — a full customer-journey audit found eight of the
+  fifteen flat `examples/*.e2e.yaml` suites failing at run time despite the compile gate staying green: three
+  declared placeholder SUT images that can never start (`orders-api:latest`,
+  `ghcr.io/example/orders-api:latest`), and five depended on the `traefik/whoami` placeholder behaving like a
+  real order service (expecting `201`/`202` responses, published events, sent email or a pre-declared queue).
+  Each now follows the honest-simulate pattern the passing examples established: the placeholder SUT is
+  exercised with `expect: status: 200`, and a clearly-marked `script.csharp` step simulates the SUT's own
+  write over the staged connection string (Redis session shapes, Elasticsearch document, MongoDB document,
+  MySQL row, RabbitMQ queue declaration, SMTP welcome email, Service Bus topic publish) so every assertion is
+  genuinely observable. The `docs/recipes.md` "complete runnable example" links are now true as written.
 - **`vouchfx run <file>.e2e.yaml` now works** — the advertised single-file form (including
   `vouchfx run <file> --watch`, which is single-file only) previously exited 2 with "Discovery root … does
   not exist" because discovery accepted only directories. A root naming a single `*.e2e.yaml` file now

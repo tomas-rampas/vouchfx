@@ -2,40 +2,140 @@
 # Verifies that an Elasticsearch index contains the expected documents.
 # Demonstrates: cache-assert.elasticsearch step type, query DSL body,
 # exact-count assertion, and field value assertion.
+#
+# Run (full docker capstone — requires Docker + Elasticsearch image):
+#   vouchfx run examples/cache-assert-elasticsearch.e2e.yaml
 metadata:
   name: elasticsearch-document-check
   owner: platform-team
   tags: [elasticsearch, cache-assert, smoke]
   description: >
-    Inserts a document via http.rest, then asserts that Elasticsearch
-    reflects the change using cache-assert.elasticsearch.
+    Asserts that Elasticsearch reflects an indexed document using
+    cache-assert.elasticsearch.
+
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself talk
+    to Elasticsearch, and the engine provisions the cluster EMPTY — no index, no
+    document. In production usage, the SUT's own order-creation handler is the
+    thing that would index the order it just accepted; cache-assert.elasticsearch
+    would then observe a real write. This example instead SIMULATES that write
+    with a script.csharp step that indexes the document over the staged
+    connection URL — exactly the same HONEST-disclosure approach
+    storage-assert-s3.e2e.yaml and db-assert-dynamodb.e2e.yaml use. It still
+    exercises the full Elasticsearch topology + query DSL + RETRY + assertion
+    path end to end.
 
 environment:
   services:
-    orders-api:
-      image: orders-api:latest
+    # The system under test.  Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
 
   dependencies:
     search:
       type: elasticsearch
 
+variables:
+  orderId: "ord-001"
+
 steps:
-  - id: seed-order
+  - id: trigger-order
     type: http.rest
-    target: orders-api
+    description: >
+      Drive the business transaction that (in a real SUT) indexes the order.
+      The whoami placeholder answers 200 to any request and ignores the body —
+      replace it with your real SUT, whose handler would index the document the
+      next step simulates.
+    target: app
     method: POST
     path: /orders
     body: '{"id":"ord-001","status":"fulfilled","region":"EU"}'
     expect:
-      status: 201
-    capture:
-      orderId: "$.id"
+      status: 200
+
+  - id: simulate-order-index
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the
+      suite description above): reads the staged connection URL, strips any
+      user-info into a Basic Authorization header (the same client strategy the
+      cache-assert.elasticsearch provider itself uses — BCL HttpClient only),
+      and indexes the document the assertion below expects.  ?refresh=true makes
+      the document searchable immediately.  A real suite would delete this step
+      entirely — its SUT already does this write.
+    code: |
+      var rawUrl = (string)Vars["conn::search"];
+      var parsedUri = new Uri(rawUrl);
+      // Uri.Authority is host:port WITHOUT userinfo — credentials must never
+      // ride in the request URL (they would leak via logs/proxies); they go
+      // into the Authorization header below instead, exactly as the
+      // cache-assert.elasticsearch provider does.
+      var baseUrl = parsedUri.Scheme + "://" + parsedUri.Authority;
+      string authHeader = null;
+      if (!string.IsNullOrEmpty(parsedUri.UserInfo))
+      {
+          authHeader = Convert.ToBase64String(
+              System.Text.Encoding.UTF8.GetBytes(Uri.UnescapeDataString(parsedUri.UserInfo)));
+      }
+
+      var http = new System.Net.Http.HttpClient();
+      try
+      {
+          if (authHeader != null)
+          {
+              http.DefaultRequestHeaders.Authorization =
+                  new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authHeader);
+          }
+
+          var orderId = (string)Vars["orderId"];
+          var body = "{\"id\":\"" + orderId + "\",\"status\":\"fulfilled\",\"region\":\"EU\"}";
+
+          // Bounded retry: the health gate proves the cluster answers, but a
+          // just-started single node can still 503 its first index write while
+          // allocation settles (the same bounded-poll idiom the dynamodb
+          // example uses for table-ACTIVE).
+          var indexed = false;
+          for (var attempt = 0; attempt < 10 && !indexed; attempt++)
+          {
+              var content = new System.Net.Http.StringContent(
+                  body, System.Text.Encoding.UTF8, "application/json");
+              try
+              {
+                  var response = await http.PutAsync(
+                      baseUrl + "/orders/_doc/" + orderId + "?refresh=true", content);
+                  try
+                  {
+                      if (response.IsSuccessStatusCode)
+                      {
+                          indexed = true;
+                      }
+                      else if ((int)response.StatusCode == 503 && attempt < 9)
+                      {
+                          await Task.Delay(TimeSpan.FromMilliseconds(500));
+                      }
+                      else
+                      {
+                          response.EnsureSuccessStatusCode();
+                      }
+                  }
+                  finally { response.Dispose(); }
+              }
+              finally { content.Dispose(); }
+          }
+      }
+      finally { http.Dispose(); }
 
   - id: check-order-indexed
     type: cache-assert.elasticsearch
+    description: >
+      Assert the order document is present with the expected field values.
+      The term query targets the 'id.keyword' sub-field: dynamic mapping indexes
+      'id' as analysed text (the standard analyser splits 'ord-001' into 'ord'
+      and '001', so a term query on the bare field never matches) plus an exact
+      'id.keyword' sub-field for term-level lookups.  RETRY accommodates the
+      index write lagging the trigger — the family's canonical idiom.
     target: search
     index: orders
-    query: '{"query":{"term":{"id":"{orderId}"}}}'
+    query: '{"query":{"term":{"id.keyword":"{orderId}"}}}'
     expect:
       count: 1
       fields:

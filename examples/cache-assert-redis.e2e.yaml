@@ -1,3 +1,7 @@
+# examples/cache-assert-redis.e2e.yaml — cache-assert.redis suite.
+#
+# Run (full docker capstone — requires Docker + Redis image):
+#   vouchfx run examples/cache-assert-redis.e2e.yaml
 metadata:
   name: cache-assert-redis-example
   description: >
@@ -6,6 +10,15 @@ metadata:
     value, the key's presence, its TTL, and a few collection shapes (hash / list / set).
     `cache-assert` is a multi-provider family (redis + elasticsearch), so the dotted form
     `cache-assert.redis` is required — the bare `cache-assert` alias is ambiguous.
+
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself talk
+    to Redis, and the engine provisions the cache EMPTY. In production usage, the
+    SUT's own session handler is the thing that would write the keys these steps
+    assert. This example instead SIMULATES those writes with a script.csharp step
+    over the staged connection string — exactly the same HONEST-disclosure
+    approach storage-assert-s3.e2e.yaml and db-assert-dynamodb.e2e.yaml use. It
+    still exercises the full Redis topology + every cache-assert.redis operation
+    end to end.
 
 environment:
   services:
@@ -18,20 +31,61 @@ environment:
     cache:
       type: redis
 
+variables:
+  userId: "42"
+
 steps:
   - id: prime-cache
     type: http.rest
     description: >
-      Trigger the system under test to write the user's session into Redis.
-      The SUT should SET user:42 = "active" (with a TTL) and populate a profile hash.
+      Drive the business transaction that (in a real SUT) writes the user's
+      session into Redis: SET user:42 = "active" (with a TTL) and populate a
+      profile hash.  The whoami placeholder answers 200 to any request and
+      ignores the body — replace it with your real SUT, whose handler would
+      perform the writes the next step simulates.
     target: app
     method: POST
     path: /sessions
     body: '{"userId":"42","status":"active"}'
     expect:
-      status: 201
-    capture:
-      userId: $.userId
+      status: 200
+
+  - id: simulate-session-write
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the
+      suite description above): connects with the staged connection string and
+      writes every shape the assertions below expect — the session string (with
+      a TTL), the profile hash, the job queue list, and the tag set.  The
+      delete-first calls make the step idempotent across reruns against the
+      same container.  A real suite would delete this step entirely — its SUT
+      already does these writes.
+    code: |
+      var connStr = (string)Vars["conn::cache"];
+      var userId = (string)Vars["userId"];
+      var muxer = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr);
+      try
+      {
+          var db = muxer.GetDatabase();
+          await db.StringSetAsync("user:" + userId, "active", TimeSpan.FromMinutes(5));
+          await db.HashSetAsync(
+              "user:" + userId + ":profile",
+              new StackExchange.Redis.HashEntry[]
+              {
+                  new StackExchange.Redis.HashEntry("status", "verified"),
+              });
+          var queueKey = "user:" + userId + ":queue";
+          await db.KeyDeleteAsync(queueKey);
+          await db.ListRightPushAsync(
+              queueKey,
+              new StackExchange.Redis.RedisValue[] { "job-1", "job-2", "job-3" });
+          var tagsKey = "user:" + userId + ":tags";
+          await db.KeyDeleteAsync(tagsKey);
+          await db.SetAddAsync(
+              tagsKey,
+              new StackExchange.Redis.RedisValue[] { "beta", "early-adopter" });
+      }
+      finally { muxer.Dispose(); }
 
   # ── String value assertion ───────────────────────────────────────────────────
   - id: assert-session-value
