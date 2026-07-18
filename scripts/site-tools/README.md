@@ -59,9 +59,14 @@ Two operational rules for the pin:
 
 ## Local development
 
-The engine repo needs no install: `scripts/build_site.py` inserts
-`scripts/site-tools/src` onto `sys.path` directly, so
-`python scripts/build_site.py` keeps working unchanged from a bare checkout.
+As of the Material for MkDocs migration (v1.0.0-alpha.9), the engine's own
+site is built via `mkdocs build` with hooks that import `fetch_facts` and
+`apply_facts` directly from this package. `scripts/build_site.py` remains
+in-tree as the authoritative DOCS-list source for the legacy-redirect table
+but no longer runs in the engine's CI. The three satellite repositories
+(vouchfx-providers, vouchfx-samples, vouchfx-telemetry-backend) continue
+using their thin `scripts/build_site.py` wrappers unchanged — their SHA pins
+and wrapper logic are unaffected by the engine's MkDocs cutover.
 
 A satellite repo's wrapper resolves the package in this order:
 

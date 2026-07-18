@@ -424,8 +424,8 @@ For complete information — the exact allowlist, where data is stored, the inst
 4. **[Common Patterns](https://tomas-rampas.github.io/vouchfx/common-patterns/)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
 5. **[Troubleshooting](https://tomas-rampas.github.io/vouchfx/troubleshooting/)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
 6. **[Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
-7. **[Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
-8. **[YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_yaml_dsl_specification_and_vscode_extension_design/)** — The complete `.e2e.yaml` grammar and JSON Schema.
+7. **[Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+8. **[YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)** — The complete `.e2e.yaml` grammar and JSON Schema.
 9. **[Community Provider Hub](https://github.com/tomas-rampas/vouchfx-providers)** — Community providers with the Vouched badge, with examples and the provider authoring rubric.
 
 ### Report formats
@@ -493,10 +493,10 @@ CLAUDE.md                             operating rules and hard invariants for th
 
 ### The authoritative documents
 
-- [Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/)
+- [Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/)
   — how the system is built (layers, Aspire/Testcontainers, Roslyn + memory model, security, verdict
   taxonomy, provider architecture, reporting, secrets).
-- [YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_yaml_dsl_specification_and_vscode_extension_design/)
+- [YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)
   — the `.e2e.yaml` grammar, JSON Schema, and the VSCode/LSP extension design.
 - [Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/) — the per-step-type field reference
   (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
@@ -533,7 +533,7 @@ engine internals.
 
 ## AI assistance
 
-Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. The [Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
+Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. The [Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
 
 ## Security
 
@@ -564,4 +564,4 @@ Replace the filename with whichever artefact you are verifying (e.g. `vouchfx-1.
 
 ## Licence
 
-Apache-2.0 — see [`LICENSE`](LICENSE).
+Apache-2.0 — see [`LICENSE`](https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE).
