@@ -612,14 +612,16 @@ def check_no_unresolved_facts(site_dir: Path) -> int:
     tolerance can never happen silently on this pipeline.
 
     Scans the same text-like surface as `check_boundary`
-    (html/js/json/xml/txt), not just html: facts.py itself only ever
-    patches *.html (mirroring the old builder's own scope), but Material's
-    generated search_index.json serialises page text too, and a token
-    could in principle survive there even after facts.py has already fixed
-    the surrounding .html — see facts.py's own docstring, "Scope note",
-    for exactly this gap. Returns the number of built files that could not
-    be read (0 normally); callers surface this count rather than
-    swallowing it, matching `check_boundary`'s convention.
+    (html/js/json/xml/txt) — the exact surface facts.py itself now patches
+    (it was originally html-only, mirroring the old builder, and was
+    widened so Material's search_index.json — serialised from page text
+    before the hook fires — gets patched too; see facts.py's "Scope note
+    (revised)"). With application and verification covering the same
+    surface, a hit here always means a real regression: facts.py did not
+    run, ran before landing.py, or the key was never a real fact. Returns
+    the number of built files that could not be read (0 normally); callers
+    surface this count rather than swallowing it, matching
+    `check_boundary`'s convention.
     """
     hits: list[tuple[str, str]] = []
     skipped = 0
