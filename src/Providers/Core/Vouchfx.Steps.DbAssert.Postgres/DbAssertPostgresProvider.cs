@@ -336,6 +336,10 @@ public sealed class DbAssertPostgresProvider
         "            var cmd = conn.CreateCommand();\n" +
         "            try\n" +
         "            {\n" +
+        "                // When the step budget governs, lift the ADO default 30-second\n" +
+        "                // CommandTimeout (0 = infinite) so the step token is the sole\n" +
+        "                // bound and a budget longer than 30s is honoured (#232).\n" +
+        "                cmd.CommandTimeout = budgetGoverned ? 0 : 30;\n" +
         "                cmd.CommandText = resolvedQuery;\n" +
         "                for (int i = 0; i < paramNames.Length; i++)\n" +
         "                {\n" +

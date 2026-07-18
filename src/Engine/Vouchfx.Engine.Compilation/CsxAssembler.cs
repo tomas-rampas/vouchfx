@@ -384,8 +384,12 @@ public static class CsxAssembler
         var safe = CsxFragment.SanitiseId(stepId);
 
         // Normalise: null or non-positive → no enforcement (mirrors RetryRunner's
-        // treatment of its window parameter).
-        var budget = timeoutMs is { } t and > 0 ? (long?)t : null;
+        // treatment of its window parameter).  Clamp the upper end to what
+        // CancellationTokenSource accepts (an absurd ~24.8-day budget must not
+        // throw ArgumentOutOfRangeException and abort the whole scenario).
+        var budget = timeoutMs is { } t and > 0
+            ? (long?)Math.Min(t, int.MaxValue - 1)
+            : null;
 
         var sb = new StringBuilder();
         sb.Append('{').Append('\n');
