@@ -21,17 +21,23 @@ exclude_docs: |
 # which copies the bespoke site/ landing page over the root of the build
 # after MkDocs finishes writing every other page.
 #
-# ORDER MATTERS: MkDocs fires same-event hooks (both of these implement
+# ORDER MATTERS: MkDocs fires same-event hooks (all three implement
 # on_post_build) in exactly the order listed here — verified against
 # mkdocs' own source (config_options.Hooks.post_validation appends each
 # hook module, in list order, into the same PluginCollection regular
 # plugins use) and empirically with throwaway hooks in both list orders.
-# facts.py substitutes {{fact:KEY}} tokens across every built .html page,
-# including the one landing.py just copied in (site/index.html) — it MUST
-# run after landing.py, or index.html won't exist yet to substitute into.
+#   1. landing.py   copies site/index.html (and companions) into the build.
+#   2. facts.py     substitutes {{fact:KEY}} tokens across every built
+#                    text-like file, including the one landing.py just
+#                    copied in — it MUST run after landing.py, or
+#                    index.html won't exist yet to substitute into.
+#   3. redirects.py writes legacy-URL redirect stubs, and refuses to
+#                    overwrite anything already present — it runs LAST so
+#                    its collision check sees the complete, final build.
 hooks:
   - scripts/site_hooks/landing.py
   - scripts/site_hooks/facts.py
+  - scripts/site_hooks/redirects.py
 
 theme:
   name: material

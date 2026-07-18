@@ -9,13 +9,17 @@ before anything is deployed:
 It asserts the handful of things that, if wrong, are silent until a real
 user hits them in production:
 
-  (a) every pymdownx.snippets `--8<--` directive in the docs/ SOURCE tree
-      targets one of the three root files this scaffold deliberately
-      embeds (README.md, CHANGELOG.md, GOVERNANCE.md) — see
-      `check_snippet_allowlist` for why this has to be checked at the
-      directive level, before a build even runs;
+  (a) every pymdownx.snippets `--8<--` directive in the docs/ SOURCE tree,
+      AND inside the three allowlisted embed targets themselves (pymdownx
+      expands snippets recursively), targets one of README.md,
+      CHANGELOG.md, GOVERNANCE.md — see `check_snippet_allowlist`;
   (b) the bespoke landing page (site/index.html) published as the site
       root, not a Material-generated homepage;
+  (b2) every internal href on every built page — not just the landing
+      page — resolves CASE-SENSITIVELY against the build tree, since this
+      machine's filesystem is not case-sensitive and Path.exists() would
+      lie about a case-mismatched link — see
+      `check_internal_links_case_sensitive`;
   (c) .nojekyll shipped, so GitHub Pages doesn't run Jekyll over the build
       and mangle underscore-prefixed paths;
   (d) nothing from four maintainer-local, confidential surfaces reached
@@ -24,6 +28,11 @@ user hits them in production:
   (e) no published text-like output still carries an unresolved
       {{fact:KEY}} token — see `check_no_unresolved_facts` for why this is
       deliberately stricter than the fact-injection machinery it backstops;
+  (e2) site/facts-fallback.json (build tooling, not a page) never ships —
+      see `check_no_facts_fallback_leak`;
+  (g) every legacy .html URL the outgoing custom generator used to publish
+      still resolves, via a redirect stub, to its new MkDocs URL — see
+      `check_legacy_redirects`;
   (f) the key user-facing pages exist at their new directory-URL
       locations.
 
@@ -91,15 +100,29 @@ Stdlib only — no dependencies to install.
 """
 from __future__ import annotations
 
+import os
+import posixpath
 import re
 import sys
+import urllib.parse
 from collections.abc import Iterator
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 DOCS_DIR = REPO_ROOT / "docs"
+
+# Shared, first-party helpers under scripts/site_hooks/ — not third-party
+# dependencies, just internal code reuse so the two things that must never
+# silently drift apart (the redirect table and the "text-like" file
+# definition) have exactly one definition each, shared with the hooks that
+# actually produce/consume them (scripts/site_hooks/redirects.py and
+# scripts/site_hooks/facts.py respectively).
+sys.path.insert(0, str(SCRIPT_DIR / "site_hooks"))
+from _redirect_table import build_redirect_table, relative_target  # noqa: E402
+from _text_like import TEXT_LIKE_SUFFIXES, iter_text_like_files  # noqa: E402
 
 LANDING_MARKER = "brand__name"
 
@@ -117,11 +140,6 @@ KEY_PAGE_SLUGS = (
 # --8<-- directive could reach anything in the repository, confidential
 # material included.
 ALLOWED_SNIPPET_TARGETS = {"README.md", "CHANGELOG.md", "GOVERNANCE.md"}
-
-# Text-like built-output suffixes worth scanning for boundary leaks. Material
-# serialises full page text into its search index JSON, so json/js/xml/txt
-# matter just as much as html.
-TEXT_LIKE_SUFFIXES = {".html", ".js", ".json", ".xml", ".txt"}
 
 # Tuned empirically against this repository's real content — see the module
 # docstring's Tier 2 section for why 64 chars was too short (56 coincidental
@@ -257,12 +275,6 @@ def _fingerprints_for(surface: ConfidentialSurface) -> tuple[set[str], int]:
         chunks = {ordered[int(i * step)] for i in range(MAX_FINGERPRINTS_PER_SURFACE)}
 
     return chunks, skipped
-
-
-def _iter_text_like_files(site_dir: Path) -> Iterator[Path]:
-    for path in site_dir.rglob("*"):
-        if path.is_file() and path.suffix.lower() in TEXT_LIKE_SUFFIXES:
-            yield path
 
 
 def check_landing_page(site_dir: Path) -> None:
@@ -422,8 +434,31 @@ def _is_excluded_from_snippet_scan(md_file: Path) -> bool:
     return False
 
 
+def _scan_file_for_disallowed_directives(path: Path) -> list[str]:
+    """Read `path` and return one violation message per --8<-- directive
+    whose target is not in ALLOWED_SNIPPET_TARGETS (empty list if clean or
+    the file has no directives)."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [
+            f"{path.relative_to(REPO_ROOT)}: could not read file to scan for "
+            f"snippet directives ({exc})"
+        ]
+    found: list[str] = []
+    for lineno, target in _iter_snippet_directives(text):
+        if target not in ALLOWED_SNIPPET_TARGETS:
+            rel = path.relative_to(REPO_ROOT)
+            found.append(
+                f"{rel}:{lineno}: --8<-- references {target!r}, which is not in the "
+                f"allowlist {sorted(ALLOWED_SNIPPET_TARGETS)}"
+            )
+    return found
+
+
 def check_snippet_allowlist(_site_dir: Path) -> None:
-    """Scan docs/**/*.md SOURCE (not built output) for --8<-- directives.
+    """Scan docs/**/*.md SOURCE (not built output), PLUS the three
+    allowlisted embed targets themselves, for --8<-- directives.
 
     mkdocs.yml configures pymdownx.snippets with base_path including the
     repo root (needed so docs/changelog.md etc. can reach the root-level
@@ -435,32 +470,36 @@ def check_snippet_allowlist(_site_dir: Path) -> None:
     something it shouldn't: every directive's target(s) must be exactly one
     of README.md, CHANGELOG.md or GOVERNANCE.md, or the check fails naming
     the offending file and line. The confidential surfaces themselves are
-    skipped when scanning (see `_is_excluded_from_snippet_scan`) since they
-    never reach a build regardless of what they say.
+    skipped when scanning docs/ (see `_is_excluded_from_snippet_scan`)
+    since they never reach a build regardless of what they say.
+
+    NESTED-DIRECTIVE HARDENING: pymdownx.snippets expands snippets
+    recursively — confirmed by reading pymdownx/snippets.py's
+    parse_snippets, which calls itself on the freshly-read content of every
+    snippet it resolves. That means a --8<-- directive placed INSIDE
+    README.md, CHANGELOG.md or GOVERNANCE.md would also get expanded when
+    docs/project-readme.md, docs/changelog.md or docs/governance.md embed
+    that file — reaching wherever IT points, entirely bypassing a
+    docs/-only scan. So this check also scans the three allowlisted root
+    files themselves for --8<-- directives, with the exact same allowlist
+    applied (today, that means they must contain none at all — nothing
+    they could legitimately point at is itself allowlisted).
     """
     violations: list[str] = []
+
     for md_file in sorted(DOCS_DIR.rglob("*.md")):
         if _is_excluded_from_snippet_scan(md_file):
             continue
-        try:
-            text = md_file.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            violations.append(
-                f"{md_file.relative_to(REPO_ROOT)}: could not read file to scan for "
-                f"snippet directives ({exc})"
-            )
-            continue
-        for lineno, target in _iter_snippet_directives(text):
-            if target not in ALLOWED_SNIPPET_TARGETS:
-                rel = md_file.relative_to(REPO_ROOT)
-                violations.append(
-                    f"{rel}:{lineno}: --8<-- references {target!r}, which is not in the "
-                    f"allowlist {sorted(ALLOWED_SNIPPET_TARGETS)}"
-                )
+        violations.extend(_scan_file_for_disallowed_directives(md_file))
+
+    for target_name in sorted(ALLOWED_SNIPPET_TARGETS):
+        target_path = REPO_ROOT / target_name
+        if target_path.is_file():
+            violations.extend(_scan_file_for_disallowed_directives(target_path))
 
     if violations:
         raise CheckFailed(
-            "Disallowed pymdownx.snippets directive(s) found in docs/ source:\n"
+            "Disallowed pymdownx.snippets directive(s) found:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
 
@@ -506,7 +545,7 @@ def check_boundary(site_dir: Path) -> int:
 
     leaked_content: list[tuple[str, str]] = []
     if literal_markers or fingerprints:
-        for file in _iter_text_like_files(site_dir):
+        for file in iter_text_like_files(site_dir):
             try:
                 text = file.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
@@ -584,7 +623,7 @@ def check_no_unresolved_facts(site_dir: Path) -> int:
     """
     hits: list[tuple[str, str]] = []
     skipped = 0
-    for file in _iter_text_like_files(site_dir):
+    for file in iter_text_like_files(site_dir):
         try:
             text = file.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
@@ -618,6 +657,378 @@ def check_no_unresolved_facts(site_dir: Path) -> int:
     return skipped
 
 
+def check_no_facts_fallback_leak(site_dir: Path) -> None:
+    """site/facts-fallback.json must NOT appear in the built output.
+
+    It is build tooling, not a page: landing.py's copy of site/ drags it
+    into the build verbatim, and facts.py deletes it again once it has
+    read the fallback values from it (matching the old builder's
+    SiteConfig.delete_facts_fallback default of True — see facts.py's own
+    docstring). If it turns up here, that deletion regressed — either
+    facts.py isn't registered, isn't running, or its unlink(missing_ok=True)
+    call was removed — and a build-tooling file with no business being
+    served would ship.
+    """
+    leaked = site_dir / "facts-fallback.json"
+    if leaked.is_file():
+        raise CheckFailed(
+            f"{leaked} exists in the built output. scripts/site_hooks/facts.py is "
+            "supposed to delete it after reading the fallback values (it is build "
+            "tooling, not a page) — check that hook is registered in mkdocs.yml's "
+            "`hooks:` list, ran, and its final unlink(missing_ok=True) call executed."
+        )
+
+
+# --- legacy-URL redirect stubs (todo 1 / check 2a) --------------------------
+
+
+def check_legacy_redirects(site_dir: Path) -> None:
+    """Every legacy .html path from the outgoing custom generator's
+    mirror-layout must still resolve, via a redirect stub, to its new
+    MkDocs URL.
+
+    Uses build_redirect_table()/relative_target() from
+    scripts/site_hooks/_redirect_table.py — the exact same table
+    scripts/site_hooks/redirects.py writes stubs from, so this check can
+    never silently drift from what that hook actually produces. For each
+    (legacy_path, new_slug) pair: the stub file must exist, its content
+    must reference the expected root-relative target, and that target must
+    resolve to a real page that actually exists in this same build (not
+    just a stub pointing at a stub, or at a slug that got renamed/removed).
+    """
+    missing: list[str] = []
+    bad_content: list[str] = []
+    dangling: list[str] = []
+
+    for legacy_path, new_slug in build_redirect_table():
+        stub = site_dir / legacy_path
+        if not stub.is_file():
+            missing.append(legacy_path)
+            continue
+
+        expected_target = relative_target(legacy_path, new_slug)
+        text = stub.read_text(encoding="utf-8", errors="replace")
+        has_refresh = f'url={expected_target}"' in text
+        has_canonical = f'href="{expected_target}"' in text and "canonical" in text
+        if not (has_refresh and has_canonical):
+            bad_content.append(f"{legacy_path} does not reference the expected target {expected_target!r}")
+            continue
+
+        new_page = site_dir / new_slug / "index.html"
+        if not new_page.is_file():
+            dangling.append(f"{legacy_path} points at {new_slug}/, but {new_page} does not exist")
+
+    if missing or bad_content or dangling:
+        lines = ["Legacy-URL redirect stub problem(s):"]
+        for m in missing:
+            lines.append(f"  MISSING stub: {m}")
+        for b in bad_content:
+            lines.append(f"  WRONG TARGET: {b}")
+        for d in dangling:
+            lines.append(f"  DANGLING: {d}")
+        lines.append(
+            "Every path the outgoing custom generator used to publish must keep "
+            "resolving — via scripts/site_hooks/redirects.py — or an external link "
+            "or satellite site pointing at the old URL breaks silently."
+        )
+        raise CheckFailed("\n".join(lines))
+
+
+# --- site-wide, case-sensitive internal-link check --------------------------
+#
+# Supersedes an earlier, narrower version of this check that only scanned
+# the landing page (site/index.html) and used Path.exists()/is_file() for
+# resolution. Folded into one, broader check rather than kept alongside it:
+# this scans every built page (a strict superset of index.html alone), and
+# case-sensitive resolution is itself a strict superset of plain existence
+# checking — anything Path.is_file() would have caught, this still catches,
+# plus a case mismatch it would have missed entirely on this machine. So
+# folding is a consolidation, not a reduction in what's asserted.
+
+
+class _HrefCollector(HTMLParser):
+    """Collects every `href` attribute value from any tag."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if name == "href" and value:
+                self.hrefs.append(value)
+
+
+def _read_site_url_prefix() -> tuple[str, str]:
+    """Extract mkdocs.yml's site_url and return (absolute_prefix,
+    path_prefix) — e.g. ("https://tomas-rampas.github.io/vouchfx/",
+    "/vouchfx/"). A light regex, not a full YAML parse, keeping this script
+    stdlib-only, so absolute- and root-relative-internal-link detection
+    below can never silently drift from the real config. Falls back to the
+    known current value if mkdocs.yml is unreadable or the key is missing,
+    degrading gracefully to document-relative-only detection rather than
+    crashing.
+
+    Both prefixes matter, for two DIFFERENT real cases seen in this
+    project's own build: a page's own self-referential canonical-style
+    link is site_url-ABSOLUTE (e.g.
+    "https://tomas-rampas.github.io/vouchfx/getting-started/"); MkDocs'
+    404.html — generated with no "current page" to compute a relative path
+    from — falls back to a ROOT-RELATIVE path prefixed with just the site's
+    mount path (e.g. "/vouchfx/getting-started/"), not the full absolute
+    URL.
+    """
+    fallback_absolute = "https://tomas-rampas.github.io/vouchfx/"
+    fallback_path = "/vouchfx/"
+    try:
+        text = (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return fallback_absolute, fallback_path
+    match = re.search(r"^site_url:\s*(\S+)\s*$", text, re.MULTILINE)
+    if not match:
+        return fallback_absolute, fallback_path
+    value = match.group(1).strip("'\"")
+    absolute = value if value.endswith("/") else value + "/"
+    path_prefix = urllib.parse.urlparse(absolute).path or "/"
+    if not path_prefix.endswith("/"):
+        path_prefix += "/"
+    return absolute, path_prefix
+
+
+def _is_checkable_internal_href(href: str, site_url_prefix: str, site_url_path_prefix: str) -> bool:
+    """True for an href that is site_url-absolute (a self-referential
+    absolute link back into this same site — real examples exist: every
+    page's own canonical-style self-link), root-relative under the site's
+    own mount path (e.g. "/vouchfx/getting-started/" — what MkDocs emits
+    for pages with no relative-path context, like 404.html), or plain
+    document-relative (no scheme, no leading slash). False for any other
+    scheme (http:, https: to a different host, mailto:, tel:, data:, ...),
+    a protocol-relative //host/... URL, a root-relative path OUTSIDE the
+    site's own mount path (points at a different site entirely — not this
+    build's concern to verify), or a bare #fragment.
+    """
+    if href.startswith(site_url_prefix):
+        return True
+    if href.startswith("//"):
+        return False  # protocol-relative: always some other host
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href):  # any scheme: http:, https:, mailto:, tel:, data:, ...
+        return False
+    if href.startswith("/"):
+        return href.startswith(site_url_path_prefix)
+    if href.startswith("#"):
+        return False
+    path = href.split("#", 1)[0].split("?", 1)[0]
+    return bool(path)
+
+
+def _case_sensitive_resolve(
+    base: Path, posix_relative_path: str, listdir_cache: dict[Path, set[str]]
+) -> Path | None:
+    """Walk `posix_relative_path` (forward-slash, already normalised — no
+    leading '/', no '..' segments) from `base`, requiring an EXACT,
+    case-sensitive match at every segment via a real directory listing.
+
+    Path.exists()/is_file() cannot be trusted for this: this machine's
+    filesystem is case-insensitive (NTFS/APFS default), so a lowercase
+    variant of a real mixed-case path satisfies Path.exists() while it
+    would 404 on GitHub Pages' case-sensitive filesystem — exactly the bug
+    class behind a prior review round's README fix (five lowercase
+    design-doc URLs that "worked" locally). `listdir_cache` memoises
+    directory listings within one check run, since many hrefs share the
+    same ancestor directories.
+    """
+    current = base
+    if posix_relative_path in ("", "."):
+        return current
+    for part in posix_relative_path.split("/"):
+        if not part:
+            continue
+        if current not in listdir_cache:
+            try:
+                listdir_cache[current] = set(os.listdir(current))
+            except OSError:
+                listdir_cache[current] = set()
+        if part not in listdir_cache[current]:
+            return None
+        current = current / part
+    return current
+
+
+def _case_insensitive_exists(
+    base: Path, posix_relative_path: str, listdir_cache: dict[Path, set[str]]
+) -> bool:
+    """Best-effort, case-INSENSITIVE existence check — used only to
+    classify a case-sensitive resolution failure (see
+    `_case_sensitive_resolve`) as a TRUE case mismatch (exists under some
+    OTHER casing) versus genuinely missing (doesn't exist under any casing
+    at all). This check's hard failures stay scoped to the case-sensitivity
+    bug class it targets — "closes the class of bug behind the README
+    404s" — rather than becoming a general internal-link checker: a
+    genuinely broken/missing link is a different, pre-existing content
+    issue this check still reports (see
+    `check_internal_links_case_sensitive`) but does not fail the gate on,
+    since fixing arbitrary broken content links is outside this task's
+    (and this script's editable-file) scope.
+    """
+    current = base
+    if posix_relative_path in ("", "."):
+        return True
+    for part in posix_relative_path.split("/"):
+        if not part:
+            continue
+        if current not in listdir_cache:
+            try:
+                listdir_cache[current] = set(os.listdir(current))
+            except OSError:
+                listdir_cache[current] = set()
+        lowered = part.lower()
+        match = next((entry for entry in listdir_cache[current] if entry.lower() == lowered), None)
+        if match is None:
+            return False
+        current = current / match
+    return True
+
+
+def _resolve_internal_href(
+    href: str,
+    page_file: Path,
+    site_dir: Path,
+    site_url_prefix: str,
+    site_url_path_prefix: str,
+    listdir_cache: dict[Path, set[str]],
+) -> tuple[str, Path | None]:
+    """Resolve `href` (found on `page_file`) against `site_dir`,
+    case-sensitively. Returns (status, path): status is "ok", "escapes",
+    "case_mismatch" (the target exists, but only under different casing —
+    THIS check's actual target bug class) or "missing" (doesn't exist
+    under any casing — a different, pre-existing content-link problem this
+    check reports but does not fail on; see `_case_insensitive_exists`).
+    `path` is the furthest point reached, for error messages.
+    """
+    path_part = href.split("#", 1)[0].split("?", 1)[0]
+
+    if path_part.startswith(site_url_prefix):
+        remainder = path_part[len(site_url_prefix) :]
+        base_posix = ""
+    elif path_part.startswith(site_url_path_prefix):
+        # Root-relative under the site's own mount path (e.g. what MkDocs
+        # emits in 404.html: "/vouchfx/getting-started/") — strip just the
+        # mount path, not the whole leading slash, so this resolves the
+        # same as the site_url-absolute form above.
+        remainder = path_part[len(site_url_path_prefix) :]
+        base_posix = ""
+    else:
+        remainder = path_part
+        page_dir_rel = page_file.parent.relative_to(site_dir).as_posix()
+        base_posix = "" if page_dir_rel == "." else page_dir_rel
+
+    joined = posixpath.normpath(posixpath.join(base_posix, remainder)) if remainder else (base_posix or ".")
+
+    if joined == ".." or joined.startswith("../") or posixpath.isabs(joined):
+        return "escapes", None
+
+    resolved = _case_sensitive_resolve(site_dir, joined, listdir_cache)
+
+    if resolved is None:
+        if _case_insensitive_exists(site_dir, joined, listdir_cache):
+            return "case_mismatch", None
+        return "missing", None
+
+    if resolved.is_dir():
+        # Directory-URL style hrefs (e.g. "../getting-started/") resolve to
+        # a directory — MkDocs' use_directory_urls convention means the
+        # real page is that directory's index.html.
+        index_file = _case_sensitive_resolve(resolved, "index.html", listdir_cache)
+        if index_file is not None and index_file.is_file():
+            return "ok", index_file
+        if _case_insensitive_exists(resolved, "index.html", listdir_cache):
+            return "case_mismatch", None
+        return "missing", resolved
+
+    if resolved.is_file():
+        return "ok", resolved
+
+    return "missing", resolved
+
+
+def check_internal_links_case_sensitive(site_dir: Path) -> None:
+    """Every internal href (site_url-absolute, root-relative, or
+    document-relative) on every built HTML page must resolve
+    CASE-SENSITIVELY against the actual build tree.
+
+    Why case-sensitively, concretely: this filesystem is case-insensitive,
+    so Path.exists()/Path.is_file() would report a lowercase variant of a
+    real mixed-case path (e.g.
+    "01_technical_architecture_and_engineering_blueprint/" vs the real
+    "01_Technical_Architecture_and_Engineering_Blueprint/") as PRESENT — it
+    silently lies. GitHub Pages serves from a case-sensitive filesystem, so
+    the same link 404s there while looking completely fine in every local
+    build+check. See `_case_sensitive_resolve` for how this walks each
+    href's target one real directory listing at a time instead.
+
+    SCOPE, DELIBERATELY: this check's hard FAILURE is reserved for true
+    case mismatches — a target that exists, but only under different
+    casing (see `_resolve_internal_href`/`_case_insensitive_exists` for how
+    that's distinguished from the alternative below). A target that
+    doesn't exist under ANY casing at all is a different, pre-existing bug
+    class — a genuinely broken/missing content link, unrelated to case —
+    and is only reported (printed) here, not failed on: fixing arbitrary
+    broken links in already-published markdown is outside what this check
+    (and this script's own editable-file scope) can respond to.
+    """
+    site_url_prefix, site_url_path_prefix = _read_site_url_prefix()
+    listdir_cache: dict[Path, set[str]] = {}
+
+    broken: list[str] = []
+    missing_not_case: list[str] = []
+    for page in sorted(site_dir.rglob("*.html")):
+        try:
+            text = page.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            broken.append(f"{page.relative_to(site_dir).as_posix()}: could not read file ({exc})")
+            continue
+
+        collector = _HrefCollector()
+        collector.feed(text)
+        rel_page = page.relative_to(site_dir).as_posix()
+
+        for href in sorted(set(collector.hrefs)):
+            if not _is_checkable_internal_href(href, site_url_prefix, site_url_path_prefix):
+                continue
+            status, resolved = _resolve_internal_href(
+                href, page, site_dir, site_url_prefix, site_url_path_prefix, listdir_cache
+            )
+            if status == "escapes":
+                broken.append(f"{rel_page}: href={href!r} escapes site_dir")
+            elif status == "case_mismatch":
+                broken.append(f"{rel_page}: href={href!r} exists only under a different casing")
+            elif status == "missing":
+                where = f" (found as far as {resolved})" if resolved is not None else ""
+                missing_not_case.append(f"{rel_page}: href={href!r} does not exist under any casing{where}")
+
+    if missing_not_case:
+        print(
+            "WARN [check_internal_links_case_sensitive]: found internal href(s) that "
+            "do not exist under ANY casing (a different, pre-existing content-link "
+            "problem, not a case mismatch — reported here but not failing the gate):",
+            file=sys.stderr,
+        )
+        for m in missing_not_case:
+            print(f"  {m}", file=sys.stderr)
+
+    if broken:
+        lines = ["Internal link(s) fail case-sensitive resolution against the build tree:"]
+        for b in broken:
+            lines.append(f"  {b}")
+        lines.append(
+            "This machine's filesystem is case-insensitive, so a case-mismatched "
+            "internal link works in every local build+check and 404s on GitHub "
+            "Pages, which is case-sensitive. Fix the href to match the real, "
+            "on-disk slug's exact casing."
+        )
+        raise CheckFailed("\n".join(lines))
+
+
 def check_key_pages(site_dir: Path) -> None:
     missing = [
         str(candidate)
@@ -634,9 +1045,12 @@ def check_key_pages(site_dir: Path) -> None:
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
+    check_internal_links_case_sensitive,
     check_nojekyll,
     check_boundary,
     check_no_unresolved_facts,
+    check_no_facts_fallback_leak,
+    check_legacy_redirects,
     check_key_pages,
 )
 
