@@ -258,7 +258,7 @@ All contributions are made under the Apache-2.0 licence and must be compatible w
 
 ## Building the documentation site locally
 
-The documentation site is built with **Material for MkDocs**, live at https://tomas-rampas.github.io/vouchfx/. To build and preview it locally:
+The documentation site is built with **Material for MkDocs**, live at https://tomas-rampas.github.io/vouchfx/. Run all of the following from the repository root (the config's snippet paths resolve against the working directory):
 
 ```bash
 # Install dependencies

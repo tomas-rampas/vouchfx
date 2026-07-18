@@ -59,7 +59,7 @@ Two operational rules for the pin:
 
 ## Local development
 
-As of the Material for MkDocs migration (v1.0.0-alpha.9), the engine's own
+As of the Material for MkDocs migration, the engine's own
 site is built via `mkdocs build` with hooks that import `fetch_facts` and
 `apply_facts` directly from this package. `scripts/build_site.py` remains
 in-tree as the authoritative DOCS-list source for the legacy-redirect table
