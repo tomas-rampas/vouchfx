@@ -126,7 +126,7 @@
           ]
         },
         "timeout": {
-          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail), and the declared value replaces the provider's built-in transport timeout as the governing bound; for a RETRY step it bounds the polling window.",
+          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window.",
           "oneOf": [
             {
               "type": "string"

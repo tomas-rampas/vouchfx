@@ -536,6 +536,9 @@ public sealed class MqPublishKafkaProvider
         "        System.Threading.CancellationToken ct,\n" +
         "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Bootstrap (broker) must be present, exactly as the plain path requires.\n" +
         "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +

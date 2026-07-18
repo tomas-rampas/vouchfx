@@ -320,6 +320,9 @@ public sealed class DbAssertMongodbProvider
         "        System.Threading.CancellationToken ct,\n" +
         "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
         "        string observation;\n" +
