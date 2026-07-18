@@ -123,3 +123,5 @@ nav:
       - Governance: governance.md
       - "Decision: dotnet tool packaging": decisions/dotnet-tool-packaging.md
       - Project README: project-readme.md
+  - Blog:
+      - blog/index.md
