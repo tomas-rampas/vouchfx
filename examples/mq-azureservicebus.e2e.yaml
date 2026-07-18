@@ -44,16 +44,18 @@ steps:
   - id: trigger-order-event
     type: http.rest
     description: >
-      Trigger the system under test to publish an order event to Azure Service Bus.
-      The SUT should publish to the 'orders' queue via the connection string it
-      receives as the AZURE_SERVICE_BUS_CONNECTION_STRING environment variable
-      (injected by Aspire when wired with a WithReference binding).
+      Drive the business transaction that (in a real SUT) publishes an order
+      event to the 'orders' queue via the connection string the SUT receives at
+      startup.  The whoami placeholder answers 200 to any request and does not
+      itself talk to Service Bus — replace it with your real SUT.  This example
+      does not depend on the placeholder publishing anything: the following
+      mq-publish.azureservicebus steps publish the asserted messages explicitly.
     target: app
     method: POST
     path: /orders
     body: '{"customerId":"cust-1","amount":49.99}'
     expect:
-      status: 202
+      status: 200
 
   - id: publish-order-event
     type: mq-publish.azureservicebus
@@ -87,12 +89,23 @@ steps:
     verifyMode: RETRY
     timeout: 30s
 
+  - id: publish-shipped-topic-event
+    type: mq-publish.azureservicebus
+    description: >
+      Topic variant of the publish step: specifying 'topic' instead of 'queue'
+      sends to the 'orders-topic' topic (declared under the 'asb' dependency
+      above), from which the emulator fans out to every subscription.
+    target: asb
+    topic: orders-topic
+    payload: '{"event":"order-shipped","orderId":"ord-001","customerId":"cust-1"}'
+
   - id: assert-order-topic-event
     type: mq-expect.azureservicebus
     description: >
-      Topic + subscription variant: peeks from a topic subscription.
-      Remove this step (or the 'topics' declaration under the 'asb' dependency
-      above) if you are only using queues.
+      Topic + subscription variant: peeks the message the previous step
+      published from the 'orders-sub' subscription.
+      Remove the topic steps (or the 'topics' declaration under the 'asb'
+      dependency above) if you are only using queues.
     target: asb
     topic: orders-topic
     subscription: orders-sub

@@ -1,16 +1,37 @@
+# examples/db-assert-mongodb.e2e.yaml — db-assert.mongodb suite.
+#
+# Demonstrates the db-assert.mongodb step kind against a managed MongoDB
+# dependency, plus the SUT `env:` configuration surface with a `${conn:...}`
+# container-native connection reference.
+#
+# Run (full docker capstone — requires Docker + MongoDB image):
+#   vouchfx run examples/db-assert-mongodb.e2e.yaml
+
 metadata:
   name: mongodb-order-assertion
   owner: platform-team
   tags: [mongodb, db-assert, orders]
   description: >
-    Verifies that a placed order is persisted correctly in MongoDB.
-    The http.rest step places the order; the db-assert.mongodb step
-    asserts the document is present with the expected field values.
+    Verifies that a placed order is persisted correctly in MongoDB with
+    db-assert.mongodb.
+
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself talk
+    to MongoDB, and the engine provisions the database EMPTY. In production
+    usage, the SUT's own order-creation handler is the thing that would insert
+    the document this provider observes. This example instead SIMULATES that
+    write with a script.csharp step that inserts the document over the staged
+    connection string — exactly the same HONEST-disclosure approach
+    db-assert-dynamodb.e2e.yaml and storage-assert-s3.e2e.yaml use. It still
+    exercises the full MongoDB topology + filter + RETRY + assertion path end
+    to end.
 
 environment:
   services:
-    orders-api:
-      image: "ghcr.io/example/orders-api:latest"
+    # The system under test.  Replace with your own image or project reference.
+    # The env: block demonstrates the SUT configuration surface — whoami ignores
+    # it, but a real SUT would read MONGO_CONNECTION at startup.
+    app:
+      image: traefik/whoami:latest
       env:
         # Container-native connection string, resolved to the mongodb dependency's
         # database resource (never the host-published localhost:randomport) — see
@@ -25,18 +46,55 @@ environment:
     orders-mongo:
       type: mongodb
 
+variables:
+  orderId: "ord-1001"
+
 steps:
   - id: place-order
     type: http.rest
-    target: orders-api
+    description: >
+      Drive the business transaction that (in a real SUT) persists the order.
+      The whoami placeholder answers 200 to any request and ignores the body —
+      replace it with your real SUT, whose handler would insert the document the
+      next step simulates.
+    target: app
     method: POST
     path: /orders
     body: |
       {"productId": "ABC-123", "quantity": 2}
     expect:
-      status: 201
-    capture:
-      orderId: "$.id"
+      status: 200
+
+  - id: simulate-order-write
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the
+      suite description above): connects with the staged connection string
+      (whose database name MongoUrl carries — the same resolution
+      db-assert.mongodb itself uses), then inserts the document the assertions
+      below expect.  The delete-first makes the step idempotent across reruns
+      against the same container.  A real suite would delete this step
+      entirely — its SUT already does this write.
+    code: |
+      var connStr = (string)Vars["conn::orders-mongo"];
+      var dbName = new MongoDB.Driver.MongoUrl(connStr).DatabaseName;
+      var client = new MongoDB.Driver.MongoClient(connStr);
+      try
+      {
+          var db = client.GetDatabase(dbName);
+          var collection = db.GetCollection<MongoDB.Bson.BsonDocument>("orders");
+          var orderId = (string)Vars["orderId"];
+          var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", orderId);
+          await collection.DeleteManyAsync(filter);
+          await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+          {
+              { "_id", orderId },
+              { "productId", "ABC-123" },
+              { "quantity", 2 },
+              { "status", "PENDING" },
+          });
+      }
+      finally { client.Dispose(); }
 
   - id: assert-order-persisted
     type: db-assert.mongodb

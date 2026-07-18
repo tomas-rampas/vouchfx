@@ -1,0 +1,91 @@
+# .github/workflows/vouchfx-run-examples.yml — the per-provider examples run gate.
+#
+# CLI-RUNS every flat examples/*.e2e.yaml suite end-to-end (real Docker topology,
+# real providers) and requires a PASS verdict from each. This is the gate the
+# compile-only ExamplesCompileTests deliberately cannot provide: compilation
+# proves the YAML parses, validates and emits well-formed CSX, but only a live
+# run proves the suite actually PASSES — the 2026-07-18 audit found 8 of 15
+# examples failing at run time (placeholder SUT images, unmet expectations)
+# while the compile gate stayed green ("run-rot").
+#
+# Scope: the FLAT examples/*.e2e.yaml files only — the suites docs/recipes.md
+# advertises as "complete runnable example"s. The subdirectory suites have their
+# own gates: examples/ci-reference is run (both root forms) by
+# vouchfx-run-reference.yml, and examples/reference requires the
+# VOUCHFX_REF_BEARER_TOKEN prerequisite its README documents.
+#
+# The roster is DISCOVERED dynamically (ls examples/*.e2e.yaml), so adding a new
+# example file automatically adds its gate — no hand-maintained matrix to rot.
+# Each example runs on its own runner (no DCP contention) via the reusable
+# workflow, exercising the single-FILE discovery-root form 15× over.
+#
+# Strict gating is deliberate here, unlike the taxonomy's permissive CI default:
+# these suites are self-contained by construction, so an Environment error or
+# Inconclusive verdict means the example (or the engine) regressed — never that
+# a customer's infrastructure hiccuped.
+
+name: vouchfx examples
+
+on:
+  # Mirror vouchfx-run-reference.yml: run on pushes that touch the examples, the
+  # workflows, or the CLI/engine that the build-from-source install compiles.
+  # Push-to-main only (not per-PR): the matrix costs one runner per example, and
+  # a same-day revert window on main is an acceptable trade for that cost.
+  push:
+    branches:
+      - main
+    paths:
+      - "examples/**"
+      - ".github/workflows/vouchfx-run.yml"
+      - ".github/workflows/vouchfx-run-examples.yml"
+      - "src/**"
+  # Allow the same proof to be triggered by hand from the Actions tab.
+  workflow_dispatch:
+
+# Read-only: the jobs only read source and upload artefacts.
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover example roster
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.list.outputs.examples }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: List flat examples/*.e2e.yaml as a JSON matrix
+        id: list
+        run: |
+          examples=$(find examples -maxdepth 1 -name '*.e2e.yaml' -printf '%f\n' \
+            | sed 's/\.e2e\.yaml$//' \
+            | sort \
+            | jq --raw-input --slurp --compact-output 'split("\n") | map(select(length > 0))')
+          if [ "$examples" = "[]" ]; then
+            echo "::error::No flat examples/*.e2e.yaml files found — discovery is broken." >&2
+            exit 1
+          fi
+          echo "Discovered roster: $examples"
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+
+  run-example:
+    name: Example ${{ matrix.example }}
+    needs: discover
+    strategy:
+      # One broken example must not mask the verdicts of the other fourteen.
+      fail-fast: false
+      matrix:
+        example: ${{ fromJson(needs.discover.outputs.examples) }}
+    uses: ./.github/workflows/vouchfx-run.yml
+    with:
+      # The single-file root form — also a rolling regression gate for
+      # `vouchfx run <file>.e2e.yaml` across every provider family.
+      scenario-path: examples/${{ matrix.example }}.e2e.yaml
+      # Strict: a self-contained example that env-errors or times out has
+      # regressed (see the header note on why the permissive default is wrong here).
+      fail-on-env-error: true
+      fail-on-inconclusive: true
+      # v4+ artefact names are immutable within one run — one name per leg.
+      artifact-name: vouchfx-reports-example-${{ matrix.example }}
