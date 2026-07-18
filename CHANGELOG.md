@@ -15,6 +15,12 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.0-alpha.8] — 2026-07-18
+
+A customer-journey hardening release: every advertised example now passes when actually run, the packaged
+tool accepts a single `.e2e.yaml` file as the discovery root, and automatic state reset covers five more
+stores. No language, SDK or event-wire contract changes.
+
 ### Added
 
 - **Examples run gate in CI** — a new `vouchfx examples` workflow discovers every flat `examples/*.e2e.yaml`
