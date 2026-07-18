@@ -627,9 +627,11 @@ public sealed class TraceExpectOtlpEmitTests
     private string Assemble(TraceExpectOtlpModel model, string stepId)
     {
         var fragment = _provider.Emit(model, new StubCompileContext(stepId));
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        return $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        return CsxAssembler.Assemble(new[] { (stepId, fragment) }).CsxSource;
     }
 
     private static StepOutcome ReadOutcome(Dictionary<string, object?> vars, string stepId)

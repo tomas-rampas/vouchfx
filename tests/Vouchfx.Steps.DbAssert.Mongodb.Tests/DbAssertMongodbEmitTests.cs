@@ -254,10 +254,7 @@ public sealed class DbAssertMongodbEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        // Assemble exactly as CsxAssembler.Assemble would.
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         // Supply MongoDB.Driver + MongoDB.Bson + System.Text.Json as compile-time references.
         // Neither is ever loaded into the collectible ALC (§5 memory-model invariant).
@@ -269,7 +266,7 @@ public sealed class DbAssertMongodbEmitTests
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -307,9 +304,7 @@ public sealed class DbAssertMongodbEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -319,7 +314,7 @@ public sealed class DbAssertMongodbEmitTests
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -365,9 +360,7 @@ public sealed class DbAssertMongodbEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -377,7 +370,7 @@ public sealed class DbAssertMongodbEmitTests
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -548,9 +541,7 @@ public sealed class DbAssertMongodbEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -560,7 +551,7 @@ public sealed class DbAssertMongodbEmitTests
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
             typeof(System.Globalization.CultureInfo).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {

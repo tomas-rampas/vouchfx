@@ -358,7 +358,8 @@ public sealed class WebhookListenHttpProvider
         "        string? pathExpected,\n" +
         "        string? bodyContainsTemplate,\n" +
         "        string[] headerNames,\n" +
-        "        string[] headerValueTemplates)\n" +
+        "        string[] headerValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct)\n" +
         "    {\n" +
         "        // No I/O is performed here — the scan is purely over the in-memory snapshot —\n" +
         "        // but the method is async to match the awaited call-site shape used by every\n" +
@@ -447,6 +448,13 @@ public sealed class WebhookListenHttpProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-error branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -647,7 +655,8 @@ public sealed class WebhookListenHttpProvider
                     {{pathLiteral}},
                     {{bodyContainsLiteral}},
                     {{headerNamesLiteral}},
-                    {{headerValueTemplatesLiteral}});
+                    {{headerValueTemplatesLiteral}},
+                    __stepCt_{{safeId}});
             }
             """;
 

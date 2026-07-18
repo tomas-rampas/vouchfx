@@ -377,7 +377,9 @@ public sealed class StorageAssertS3Provider
                 string[] metadataValueTemplates,
                 string[] captureVarNames,
                 string[] captureExprs,
-                string[] captureKinds)
+                string[] captureKinds,
+                System.Threading.CancellationToken ct,
+                bool budgetGoverned)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 Vouchfx.Engine.Abstractions.Verdict verdict;
@@ -412,13 +414,20 @@ public sealed class StorageAssertS3Provider
                     // would make a single poll attempt hang far longer than the step's own
                     // timeout budget. A local MinIO container responds in milliseconds when
                     // healthy, so 5s is generous headroom, not a tight race.
+                    // Step-timeout convention (#232): a declared step budget governs this call —
+                    // lift the transport bound (infinite) and let the step token (ct) be the sole
+                    // enforcement mechanism; otherwise keep the M2 5s connect/read convention.
                     var config = new Amazon.S3.AmazonS3Config
                     {
                         ServiceURL = serviceUrl,
                         ForcePathStyle = true,
                         MaxErrorRetry = 0,
-                        Timeout = System.TimeSpan.FromSeconds(5),
-                        ConnectTimeout = System.TimeSpan.FromSeconds(5),
+                        Timeout = budgetGoverned
+                            ? System.Threading.Timeout.InfiniteTimeSpan
+                            : System.TimeSpan.FromSeconds(5),
+                        ConnectTimeout = budgetGoverned
+                            ? System.Threading.Timeout.InfiniteTimeSpan
+                            : System.TimeSpan.FromSeconds(5),
                     };
                     var creds = new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey);
                     client = new Amazon.S3.AmazonS3Client(creds, config);
@@ -430,7 +439,7 @@ public sealed class StorageAssertS3Provider
                         {
                             BucketName = bucket,
                             Key = key,
-                        }).ConfigureAwait(false);
+                        }, ct).ConfigureAwait(false);
                     }
                     catch (Amazon.S3.AmazonS3Exception notFoundEx) when (notFoundEx.StatusCode == System.Net.HttpStatusCode.NotFound)
                     {
@@ -557,7 +566,7 @@ public sealed class StorageAssertS3Provider
                                     {
                                         BucketName = bucket,
                                         Key = key,
-                                    }).ConfigureAwait(false);
+                                    }, ct).ConfigureAwait(false);
 
                                     var mem = new System.IO.MemoryStream();
                                     try
@@ -571,7 +580,7 @@ public sealed class StorageAssertS3Provider
                                         long totalRead = 0;
                                         while (true)
                                         {
-                                            var read = await getResp.ResponseStream.ReadAsync(copyBuffer, 0, copyBuffer.Length).ConfigureAwait(false);
+                                            var read = await getResp.ResponseStream.ReadAsync(copyBuffer, 0, copyBuffer.Length, ct).ConfigureAwait(false);
                                             if (read <= 0) { break; }
                                             totalRead += read;
                                             if (totalRead > BodyCapBytes)
@@ -710,6 +719,13 @@ public sealed class StorageAssertS3Provider
                         ",\"source\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +
                         ",\"path\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + "}";
                 }
+                catch (System.OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Step-token cut (#232): rethrow past this provider's own error handling so
+                    // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead
+                    // of the EnvironmentError branch below misclassifying it.
+                    throw;
+                }
                 catch (System.Exception ex)
                 {
                     // Any AWS SDK / connection / parse failure = EnvironmentError (§12.1).
@@ -815,7 +831,9 @@ public sealed class StorageAssertS3Provider
                     {{metadataValuesLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureExprsLiteral}},
-                    {{captureKindsLiteral}});
+                    {{captureKindsLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

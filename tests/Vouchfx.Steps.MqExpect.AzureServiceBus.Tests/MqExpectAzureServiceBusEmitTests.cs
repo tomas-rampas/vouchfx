@@ -227,11 +227,11 @@ public sealed class MqExpectAzureServiceBusEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
-
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: _additionalRefs);
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: _additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -269,11 +269,11 @@ public sealed class MqExpectAzureServiceBusEmitTests
             var ctx = new StubCompileContext(stepId);
             var fragment = _provider.Emit(model, ctx);
 
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
-
-            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: _additionalRefs);
+            // Splice via CsxAssembler (not a manual join) — it declares the per-step
+            // __stepCt_<safeId> local the emitted call site now references (§4 common
+            // step fields, issue #232).
+            var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: _additionalRefs);
 
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
             {

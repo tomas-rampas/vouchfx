@@ -238,9 +238,11 @@ public sealed class MailExpectSmtpSubstituteTests
     {
         var provider = new MailExpectSmtpProvider();
         var fragment = provider.Emit(model, ctx);
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted call
+        // site now references (§4 common step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (ctx.StepId, fragment) });
 
         // System.Net.Http + System.Text.Json + System.Private.Uri are not in the TPA-only
         // Roslyn reference set; the shared Secret_/Substitute_ helpers resolve against the
@@ -250,7 +252,7 @@ public sealed class MailExpectSmtpSubstituteTests
             .Select(a => a.Location)
             .Where(p => !string.IsNullOrEmpty(p))
             .ToArray();
-        return (csx, refs);
+        return (assembled.CsxSource, refs);
     }
 
     /// <summary>

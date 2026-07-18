@@ -289,7 +289,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
-        var compiled = CompileFragment(fragment);
+        var compiled = CompileFragment(fragment, stepId);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -328,7 +328,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
-        var compiled = CompileFragment(fragment);
+        var compiled = CompileFragment(fragment, stepId);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -493,7 +493,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         // The compile must fail — assert that ScriptCompilationException is thrown.
         await Assert.ThrowsAsync<ScriptCompilationException>(async () =>
         {
-            var compiled = CompileFragment(fragment);
+            var compiled = CompileFragment(fragment, stepId);
             // If (unexpectedly) compilation succeeds, run to see if the clobber happened.
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
             await RoslynScriptCompiler.RunIsolatedAsync(compiled, new ScriptGlobalVariables(vars));
@@ -526,13 +526,11 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var ctx2 = new StubCompileContext(stepId2);
         var fragment2 = _provider.Emit(model2, ctx2);
 
-        // Assemble both steps into one CSX (mirrors CsxAssembler).
-        var allUsings = fragment1.RequiredUsings
-            .Concat(fragment2.RequiredUsings)
-            .Distinct(StringComparer.Ordinal);
-        var usings = string.Join("\n", allUsings.Select(u => $"using {u};"));
-        var csx = $"{usings}\n{fragment1.StatementBlock}\n{fragment2.StatementBlock}";
-        var compiled = RoslynScriptCompiler.CompileOnce(csx);
+        // Assemble both steps into one CSX via CsxAssembler (not a manual join) — it
+        // declares each step's own __stepCt_<safeId> local, referenced by the emitted
+        // rethrow filter (§4 common step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId1, fragment1), (stepId2, fragment2) });
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -569,7 +567,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var ctx = new StubCompileContext(stepId);
 
         var fragment = _provider.Emit(model, ctx);
-        var compiled = CompileFragment(fragment);
+        var compiled = CompileFragment(fragment, stepId);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -723,7 +721,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var ctx = new StubCompileContext(stepId, _root);
 
         var fragment = _provider.Emit(model, ctx);
-        var compiled = CompileFragment(fragment);
+        var compiled = CompileFragment(fragment, stepId);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -755,15 +753,16 @@ public sealed class ScriptCsharpProviderTests : IDisposable
     }
 
     /// <summary>
-    /// Assembles a <see cref="CsxFragment"/> into a single CSX source string and
-    /// compiles it with <see cref="RoslynScriptCompiler.CompileOnce"/>.
-    /// Mirrors what <c>CsxAssembler.Assemble</c> does for a single step.
+    /// Assembles a <see cref="CsxFragment"/> into a single CSX source string via
+    /// <see cref="CsxAssembler.Assemble(IReadOnlyList{ValueTuple{string, CsxFragment}})"/>
+    /// — not a manual join — and compiles it with
+    /// <see cref="RoslynScriptCompiler.CompileOnce"/>.  <c>CsxAssembler</c> declares the
+    /// per-step <c>__stepCt_&lt;safeId&gt;</c> local the emitted StatementBlock's rethrow
+    /// filter now references (§4 common step fields, issue #232).
     /// </summary>
-    private static CompiledScript CompileFragment(CsxFragment fragment)
+    private static CompiledScript CompileFragment(CsxFragment fragment, string stepId)
     {
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
-        return RoslynScriptCompiler.CompileOnce(csx);
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+        return RoslynScriptCompiler.CompileOnce(assembled.CsxSource);
     }
 }

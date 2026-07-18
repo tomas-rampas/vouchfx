@@ -68,9 +68,17 @@ public sealed record AssembledScript(string CsxSource, IReadOnlyList<string> Ste
 /// (IMMEDIATE).
 /// </param>
 /// <param name="TimeoutMs">
-/// The overall RETRY polling window in milliseconds, or <see langword="null"/> to let
+/// The step's overall time budget in milliseconds, or <see langword="null"/> when the
+/// step declares no <c>timeout</c>.  For a RETRY step this is the overall polling
+/// window (<see langword="null"/> lets
 /// <see cref="Vouchfx.Engine.Abstractions.Retry.RetryRunner"/> apply its engine
-/// default.  Ignored when <paramref name="Retry"/> is <see langword="false"/>.
+/// default).  For an IMMEDIATE step this is the enforced upper bound on the step
+/// (§4 common step fields): the emitted wrapper arms a per-step
+/// <see cref="System.Threading.CancellationTokenSource"/> with this budget, classifies
+/// a body that observes the cancellation as <c>Inconclusive</c> (step-timeout), and
+/// supersedes the outcome of a body that completes past the budget with the same
+/// <c>Inconclusive</c> classification.  <see langword="null"/> or non-positive means
+/// no IMMEDIATE enforcement (the provider's transport conventions are the only bound).
 /// </param>
 /// <param name="PollIntervalMs">
 /// The base delay between RETRY attempts in milliseconds, or <see langword="null"/> to
@@ -281,11 +289,13 @@ public static class CsxAssembler
             }
 
             // ── Collect block ──────────────────────────────────────────────
-            // IMMEDIATE: splice the provider block verbatim.
+            // IMMEDIATE: wrap the provider block in the per-step cancellation scope
+            //   (the step-timeout upper bound, §4 — a no-op scope when the step
+            //   declares no timeout).
             // RETRY: wrap it in the engine-owned polling loop (§7).
             blocks.Add(plan.Retry
                 ? WrapForRetry(stepId, fragment.StatementBlock, plan.TimeoutMs, plan.PollIntervalMs)
-                : fragment.StatementBlock);
+                : WrapForImmediate(stepId, fragment.StatementBlock, plan.TimeoutMs));
         }
 
         // ── Assemble final source ─────────────────────────────────────────────
@@ -313,6 +323,167 @@ public static class CsxAssembler
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Wraps a provider's IMMEDIATE statement block in the per-step cancellation
+    /// scope that enforces the step's <c>timeout</c> as an upper bound (§4 common
+    /// step fields, issue #232).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every IMMEDIATE step — with or without a declared timeout — receives a
+    /// step-scoped <see cref="System.Threading.CancellationToken"/> local named
+    /// <c>__stepCt_&lt;safeId&gt;</c>.  This is the emitted-CSX convention providers
+    /// use to make their client calls cooperatively cancellable: pass it into every
+    /// awaited call that accepts a token, and rethrow an
+    /// <see cref="OperationCanceledException"/> past the provider's own generic
+    /// catch when the step token has fired (the assembler's wrapper then classifies
+    /// it).  The RETRY wrapper exposes the same local name inside the attempt
+    /// function, so provider bodies reference one token in both modes.
+    /// </para>
+    /// <para>
+    /// <strong>No timeout declared:</strong> the token local aliases
+    /// <see cref="System.Threading.CancellationToken.None"/> and the block is spliced
+    /// with no try/catch, no timer and no post-check — byte-for-byte behavioural
+    /// parity with the pre-#232 splice apart from the two token locals.
+    /// </para>
+    /// <para>
+    /// <strong>Timeout declared:</strong> enforcement is two-fold and entirely
+    /// cooperative (no task abandonment — a zombie body mutating the shared,
+    /// non-thread-safe <c>Vars</c> dictionary while later steps run, or outliving
+    /// the collectible <see cref="System.Runtime.Loader.AssemblyLoadContext"/>, is
+    /// exactly the hazard the §5 memory model forbids):
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     <strong>Early cut:</strong> a body that observes the token throws
+    ///     <see cref="OperationCanceledException"/>; the wrapper's filtered catch
+    ///     (token fired) writes an <c>Inconclusive</c> outcome with observation
+    ///     <c>{"reason":"step-timeout","timeoutMs":N}</c> — timeout is Inconclusive,
+    ///     never Fail (§12.1), mirroring the RETRY window semantics.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>Late enforcement:</strong> a body that ignores the token but
+    ///     completes past the budget has its outcome superseded by the same
+    ///     <c>Inconclusive</c> classification, with the superseded verdict preserved
+    ///     in the observation (<c>"supersededVerdict"</c>).  This guarantees the
+    ///     documented upper bound is enforced deterministically for every provider,
+    ///     wired or not — a RETRY window elapse likewise discards what a late
+    ///     attempt would have said.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// Built with a <see cref="StringBuilder"/> for the same nested-raw-string
+    /// reason as <see cref="WrapForRetry"/>; every engine-introduced local carries
+    /// the sanitised step id suffix; fully-qualified type names throughout; no
+    /// <c>using var</c> (illegal in a Roslyn script body, §13.3.1).
+    /// </para>
+    /// </remarks>
+    private static string WrapForImmediate(string stepId, string statementBlock, long? timeoutMs)
+    {
+        var safe = CsxFragment.SanitiseId(stepId);
+
+        // Normalise: null or non-positive → no enforcement (mirrors RetryRunner's
+        // treatment of its window parameter).  Clamp the upper end to what
+        // CancellationTokenSource accepts (an absurd ~24.8-day budget must not
+        // throw ArgumentOutOfRangeException and abort the whole scenario).
+        var budget = timeoutMs is { } t and > 0
+            ? (long?)Math.Min(t, int.MaxValue - 1)
+            : null;
+
+        var sb = new StringBuilder();
+        sb.Append('{').Append('\n');
+
+        if (budget is not { } b)
+        {
+            // No declared timeout: token convention only, zero behavioural change.
+            // __stepBudgetGoverned_<safeId> is the second convention local: false here,
+            // so wired providers keep their own transport-timeout conventions as the
+            // step's de facto bound.
+            sb.Append("    System.Threading.CancellationToken __stepCt_").Append(safe)
+              .Append(" = System.Threading.CancellationToken.None;\n");
+            sb.Append("    _ = __stepCt_").Append(safe).Append(";\n");
+            sb.Append("    bool __stepBudgetGoverned_").Append(safe).Append(" = false;\n");
+            sb.Append("    _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
+            sb.Append(statementBlock).Append('\n');
+            sb.Append('}');
+            return sb.ToString();
+        }
+
+        var outcomeLit = JsonSerializer.Serialize(VarKeys.Outcome(safe));
+        var budgetLit = b.ToString(CultureInfo.InvariantCulture) + "L";
+
+        // The observation JSON is assembled from compile-time literals only, so it is
+        // emitted as an escaped C# string literal via JsonSerializer.Serialize.
+        var timeoutObservationLit = JsonSerializer.Serialize(
+            "{\"reason\":\"step-timeout\",\"timeoutMs\":" +
+            b.ToString(CultureInfo.InvariantCulture) + "}");
+        var supersededPrefixLit = JsonSerializer.Serialize(
+            "{\"reason\":\"step-timeout\",\"timeoutMs\":" +
+            b.ToString(CultureInfo.InvariantCulture) + ",\"supersededVerdict\":\"");
+        var supersededSuffixLit = JsonSerializer.Serialize("\"}");
+
+        sb.Append("    var __stepSw_").Append(safe)
+          .Append(" = System.Diagnostics.Stopwatch.StartNew();\n");
+        sb.Append("    var __stepCts_").Append(safe)
+          .Append(" = new System.Threading.CancellationTokenSource(System.TimeSpan.FromMilliseconds(")
+          .Append(budgetLit).Append("));\n");
+        sb.Append("    System.Threading.CancellationToken __stepCt_").Append(safe)
+          .Append(" = __stepCts_").Append(safe).Append(".Token;\n");
+        sb.Append("    _ = __stepCt_").Append(safe).Append(";\n");
+        // The declared budget governs this step: wired providers lift their own
+        // transport-timeout conventions (infinite transport bound) and defer to the
+        // step token, so a budget LONGER than a convention is honoured (#232).
+        sb.Append("    bool __stepBudgetGoverned_").Append(safe).Append(" = true;\n");
+        sb.Append("    _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
+        sb.Append("    var __stepTimedOut_").Append(safe).Append(" = false;\n");
+        sb.Append("    try\n");
+        sb.Append("    {\n");
+        sb.Append(statementBlock).Append('\n');
+        sb.Append("    }\n");
+        sb.Append("    catch (System.OperationCanceledException) when (__stepCts_")
+          .Append(safe).Append(".IsCancellationRequested)\n");
+        sb.Append("    {\n");
+        sb.Append("        // Early cooperative cut: the body observed the step token (§4, #232).\n");
+        sb.Append("        __stepTimedOut_").Append(safe).Append(" = true;\n");
+        sb.Append("        Vars[").Append(outcomeLit)
+          .Append("] = new Vouchfx.Engine.Abstractions.StepOutcome(\n");
+        sb.Append("            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,\n");
+        sb.Append("            __stepSw_").Append(safe).Append(".ElapsedMilliseconds,\n");
+        sb.Append("            ").Append(timeoutObservationLit).Append(");\n");
+        sb.Append("    }\n");
+        sb.Append("    finally\n");
+        sb.Append("    {\n");
+        sb.Append("        __stepSw_").Append(safe).Append(".Stop();\n");
+        sb.Append("        __stepCts_").Append(safe).Append(".Dispose();\n");
+        sb.Append("    }\n");
+
+        // Late enforcement: the body completed (any verdict) but exceeded the budget.
+        // Strictly-greater comparison — the budget itself is within the bound.  The
+        // early-cut flag guards against superseding the cleaner early observation.
+        sb.Append("    if (!__stepTimedOut_").Append(safe)
+          .Append(" && __stepSw_").Append(safe).Append(".ElapsedMilliseconds > ")
+          .Append(budgetLit).Append(")\n");
+        sb.Append("    {\n");
+        sb.Append("        var __prior_").Append(safe)
+          .Append(" = Vars.TryGetValue(").Append(outcomeLit)
+          .Append(", out var __praw_").Append(safe)
+          .Append(") && __praw_").Append(safe)
+          .Append(" is Vouchfx.Engine.Abstractions.StepOutcome __pso_").Append(safe).Append('\n');
+        sb.Append("            ? __pso_").Append(safe).Append(".Verdict.ToString()\n");
+        sb.Append("            : \"(none)\";\n");
+        sb.Append("        Vars[").Append(outcomeLit)
+          .Append("] = new Vouchfx.Engine.Abstractions.StepOutcome(\n");
+        sb.Append("            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,\n");
+        sb.Append("            __stepSw_").Append(safe).Append(".ElapsedMilliseconds,\n");
+        sb.Append("            ").Append(supersededPrefixLit)
+          .Append(" + __prior_").Append(safe)
+          .Append(" + ").Append(supersededSuffixLit).Append(");\n");
+        sb.Append("    }\n");
+
+        sb.Append('}');
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Wraps a provider's IMMEDIATE statement block in the engine-owned RETRY polling
@@ -370,6 +541,18 @@ public static class CsxAssembler
           .Append(safe)
           .Append(")\n");
         sb.Append("    {\n");
+
+        // Expose the uniform per-step token name inside the attempt so provider
+        // bodies reference __stepCt_<safeId> identically in both verify modes
+        // (§4, #232).  In RETRY mode it is the RetryRunner-linked attempt token,
+        // so a wired provider's in-flight attempt is cut when the window elapses.
+        // __stepBudgetGoverned is FALSE in RETRY: the window bounds the poll, and
+        // each attempt keeps the provider's own transport convention as its bound.
+        sb.Append("        System.Threading.CancellationToken __stepCt_").Append(safe)
+          .Append(" = __ct_").Append(safe).Append(";\n");
+        sb.Append("        _ = __stepCt_").Append(safe).Append(";\n");
+        sb.Append("        bool __stepBudgetGoverned_").Append(safe).Append(" = false;\n");
+        sb.Append("        _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
 
         // The provider's original statement block, verbatim — it is already a { … } block.
         // Note: this block re-executes on every poll, so RETRY is intended for idempotent

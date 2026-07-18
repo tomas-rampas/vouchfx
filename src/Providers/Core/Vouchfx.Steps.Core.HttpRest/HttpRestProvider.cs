@@ -161,7 +161,9 @@ public sealed class HttpRestProvider
         "        int? expectedStatus,\n" +
         "        string[] captureVarNames,\n" +
         "        string[] captureExprs,\n" +
-        "        string[] captureKinds)\n" +
+        "        string[] captureKinds,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -173,8 +175,12 @@ public sealed class HttpRestProvider
         "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
-        "            // M2: cap the default stall window; per-step timeout plumbing is Sprint 6.\n" +
-        "            client.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "            // Step-timeout convention (#232): a declared step budget governs this call —\n" +
+        "            // lift the transport bound (infinite) and let the step token (ct) be the sole\n" +
+        "            // enforcement mechanism; otherwise keep the M2 30s stall-window convention.\n" +
+        "            client.Timeout = budgetGoverned\n" +
+        "                ? System.Threading.Timeout.InfiniteTimeSpan\n" +
+        "                : System.TimeSpan.FromSeconds(30);\n" +
         "            // §security S07: bound the untrusted response body. The default\n" +
         "            // MaxResponseContentBufferSize is ~2 GB, so a hostile target could stream a\n" +
         "            // huge body and OOM the runner before the JSON/XPath branch even parses it.\n" +
@@ -243,7 +249,7 @@ public sealed class HttpRestProvider
         "                    req.Content = new System.Net.Http.StringContent(\n" +
         "                        body, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "                }\n" +
-        "                var resp = await client.SendAsync(req).ConfigureAwait(false);\n" +
+        "                var resp = await client.SendAsync(req, ct).ConfigureAwait(false);\n" +
         "                var actual = (int)resp.StatusCode;\n" +
         "                bool ok = expectedStatus.HasValue\n" +
         "                    ? actual == expectedStatus.Value\n" +
@@ -261,7 +267,7 @@ public sealed class HttpRestProvider
         "                // ── S04-B-02 + S07-B-01b: format-aware capture (JSONPath / XPath) ──\n" +
         "                if (captureVarNames.Length > 0 && verdict != Vouchfx.Engine.Abstractions.Verdict.Fail)\n" +
         "                {\n" +
-        "                    var bodyStr = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);\n" +
+        "                    var bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
         "                    // Parse the JSON body ONCE before the per-capture loop (lazily — only\n" +
         "                    // when the first JSONPath capture is hit). A malformed body sets the\n" +
         "                    // cached node to null, which marks every JSONPath capture unmet.\n" +
@@ -421,6 +427,13 @@ public sealed class HttpRestProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the connection-timeout branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException\n" +
         "                                          || ex is System.TimeoutException)\n" +
@@ -796,7 +809,9 @@ public sealed class HttpRestProvider
                     {{expectedLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureExprsLiteral}},
-                    {{captureKindsLiteral}});
+                    {{captureKindsLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

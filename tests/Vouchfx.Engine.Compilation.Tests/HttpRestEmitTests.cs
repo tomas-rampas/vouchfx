@@ -78,18 +78,19 @@ public sealed class HttpRestEmitTests
         var ctx = new StubCompileContext(stepId);
         var frag = provider.Emit(model, ctx);
 
-        // Splice the fragment the same way the engine does at suite compile time:
-        //   1. using directives
-        //   2. helper class definitions (no 'using' keyword, no ';')
-        //   3. statement block
-        var usings = string.Join("\n", frag.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", frag.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{frag.StatementBlock}";
-
         // Guard: §13.3.1 invariant must still hold even with special chars.
-        Assert.DoesNotContain("using var", csx, StringComparison.Ordinal);
+        var rawSource = frag.StatementBlock + "\n" + string.Join("\n", frag.RequiredHelpers);
+        Assert.DoesNotContain("using var", rawSource, StringComparison.Ordinal);
 
         // ── Act ───────────────────────────────────────────────────────────────
+
+        // Splice the fragment the same way the engine does at suite compile time — via
+        // CsxAssembler, which wraps the IMMEDIATE statement block in the per-step
+        // cancellation scope (§4 common step fields, issue #232).  This declares the
+        // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the provider's emitted
+        // call site now references (no declared timeout here, so they alias
+        // CancellationToken.None / false — zero behavioural change from the pre-#232 splice).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, frag) });
 
         // CompileOnce must not throw — previously it would because the unescaped
         // double-quote in Path terminated the emitted string literal early.
@@ -106,7 +107,7 @@ public sealed class HttpRestEmitTests
             typeof(Json.Path.JsonPath).Assembly.Location,          // JsonPath.Net — capture logic (S04-B-02)
             typeof(System.Xml.XmlDocument).Assembly.Location,      // System.Private.Xml — XPath capture logic (S07-B-01b)
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);

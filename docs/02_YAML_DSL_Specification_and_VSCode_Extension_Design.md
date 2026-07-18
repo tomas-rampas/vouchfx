@@ -237,7 +237,7 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 | **description** | No | A short human-readable explanation shown in test output. |
 | **capture** | No | A map of variable names to extractor expressions; writes values from this step's result into the shared context (see section 6). |
 | **verifyMode** | No | Either IMMEDIATE (the default) or RETRY. RETRY instructs the engine to poll until the step's assertions hold or a timeout expires (see section 7). |
-| **timeout** | No | An upper bound on how long the step may take, expressed as a duration such as 30s. For a RETRY step this bounds the polling window. |
+| **timeout** | No | An upper bound on how long the step may take, expressed as a duration such as 30s — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as **Inconclusive** (`step-timeout`, never Fail — §12.1): providers observe the step's cancellation cooperatively, and a body that completes past the bound has its outcome superseded. Where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), a declared value replaces it as the governing bound, so a budget longer than that convention is honoured; when omitted, those conventions (typically 30 seconds) remain the de facto bound. For a RETRY step it bounds the polling window. |
 | **continueOnFailure** | No | When true, a failed assertion in this step is recorded but does not abort the remaining steps. Defaults to false. |
 
 *Table 4.1 — Fields available on every step type.*
@@ -1055,7 +1055,7 @@ The engine polls the step's underlying assertion (re-running its query or consum
 
 ## 7.3 Tuning the polling window and backoff
 
-The `timeout` field sets the outer bound for the polling window — the longest the engine will keep trying before resolving the step's verdict. Within that window, the engine applies exponential backoff with these defaults: initial delay of 200 milliseconds, doubling on each attempt with random jitter, and a maximum interval of 5 seconds. These defaults are chosen to be conservative — quick on fast systems, gentle on slow ones — and do not require author configuration.
+The `timeout` field sets the outer bound for the polling window — the longest the engine will keep trying before resolving the step's verdict. Within that window, the engine applies exponential backoff with these defaults: initial delay of 200 milliseconds, doubling on each attempt with random jitter, and a maximum interval of 5 seconds. These defaults are chosen to be conservative — quick on fast systems, gentle on slow ones — and do not require author configuration. The window also bounds an in-flight attempt: where a provider's client supports cooperative cancellation, an attempt still running when the window elapses is cut at the boundary rather than running on to its transport bound; each attempt otherwise keeps the provider's transport timeout as its own per-attempt limit.
 
 An optional `pollInterval` field is reserved in the schema as documentation of intent, but it is not yet parsed or honoured by the execution engine; the `timeout` is the real bound. A future release may expose `pollInterval` to allow authors to tune the base delay or backoff strategy. For now, authors should rely on the default backoff and set a `timeout` that reflects a realistic worst case for the system under test rather than an arbitrarily large value, because an over-long timeout turns a genuine failure into a slow failure.
 

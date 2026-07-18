@@ -337,7 +337,8 @@ public sealed class CacheAssertRedisProvider
                 string? fieldTemplate,
                 string? expectValueTemplate,
                 bool? expectExists,
-                long? expectLength)
+                long? expectLength,
+                System.Threading.CancellationToken ct)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 Vouchfx.Engine.Abstractions.Verdict verdict;
@@ -448,6 +449,16 @@ public sealed class CacheAssertRedisProvider
                     verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;
                     observation = "{\"error\":" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + "}";
                 }
+                catch (System.OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Step-token cut (#232): rethrow past this provider's own error handling so
+                    // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead
+                    // of the generic-error branch below misclassifying it.  The redis client's
+                    // synchronous API does not observe 'ct' internally (StackExchange.Redis has
+                    // no CancellationToken overloads) — this filter is defensive, guarding
+                    // against a future call path that does.
+                    throw;
+                }
                 catch (System.Exception ex)
                 {
                     // Any other connection/protocol/parse failure = EnvironmentError (§12.1).
@@ -554,7 +565,8 @@ public sealed class CacheAssertRedisProvider
                     {{fieldLiteral}},
                     {{expectValueLiteral}},
                     {{expectExistsLiteral}},
-                    {{expectLengthLiteral}});
+                    {{expectLengthLiteral}},
+                    __stepCt_{{safeId}});
             }
             """;
 

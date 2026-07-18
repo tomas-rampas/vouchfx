@@ -232,8 +232,13 @@ public sealed class MqPublishNatsProvider
         "        string connKey,\n" +
         "        string subjectTemplate,\n" +
         "        string streamName,\n" +
-        "        string payloadTemplate)\n" +
+        "        string payloadTemplate,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var natsUrl = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(natsUrl))\n" +
@@ -269,7 +274,7 @@ public sealed class MqPublishNatsProvider
         "            {\n" +
         "                await js.CreateStreamAsync(\n" +
         "                    new NATS.Client.JetStream.Models.StreamConfig(streamName, new string[] { subject }),\n" +
-        "                    System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                    ct).ConfigureAwait(false);\n" +
         "            }\n" +
         "            catch (NATS.Client.JetStream.NatsJSApiException ex) when (ex.Error.ErrCode == 10058) { }\n" +
         "            var payloadBytes = System.Text.Encoding.UTF8.GetBytes(payload);\n" +
@@ -279,7 +284,7 @@ public sealed class MqPublishNatsProvider
         "                NATS.Client.Core.NatsRawSerializer<byte[]>.Default,\n" +
         "                opts: null,\n" +
         "                headers: null,\n" +
-        "                cancellationToken: System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                cancellationToken: ct).ConfigureAwait(false);\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "            observation = \"{\\\"stream\\\":\" + System.Text.Json.JsonSerializer.Serialize(ack.Stream) +\n" +
         "                \",\\\"seq\\\":\" + ack.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
@@ -298,6 +303,13 @@ public sealed class MqPublishNatsProvider
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(RedactNatsUrl(natsUrl ?? string.Empty, ex.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the connection-failure branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -393,7 +405,9 @@ public sealed class MqPublishNatsProvider
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
                     {{subjectTemplateLiteral}},
                     {{streamNameLiteral}},
-                    {{payloadTemplateLiteral}});
+                    {{payloadTemplateLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

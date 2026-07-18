@@ -238,8 +238,13 @@ public sealed class MqExpectRabbitmqProvider
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        string[] jsonPaths,\n" +
-        "        string[] jsonValueTemplates)\n" +
+        "        string[] jsonValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var amqpUri = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(amqpUri))\n" +
@@ -269,8 +274,8 @@ public sealed class MqExpectRabbitmqProvider
         "            for (int ji = 0; ji < jsonValueTemplates.Length; ji++)\n" +
         "                jsonValues[ji] = Secret_Helpers.ResolveTemplate(secrets, vars, jsonValueTemplates[ji]);\n" +
         "            var factory = new RabbitMQ.Client.ConnectionFactory { Uri = new System.Uri(amqpUri) };\n" +
-        "            conn = await factory.CreateConnectionAsync(System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
-        "            channel = await conn.CreateChannelAsync(cancellationToken: System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "            conn = await factory.CreateConnectionAsync(ct).ConfigureAwait(false);\n" +
+        "            channel = await conn.CreateChannelAsync(cancellationToken: ct).ConfigureAwait(false);\n" +
         "            const int maxMessages = 200;\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
@@ -286,7 +291,7 @@ public sealed class MqExpectRabbitmqProvider
         "            var pendingTags = new System.Collections.Generic.List<ulong>();\n" +
         "            while (scanned < maxMessages && !matched)\n" +
         "            {\n" +
-        "                var result = await channel.BasicGetAsync(queue, autoAck: false, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                var result = await channel.BasicGetAsync(queue, autoAck: false, ct).ConfigureAwait(false);\n" +
         "                if (result is null)\n" +
         "                    break;  // all ready messages are held as outstanding, or queue is empty\n" +
         "                scanned++;\n" +
@@ -294,7 +299,7 @@ public sealed class MqExpectRabbitmqProvider
         "                if (MatchesMessage(body, result.BasicProperties.Headers, payloadContains,\n" +
         "                        headerNames, headerValues, jsonPaths, jsonValues))\n" +
         "                {\n" +
-        "                    await channel.BasicAckAsync(result.DeliveryTag, multiple: false, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                    await channel.BasicAckAsync(result.DeliveryTag, multiple: false, ct).ConfigureAwait(false);\n" +
         "                    matched = true;\n" +
         "                }\n" +
         "                else\n" +
@@ -335,6 +340,13 @@ public sealed class MqExpectRabbitmqProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the broker-failure branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -526,7 +538,9 @@ public sealed class MqExpectRabbitmqProvider
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     {{jsonPathsLiteral}},
-                    {{jsonValueTemplatesLiteral}});
+                    {{jsonValueTemplatesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

@@ -247,8 +247,13 @@ public sealed class MqPublishAzureServiceBusProvider
         "        string? topicTemplate,\n" +
         "        string payloadTemplate,\n" +
         "        string[] propKeys,\n" +
-        "        string[] propValueTemplates)\n" +
+        "        string[] propValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var connStr = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(connStr))\n" +
@@ -289,7 +294,7 @@ public sealed class MqPublishAzureServiceBusProvider
         "            var msg = new Azure.Messaging.ServiceBus.ServiceBusMessage(System.Text.Encoding.UTF8.GetBytes(payload));\n" +
         "            for (int __pi = 0; __pi < propKeys.Length; __pi++)\n" +
         "                msg.ApplicationProperties[propKeys[__pi]] = propValues[__pi];\n" +
-        "            await sender.SendMessageAsync(msg, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "            await sender.SendMessageAsync(msg, ct).ConfigureAwait(false);\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "            observation = \"{\\\"sent\\\":true,\\\"entity\\\":\" + System.Text.Json.JsonSerializer.Serialize(entityTemplate) + \"}\";\n" +
         "        }\n" +
@@ -304,6 +309,13 @@ public sealed class MqPublishAzureServiceBusProvider
         "        {\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactAsbConnStr(connStr ?? string.Empty, sbEx.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-EnvironmentError branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -392,7 +404,9 @@ public sealed class MqPublishAzureServiceBusProvider
                     {{topicLiteral}},
                     {{payloadLiteral}},
                     {{propKeysLiteral}},
-                    {{propValuesLiteral}});
+                    {{propValuesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

@@ -379,7 +379,9 @@ public sealed class MailExpectSmtpProvider
         "        string? toTemplate,\n" +
         "        string? subjectContainsTemplate,\n" +
         "        string? bodyContainsTemplate,\n" +
-        "        int? expectedCount)\n" +
+        "        int? expectedCount,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
@@ -412,12 +414,18 @@ public sealed class MailExpectSmtpProvider
         "                    ? null\n" +
         "                    : Secret_Helpers.ResolveTemplate(secrets, vars, bodyContainsTemplate);\n" +
         "                System.Net.Http.HttpClient http = new System.Net.Http.HttpClient();\n" +
-        "                http.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "                // Step-timeout convention (#232): a declared step budget governs this\n" +
+        "                // call — lift the transport bound (infinite) and let the step token\n" +
+        "                // (ct) be the sole enforcement mechanism; otherwise keep the 30s\n" +
+        "                // stall-window convention.\n" +
+        "                http.Timeout = budgetGoverned\n" +
+        "                    ? System.Threading.Timeout.InfiniteTimeSpan\n" +
+        "                    : System.TimeSpan.FromSeconds(30);\n" +
         "                try\n" +
         "                {\n" +
         "                    // Scan cap: ?limit=100 bounds the inbox enumeration to the 100 most\n" +
         "                    // recent messages Mailpit returns per attempt (newest-first).\n" +
-        "                    var listJson = await http.GetStringAsync(baseUrl + \"/api/v1/messages?limit=100\").ConfigureAwait(false);\n" +
+        "                    var listJson = await http.GetStringAsync(baseUrl + \"/api/v1/messages?limit=100\", ct).ConfigureAwait(false);\n" +
         "                    var listDoc = System.Text.Json.JsonDocument.Parse(listJson);\n" +
         "                    int matched = 0;\n" +
         "                    try\n" +
@@ -465,7 +473,8 @@ public sealed class MailExpectSmtpProvider
         "                                        try\n" +
         "                                        {\n" +
         "                                            var bodyJson = await http.GetStringAsync(\n" +
-        "                                                baseUrl + \"/api/v1/message/\" + System.Uri.EscapeDataString(msgId)\n" +
+        "                                                baseUrl + \"/api/v1/message/\" + System.Uri.EscapeDataString(msgId),\n" +
+        "                                                ct\n" +
         "                                            ).ConfigureAwait(false);\n" +
         "                                            var bodyDoc = System.Text.Json.JsonDocument.Parse(bodyJson);\n" +
         "                                            try\n" +
@@ -476,6 +485,15 @@ public sealed class MailExpectSmtpProvider
         "                                                    ok = false;\n" +
         "                                            }\n" +
         "                                            finally { bodyDoc.Dispose(); }\n" +
+        "                                        }\n" +
+        "                                        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "                                        {\n" +
+        "                                            // Step-token cut (#232): rethrow past this per-candidate scan\n" +
+        "                                            // loop so the assembler's wrapper classifies it as\n" +
+        "                                            // Inconclusive(step-timeout) instead of the resilient\n" +
+        "                                            // non-matching branch below silently swallowing it and\n" +
+        "                                            // looping on to the next candidate.\n" +
+        "                                            throw;\n" +
         "                                        }\n" +
         "                                        catch (System.Exception)\n" +
         "                                        {\n" +
@@ -519,6 +537,13 @@ public sealed class MailExpectSmtpProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-error branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -608,7 +633,9 @@ public sealed class MailExpectSmtpProvider
                     {{toLiteral}},
                     {{subjectLiteral}},
                     {{bodyLiteral}},
-                    {{countLiteral}});
+                    {{countLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

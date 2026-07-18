@@ -331,23 +331,19 @@ public sealed class MailExpectSmtpEmitTests
         var fragNull = _provider.Emit(modelNull, ctxNull);
         var fragExact = _provider.Emit(modelExact, ctxExact);
 
-        // Absent count → the last ExpectAsync argument must be the literal null,
-        // not 1 (the old bug: defaulting null→1 bypassed the at-least-one path).
-        Assert.Contains(
-            "null);",
-            fragNull.StatementBlock,
-            StringComparison.Ordinal);
-
-        Assert.DoesNotContain(
-            ", 1);",
-            fragNull.StatementBlock,
-            StringComparison.Ordinal);
+        // The countLiteral argument (expectedCount) is no longer the LAST argument —
+        // it now precedes the __stepCt_<safeId> / __stepBudgetGoverned_<safeId> step-token
+        // arguments (§4 common step fields, issue #232). Locate it positionally by reading
+        // the argument immediately before __stepCt_<safeId>, independent of exact
+        // whitespace/indentation.
+        Assert.Equal(
+            "null",
+            CountArgumentBeforeStepToken(fragNull.StatementBlock, CsxFragment.SanitiseId("at-least-one")));
 
         // Explicit count=3 → integer literal 3.
-        Assert.Contains(
-            "3);",
-            fragExact.StatementBlock,
-            StringComparison.Ordinal);
+        Assert.Equal(
+            "3",
+            CountArgumentBeforeStepToken(fragExact.StatementBlock, CsxFragment.SanitiseId("exact-count")));
 
         // The helper signature must declare the parameter as nullable to support
         // both the at-least-one and exact-match branches.
@@ -356,6 +352,27 @@ public sealed class MailExpectSmtpEmitTests
             "int? expectedCount",
             helperSource,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Reads the ExpectAsync call-site argument that appears immediately before the
+    /// <c>__stepCt_&lt;safeId&gt;</c> step-token argument (§4, issue #232) — i.e. the
+    /// <c>expectedCount</c> literal — independent of the emitted block's exact
+    /// whitespace/indentation.
+    /// </summary>
+    private static string CountArgumentBeforeStepToken(string statementBlock, string safeId)
+    {
+        var marker = "__stepCt_" + safeId;
+        var markerIndex = statementBlock.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(markerIndex >= 0, $"Expected to find '{marker}' in the StatementBlock.");
+
+        var before = statementBlock[..markerIndex];
+        var valueEnd = before.TrimEnd().TrimEnd(',').Length;
+        var trimmed = before[..valueEnd];
+        var precedingCommaIndex = Math.Max(
+            trimmed.LastIndexOf(',', valueEnd - 1),
+            trimmed.LastIndexOf('\n', valueEnd - 1));
+        return trimmed[(precedingCommaIndex + 1)..].Trim();
     }
 
     // ── 13. Dead endpoint in conn key → EnvironmentError ─────────────────────────
@@ -602,9 +619,11 @@ public sealed class MailExpectSmtpEmitTests
     {
         var provider = new MailExpectSmtpProvider();
         var fragment = provider.Emit(model, ctx);
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted call
+        // site now references (§4 common step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (ctx.StepId, fragment) });
 
         // Collect compile-reference assembly paths from ICompileReferenceContributor.
         // System.Net.Http + System.Text.Json are not in the TPA-only Roslyn reference set.
@@ -613,7 +632,7 @@ public sealed class MailExpectSmtpEmitTests
             .Select(a => a.Location)
             .Where(p => !string.IsNullOrEmpty(p))
             .ToArray();
-        return (csx, refs);
+        return (assembled.CsxSource, refs);
     }
 
     /// <summary>

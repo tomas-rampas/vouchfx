@@ -293,8 +293,13 @@ public sealed class MqExpectNatsProvider
         "        string streamName,\n" +
         "        string? payloadContainsTemplate,\n" +
         "        string[] jsonPaths,\n" +
-        "        string[] jsonValueTemplates)\n" +
+        "        string[] jsonValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var natsUrl = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(natsUrl))\n" +
@@ -338,7 +343,7 @@ public sealed class MqExpectNatsProvider
         "            {\n" +
         "                await js.CreateStreamAsync(\n" +
         "                    new NATS.Client.JetStream.Models.StreamConfig(streamName, new string[] { subject }),\n" +
-        "                    System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                    ct).ConfigureAwait(false);\n" +
         "            }\n" +
         "            catch (NATS.Client.JetStream.NatsJSApiException ex) when (ex.Error.ErrCode == 10058) { }\n" +
         "            // Ordered consumer: truly ephemeral — no durable state on the server.\n" +
@@ -350,7 +355,7 @@ public sealed class MqExpectNatsProvider
         "                new NATS.Client.JetStream.NatsJSOrderedConsumerOpts\n" +
         "                {\n" +
         "                    FilterSubjects = new string[] { subject },\n" +
-        "                }, System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                }, ct).ConfigureAwait(false);\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
         "            // FetchAsync<T> requires an explicit deserializer (NATS.Net 2.7.x).\n" +
@@ -366,7 +371,7 @@ public sealed class MqExpectNatsProvider
         "                    MaxMsgs = 10000,\n" +
         "                    Expires = System.TimeSpan.FromSeconds(1),\n" +
         "                }, NATS.Client.Core.NatsRawSerializer<byte[]>.Default,\n" +
-        "                System.Threading.CancellationToken.None))\n" +
+        "                ct))\n" +
         "            {\n" +
         "                if (msg.Error is not null)\n" +
         "                    break;\n" +
@@ -405,6 +410,13 @@ public sealed class MqExpectNatsProvider
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(RedactNatsUrl(natsUrl ?? string.Empty, ex.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the connection-failure branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -579,7 +591,9 @@ public sealed class MqExpectNatsProvider
                     {{streamNameLiteral}},
                     {{payloadContainsLiteral}},
                     {{jsonPathsLiteral}},
-                    {{jsonValueTemplatesLiteral}});
+                    {{jsonValueTemplatesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

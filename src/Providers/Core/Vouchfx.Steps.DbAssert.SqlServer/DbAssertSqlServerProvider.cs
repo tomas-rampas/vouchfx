@@ -290,7 +290,9 @@ public sealed class DbAssertSqlServerProvider
         "        string[] paramValues,\n" +
         "        int? expectedRowCount,\n" +
         "        string[] expectColumns,\n" +
-        "        string[] expectValues)\n" +
+        "        string[] expectValues,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -330,22 +332,26 @@ public sealed class DbAssertSqlServerProvider
         "        try\n" +
         "        {\n" +
         "            conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);\n" +
-        "            await conn.OpenAsync().ConfigureAwait(false);\n" +
+        "            await conn.OpenAsync(ct).ConfigureAwait(false);\n" +
         "            var cmd = conn.CreateCommand();\n" +
         "            try\n" +
         "            {\n" +
+        "                // When the step budget governs, lift the ADO default 30-second\n" +
+        "                // CommandTimeout (0 = infinite) so the step token is the sole\n" +
+        "                // bound and a budget longer than 30s is honoured (#232).\n" +
+        "                cmd.CommandTimeout = budgetGoverned ? 0 : 30;\n" +
         "                cmd.CommandText = resolvedQuery;\n" +
         "                for (int i = 0; i < paramNames.Length; i++)\n" +
         "                {\n" +
         "                    cmd.Parameters.AddWithValue(\"@\" + paramNames[i], (object)paramValues[i]);\n" +
         "                }\n" +
-        "                var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);\n" +
+        "                var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);\n" +
         "                try\n" +
         "                {\n" +
         "                    int actualRowCount = 0;\n" +
         "                    string? failObservation = null;\n" +
         "                    bool firstRow = true;\n" +
-        "                    while (await reader.ReadAsync().ConfigureAwait(false))\n" +
+        "                    while (await reader.ReadAsync(ct).ConfigureAwait(false))\n" +
         "                    {\n" +
         "                        actualRowCount++;\n" +
         "                        // Evaluate column expectations against the first row only.\n" +
@@ -413,6 +419,13 @@ public sealed class DbAssertSqlServerProvider
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the connection/protocol EnvironmentError branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -556,7 +569,8 @@ public sealed class DbAssertSqlServerProvider
                     {{paramValuesLiteral}},
                     {{rowCountLiteral}},
                     {{expectColumnsLiteral}},
-                    {{expectValuesLiteral}});
+                    {{expectValuesLiteral}},
+                    __stepCt_{{safeId}}, __stepBudgetGoverned_{{safeId}});
             }
             """;
 

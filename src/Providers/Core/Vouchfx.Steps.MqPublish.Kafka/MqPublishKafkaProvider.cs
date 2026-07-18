@@ -388,7 +388,9 @@ public sealed class MqPublishKafkaProvider
         "        string? avroSubject,\n" +
         "        string? avroSchemaJson,\n" +
         "        string[] avroFieldNames,\n" +
-        "        string[] avroFieldValueTemplates)\n" +
+        "        string[] avroFieldValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        // AVRO path is selected when the avro args are present (avroSubject non-null).\n" +
         "        // Otherwise the PLAIN string path runs, byte-identical to the committed slice.\n" +
@@ -396,7 +398,8 @@ public sealed class MqPublishKafkaProvider
         "        {\n" +
         "            await PublishAvroAsync(vars, secrets, outcomeKey, connKey, topicTemplate,\n" +
         "                keyTemplate, headerNames, headerValueTemplates, avroRegistrySvcKey,\n" +
-        "                avroSubject, avroSchemaJson, avroFieldNames, avroFieldValueTemplates)\n" +
+        "                avroSubject, avroSchemaJson, avroFieldNames, avroFieldValueTemplates,\n" +
+        "                ct, budgetGoverned)\n" +
         "                .ConfigureAwait(false);\n" +
         "            return;\n" +
         "        }\n" +
@@ -447,7 +450,7 @@ public sealed class MqPublishKafkaProvider
         "                }\n" +
         "                msg.Headers = msgHeaders;\n" +
         "            }\n" +
-        "            var dr = await producer.ProduceAsync(topic, msg).ConfigureAwait(false);\n" +
+        "            var dr = await producer.ProduceAsync(topic, msg, ct).ConfigureAwait(false);\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "            observation = \"{\\\"topic\\\":\" + System.Text.Json.JsonSerializer.Serialize(dr.Topic) +\n" +
         "                \",\\\"partition\\\":\" + dr.Partition.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
@@ -463,6 +466,13 @@ public sealed class MqPublishKafkaProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this method's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the produce-failure branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (Confluent.Kafka.ProduceException<string, string> ex)\n" +
         "        {\n" +
@@ -522,8 +532,13 @@ public sealed class MqPublishKafkaProvider
         "        string avroSubject,\n" +
         "        string? avroSchemaJson,\n" +
         "        string[] avroFieldNames,\n" +
-        "        string[] avroFieldValueTemplates)\n" +
+        "        string[] avroFieldValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
+        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
+        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Bootstrap (broker) must be present, exactly as the plain path requires.\n" +
         "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
@@ -601,7 +616,7 @@ public sealed class MqPublishKafkaProvider
         "                }\n" +
         "                msg.Headers = msgHeaders;\n" +
         "            }\n" +
-        "            var dr = await producer.ProduceAsync(topic, msg).ConfigureAwait(false);\n" +
+        "            var dr = await producer.ProduceAsync(topic, msg, ct).ConfigureAwait(false);\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "            observation = \"{\\\"topic\\\":\" + System.Text.Json.JsonSerializer.Serialize(dr.Topic) +\n" +
         "                \",\\\"partition\\\":\" + dr.Partition.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
@@ -614,6 +629,13 @@ public sealed class MqPublishKafkaProvider
         "            observation = \"{\\\"secretError\\\":\\\"secret resolution failed\\\"\" +\n" +
         "                \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +\n" +
         "                \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this method's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the catch-all below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -824,7 +846,9 @@ public sealed class MqPublishKafkaProvider
                     {{avroSubjectLiteral}},
                     {{avroSchemaLiteral}},
                     {{avroFieldNamesLiteral}},
-                    {{avroFieldValueTemplatesLiteral}});
+                    {{avroFieldValueTemplatesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 
