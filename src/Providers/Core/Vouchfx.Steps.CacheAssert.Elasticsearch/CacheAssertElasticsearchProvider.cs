@@ -473,7 +473,9 @@ public sealed class CacheAssertElasticsearchProvider
         "        int minCount,\n" +
         "        int? exactCount,\n" +
         "        string[]? assertFieldNames,\n" +
-        "        string[]? assertFieldValues)\n" +
+        "        string[]? assertFieldValues,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
@@ -520,7 +522,13 @@ public sealed class CacheAssertElasticsearchProvider
         "                var resolvedQuery = ResolveQuery(vars, queryTemplate);\n" +
         "\n" +
         "                System.Net.Http.HttpClient http = new System.Net.Http.HttpClient();\n" +
-        "                http.Timeout = System.TimeSpan.FromSeconds(30);\n" +
+        "                // Step-timeout convention (#232): a declared step budget governs this\n" +
+        "                // call — lift the transport bound (infinite) and let the step token\n" +
+        "                // (ct) be the sole enforcement mechanism; otherwise keep the 30s\n" +
+        "                // stall-window convention.\n" +
+        "                http.Timeout = budgetGoverned\n" +
+        "                    ? System.Threading.Timeout.InfiniteTimeSpan\n" +
+        "                    : System.TimeSpan.FromSeconds(30);\n" +
         "                try\n" +
         "                {\n" +
         "                    if (authHeader is not null)\n" +
@@ -531,8 +539,8 @@ public sealed class CacheAssertElasticsearchProvider
         "                    var content = new System.Net.Http.StringContent(\n" +
         "                        resolvedQuery, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "\n" +
-        "                    var response = await http.PostAsync(url, content).ConfigureAwait(false);\n" +
-        "                    var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);\n" +
+        "                    var response = await http.PostAsync(url, content, ct).ConfigureAwait(false);\n" +
+        "                    var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
         "\n" +
         "                    if (!response.IsSuccessStatusCode)\n" +
         "                    {\n" +
@@ -665,6 +673,13 @@ public sealed class CacheAssertElasticsearchProvider
         "                + \",\\\"source\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource)\n" +
         "                + \",\\\"path\\\":\" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + \"}\";\n" +
         "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-error branch below misclassifying it.\n" +
+        "            throw;\n" +
+        "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
@@ -777,7 +792,9 @@ public sealed class CacheAssertElasticsearchProvider
                     {{minCountLiteral}},
                     {{exactCountLiteral}},
                     {{fieldNamesLiteral}},
-                    {{fieldValuesLiteral}});
+                    {{fieldValuesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

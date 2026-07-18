@@ -508,10 +508,12 @@ public sealed class HttpSoapEmitTests
             var model = MakeModel(envelope: $"<GetUser>${{secret:env/{envName}}}</GetUser>");
 
             var fragment = _provider.Emit(model, new StubCompileContext(stepId));
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
-            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
+            // Splice via CsxAssembler (not a manual join) — it declares the per-step
+            // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted call
+            // site now references (§4 common step fields, issue #232).
+            var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
 
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
             {

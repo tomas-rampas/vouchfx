@@ -356,7 +356,9 @@ public sealed class HttpSoapProvider
                 string[] xpathValueTemplates,
                 string[] captureVarNames,
                 string[] captureExprs,
-                string[] captureKinds)
+                string[] captureKinds,
+                System.Threading.CancellationToken ct,
+                bool budgetGoverned)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 Vouchfx.Engine.Abstractions.Verdict verdict;
@@ -367,7 +369,12 @@ public sealed class HttpSoapProvider
                 var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
                 try
                 {
-                    client.Timeout = System.TimeSpan.FromSeconds(30);
+                    // Step-timeout convention (#232): a declared step budget governs this call —
+                    // lift the transport bound (infinite) and let the step token (ct) be the sole
+                    // enforcement mechanism; otherwise keep the 30s stall-window convention.
+                    client.Timeout = budgetGoverned
+                        ? System.Threading.Timeout.InfiniteTimeSpan
+                        : System.TimeSpan.FromSeconds(30);
                     // Bound the untrusted response body exactly like http.rest (§security S07).
                     client.MaxResponseContentBufferSize = 16 * 1024 * 1024;
 
@@ -401,9 +408,9 @@ public sealed class HttpSoapProvider
                         var envelope = Secret_Helpers.ResolveTemplate(secrets, vars, envelopeTemplate);
                         req.Content = new System.Net.Http.StringContent(envelope, System.Text.Encoding.UTF8, "text/xml");
 
-                        var resp = await client.SendAsync(req).ConfigureAwait(false);
+                        var resp = await client.SendAsync(req, ct).ConfigureAwait(false);
                         var actualStatus = (int)resp.StatusCode;
-                        var bodyStr = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        var bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
                         // ── Hardened XML parse (identical hardening to http.rest's XPath capture) ──
                         System.Xml.XPath.XPathNavigator? nav = null;
@@ -564,6 +571,13 @@ public sealed class HttpSoapProvider
                         ",\"source\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +
                         ",\"path\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + "}";
                 }
+                catch (System.OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Step-token cut (#232): rethrow past this provider's own error handling so
+                    // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead
+                    // of the connection-timeout branch below misclassifying it.
+                    throw;
+                }
                 catch (System.Exception ex) when (ex is System.Threading.Tasks.TaskCanceledException
                                                   || ex is System.TimeoutException)
                 {
@@ -684,7 +698,9 @@ public sealed class HttpSoapProvider
                     {{xpathValueTemplatesLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureExprsLiteral}},
-                    {{captureKindsLiteral}});
+                    {{captureKindsLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

@@ -261,7 +261,9 @@ public sealed class MqExpectAzureServiceBusProvider
         "        string? subscriptionTemplate,\n" +
         "        string? payloadContainsTemplate,\n" +
         "        string[] expectPropKeys,\n" +
-        "        string[] expectPropValueTemplates)\n" +
+        "        string[] expectPropValueTemplates,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var connStr = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
@@ -307,7 +309,7 @@ public sealed class MqExpectAzureServiceBusProvider
         "            // (not 'maxMessageCount'); positional arg avoids version-skew compile errors.\n" +
         "            var messages = await receiver.PeekMessagesAsync(\n" +
         "                100,\n" +
-        "                cancellationToken: System.Threading.CancellationToken.None).ConfigureAwait(false);\n" +
+        "                cancellationToken: ct).ConfigureAwait(false);\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
         "            foreach (var msg in messages)\n" +
@@ -352,6 +354,13 @@ public sealed class MqExpectAzureServiceBusProvider
         "        {\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactAsbConnStr(connStr ?? string.Empty, sbEx.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-EnvironmentError branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -437,7 +446,9 @@ public sealed class MqExpectAzureServiceBusProvider
                     {{subscriptionLiteral}},
                     {{payloadContainsLiteral}},
                     {{expectPropKeysLiteral}},
-                    {{expectPropValuesLiteral}});
+                    {{expectPropValuesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

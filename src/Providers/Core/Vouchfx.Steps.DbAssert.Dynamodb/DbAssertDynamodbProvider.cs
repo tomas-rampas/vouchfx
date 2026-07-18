@@ -423,7 +423,9 @@ public sealed class DbAssertDynamodbProvider
                 string keyTemplate,
                 bool expectExists,
                 string[] expectFields,
-                string[] expectValues)
+                string[] expectValues,
+                System.Threading.CancellationToken ct,
+                bool budgetGoverned)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 Vouchfx.Engine.Abstractions.Verdict verdict;
@@ -466,12 +468,19 @@ public sealed class DbAssertDynamodbProvider
                     // that would make a single poll attempt hang far longer than the step's own
                     // timeout budget. A local dynamodb-local container responds in milliseconds
                     // when healthy, so 5s is generous headroom, not a tight race.
+                    // Step-timeout convention (#232): a declared step budget governs this call —
+                    // lift the transport bound (infinite) and let the step token (ct) be the sole
+                    // enforcement mechanism; otherwise keep the M2 5s connect/read convention.
                     var config = new Amazon.DynamoDBv2.AmazonDynamoDBConfig
                     {
                         ServiceURL = serviceUrl,
                         MaxErrorRetry = 0,
-                        Timeout = System.TimeSpan.FromSeconds(5),
-                        ConnectTimeout = System.TimeSpan.FromSeconds(5),
+                        Timeout = budgetGoverned
+                            ? System.Threading.Timeout.InfiniteTimeSpan
+                            : System.TimeSpan.FromSeconds(5),
+                        ConnectTimeout = budgetGoverned
+                            ? System.Threading.Timeout.InfiniteTimeSpan
+                            : System.TimeSpan.FromSeconds(5),
                     };
                     var creds = new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey);
                     client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(creds, config);
@@ -484,7 +493,7 @@ public sealed class DbAssertDynamodbProvider
                         Key = keyAttrs,
                     };
 
-                    var response = await client.GetItemAsync(request).ConfigureAwait(false);
+                    var response = await client.GetItemAsync(request, ct).ConfigureAwait(false);
                     var found = response.Item is not null && response.Item.Count > 0;
 
                     string? failObservation = null;
@@ -527,6 +536,13 @@ public sealed class DbAssertDynamodbProvider
                         verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;
                         observation = "{\"exists\":" + (found ? "true" : "false") + "}";
                     }
+                }
+                catch (System.OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Step-token cut (#232): rethrow past this provider's own error handling so
+                    // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead
+                    // of the EnvironmentError branch below misclassifying it.
+                    throw;
                 }
                 catch (System.Exception ex)
                 {
@@ -596,7 +612,9 @@ public sealed class DbAssertDynamodbProvider
                     {{keyLiteral}},
                     {{expectExistsLiteral}},
                     {{expectFieldsLiteral}},
-                    {{expectValuesLiteral}});
+                    {{expectValuesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

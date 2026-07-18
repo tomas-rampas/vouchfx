@@ -312,6 +312,14 @@ public sealed class ScriptCsharpProvider
         sb.Append("    {\n");
         sb.Append("        await __body_").Append(safeId).Append("();\n");
         sb.Append("    }\n");
+        // Step-token cut (#232): the author body may observe __stepCt_<safeId> (declared by
+        // the assembler's per-step wrapper, in scope here) and throw OperationCanceledException
+        // when it fires.  Rethrow past the author-facing catch below so the wrapper classifies
+        // it as Inconclusive(step-timeout) instead of this provider's own Fail mapping.
+        sb.Append("    catch (System.OperationCanceledException) when (__stepCt_").Append(safeId).Append(".IsCancellationRequested)\n");
+        sb.Append("    {\n");
+        sb.Append("        throw;\n");
+        sb.Append("    }\n");
         sb.Append("    catch (System.Exception __ex_").Append(safeId).Append(")\n");
         sb.Append("    {\n");
         sb.Append("        __v_").Append(safeId)

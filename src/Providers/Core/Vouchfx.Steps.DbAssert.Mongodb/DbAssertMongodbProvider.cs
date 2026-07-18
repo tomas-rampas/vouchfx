@@ -316,7 +316,9 @@ public sealed class DbAssertMongodbProvider
         "        string filterTemplate,\n" +
         "        long? expectedCount,\n" +
         "        string[] expectFields,\n" +
-        "        string[] expectValues)\n" +
+        "        string[] expectValues,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -390,9 +392,9 @@ public sealed class DbAssertMongodbProvider
         "            // Two-query approach: CountDocumentsAsync returns the exact count with no document cap,\n" +
         "            // then Limit(1) fetches the first document only when field expectations are declared.\n" +
         "            // Using Limit(1000).ToListAsync() would silently cap actualCount at 1000 (B1 blocker).\n" +
-        "            var actualCount = await coll.CountDocumentsAsync(filterDoc).ConfigureAwait(false);\n" +
+        "            var actualCount = await coll.CountDocumentsAsync(filterDoc, cancellationToken: ct).ConfigureAwait(false);\n" +
         "            MongoDB.Bson.BsonDocument? firstDoc = expectFields.Length > 0\n" +
-        "                ? await coll.Find(filterDoc).Limit(1).FirstOrDefaultAsync(default(System.Threading.CancellationToken)).ConfigureAwait(false)\n" +
+        "                ? await coll.Find(filterDoc).Limit(1).FirstOrDefaultAsync(ct).ConfigureAwait(false)\n" +
         "                : null;\n" +
         "            string? failObservation = null;\n" +
         "            // Evaluate document-field expectations against the first matched document.\n" +
@@ -461,6 +463,13 @@ public sealed class DbAssertMongodbProvider
         "            // MongoDB-specific exception: network failure, auth error, etc. = EnvironmentError (§12.1).\n" +
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the EnvironmentError branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -619,7 +628,9 @@ public sealed class DbAssertMongodbProvider
                     {{filterLiteral}},
                     {{countLiteral}},
                     {{expectFieldsLiteral}},
-                    {{expectValuesLiteral}});
+                    {{expectValuesLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

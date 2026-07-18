@@ -363,7 +363,8 @@ public sealed class TraceExpectOtlpProvider
                 string[] attributeValueTemplates,
                 string[] captureVarNames,
                 string[] captureExprs,
-                string[] captureKinds)
+                string[] captureKinds,
+                System.Threading.CancellationToken ct)
             {
                 // No I/O is performed here — the scan is purely over the in-memory snapshot —
                 // but the method is async to match the awaited call-site shape every RETRY
@@ -570,6 +571,13 @@ public sealed class TraceExpectOtlpProvider
                     observation = "{\"secretError\":\"secret resolution failed\"" +
                         ",\"source\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretSource) +
                         ",\"path\":" + System.Text.Json.JsonSerializer.Serialize(sre.SecretPath) + "}";
+                }
+                catch (System.OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Step-token cut (#232): rethrow past this provider's own error handling so
+                    // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead
+                    // of the generic-error branch below misclassifying it.
+                    throw;
                 }
                 catch (System.Exception ex)
                 {
@@ -780,7 +788,8 @@ public sealed class TraceExpectOtlpProvider
                     {{attributeValueTemplatesLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureExprsLiteral}},
-                    {{captureKindsLiteral}});
+                    {{captureKindsLiteral}},
+                    __stepCt_{{safeId}});
             }
             """;
 

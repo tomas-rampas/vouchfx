@@ -456,7 +456,9 @@ public sealed class MqExpectKafkaProvider
         "        string[] jsonPaths,\n" +
         "        string[] jsonValueTemplates,\n" +
         "        bool avro,\n" +
-        "        string? avroRegistrySvcKey)\n" +
+        "        string? avroRegistrySvcKey,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        // AVRO path is selected when 'avro' is true.  Otherwise the PLAIN string\n" +
         "        // consumer path runs, byte-identical to the committed slice.\n" +
@@ -464,7 +466,8 @@ public sealed class MqExpectKafkaProvider
         "        {\n" +
         "            await ExpectAvroAsync(vars, secrets, outcomeKey, connKey, topic,\n" +
         "                expectKeyTemplate, payloadContainsTemplate, headerNames,\n" +
-        "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey)\n" +
+        "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey,\n" +
+        "                ct, budgetGoverned)\n" +
         "                .ConfigureAwait(false);\n" +
         "            return;\n" +
         "        }\n" +
@@ -529,7 +532,12 @@ public sealed class MqExpectKafkaProvider
         "            // Bounded per-attempt poll budget.  The RETRY runner owns the overall\n" +
         "            // timeout/backoff; this is just one attempt's drain window.\n" +
         "            var deadline = System.DateTime.UtcNow.AddSeconds(1);\n" +
-        "            while (System.DateTime.UtcNow < deadline && !matched)\n" +
+        "            // Step-timeout convention (#232): consumer.Consume(TimeSpan) is a blocking,\n" +
+        "            // synchronous call with no cancellation-token overload usable here without\n" +
+        "            // restructuring this loop's try/catch — so cooperative early-exit is added\n" +
+        "            // to the loop GUARD only.  The step token is polled between Consume() calls;\n" +
+        "            // the bounded per-attempt poll (<=1s) keeps this responsive.\n" +
+        "            while (System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
         "            {\n" +
         "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(200));\n" +
         "                if (cr is null)\n" +
@@ -737,7 +745,9 @@ public sealed class MqExpectKafkaProvider
         "        string[] headerValueTemplates,\n" +
         "        string[] jsonPaths,\n" +
         "        string[] jsonValueTemplates,\n" +
-        "        string? avroRegistrySvcKey)\n" +
+        "        string? avroRegistrySvcKey,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
@@ -802,7 +812,10 @@ public sealed class MqExpectKafkaProvider
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
         "            var deadline = System.DateTime.UtcNow.AddSeconds(1);\n" +
-        "            while (System.DateTime.UtcNow < deadline && !matched)\n" +
+        "            // Step-timeout convention (#232): see ExpectAsync's poll loop for the\n" +
+        "            // rationale — Consume(TimeSpan) stays a blocking call; cooperative\n" +
+        "            // early-exit is added to the loop GUARD only.\n" +
+        "            while (System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
         "            {\n" +
         "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(200));\n" +
         "                if (cr is null)\n" +
@@ -1036,7 +1049,9 @@ public sealed class MqExpectKafkaProvider
                     {{jsonPathsLiteral}},
                     {{jsonValueTemplatesLiteral}},
                     {{avroFlagLiteral}},
-                    {{avroRegistrySvcKeyLiteral}});
+                    {{avroRegistrySvcKeyLiteral}},
+                    __stepCt_{{safeId}},
+                    __stepBudgetGoverned_{{safeId}});
             }
             """;
 

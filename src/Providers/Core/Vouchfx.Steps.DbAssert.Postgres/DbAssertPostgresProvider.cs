@@ -290,7 +290,9 @@ public sealed class DbAssertPostgresProvider
         "        string[] paramValues,\n" +
         "        int? expectedRowCount,\n" +
         "        string[] expectColumns,\n" +
-        "        string[] expectValues)\n" +
+        "        string[] expectValues,\n" +
+        "        System.Threading.CancellationToken ct,\n" +
+        "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -330,7 +332,7 @@ public sealed class DbAssertPostgresProvider
         "        try\n" +
         "        {\n" +
         "            conn = new Npgsql.NpgsqlConnection(connStr);\n" +
-        "            await conn.OpenAsync().ConfigureAwait(false);\n" +
+        "            await conn.OpenAsync(ct).ConfigureAwait(false);\n" +
         "            var cmd = conn.CreateCommand();\n" +
         "            try\n" +
         "            {\n" +
@@ -339,13 +341,13 @@ public sealed class DbAssertPostgresProvider
         "                {\n" +
         "                    cmd.Parameters.AddWithValue(paramNames[i], (object)paramValues[i]);\n" +
         "                }\n" +
-        "                var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);\n" +
+        "                var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);\n" +
         "                try\n" +
         "                {\n" +
         "                    int actualRowCount = 0;\n" +
         "                    string? failObservation = null;\n" +
         "                    bool firstRow = true;\n" +
-        "                    while (await reader.ReadAsync().ConfigureAwait(false))\n" +
+        "                    while (await reader.ReadAsync(ct).ConfigureAwait(false))\n" +
         "                    {\n" +
         "                        actualRowCount++;\n" +
         "                        // Evaluate column expectations against the first row only.\n" +
@@ -413,6 +415,13 @@ public sealed class DbAssertPostgresProvider
         "            verdict = Vouchfx.Engine.Abstractions.Verdict.EnvironmentError;\n" +
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
+        "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the connection/protocol EnvironmentError branch below misclassifying it.\n" +
+        "            throw;\n" +
         "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
@@ -605,7 +614,8 @@ public sealed class DbAssertPostgresProvider
                     {{paramValuesLiteral}},
                     {{rowCountLiteral}},
                     {{expectColumnsLiteral}},
-                    {{expectValuesLiteral}});
+                    {{expectValuesLiteral}},
+                    __stepCt_{{safeId}}, __stepBudgetGoverned_{{safeId}});
             }
             """;
 

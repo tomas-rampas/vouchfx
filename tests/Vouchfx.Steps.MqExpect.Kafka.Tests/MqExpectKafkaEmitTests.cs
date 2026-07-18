@@ -302,9 +302,8 @@ public sealed class MqExpectKafkaEmitTests
         var fragment = _provider.Emit(model, ctx);
 
         // Assemble exactly as CsxAssembler.Assemble would.
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         // The emitted helper references Confluent.Kafka, JsonPath.Net, System.Text.Json,
         // System.Text (Encoding), System.Globalization, System.Text.RegularExpressions
@@ -387,10 +386,9 @@ public sealed class MqExpectKafkaEmitTests
             var ctx = new StubCompileContext(stepId);
             var fragment = _provider.Emit(model, ctx);
 
-            // Assemble exactly as CsxAssembler.Assemble would (same harness as test 11).
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+            // Assemble via the real CsxAssembler (same harness as test 11).
+            var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+                new[] { (stepId, fragment) }).CsxSource;
 
             var additionalRefs = new[]
             {
@@ -541,9 +539,8 @@ public sealed class MqExpectKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         var additionalRefs = new[]
         {
@@ -594,9 +591,8 @@ public sealed class MqExpectKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         var additionalRefs = new[]
         {

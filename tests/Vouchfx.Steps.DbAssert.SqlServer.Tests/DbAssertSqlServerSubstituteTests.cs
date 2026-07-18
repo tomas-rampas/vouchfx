@@ -445,10 +445,10 @@ public sealed class DbAssertSqlServerSubstituteTests
 
         var fragment = new DbAssertSqlServerProvider().Emit(model, ctx);
 
-        // Assemble exactly as CsxAssembler.Assemble would.
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        var assembled = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -457,7 +457,7 @@ public sealed class DbAssertSqlServerSubstituteTests
             typeof(System.Globalization.CultureInfo).Assembly.Location,
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
-        var compiled = Vouchfx.Engine.Compilation.RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = Vouchfx.Engine.Compilation.RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {

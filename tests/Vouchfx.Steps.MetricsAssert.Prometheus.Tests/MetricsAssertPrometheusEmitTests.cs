@@ -417,11 +417,13 @@ public sealed class MetricsAssertPrometheusEmitTests
                 new MetricsExpectation(Value: "1", Min: null, Max: null));
 
             var fragment = _provider.Emit(model, new StubCompileContext(stepId));
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+            // Splice via CsxAssembler (not a manual join) — it declares the per-step
+            // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted call
+            // site now references (§4 common step fields, issue #232).
+            var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
-            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
 
             // Stage a service base URL so the helper proceeds PAST path resolution's
             // secret check first — the path is resolved before the base-URL is even

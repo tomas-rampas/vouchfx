@@ -130,9 +130,12 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
                 Count: 1));
 
         var fragment = provider.Emit(model, new StubCompileCtx("mail-check"));
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted call
+        // site now references (§4 common step fields, issue #232).
+        var assembled = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { ("mail-check", fragment) });
 
         // Pass the provider's compile-reference assemblies so Roslyn can resolve
         // System.Net.Http.HttpClient and System.Text.Json.JsonDocument in the helper.
@@ -143,7 +146,7 @@ public sealed class MailExpectSmtpDockerTests : IAsyncLifetime
             .ToArray();
 
         var compiled = Vouchfx.Engine.Compilation.RoslynScriptCompiler.CompileOnce(
-            csx, additionalReferencePaths: refPaths);
+            assembled.CsxSource, additionalReferencePaths: refPaths);
 
         var outcomeKey = VarKeys.Outcome(CsxFragment.SanitiseId("mail-check"));
 

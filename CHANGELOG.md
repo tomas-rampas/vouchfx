@@ -15,6 +15,21 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step `timeout` is now enforced for IMMEDIATE steps** (#232) — the DSL has always documented `timeout` as
+  an upper bound on the step, but the engine wired it only as the RETRY polling window. Every step's compiled
+  body now runs inside a per-step cancellation scope: providers observe the step's token cooperatively (their
+  client calls are cut when the budget elapses), and a body that ignores the token but completes past the
+  budget has its outcome superseded. Either way the step resolves as **Inconclusive** (`step-timeout`), never
+  Fail, mirroring the RETRY window semantics (§12.1). A declared timeout becomes the step's governing bound —
+  it replaces the provider's built-in transport timeout (the previous hard-coded 30-second HTTP / 5-second AWS
+  conventions), so `timeout: 90s` now genuinely means ninety seconds; with no timeout declared, behaviour is
+  unchanged (provider transport conventions remain the de facto bound). RETRY semantics are preserved: the
+  window bounds the poll, per-attempt transport conventions still bound each attempt, and an in-flight attempt
+  is now also cut at the window's edge where the client supports cancellation. Language schema, SDK and
+  event-wire contracts are untouched.
+
 ## [1.0.0-alpha.8] — 2026-07-18
 
 A customer-journey hardening release: every advertised example now passes when actually run, the packaged

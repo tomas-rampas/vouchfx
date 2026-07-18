@@ -246,10 +246,10 @@ public sealed class DbAssertMysqlEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        // Assemble exactly as CsxAssembler.Assemble would.
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         // The emitted helper references MySqlConnector and System.Text.Json — supply
         // both as compile-time metadata references.  Neither is ever loaded into the
@@ -261,7 +261,7 @@ public sealed class DbAssertMysqlEmitTests
             typeof(System.Globalization.CultureInfo).Assembly.Location,
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
         var globals = new ScriptGlobalVariables(vars);
@@ -299,9 +299,10 @@ public sealed class DbAssertMysqlEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -310,7 +311,7 @@ public sealed class DbAssertMysqlEmitTests
             typeof(System.Globalization.CultureInfo).Assembly.Location,
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -353,9 +354,10 @@ public sealed class DbAssertMysqlEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        // Splice via CsxAssembler (not a manual join) — it declares the per-step
+        // __stepCt_<safeId> local the emitted call site now references (§4 common
+        // step fields, issue #232).
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
 
         var additionalRefs = new[]
         {
@@ -364,7 +366,7 @@ public sealed class DbAssertMysqlEmitTests
             typeof(System.Globalization.CultureInfo).Assembly.Location,
             typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         };
-        var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: additionalRefs);
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: additionalRefs);
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {

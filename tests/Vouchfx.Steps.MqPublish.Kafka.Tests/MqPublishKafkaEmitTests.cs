@@ -285,10 +285,11 @@ public sealed class MqPublishKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        // Assemble exactly as CsxAssembler.Assemble would.
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        // Assemble via the real CsxAssembler (not a manual join) — it declares the
+        // per-step __stepCt_<safeId> / __stepBudgetGoverned_<safeId> locals the emitted
+        // call site now references (§4 common step fields, issue #232).
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         // The emitted helper references Confluent.Kafka, System.Text.Json, System.Text
         // (Encoding), System.Globalization — AND (because the helper class is now
@@ -366,10 +367,9 @@ public sealed class MqPublishKafkaEmitTests
             var ctx = new StubCompileContext(stepId);
             var fragment = _provider.Emit(model, ctx);
 
-            // Assemble exactly as CsxAssembler.Assemble would (same harness as test 11).
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+            // Assemble via the real CsxAssembler (same harness as test 11).
+            var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+                new[] { (stepId, fragment) }).CsxSource;
 
             // Same reference set as test 11 (Confluent.Kafka + Avro serdes + BCL facades),
             // plus System.Text.RegularExpressions which Secret_Helpers / Substitute_Helpers
@@ -502,9 +502,8 @@ public sealed class MqPublishKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         // Supply the serdes + supporting assemblies as compile-time metadata.  The emitted
         // Avro path references Confluent.SchemaRegistry(.Serdes.Avro), Avro, Confluent.Kafka,
@@ -558,9 +557,8 @@ public sealed class MqPublishKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         var additionalRefs = new[]
         {
@@ -640,9 +638,8 @@ public sealed class MqPublishKafkaEmitTests
         var ctx = new StubCompileContext(stepId);
         var fragment = _provider.Emit(model, ctx);
 
-        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-        var helpers = string.Join("\n", fragment.RequiredHelpers);
-        var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(
+            new[] { (stepId, fragment) }).CsxSource;
 
         var additionalRefs = new[]
         {
