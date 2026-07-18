@@ -1,9 +1,17 @@
 # .github/workflows/pages.yml — vouchfx project site (GitHub Pages)
 #
-# Publishes the static landing page in `site/` PLUS the repository's markdown
-# design docs and user guides, rendered to styled HTML by
-# `scripts/build_site.py`. The markdown files stay the single source of truth;
-# this regenerates their HTML on every run, so the published docs never drift.
+# Publishes the project site — the repository's design docs, user guides,
+# and the bespoke landing page in `site/` — built with MkDocs Material
+# (`mkdocs build --strict`, run from the repo root so mkdocs.yml's
+# relative snippet and hook paths resolve). The markdown files under docs/
+# stay the single source of truth; this regenerates the static site on
+# every run, so the published docs never drift. Two MkDocs hooks
+# (scripts/site_hooks/landing.py, scripts/site_hooks/facts.py) splice the
+# landing page over the build root and resolve {{fact:...}} tokens.
+# `scripts/check_site.py` then runs as a HARD DEPLOY GATE straight after
+# the build: a non-zero exit fails the job before anything reaches Pages,
+# enforcing the confidential-content boundary, legacy-redirect presence,
+# landing-link integrity and unresolved-fact detection.
 #
 # One-time setup (repository owner): Settings → Pages → Build and deployment →
 # Source: "GitHub Actions".
@@ -19,7 +27,15 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
       - 'GOVERNANCE.md'
+      - 'mkdocs.yml'
+      # build_site.py no longer runs in CI, but its DOCS list is still the
+      # source of truth for the legacy-redirect table (scripts/site_hooks/
+      # _redirect_table.py AST-parses it at build time) — an edit to it must
+      # therefore still trigger a rebuild.
       - 'scripts/build_site.py'
+      - 'requirements-docs.txt'
+      - 'scripts/site_hooks/**'
+      - 'scripts/check_site.py'
       - 'scripts/site-tools/**'
       - '.github/workflows/pages.yml'
   # Ecosystem fan-out: a sibling repo's docs merge triggers a rebuild here so
@@ -53,6 +69,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history: the git-revision-date-localized plugin reads each
+          # page's git log to render "last updated"/"created" dates and
+          # hard-fails on a shallow clone.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -60,14 +81,17 @@ jobs:
           python-version: '3.12'
 
       - name: Install build dependencies
-        run: python -m pip install markdown==3.10.2 pygments==2.20.0
+        run: python -m pip install -r requirements-docs.txt
 
-      - name: Build site (landing page + rendered docs)
+      - name: Build site (MkDocs Material)
         env:
-          # Rate-limit headroom for fetch_facts()'s GitHub API call — the
+          # Rate-limit headroom for the facts hook's GitHub API call — the
           # default token is enough to lift the anonymous 60/hour cap.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/build_site.py _site
+        run: mkdocs build --strict
+
+      - name: Verify publication gate
+        run: python scripts/check_site.py _site
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
