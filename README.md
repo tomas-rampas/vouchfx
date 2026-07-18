@@ -36,8 +36,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all twenty-five Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB, DynamoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), metrics (Prometheus), storage (S3), HTTP (REST, SOAP), distributed tracing (OTLP), webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Vouchfx.Sdk`) is published on NuGet.org with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [`docs/accessibility.md`](docs/accessibility.md) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha` series for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
-> The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with the community registry, hub-hosted community providers, and the maintainer-awarded Vouched badge, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0 GA: validation with pilot teams, and stabilisation of the Provider SDK at 1.0.0 final (see the [roadmap](docs/roadmap.md)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Vouchfx.Sdk`) is published on NuGet.org with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [accessibility conformance](https://tomas-rampas.github.io/vouchfx/accessibility/) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha` series for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
+> The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with the community registry, hub-hosted community providers, and the maintainer-awarded Vouched badge, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0 GA: validation with pilot teams, and stabilisation of the Provider SDK at 1.0.0 final (see the [roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -110,7 +110,7 @@ dotnet format --verify-no-changes
 
 Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a blocking **build** job
 (build + format + unit tests), a blocking **memory-leak** job that runs the heap-measurement harness
-over 5,000 load-unload cycles (see [`docs/memory-harness.md`](docs/memory-harness.md) for the tool, how
+over 5,000 load-unload cycles (see [memory-harness](https://tomas-rampas.github.io/vouchfx/memory-harness/) for the tool, how
 to run it locally, and a sample passing report), and a forward-looking **integration** (Docker) job.
 
 ## Getting started
@@ -121,7 +121,7 @@ to run it locally, and a sample passing report), and a forward-looking **integra
 dotnet tool install --global vouchfx --prerelease
 ```
 
-Then start with the [Getting Started guide](docs/getting-started.md), which walks you through
+Then start with the [Getting Started guide](https://tomas-rampas.github.io/vouchfx/getting-started/), which walks you through
 your first test in 60 minutes: checking prerequisites, installing the tool (or building from source),
 authoring a minimal `.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
 generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
@@ -130,9 +130,9 @@ generate HTML and JUnit reports, and where to find the full DSL spec, recipes, a
 
 The repository includes worked scenarios demonstrating core features:
 
-- **[`examples/reference/reference.e2e.yaml`](examples/reference/reference.e2e.yaml)** — **The canonical four-technology reference scenario.** One business transaction spanning all engine capabilities: REST call (`http.rest` + `capture`), database mutation (`script.csharp` + `db-assert.postgres` over a seeded table), Kafka publish-and-consume (`mq-publish.kafka` + `mq-expect.kafka` with `verifyMode: RETRY`), and outbound webhook simulation (`script.csharp` → `webhook-listen.http` with RETRY). It also threads a `${secret:env/…}` bearer token and demonstrates cross-step placeholder substitution. See [`examples/reference/README.md`](examples/reference/README.md) for a walkthrough.
-- **[`examples/ci-reference/smoke.e2e.yaml`](examples/ci-reference/smoke.e2e.yaml)** — A minimal happy-path scenario used in CI integration tests.
-- **[`examples/getting-started/hello-world.e2e.yaml`](examples/getting-started/hello-world.e2e.yaml)** — A first-time introductory scenario from the Getting Started guide.
+- **[`examples/reference/reference.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/reference/reference.e2e.yaml)** — **The canonical four-technology reference scenario.** One business transaction spanning all engine capabilities: REST call (`http.rest` + `capture`), database mutation (`script.csharp` + `db-assert.postgres` over a seeded table), Kafka publish-and-consume (`mq-publish.kafka` + `mq-expect.kafka` with `verifyMode: RETRY`), and outbound webhook simulation (`script.csharp` → `webhook-listen.http` with RETRY). It also threads a `${secret:env/…}` bearer token and demonstrates cross-step placeholder substitution. See [`examples/reference/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/reference/README.md) for a walkthrough.
+- **[`examples/ci-reference/smoke.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/ci-reference/smoke.e2e.yaml)** — A minimal happy-path scenario used in CI integration tests.
+- **[`examples/getting-started/hello-world.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/getting-started/hello-world.e2e.yaml)** — A first-time introductory scenario from the Getting Started guide.
 
 **For real-world sample applications and comprehensive end-to-end test suites**, see the **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** repository, which includes working microservices in C#, Python, and Java with corresponding test suites demonstrating provider usage across multiple technologies.
 
@@ -155,7 +155,7 @@ jobs:
       fail-on-env-error: false
 ```
 
-The `v1-alpha` tag is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml), which force-moves them to each published release's commit; they are convenience refs, not production-grade pins.
+The `v1-alpha` tag is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml), which force-moves them to each published release's commit; they are convenience refs, not production-grade pins.
 
 **Workflow inputs.** The reusable workflow accepts these configuration inputs:
 
@@ -226,7 +226,7 @@ git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-alpha.9
 
 Depending on how a release tag was created (RELEASING.md documents both kinds), `git ls-remote --tags` prints either *two* lines for it — `refs/tags/v1.0.0-alpha.9` (an annotated tag object's own SHA) and `refs/tags/v1.0.0-alpha.9^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the single line's SHA is the commit SHA to pin.
 
-**Example.** See [`.github/workflows/vouchfx-run-reference.yml`](.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
+**Example.** See [`.github/workflows/vouchfx-run-reference.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run-reference.yml) for a worked example that calls the reusable workflow against this repository's own minimal reference suite (`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes artefacts end-to-end.
 
 ### CI integration with GitLab CI
 
@@ -249,7 +249,7 @@ vouchfx-run:
     VOUCHFX_FAIL_ON_ENV_ERROR: "false"
 ```
 
-`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](.github/workflows/move-floating-tag.yml) — convenience refs, not production-grade pins.
+`v1-alpha` is a pre-release convenience tag: it moves to track the latest `v1.0.0-alpha.N`/`-beta.N` release and will be superseded by `v1` (tracking `v1.y.z` GA releases) once v1.0.0 ships — at which point `v1-alpha` simply stops moving. Both tags are maintained by [`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml) — convenience refs, not production-grade pins.
 
 **Configuration variables.** The template accepts these configuration variables (the GitLab analogue of GitHub workflow inputs):
 
@@ -301,7 +301,7 @@ Depending on how the release tag was created (RELEASING.md documents both kinds)
 
 **Verification status (important).** The GitLab template is **static-validated only** (yamllint + GitLab CI JSON schema + behavioural-equivalence cross-check against the GitHub workflow), but has **not been run on a live GitLab instance** — a live pipeline / `ci/lint` run is an infrastructure-gated follow-up. The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed containers are reachable under sibling Docker-in-Docker** (the template sets `TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw Testcontainers) — that dind-to-DCP networking is the primary unknown.
 
-See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](ci/gitlab/vouchfx-run.gitlab-ci.yml) and [`ci/gitlab/README.md`](ci/gitlab/README.md) for the complete reference and implementation details.
+See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml) and [`ci/gitlab/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md) for the complete reference and implementation details.
 
 ## Running tests with the CLI
 
@@ -410,22 +410,22 @@ export VOUCHFX_NO_TELEMETRY=1
 vouchfx run ./tests
 ```
 
-In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. Optionally, you can drain the outbox to a backend via `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` (opt-in, HTTPS recommended, fail-silent, same allowlist); see [`docs/telemetry.md`](docs/telemetry.md) for details.
+In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. Optionally, you can drain the outbox to a backend via `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` (opt-in, HTTPS recommended, fail-silent, same allowlist); see [telemetry](https://tomas-rampas.github.io/vouchfx/telemetry/) for details.
 
-For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, backend configuration, and troubleshooting — see [`docs/telemetry.md`](docs/telemetry.md).
+For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, backend configuration, and troubleshooting — see [telemetry](https://tomas-rampas.github.io/vouchfx/telemetry/).
 
 ### Documentation roadmap
 
 **New to vouchfx?** Here is a recommended reading order:
 
-1. **[Getting Started](docs/getting-started.md)** — Your first test in 60 minutes.
+1. **[Getting Started](https://tomas-rampas.github.io/vouchfx/getting-started/)** — Your first test in 60 minutes.
 2. **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications and complete end-to-end test suites demonstrating common patterns across multiple languages.
-3. **[Recipes](docs/recipes.md)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
-4. **[Common Patterns](docs/common-patterns.md)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
-5. **[Troubleshooting](docs/troubleshooting.md)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
-6. **[Language Reference](docs/language-reference.md)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
-7. **[Technical Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
-8. **[YAML DSL Specification](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The complete `.e2e.yaml` grammar and JSON Schema.
+3. **[Recipes](https://tomas-rampas.github.io/vouchfx/recipes/)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
+4. **[Common Patterns](https://tomas-rampas.github.io/vouchfx/common-patterns/)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
+5. **[Troubleshooting](https://tomas-rampas.github.io/vouchfx/troubleshooting/)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
+6. **[Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
+7. **[Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+8. **[YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_yaml_dsl_specification_and_vscode_extension_design/)** — The complete `.e2e.yaml` grammar and JSON Schema.
 9. **[Community Provider Hub](https://github.com/tomas-rampas/vouchfx-providers)** — Community providers with the Vouched badge, with examples and the provider authoring rubric.
 
 ### Report formats
@@ -440,7 +440,7 @@ All three flags accept `--parallel` and sequential runs; none works with `--watc
 
 ## VSCode extension
 
-A VSCode extension lives at [`tools/vscode-vouchfx/`](tools/vscode-vouchfx/). It binds the frozen v1
+A VSCode extension lives at [`tools/vscode-vouchfx/`](https://github.com/tomas-rampas/vouchfx/tree/main/tools/vscode-vouchfx). It binds the frozen v1
 JSON Schema to `*.e2e.yaml` files (via the `redhat.vscode-yaml` language server), giving step-type-aware
 **autocomplete, hover, and inline validation** as you author a suite — a `.NET` CI gate keeps the editor's
 schema byte-for-byte in step with what the compiler accepts, so the editor can never suggest a construct
@@ -448,7 +448,7 @@ the engine would reject. It also provides **C# syntax highlighting** inside `scr
 **Test Explorer integration** that discovers `.e2e.yaml` files in the workspace and runs scenarios/steps
 with per-step verdicts and failing-line decoration in the editor. Full in-block C# IntelliSense
 (completion/diagnostics) is a documented fast-follow — see
-[`tools/vscode-vouchfx/docs/csharp-intellisense.md`](tools/vscode-vouchfx/docs/csharp-intellisense.md).
+[C# IntelliSense docs](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/docs/csharp-intellisense.md).
 
 ## De-risking results
 
@@ -493,17 +493,17 @@ CLAUDE.md                             operating rules and hard invariants for th
 
 ### The authoritative documents
 
-- [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](docs/01_Technical_Architecture_and_Engineering_Blueprint.md)
+- [Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/)
   — how the system is built (layers, Aspire/Testcontainers, Roslyn + memory model, security, verdict
   taxonomy, provider architecture, reporting, secrets).
-- [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)
+- [YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_yaml_dsl_specification_and_vscode_extension_design/)
   — the `.e2e.yaml` grammar, JSON Schema, and the VSCode/LSP extension design.
-- [`docs/language-reference.md`](docs/language-reference.md) — the per-step-type field reference
+- [Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/) — the per-step-type field reference
   (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
   frozen by a golden gate, so it can never drift from what the compiler accepts.
-- [`docs/roadmap.md`](docs/roadmap.md) — the public roadmap: what has shipped, what v1.0 still
+- [Roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/) — the public roadmap: what has shipped, what v1.0 still
   needs, what v1.x adds next, and the permanent open-source feature boundary.
-- [`CHANGELOG.md`](CHANGELOG.md) — the delivered-capability record, seeding each release's notes.
+- [Changelog](https://tomas-rampas.github.io/vouchfx/changelog/) — the delivered-capability record, seeding each release's notes.
 
 ## Reserved namespaces
 
@@ -527,17 +527,17 @@ engine internals.
 
 ## Contributing
 
-**Writing a provider?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Vouchfx.Sdk` project (published on NuGet.org), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for an end-to-end walkthrough.
+**Writing a provider?** See [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Vouchfx.Sdk` project (published on NuGet.org), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for an end-to-end walkthrough.
 
-**Contributing to the platform engine?** Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), [`GOVERNANCE.md`](GOVERNANCE.md), and the [public roadmap](docs/roadmap.md) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
+**Contributing to the platform engine?** Start with [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md), [Governance](https://github.com/tomas-rampas/vouchfx/blob/main/GOVERNANCE.md), and the [public roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md). Documentation prose is British English.
 
 ## AI assistance
 
-Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [`CLAUDE.md`](CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. §1.2 of the [Architecture Blueprint](docs/01_Technical_Architecture_and_Engineering_Blueprint.md) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
+Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. The [Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_technical_architecture_and_engineering_blueprint/) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
 
 ## Security
 
-For information on how to report a security vulnerability, please refer to [`SECURITY.md`](SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
+For information on how to report a security vulnerability, please refer to [SECURITY.md](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md). vouchfx takes security seriously and operates a private coordinated-disclosure process via GitHub security advisories.
 
 Releases are signed keylessly using [Sigstore](https://sigstore.dev/) (OIDC/Fulcio) with verifiable provenance attestations, and the nupkg is published to NuGet.org via Trusted Publishing (OIDC); no long-lived signing or publishing keys are managed. Consumers can verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing and publishing pipeline (`.github/workflows/release.yml`) produces every release.
 
@@ -558,7 +558,7 @@ cosign verify-blob vouchfx.1.2.3.nupkg \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Replace the filename with whichever artefact you are verifying (e.g. `vouchfx-1.2.3-linux-x64.tar.gz`, `vouchfx-1.2.3-win-x64.msi`). For complete verification procedures, including optional GPG signatures and SBOM inspection, see [`RELEASING.md`](RELEASING.md).
+Replace the filename with whichever artefact you are verifying (e.g. `vouchfx-1.2.3-linux-x64.tar.gz`, `vouchfx-1.2.3-win-x64.msi`). For complete verification procedures, including optional GPG signatures and SBOM inspection, see [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md).
 
 **Distribution note:** vouchfx is distributed as the `dotnet` global tool (nupkg, primary), plus multi-file self-contained per-OS executables (`.tar.gz`, `.msi`, `.deb`, `.pkg`). Single-file self-contained builds are not produced — the Roslyn compiler discovers provider assemblies via `Assembly.Location`, which returns an empty string in single-file mode, breaking provider loading.
 

@@ -623,7 +623,7 @@ steps:
 - **Avro codec (advanced):** The `avro` field (with `schemaRegistry`, `subject`, `schema`, and `record` sub-fields) allows publishing and consuming Avro-encoded messages via Confluent Schema Registry.
 - **Polling:** `verifyMode: RETRY` polls the Kafka broker until a matching message is found or the timeout expires. Each poll is independent, so the message is re-evaluated on every attempt.
 
-**For a complete runnable example,** see the Kafka publish/expect steps in [`examples/reference/reference.e2e.yaml`](../examples/reference/reference.e2e.yaml) and the orders-dotnet sample in the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet) repository.
+**For a complete runnable example,** see the Kafka publish/expect steps in [`examples/reference/reference.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/reference/reference.e2e.yaml) and the orders-dotnet sample in the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet) repository.
 
 ---
 
@@ -688,7 +688,7 @@ steps:
 - **Durability:** RabbitMQ queues can be transient or durable (persisting across broker restarts). Declare test queues **durable** unless they are exclusive: RabbitMQ 4.x deprecates transient non-exclusive queues and refuses the declaration outright (AMQP 541 `INTERNAL_ERROR`, `transient_nonexcl_queues`). Durability costs nothing in a throwaway test container.
 - **Message consumption:** The `mq-expect.rabbitmq` step peeks the queue without consuming (deleting) the message, so multiple assertions on the same queue in the same scenario will all see the same messages.
 
-**For a complete runnable example,** see [`examples/mq-rabbitmq.e2e.yaml`](../examples/mq-rabbitmq.e2e.yaml) and the inventory-python sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/mq-rabbitmq.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/mq-rabbitmq.e2e.yaml) and the inventory-python sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/inventory-python). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -768,7 +768,7 @@ steps:
 - **Message ordering:** JetStream guarantees FIFO ordering within a subject. If you publish multiple messages to the same subject, the consumer will see them in order.
 - **Cross-scenario isolation:** Because the retained log persists across assertions within a scenario, **do not reuse a single NATS dependency across multiple sequential scenarios on the same subject.** Use separate `nats` dependency declarations per scenario, or assign unique `stream` names if you must reuse the dependency.
 
-**For a complete runnable example,** see [`examples/mq-nats.e2e.yaml`](../examples/mq-nats.e2e.yaml) and the payments-java sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/payments-java). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/mq-nats.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/mq-nats.e2e.yaml) and the payments-java sample in [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/payments-java). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -874,7 +874,7 @@ steps:
 - **Properties:** Custom application-level properties (key-value pairs) are set via the `properties` map on the publish step and matched via `expectProperties` on the assert step.
 - **Emulator setup:** The emulator requires Docker and automatically starts a SQL Server container for persistence. If using a live Azure Service Bus, provide a valid connection string via the `environment` or `${secret:}` injection.
 
-**For a complete runnable example,** see [`examples/mq-azureservicebus.e2e.yaml`](../examples/mq-azureservicebus.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/mq-azureservicebus.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/mq-azureservicebus.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -976,7 +976,7 @@ steps:
 - **Placeholders:** The `key`, `field`, and expected `value` may all contain `{placeholder}` tokens that are substituted at execution time.
 - **Exact-match vs. exists:** For string values (GET), `expect.value` is an ordinal equality check. For presence checks (EXISTS), use `expect.exists: true/false`.
 
-**For a complete runnable example,** see [`examples/cache-assert-redis.e2e.yaml`](../examples/cache-assert-redis.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/cache-assert-redis.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/cache-assert-redis.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -1048,7 +1048,7 @@ steps:
 - **Placeholders:** The `query` body may contain `{placeholder}` tokens, which are substituted into the JSON structure at execution time.
 - **Idempotent polling:** `verifyMode: RETRY` is ideal for indexing assertions, because newly indexed documents may take a moment to become searchable.
 
-**For a complete runnable example,** see [`examples/cache-assert-elasticsearch.e2e.yaml`](../examples/cache-assert-elasticsearch.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/cache-assert-elasticsearch.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/cache-assert-elasticsearch.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -1127,7 +1127,7 @@ steps:
 - **Polling:** `verifyMode: RETRY` is essential for email testing, because SMTP delivery is asynchronous.
 - **SUT configuration:** Ensure your system-under-test reads the SMTP host and port from the environment (e.g., `${conn:mail.host}` and `${conn:mail.port}` injected as env vars). Without this, the SUT cannot connect to Mailpit.
 
-**For a complete runnable example,** see [`examples/mail-expect-smtp.e2e.yaml`](../examples/mail-expect-smtp.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
+**For a complete runnable example,** see [`examples/mail-expect-smtp.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/mail-expect-smtp.e2e.yaml). (The linked file is the standalone runnable variant: its comments explain how the in-suite write or publish stands in for the real-SUT behaviour shown in this recipe.)
 
 ---
 
@@ -1179,7 +1179,7 @@ The workflow always publishes artifacts (even on failure, via `if: always()`):
 | 3 | EnvironmentError (infrastructure breakage) | Only if `fail-on-env-error: true` |
 | 4 | Inconclusive (timeout, unmet captures) | Only if `fail-on-inconclusive: true` |
 
-For the full reference, see [`README.md` § CI integration with GitHub Actions](../README.md#ci-integration-with-github-actions) and [`.github/workflows/vouchfx-run.yml`](../.github/workflows/vouchfx-run.yml).
+For the full reference, see [project README § CI integration with GitHub Actions](project-readme.md#ci-integration-with-github-actions) and [`.github/workflows/vouchfx-run.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run.yml).
 
 ---
 
@@ -1227,7 +1227,7 @@ Reports are published to the job's default artifact path (native GitLab test-rep
 
 **Verification status:** The GitLab template is static-validated (schema, behavioural equivalence) but has not been run on a live GitLab instance — a live pipeline run is a follow-up. The primary unknown is whether vouchfx's Aspire/DCP-managed containers are reachable under dind (set `TESTCONTAINERS_HOST_OVERRIDE=docker` in the template).
 
-For the full reference, see [`README.md` § CI integration with GitLab CI](../README.md#ci-integration-with-gitlab-ci) and [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](../ci/gitlab/vouchfx-run.gitlab-ci.yml).
+For the full reference, see [project README § CI integration with GitLab CI](project-readme.md#ci-integration-with-gitlab-ci) and [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml).
 
 ---
 

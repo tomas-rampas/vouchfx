@@ -1097,4 +1097,4 @@ The engine attempted to clear a dependency's state between scenarios (the reset 
 - **[Common Patterns](common-patterns.md)** — Authoring patterns and step structure.
 - **[Language Reference](language-reference.md)** — Complete field reference for every step type.
 - **[Technical Architecture Blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md)** — How the system works (Aspire, Roslyn, memory model, verdict taxonomy, secrets).
-- **[README.md](../README.md)** — Building and running vouchfx, CLI reference, exit codes.
+- **[Project README](project-readme.md)** — Building and running vouchfx, CLI reference, exit codes.
