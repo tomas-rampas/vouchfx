@@ -30,10 +30,10 @@ user hits them in production:
       deliberately stricter than the fact-injection machinery it backstops;
   (e2) site/facts-fallback.json (build tooling, not a page) never ships —
       see `check_no_facts_fallback_leak`;
-  (g) every legacy .html URL the outgoing custom generator used to publish
+  (f) every legacy .html URL the outgoing custom generator used to publish
       still resolves, via a redirect stub, to its new MkDocs URL — see
       `check_legacy_redirects`;
-  (f) the key user-facing pages exist at their new directory-URL
+  (g) the key user-facing pages exist at their new directory-URL
       locations;
   (h) no built text-like output references the retired
       tomas-rampas.github.io Pages host — see `check_no_legacy_domain`;
