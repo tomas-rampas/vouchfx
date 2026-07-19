@@ -49,13 +49,14 @@ assumed:
       listed order both times.
 
 mkdocs.yml must therefore list this AFTER landing.py (and before
-redirects.py, though that hook has no dependency on this one running
+redirects.py and sitemap.py, though those hooks have no dependency on this one running
 first — see redirects.py's own docstring):
 
     hooks:
         - scripts/site_hooks/landing.py
         - scripts/site_hooks/facts.py
         - scripts/site_hooks/redirects.py
+        - scripts/site_hooks/sitemap.py
 
 Scope note (revised): this applies facts to every TEXT-LIKE file under
 site_dir — html/js/json/xml/txt, the exact same surface

@@ -28,10 +28,15 @@ config = SiteConfig(
     portal_html=...,         # the docs.html portal template
     meta_description_prefix=...,
     # optional: extra, skip, skip_prefixes, fact_overrides,
-    # delete_facts_fallback — see the SiteConfig docstring.
+    # delete_facts_fallback, site_url — see the SiteConfig docstring.
 )
 build(config, out_dir)
 ```
+
+The `site_url` optional parameter, when set, directs `build()` to emit
+`robots.txt` and `sitemap.xml` with the site root as a bare origin URL; it
+also provides a per-page `{canonical}` value for use in `page_template`.
+Unset, the pre-existing behaviour applies (no SEO files generated).
 
 ## How the satellite repos consume this package
 

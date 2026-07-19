@@ -25,9 +25,9 @@ scripts/site_hooks/_redirect_table.py, the single source of truth this
 hook shares with scripts/check_site.py's own verification of the same
 table.
 
-Registered LAST in mkdocs.yml's hooks: list (after landing.py and
-facts.py). Not because correctness requires it — this hook's stub content
-has no dependency on either of the other two hooks having run — but so
+Registered third of four in mkdocs.yml's hooks: list (after landing.py and
+facts.py, before sitemap.py). Not because correctness requires it — this hook's stub
+content has no dependency on the other three hooks having run — but so
 its collision check below (refuse to overwrite anything already present)
 sees the complete, final build: everything MkDocs itself wrote, everything
 landing.py copied in, and everything facts.py substituted, all before this
@@ -38,6 +38,7 @@ hook decides whether writing a stub anywhere would clobber something real.
             - scripts/site_hooks/landing.py
             - scripts/site_hooks/facts.py
             - scripts/site_hooks/redirects.py
+            - scripts/site_hooks/sitemap.py
 """
 from __future__ import annotations
 
