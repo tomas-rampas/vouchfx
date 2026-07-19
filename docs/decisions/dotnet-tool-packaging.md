@@ -54,7 +54,7 @@ The embedded DCP path metadata resolves into the per-user NuGet cache at `~/.nug
 
 A truly fresh machine that has **only** the .NET 8 runtime installed and has never resolved the Aspire orchestration packages will **not** have the DCP binaries on the embedded path and the tool will fail to start topologies.
 
-**Frame for users:** the `dotnet global tool` is the primary distribution channel for .NET-SDK-equipped developers and CI pipelines (which already have Aspire/Testcontainers in their dependency graphs). For the zero-prerequisite, self-contained experience (a machine with only the OS and no .NET SDK), use the per-OS native executables produced by the release pipeline (forthcoming).
+**Frame for users:** the `dotnet global tool` is the primary distribution channel for .NET-SDK-equipped developers and CI pipelines (which already have Aspire/Testcontainers in their dependency graphs). For the zero-prerequisite, self-contained experience (a machine with only the OS and no .NET SDK), use the per-OS native executables produced by the release pipeline (attached to each GitHub release: archives and installers, cosign-signed).
 
 ### Package Size
 
