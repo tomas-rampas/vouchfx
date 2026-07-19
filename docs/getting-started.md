@@ -203,7 +203,7 @@ src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started
 
 (On Windows the binary is `vouchfx.exe`, so the command is `…\net8.0\vouchfx.exe run examples\getting-started`.)
 
-**Tip:** Add the `bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
+**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
 
 ```bash
 dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run "$(pwd)/examples/getting-started"
