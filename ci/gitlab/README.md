@@ -84,15 +84,16 @@ ports the topology publishes on the sibling dind service.
 
 ## Build-from-source install
 
-vouchfx is **not yet** a published `dotnet tool` or container — it is an Aspire-host
-executable (`src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj`, `OutputType Exe`, `IsAspireHost`). So
-the template **builds it from source**: it `git clone`s `VOUCHFX_REPO_URL` at `VOUCHFX_REF`
-into `.vouchfx-src`, runs `dotnet build … -c Release`, then invokes the CLI with
-`dotnet run --project … --no-build`. Real packaging (a published binary / container image)
-is a **forward-ready packaged-release dependency** — exactly as in the GitHub template. When it
-lands, a consumer keeps this same template contract and overrides `VOUCHFX_REPO_URL` /
-`VOUCHFX_REF` to track the packaged release; the install step is intentionally the only
-thing that changes.
+vouchfx is published as a **NuGet global tool** and can be installed locally with
+`dotnet tool install --global vouchfx --prerelease` (the recommended approach for running
+suites locally). This template nevertheless **deliberately builds vouchfx from source** at a
+pinned reference: it `git clone`s `VOUCHFX_REPO_URL` at `VOUCHFX_REF` into `.vouchfx-src`,
+runs `dotnet build … -c Release`, then invokes the CLI with `dotnet run --project … --no-build`.
+Pinning the `include:` `ref:` and `VOUCHFX_REF` together keeps the engine and template in
+lock-step; a SHA or tag-pinned source build is an immutable supply-chain reference, exactly as
+in the GitHub template. A consumer tracking a released engine pins `VOUCHFX_REF` to the release
+tag (e.g. `v1.0.0-alpha.9`), still as a source build. A packaged-tool install could become an
+optional mode later; the install step is intentionally the only thing that would change.
 
 ## Exit-code gating (verdict taxonomy §12.1)
 
@@ -105,7 +106,9 @@ thing that changes.
 | 4 | Inconclusive | only with `VOUCHFX_FAIL_ON_INCONCLUSIVE` truthy |
 
 A non-zero exit fails the job — so a product **Fail** gates the consumer's CI by default,
-infra errors / inconclusives only on opt-in.
+infra errors / inconclusives only on opt-in. The run step also echoes the vouchfx exit code
+and its taxonomy legend on every run, pass or fail, so the job log always records both the
+verdict token and the numeric code.
 
 ## Artefacts
 
@@ -145,7 +148,7 @@ supply digests — mirroring the GitHub header guidance.)
 | Injection-safety | inputs bound to `env:`, dereferenced (not `${{ }}`-spliced) | values dereferenced as `"$VAR"` / iterated via env (not spliced) |
 | Artefacts | `if: always()` upload `results.xml`+`report.html`, `retention-days: 7` | `when: always` `paths: [results.xml, report.html]`, `expire_in: 7 days` |
 | Native test report | (consumer wires `dorny/test-reporter` etc.) | `reports: junit: results.xml` (native) |
-| Packaging note | build-from-source; packaged-release forward-ready | build-from-source; packaged-release forward-ready |
+| Packaging note | build-from-source by design; packaged NuGet tool available for local use | build-from-source by design; packaged NuGet tool available for local use |
 
 ## Validation status
 

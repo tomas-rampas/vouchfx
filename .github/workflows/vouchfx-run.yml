@@ -7,15 +7,20 @@
 # reference caller in .github/workflows/vouchfx-run-reference.yml).
 #
 # ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
-# vouchfx is NOT (yet) a published `dotnet tool` or container — it is an Aspire-host
-# executable (src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj, OutputType Exe, IsAspireHost).
-# So by default this workflow INSTALLS vouchfx by building it from source: it checks
-# out the vouchfx repository at a pinned ref (`vouchfx-repo` / `vouchfx-ref`), runs
-# `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
-#   Real packaging (a published binary / container image) is a LATER
-#   dependency.  When it lands, a consumer can keep this same workflow contract and
-#   simply override `vouchfx-repo` / `vouchfx-ref` to track the packaged release —
-#   the install step is intentionally the only thing that changes.
+# vouchfx IS published as a NuGet global tool — `dotnet tool install --global vouchfx
+# --prerelease` (docs/getting-started.md) is the recommended way to run suites locally.
+# It is not published as a container image.
+#   This workflow nevertheless DELIBERATELY installs by building from source at a
+#   pinned ref, rather than installing the packaged tool: the default `vouchfx-ref` is
+#   this workflow's own SHA (`github.sha`), keeping the engine and the workflow
+#   definition in lock-step — which is also what lets the vouchfx repository's own CI
+#   gate unreleased engine commits with this same workflow — and a SHA/tag-pinned
+#   source build is an immutable supply-chain reference, consistent with this header's
+#   pinning rules (see below).
+#   A consumer tracking a released engine pins `vouchfx-ref` to the release tag (e.g.
+#   `v1.0.0-alpha.9`) — still a source build. Installing the packaged tool instead
+#   could become an optional install mode later; the install step is intentionally the
+#   only thing that would change.
 #
 # ── Supply-chain hygiene (please read before calling this workflow) ─────────────────
 #   • PIN the `uses:` reference to a full commit SHA, NOT a moving branch or tag, e.g.
@@ -80,7 +85,8 @@ on:
         description: >-
           The `owner/name` of the repository to obtain vouchfx from (build-from-source
           install). Defaults to this repository. Override (with vouchfx-ref) to track a
-          different fork, or — once real packaging ships — a packaged release.
+          different fork, or to pin to a specific release tag while still building from
+          source.
         type: string
         required: false
         default: ${{ github.repository }}
@@ -201,8 +207,8 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # 2. Check out the vouchfx SOURCE at the requested repo/ref into a sibling path, so
-      #    building the engine never collides with the consumer's own files. (Real
-      #    packaging will later replace this build-from-source step; see the header.)
+      #    building the engine never collides with the consumer's own files. The
+      #    build-from-source install is deliberate, not a stopgap; see the header.
       - name: Check out vouchfx source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
