@@ -174,6 +174,8 @@ To run a single file instead of a directory, specify it directly:
 vouchfx run examples/getting-started/hello-world.e2e.yaml
 ```
 
+These commands run the repository's bundled copy of the example; if you authored your own `hello-world.e2e.yaml` elsewhere (as in the previous section), point `vouchfx run` at that file or directory instead.
+
 This command:
 
 1. Discovers all `.e2e.yaml` files in `examples/getting-started/` (or runs the single file if given).
