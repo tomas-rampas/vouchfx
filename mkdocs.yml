@@ -1,8 +1,12 @@
 site_name: vouchfx
+# REQ-008 (specs/seo-custom-domains.md): leads with the mandatory anchor
+# phrase "end-to-end integration testing framework", states the .NET
+# foundation, and names the polyglot reach — 147 chars, under the 160-char
+# meta-description budget.
 site_description: >-
-  Declarative .e2e.yaml end-to-end tests for distributed .NET systems, compiled to
-  memory-safe C# and orchestrated with .NET Aspire and Testcontainers.
-site_url: https://tomas-rampas.github.io/vouchfx/
+  The end-to-end integration testing framework built on .NET, for services in
+  any language (Java, Kotlin, Python, Go, Node.js) running as containers.
+site_url: https://vouchfx.io/
 repo_url: https://github.com/tomas-rampas/vouchfx
 repo_name: tomas-rampas/vouchfx
 edit_uri: edit/main/docs/
@@ -21,23 +25,31 @@ exclude_docs: |
 # which copies the bespoke site/ landing page over the root of the build
 # after MkDocs finishes writing every other page.
 #
-# ORDER MATTERS: MkDocs fires same-event hooks (all three implement
-# on_post_build) in exactly the order listed here — verified against
-# mkdocs' own source (config_options.Hooks.post_validation appends each
-# hook module, in list order, into the same PluginCollection regular
-# plugins use) and empirically with throwaway hooks in both list orders.
-#   1. landing.py   copies site/index.html (and companions) into the build.
+# ORDER MATTERS for the first three (all four implement on_post_build, fired
+# in exactly the order listed here — verified against mkdocs' own source
+# (config_options.Hooks.post_validation appends each hook module, in list
+# order, into the same PluginCollection regular plugins use) and empirically
+# with throwaway hooks in both list orders.
+#   1. landing.py   copies site/index.html (and companions — including the
+#                    site/robots.txt and site/llms.txt REQ-003/REQ-011
+#                    companions) into the build.
 #   2. facts.py     substitutes {{fact:KEY}} tokens across every built
 #                    text-like file, including the one landing.py just
 #                    copied in — it MUST run after landing.py, or
 #                    index.html won't exist yet to substitute into.
 #   3. redirects.py writes legacy-URL redirect stubs, and refuses to
-#                    overwrite anything already present — it runs LAST so
-#                    its collision check sees the complete, final build.
+#                    overwrite anything already present — it runs after
+#                    landing.py and facts.py so its collision check sees
+#                    the complete, final build those two produce.
+#   4. sitemap.py   tops up MkDocs' own sitemap.xml (written before any
+#                    on_post_build hook runs) with the site-root <loc> entry
+#                    EDGE-001 requires. Independent of 1-3 (no read/write
+#                    dependency either way) — listed last by convention only.
 hooks:
   - scripts/site_hooks/landing.py
   - scripts/site_hooks/facts.py
   - scripts/site_hooks/redirects.py
+  - scripts/site_hooks/sitemap.py
 
 theme:
   name: material

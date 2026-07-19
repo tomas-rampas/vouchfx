@@ -5,7 +5,7 @@
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftomas-rampas%2Fvouchfx%2Fbadges%2Fcoverage-endpoint.json)](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml?query=branch%3Amain)
 [![NuGet (prerelease)](https://img.shields.io/nuget/vpre/vouchfx)](https://www.nuget.org/packages/vouchfx)
 [![Core providers](https://img.shields.io/badge/providers-25_core-blue)](https://github.com/tomas-rampas/vouchfx-providers)
-[![Docs](https://img.shields.io/badge/docs-GitHub_Pages-blue)](https://tomas-rampas.github.io/vouchfx/)
+[![Docs](https://img.shields.io/badge/docs-GitHub_Pages-blue)](https://vouchfx.io/)
 [![License](https://img.shields.io/github/license/tomas-rampas/vouchfx)](https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE)
 
 **End-to-end integration testing for distributed systems, authored in YAML.**
@@ -36,8 +36,8 @@ author .e2e.yaml → validate vs JSON Schema → compile YAML→AST→CSX→Rosl
 > with Aspire and Testcontainers, executes all twenty-five Core providers across database (PostgreSQL, SQL Server, MySQL, MongoDB, DynamoDB),
 > cache and search (Redis, Elasticsearch), messaging (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), metrics (Prometheus), storage (S3), HTTP (REST, SOAP), distributed tracing (OTLP), webhooks, and scripts end-to-end with
 > declarative seeding, `${secret:env/…}` and `${secret:vault/…}` resolution, engine-owned RETRY polling (Polly v8)
-> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Vouchfx.Sdk`) is published on NuGet.org with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [accessibility conformance](https://tomas-rampas.github.io/vouchfx/accessibility/) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha` series for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
-> The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with the community registry, hub-hosted community providers, and the maintainer-awarded Vouched badge, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0 GA: validation with pilot teams, and stabilisation of the Provider SDK at 1.0.0 final (see the [roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
+> with per-attempt timeline and captured-variable provenance rendering, and emits a schema-versioned JSON Lines event stream persisted to a file (`--events`) and rendered to the terminal (with a plain-text `--no-decorations` mode for WCAG 1.4.1 screen-reader compatibility), a WCAG 2.1 AA self-contained HTML report, and JUnit XML for CI. The v1 JSON Schema and v1 provider/event contract are frozen, the Provider SDK (`Vouchfx.Sdk`) is published on NuGet.org with developer guidance and worked-example providers, and scenarios can run in parallel with topology-per-scenario isolation (`vouchfx run --parallel <n>`) or in watch mode for local iteration (`vouchfx run --watch`). A headless CLI runner discovers and selects scenarios by tag, owner, path, or git change-set, with per-scenario isolation and taxonomy-aware exit codes (0 = Pass/EnvironmentError/Inconclusive by default; 1 = Fail; 3 = EnvironmentError if `--fail-on-env-error`; 4 = Inconclusive if `--fail-on-inconclusive`). A VSCode extension provides schema-driven YAML autocomplete and validation, C# syntax highlighting in `script.csharp` blocks, and Test Explorer integration with per-step verdicts and line-level failure decoration (see [accessibility conformance](https://vouchfx.io/accessibility/) for the WCAG 2.1 AA conformance record; full in-block C# IntelliSense is a documented fast-follow). The four-technology reference scenario (REST, Kafka, PostgreSQL, webhook) is green from both the VSCode editor and the CLI; the secret-redaction path has passed a penetration test; and the release pipeline has shipped the `v1.0.0-alpha` series for real — a signed nupkg on NuGet.org (Trusted Publishing, no long-lived keys), per-OS self-contained archives and MSI/deb/pkg installers, CycloneDX SBOMs, SLSA provenance and keyless cosign signatures on every artefact, with certificate-based signing (Authenticode, notarisation, GPG) secret-gated until those certificates are provisioned.
+> The [community provider hub](https://github.com/tomas-rampas/vouchfx-providers) is live with the community registry, hub-hosted community providers, and the maintainer-awarded Vouched badge, and the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository provides real-world sample applications and end-to-end test suites. Remaining for v1.0 GA: validation with pilot teams, and stabilisation of the Provider SDK at 1.0.0 final (see the [roadmap](https://vouchfx.io/roadmap/)). The engine targets **.NET 8 LTS**, shipped as a `dotnet` global tool plus a VSCode extension.
 
 ## How it works
 
@@ -110,7 +110,7 @@ dotnet format --verify-no-changes
 
 Continuous integration (GitHub Actions, `.github/workflows/build.yml`) runs a blocking **build** job
 (build + format + unit tests), a blocking **memory-leak** job that runs the heap-measurement harness
-over 5,000 load-unload cycles (see [memory-harness](https://tomas-rampas.github.io/vouchfx/memory-harness/) for the tool, how
+over 5,000 load-unload cycles (see [memory-harness](https://vouchfx.io/memory-harness/) for the tool, how
 to run it locally, and a sample passing report), and a forward-looking **integration** (Docker) job.
 
 ## Getting started
@@ -121,7 +121,7 @@ to run it locally, and a sample passing report), and a forward-looking **integra
 dotnet tool install --global vouchfx --prerelease
 ```
 
-Then start with the [Getting Started guide](https://tomas-rampas.github.io/vouchfx/getting-started/), which walks you through
+Then start with the [Getting Started guide](https://vouchfx.io/getting-started/), which walks you through
 your first test in 60 minutes: checking prerequisites, installing the tool (or building from source),
 authoring a minimal `.e2e.yaml` file, running it, and interpreting the verdict. It covers the four verdict types, how to
 generate HTML and JUnit reports, and where to find the full DSL spec, recipes, and architecture docs.
@@ -410,22 +410,22 @@ export VOUCHFX_NO_TELEMETRY=1
 vouchfx run ./tests
 ```
 
-In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. Optionally, you can drain the outbox to a backend via `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` (opt-in, HTTPS recommended, fail-silent, same allowlist); see [telemetry](https://tomas-rampas.github.io/vouchfx/telemetry/) for details.
+In v1, events are persisted to a local JSON Lines file in your per-user config directory (`%APPDATA%\vouchfx\telemetry-outbox.jsonl` on Windows, `~/.config/vouchfx/telemetry-outbox.jsonl` on Linux/macOS) and are fully under your control. Optionally, you can drain the outbox to a backend via `VOUCHFX_TELEMETRY_ENDPOINT` and `VOUCHFX_TELEMETRY_TOKEN` (opt-in, HTTPS recommended, fail-silent, same allowlist); see [telemetry](https://vouchfx.io/telemetry/) for details.
 
-For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, backend configuration, and troubleshooting — see [telemetry](https://tomas-rampas.github.io/vouchfx/telemetry/).
+For complete information — the exact allowlist, where data is stored, the install-identifier lifecycle, backend configuration, and troubleshooting — see [telemetry](https://vouchfx.io/telemetry/).
 
 ### Documentation roadmap
 
 **New to vouchfx?** Here is a recommended reading order:
 
-1. **[Getting Started](https://tomas-rampas.github.io/vouchfx/getting-started/)** — Your first test in 60 minutes.
+1. **[Getting Started](https://vouchfx.io/getting-started/)** — Your first test in 60 minutes.
 2. **[vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples)** — Real-world sample applications and complete end-to-end test suites demonstrating common patterns across multiple languages.
-3. **[Recipes](https://tomas-rampas.github.io/vouchfx/recipes/)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
-4. **[Common Patterns](https://tomas-rampas.github.io/vouchfx/common-patterns/)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
-5. **[Troubleshooting](https://tomas-rampas.github.io/vouchfx/troubleshooting/)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
-6. **[Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
-7. **[Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
-8. **[YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)** — The complete `.e2e.yaml` grammar and JSON Schema.
+3. **[Recipes](https://vouchfx.io/recipes/)** — Task-oriented examples: seeding with SQL, test doubles (WireMock), injecting secrets, CI integration.
+4. **[Common Patterns](https://vouchfx.io/common-patterns/)** — Authoring patterns: the file structure, state threading with captures and placeholders, selecting scenarios, multi-step workflows, configuring services from the environment.
+5. **[Troubleshooting](https://vouchfx.io/troubleshooting/)** — Real failure modes and how to fix them (Docker not running, the Aspire 20s cold-start gotcha, path resolution, verdicts, etc.).
+6. **[Language Reference](https://vouchfx.io/language-reference/)** — Per-step-type field reference (required/optional, types, descriptions). Auto-generated from the schema and always in sync.
+7. **[Technical Architecture Blueprint](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/)** — How the system works (layers, Aspire/Testcontainers, Roslyn + memory model, verdict taxonomy, provider architecture, secrets, security).
+8. **[YAML DSL Specification](https://vouchfx.io/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)** — The complete `.e2e.yaml` grammar and JSON Schema.
 9. **[Community Provider Hub](https://github.com/tomas-rampas/vouchfx-providers)** — Community providers with the Vouched badge, with examples and the provider authoring rubric.
 
 ### Report formats
@@ -493,17 +493,17 @@ CLAUDE.md                             operating rules and hard invariants for th
 
 ### The authoritative documents
 
-- [Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/)
+- [Technical Architecture Blueprint](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/)
   — how the system is built (layers, Aspire/Testcontainers, Roslyn + memory model, security, verdict
   taxonomy, provider architecture, reporting, secrets).
-- [YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)
+- [YAML DSL Specification](https://vouchfx.io/02_YAML_DSL_Specification_and_VSCode_Extension_Design/)
   — the `.e2e.yaml` grammar, JSON Schema, and the VSCode/LSP extension design.
-- [Language Reference](https://tomas-rampas.github.io/vouchfx/language-reference/) — the per-step-type field reference
+- [Language Reference](https://vouchfx.io/language-reference/) — the per-step-type field reference
   (required/optional fields, types, descriptions). Auto-generated from the composed v1 JSON Schema and
   frozen by a golden gate, so it can never drift from what the compiler accepts.
-- [Roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/) — the public roadmap: what has shipped, what v1.0 still
+- [Roadmap](https://vouchfx.io/roadmap/) — the public roadmap: what has shipped, what v1.0 still
   needs, what v1.x adds next, and the permanent open-source feature boundary.
-- [Changelog](https://tomas-rampas.github.io/vouchfx/changelog/) — the delivered-capability record, seeding each release's notes.
+- [Changelog](https://vouchfx.io/changelog/) — the delivered-capability record, seeding each release's notes.
 
 ## Reserved namespaces
 
@@ -521,19 +521,19 @@ engine internals.
 
 ## Related repositories
 
-- **[vouchfx-providers](https://tomas-rampas.github.io/vouchfx-providers/)** — The community provider hub. Hosts community providers, with PR-gated conformance testing and the Vouched badge rubric. ([source](https://github.com/tomas-rampas/vouchfx-providers))
-- **[vouchfx-samples](https://tomas-rampas.github.io/vouchfx-samples/)** — Four production-grade sample applications (C#, Python, Node.js, Java) and complete end-to-end test suites demonstrating common patterns and provider usage. ([source](https://github.com/tomas-rampas/vouchfx-samples))
-- **[vouchfx-telemetry-backend](https://tomas-rampas.github.io/vouchfx-telemetry-backend/)** — The optional, privacy-first, self-hostable telemetry backend. Why telemetry, deployment, outbox verification, and privacy guarantees. ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend))
+- **[vouchfx-providers](https://providers.vouchfx.io/)** — The community provider hub. Hosts community providers, with PR-gated conformance testing and the Vouched badge rubric. ([source](https://github.com/tomas-rampas/vouchfx-providers))
+- **[vouchfx-samples](https://samples.vouchfx.io/)** — Four production-grade sample applications (C#, Python, Node.js, Java) and complete end-to-end test suites demonstrating common patterns and provider usage. ([source](https://github.com/tomas-rampas/vouchfx-samples))
+- **[vouchfx-telemetry-backend](https://telemetry.vouchfx.io/)** — The optional, privacy-first, self-hostable telemetry backend. Why telemetry, deployment, outbox verification, and privacy guarantees. ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend))
 
 ## Contributing
 
-**Writing a provider?** See [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Vouchfx.Sdk` project (published on NuGet.org), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) for an end-to-end walkthrough.
+**Writing a provider?** See [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md) for the step-type model, the frozen v1 contract in the `Vouchfx.Sdk` project (published on NuGet.org), composition rules, and the Vouched rubric. The [`examples/Example.Steps.Echo`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Echo) provider is a worked example demonstrating all four mandatory interfaces and the contributor's friction log; [`Example.Steps.Hello`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Hello) is an even more minimal template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical reference implementation — a complete JSON-RPC 2.0 protocol provider with substitution, capture, negative testing, four-verdict mapping and Docker-free test harness; see the hub's [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html) for an end-to-end walkthrough.
 
-**Contributing to the platform engine?** Start with [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md), [Governance](https://github.com/tomas-rampas/vouchfx/blob/main/GOVERNANCE.md), and the [public roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md). Documentation prose is British English.
+**Contributing to the platform engine?** Start with [Contributing guide](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md), [Governance](https://github.com/tomas-rampas/vouchfx/blob/main/GOVERNANCE.md), and the [public roadmap](https://vouchfx.io/roadmap/) for where the project is heading. Anyone working in this repository — human or agent — must honour the **hard invariants** in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md). Documentation prose is British English.
 
 ## AI assistance
 
-Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. The [Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/01_Technical_Architecture_and_Engineering_Blueprint/) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
+Portions of vouchfx were written with AI assistance (Claude, via Claude Code), used in the manner of a junior engineer working under close review — never as an unsupervised author. The architecture, the hard invariants in [CLAUDE.md](https://github.com/tomas-rampas/vouchfx/blob/main/CLAUDE.md), the provider contract, and every non-trivial design decision are the maintainer's; AI-drafted code and docs were reviewed, tested against real spikes, and frequently corrected or rejected before merge. The [Architecture Blueprint](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/) records several such corrections — cases where a plausible-looking snippet (Aspire APIs, Roslyn script constraints) turned out to be wrong and had to be fixed against the pinned library versions. That scepticism toward AI output is deliberate, ongoing policy, not a one-off caveat.
 
 ## Security
 

@@ -66,6 +66,32 @@ class SiteConfig:
         every repo except vouchfx-telemetry-backend, whose current published
         site has always shipped that file — preserved here as a deliberate,
         named exception rather than silently changing that repo's output.
+    site_url: the site's canonical absolute origin (e.g.
+        "https://vouchfx.io/"), OPTIONAL and additive (vouchfx issue
+        specs/seo-custom-domains.md, REQ-005). Unset (None, the default) is
+        the pre-existing behaviour, byte-for-byte: `build()` never writes
+        robots.txt/sitemap.xml, and `render_markdown()` never adds a
+        `canonical` `str.format()` kwarg. When set, `build()` emits
+        robots.txt (allow-all + a `Sitemap:` line) and sitemap.xml (one
+        `<loc>` per portal/index/rendered page, all on `site_url`), and
+        `render_markdown()` additionally passes `canonical=<absolute page
+        URL>` into `page_template.format(...)` — a template with no
+        `{canonical}` placeholder still renders identically, since an
+        unused `str.format()` keyword argument is simply ignored.
+
+        NOTE — site/ companion passthrough is unconditional, regardless of
+        site_url: `build()`'s `shutil.copytree(site, out)` (its very first
+        step) always copies every file under a repo's `site/` directory
+        verbatim, including any hand-authored `site/robots.txt` or
+        `site/llms.txt` a wrapper chooses to ship itself — this predates
+        REQ-005 and is deliberately left as-is (adding delete/skip logic
+        for a same-named companion would be a behavioural change no
+        acceptance criterion asks for, and would break a wrapper relying on
+        its own hand-authored file when site_url is unset). When site_url
+        IS set, `write_robots_and_sitemap()` runs after `build()` has
+        already rendered every page — i.e. strictly after that initial
+        copytree — so its `robots.txt`/`sitemap.xml` unconditionally
+        overwrite same-named `site/` companions, and are what wins.
     """
 
     root: Path
@@ -79,6 +105,7 @@ class SiteConfig:
     skip_prefixes: tuple[str, ...] = ()
     fact_overrides: dict[str, Callable[[], str]] = field(default_factory=dict)
     delete_facts_fallback: bool = True
+    site_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +247,15 @@ def rel_root(out: Path, target: Path) -> str:
     return "" if rp == "." else rp + "/"
 
 
+def site_url_join(site_url: str, relative_html_path: str) -> str:
+    """Join a SiteConfig.site_url with a build-output-relative path (e.g.
+    "docs/getting-started.html"), tolerating a site_url with or without a
+    trailing slash so a wrapper's `SiteConfig(site_url="https://x/")` and
+    `SiteConfig(site_url="https://x")` behave identically."""
+    base = site_url if site_url.endswith("/") else site_url + "/"
+    return base + relative_html_path
+
+
 def derive_label(src: Path) -> str:
     """Best-effort page label from the first heading, else the file stem."""
     for line in src.read_text(encoding="utf-8").splitlines():
@@ -329,7 +365,7 @@ def render_markdown(
     dst.parent.mkdir(parents=True, exist_ok=True)
     root_str = rel_root(out, dst)
     desc = f"{config.meta_description_prefix} — {label}"
-    page = config.page_template.format(
+    format_kwargs: dict[str, str] = dict(
         title=html.escape(label),
         desc=html.escape(desc),
         root=root_str,
@@ -339,6 +375,14 @@ def render_markdown(
         toc=toc,
         mermaid_script=mermaid_script,
     )
+    if config.site_url:
+        # Additive only when site_url is set (REQ-005) — a template with no
+        # {canonical} placeholder still renders correctly (an unused
+        # str.format() kwarg is a no-op), so the site_url-unset path below
+        # never even constructs this key and stays byte-identical to the
+        # pre-REQ-005 format() call.
+        format_kwargs["canonical"] = site_url_join(config.site_url, dst.relative_to(out).as_posix())
+    page = config.page_template.format(**format_kwargs)
     dst.write_text(apply_facts(page, facts), encoding="utf-8")
     print(f"  rendered {rel} -> {dst.relative_to(out)}")
 
@@ -349,12 +393,72 @@ def build_portal(config: SiteConfig, out: Path, facts: dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# robots.txt / sitemap.xml — additive, only when SiteConfig.site_url is set
+# (specs/seo-custom-domains.md, REQ-005). `build()` only calls this function
+# from inside an `if config.site_url:` guard, so its very existence has no
+# effect on the site_url-unset output path.
+# ---------------------------------------------------------------------------
+
+
+def _sitemap_loc(config: SiteConfig, entry: str) -> str:
+    """The <loc> URL for one sitemap entry. "index.html" is special-cased to
+    the bare site_url origin (e.g. "https://samples.vouchfx.io/") rather than
+    "{site_url}index.html" — canonical URL hygiene: the root page's own
+    <link rel="canonical"> is the bare origin (see render_markdown/index.html
+    conventions across every wrapper's PAGE/PORTAL templates), and a sitemap
+    that advertised a different URL form for the same page would be sending
+    search engines a self-contradictory signal for "/"."""
+    if entry == "index.html":
+        return config.site_url if config.site_url.endswith("/") else config.site_url + "/"
+    return site_url_join(config.site_url, entry)
+
+
+def write_robots_and_sitemap(config: SiteConfig, out: Path, rendered: set[str]) -> None:
+    """Emit robots.txt (allow-all + Sitemap: line) and sitemap.xml (<loc>
+    for the portal, the copied index.html — as the bare origin, see
+    `_sitemap_loc` — and every rendered doc page)."""
+    assert config.site_url  # only ever called when truthy — see build()
+    (out / "robots.txt").write_text(
+        f"User-agent: *\nAllow: /\n\nSitemap: {site_url_join(config.site_url, 'sitemap.xml')}\n",
+        encoding="utf-8",
+    )
+
+    # index.html/docs.html are written directly (shutil.copytree + build_portal
+    # above), never via out_path()/render_markdown(), so they're added by name
+    # rather than derived from `rendered`.
+    entries = {"index.html", "docs.html"}
+    entries.update(out_path(rel, out).relative_to(out).as_posix() for rel in rendered)
+
+    # Sorted by relative-path identifier (unaffected by the index.html ->
+    # bare-origin substitution below), so entry order stays deterministic.
+    urls = "\n".join(f"  <url><loc>{_sitemap_loc(config, entry)}</loc></url>" for entry in sorted(entries))
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        "</urlset>\n"
+    )
+    (out / "sitemap.xml").write_text(sitemap, encoding="utf-8")
+    print(f"  wrote robots.txt + sitemap.xml ({len(entries)} url(s)) for {config.site_url}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def build(config: SiteConfig, out: Path) -> None:
-    """Build one repository's site into `out`. See SiteConfig for the knobs."""
+    """Build one repository's site into `out`. See SiteConfig for the knobs.
+
+    Write order for two same-named surfaces worth knowing: the
+    `shutil.copytree(site, out)` below runs first and is unconditional
+    (any `site/robots.txt`/`site/llms.txt` a wrapper hand-authors always
+    passes through, regardless of `config.site_url`); `write_robots_and_
+    sitemap()` — only called when `config.site_url` is set — runs last, so
+    its generated robots.txt/sitemap.xml overwrite same-named `site/`
+    companions when both exist. See `SiteConfig.site_url`'s docstring for
+    the full rationale.
+    """
     root = config.root
     site = root / "site"
 
@@ -422,4 +526,8 @@ def build(config: SiteConfig, out: Path) -> None:
         rendered.add(rel)
 
     build_portal(config, out, facts)
+
+    if config.site_url:
+        write_robots_and_sitemap(config, out, rendered)
+
     print(f"done -> {out}")

@@ -19,7 +19,7 @@ release cadence, unlike the provider contract.
 
 ## Learn more
 
-- Documentation: <https://tomas-rampas.github.io/vouchfx/>
+- Documentation: <https://vouchfx.io/>
 - Community provider hub: <https://github.com/tomas-rampas/vouchfx-providers>
 
 Apache-2.0.

@@ -54,7 +54,7 @@ Plus: engine-owned RETRY polling (you never write `Thread.Sleep`), `${secret:…
 
 ## Learn more
 
-- **Documentation**: <https://tomas-rampas.github.io/vouchfx/> — getting started (60-minute path), recipes, the language reference, and the architecture blueprint.
+- **Documentation**: <https://vouchfx.io/> — getting started (60-minute path), recipes, the language reference, and the architecture blueprint.
 - **Source**: <https://github.com/tomas-rampas/vouchfx> (Apache-2.0)
 - **Community provider hub**: <https://github.com/tomas-rampas/vouchfx-providers> — Core and Community providers, the Vouched badge rubric, and examples.
 

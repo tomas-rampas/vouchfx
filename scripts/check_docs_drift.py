@@ -43,10 +43,10 @@ MAX_DEPTH = 2
 MAX_PAGES_PER_SITE = 25
 
 SITES: dict[str, str] = {
-    "vouchfx": "https://tomas-rampas.github.io/vouchfx/",
-    "vouchfx-providers": "https://tomas-rampas.github.io/vouchfx-providers/",
-    "vouchfx-samples": "https://tomas-rampas.github.io/vouchfx-samples/",
-    "vouchfx-telemetry-backend": "https://tomas-rampas.github.io/vouchfx-telemetry-backend/",
+    "vouchfx": "https://vouchfx.io/",
+    "vouchfx-providers": "https://providers.vouchfx.io/",
+    "vouchfx-samples": "https://samples.vouchfx.io/",
+    "vouchfx-telemetry-backend": "https://telemetry.vouchfx.io/",
 }
 
 # Internal-planning terminology that must never reach a published page.

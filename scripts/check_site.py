@@ -22,7 +22,7 @@ user hits them in production:
       `check_internal_links_case_sensitive`;
   (c) .nojekyll shipped, so GitHub Pages doesn't run Jekyll over the build
       and mangle underscore-prefixed paths;
-  (d) nothing from four maintainer-local, confidential surfaces reached
+  (d) nothing from five maintainer-local, confidential surfaces reached
       the build, in any path form or embedded in any built page's
       content — see `check_boundary` for the two-tier design;
   (e) no published text-like output still carries an unresolved
@@ -34,7 +34,13 @@ user hits them in production:
       still resolves, via a redirect stub, to its new MkDocs URL — see
       `check_legacy_redirects`;
   (f) the key user-facing pages exist at their new directory-URL
-      locations.
+      locations;
+  (h) no built text-like output references the retired
+      tomas-rampas.github.io Pages host — see `check_no_legacy_domain`;
+  (i) robots.txt and sitemap.xml both exist at the build root, and every
+      sitemap.xml <loc> (including the site-root entry EDGE-001 requires)
+      is on the configured custom-domain origin — see
+      `check_sitemap_and_robots`.
 
 Exit 0: the build is safe to publish. Exit 1: a check failed; the printed
 message says which one and why it matters, so a CI failure is actionable
@@ -46,29 +52,29 @@ touching `check_boundary` or `_confidential_surfaces`)
 --------------------------------------------------------------------------
 This script is PUBLIC (it ships in the repository). It must never contain
 any confidential *content* — no prose, no distinctive phrases, no excerpts
-copy-pasted from the files it protects. It only ever hard-codes the four
+copy-pasted from the files it protects. It only ever hard-codes the five
 surfaces' *names* (filenames/directory names such as "03_MVP_Project_Plan",
-"reviews", "HUMAN_TODO", "plan") — these are structural identifiers the
-project's own conventions already use in the open (CLAUDE.md, .gitignore,
+"reviews", "HUMAN_TODO", "plan", "specs") — these are structural identifiers
+the project's own conventions already use in the open (CLAUDE.md, .gitignore,
 commit history), not confidential material in themselves.
 
 The boundary check runs in two tiers:
 
   Tier 1 — path/name matching (always active, in CI and locally alike).
-  Flags any built file or directory whose path contains one of the four
+  Flags any built file or directory whose path contains one of the five
   surface identifiers above. This also flags the same identifiers as
   literal, case-insensitive substrings inside any built text-like file's
   *content* — but only for the two file-shaped surfaces
   (03_MVP_Project_Plan.md, HUMAN_TODO.md), whose names are distinctive
   enough not to collide with ordinary prose. It deliberately does NOT do a
-  bare content-substring check for "reviews" or "plan": both are common
-  English words and would drown the check in false positives.
+  bare content-substring check for "reviews", "plan" or "specs": all three
+  are common English words and would drown the check in false positives.
 
   Tier 2 — content fingerprinting (active only when a confidential source
   exists on disk). On a maintainer checkout, docs/03_MVP_Project_Plan.md,
-  docs/reviews/, HUMAN_TODO.md and plan/ all exist. In CI, none of them do
-  — they are untracked/gitignored — so this tier has nothing to read and
-  silently does nothing there; Tier 1 still runs regardless. When active,
+  docs/reviews/, HUMAN_TODO.md, plan/ and specs/ all exist. In CI, none of
+  them do — they are untracked/gitignored — so this tier has nothing to read
+  and silently does nothing there; Tier 1 still runs regardless. When active,
   it reads each confidential source file, collapses whitespace, and slices
   it into overlapping 512-character windows sampled at a 128-character
   stride. It then checks whether any window reappears verbatim (after the
@@ -100,6 +106,7 @@ Stdlib only — no dependencies to install.
 """
 from __future__ import annotations
 
+import gzip
 import os
 import posixpath
 import re
@@ -125,6 +132,13 @@ from _redirect_table import build_redirect_table, relative_target  # noqa: E402
 from _text_like import TEXT_LIKE_SUFFIXES, iter_text_like_files  # noqa: E402
 
 LANDING_MARKER = "brand__name"
+
+# The retired GitHub Pages host every vouchfx site canonicalised on before
+# the custom-domain migration (specs/seo-custom-domains.md) — deliberately
+# a plain string constant, matched as-is wherever it might leak back in
+# (built output content, `check_sitemap_and_robots`'s origin check via
+# `_read_site_url_prefix`'s fallback below).
+LEGACY_DOMAIN = "tomas-rampas.github.io"
 
 KEY_PAGE_SLUGS = (
     "getting-started",
@@ -211,6 +225,20 @@ def _confidential_surfaces() -> tuple[ConfidentialSurface, ...]:
             is_dir=True,
             path_fragment="plan",
             match_mode="segment",
+            literal_content_marker=None,
+        ),
+        ConfidentialSurface(
+            name="approved feature specs",
+            source=REPO_ROOT / "specs",
+            is_dir=True,
+            path_fragment="specs",
+            match_mode="segment",
+            # None, matching "reviews"/"plan" above: "specs" is a generic
+            # English word too common in ordinary prose (this project's own
+            # docs talk about "the DSL spec", "JSON Schema spec", etc.) for a
+            # bare content-substring check not to drown in false positives —
+            # Tier 2 fingerprinting (whole-paragraph verbatim matching) is
+            # the safe way to catch an actual spec-content leak.
             literal_content_marker=None,
         ),
     )
@@ -508,7 +536,7 @@ def check_snippet_allowlist(_site_dir: Path) -> None:
 
 
 def check_boundary(site_dir: Path) -> int:
-    """Nothing from the four confidential surfaces may reach the built
+    """Nothing from the five confidential surfaces may reach the built
     site. See the module docstring for the full two-tier design. Returns
     the number of built files that could not be read during the content
     scan (0 normally); callers surface this count rather than swallowing
@@ -763,25 +791,25 @@ class _HrefCollector(HTMLParser):
 
 def _read_site_url_prefix() -> tuple[str, str]:
     """Extract mkdocs.yml's site_url and return (absolute_prefix,
-    path_prefix) — e.g. ("https://tomas-rampas.github.io/vouchfx/",
-    "/vouchfx/"). A light regex, not a full YAML parse, keeping this script
-    stdlib-only, so absolute- and root-relative-internal-link detection
-    below can never silently drift from the real config. Falls back to the
-    known current value if mkdocs.yml is unreadable or the key is missing,
-    degrading gracefully to document-relative-only detection rather than
-    crashing.
+    path_prefix) — e.g. ("https://vouchfx.io/", "/"). A light regex, not a
+    full YAML parse, keeping this script stdlib-only, so absolute- and
+    root-relative-internal-link detection below can never silently drift
+    from the real config. Falls back to the known current value if
+    mkdocs.yml is unreadable or the key is missing, degrading gracefully to
+    document-relative-only detection rather than crashing.
 
     Both prefixes matter, for two DIFFERENT real cases seen in this
     project's own build: a page's own self-referential canonical-style
     link is site_url-ABSOLUTE (e.g.
-    "https://tomas-rampas.github.io/vouchfx/getting-started/"); MkDocs'
-    404.html — generated with no "current page" to compute a relative path
-    from — falls back to a ROOT-RELATIVE path prefixed with just the site's
-    mount path (e.g. "/vouchfx/getting-started/"), not the full absolute
+    "https://vouchfx.io/getting-started/"); MkDocs' 404.html — generated
+    with no "current page" to compute a relative path from — falls back to
+    a ROOT-RELATIVE path prefixed with just the site's mount path (e.g.
+    "/getting-started/" now that the custom domain carries no path prefix
+    of its own — see specs/seo-custom-domains.md), not the full absolute
     URL.
     """
-    fallback_absolute = "https://tomas-rampas.github.io/vouchfx/"
-    fallback_path = "/vouchfx/"
+    fallback_absolute = "https://vouchfx.io/"
+    fallback_path = "/"
     try:
         text = (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -1044,6 +1072,141 @@ def check_key_pages(site_dir: Path) -> None:
         )
 
 
+# --- custom-domain migration hardening (REQ-007, EDGE-001/002) -------------
+
+
+def check_no_legacy_domain(site_dir: Path) -> int:
+    """No built text-like output may reference the retired
+    tomas-rampas.github.io Pages host (REQ-007a).
+
+    The four vouchfx sites migrated to custom domains (vouchfx.io and its
+    three subdomains) — every self-referential link, canonical tag, JSON-LD
+    URL, fact-injected ecosystem link and legacy-redirect stub must point at
+    a custom domain from here on. A leftover github.io reference (a stale
+    doc-card href, an unmigrated canonical, a fact that resolved before the
+    satellites bumped their site-tools pin) splits link equity across two
+    hosts and confuses search engines about which is authoritative. Scans
+    the same text-like surface as `check_boundary`/`check_no_unresolved_facts`
+    (html/js/json/xml/txt, including robots.txt/llms.txt — see
+    scripts/site_hooks/_text_like.py). Returns the number of built files
+    that could not be read (0 normally); callers surface this count rather
+    than swallowing it, matching this module's other content-scan checks.
+    """
+    hits: list[str] = []
+    skipped = 0
+    for file in iter_text_like_files(site_dir):
+        try:
+            text = file.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            skipped += 1
+            print(
+                f"WARN [check_no_legacy_domain]: could not read {file} ({exc}); "
+                "this built file was NOT checked and may hide a stale domain reference.",
+                file=sys.stderr,
+            )
+            continue
+        # Case-insensitive: a case-varied host (e.g. "Tomas-Rampas.GitHub.io")
+        # still resolves to the same retired Pages host (DNS is
+        # case-insensitive), and would otherwise sail through a bare
+        # case-sensitive substring match. LEGACY_DOMAIN is already
+        # lower-case, matching check_boundary's own lowered comparisons.
+        count = text.lower().count(LEGACY_DOMAIN)
+        if count:
+            rel = file.relative_to(site_dir).as_posix()
+            hits.append(f"{rel}: {count} occurrence(s)")
+
+    if hits:
+        lines = [f"Built output still references the retired {LEGACY_DOMAIN} host:"]
+        for h in sorted(hits):
+            lines.append(f"  {h}")
+        lines.append(
+            "Every surface migrated to a custom domain (vouchfx.io and its three "
+            "subdomains, see specs/seo-custom-domains.md) — fix the source (docs "
+            "markdown, site/ templates, scripts/build_site.py's PORTAL/footer, or a "
+            "stale fact) so the built output never mentions the old host."
+        )
+        raise CheckFailed("\n".join(lines))
+
+    return skipped
+
+
+def check_sitemap_and_robots(site_dir: Path) -> None:
+    """robots.txt, sitemap.xml and sitemap.xml.gz MUST all exist at the
+    build root; every sitemap.xml `<loc>` MUST be on the configured
+    site_url origin (including the site-root entry itself — REQ-007b/c,
+    EDGE-001); and sitemap.xml.gz MUST gunzip to exactly sitemap.xml's
+    bytes.
+
+    site_url is read the same way `check_internal_links_case_sensitive`
+    reads it (`_read_site_url_prefix`, a light regex over mkdocs.yml — this
+    stays stdlib-only and can never silently drift from the real config).
+    robots.txt is a static site/ companion copied by
+    scripts/site_hooks/landing.py; sitemap.xml is MkDocs' own built-in
+    template (populated whenever mkdocs.yml's site_url is set), topped up
+    with the missing site-root entry by scripts/site_hooks/sitemap.py — see
+    that hook's docstring for why MkDocs' own generator can't produce the
+    root entry unaided (there is no docs/index.md for the bespoke landing
+    page). MkDocs also writes a gzip companion, sitemap.xml.gz, at the same
+    build step — Google (and other crawlers) may fetch either — so
+    sitemap.xml.gz must stay byte-for-byte the same document as sitemap.xml
+    once decompressed, or a crawler reading the stale/uncorrected .gz could
+    silently miss the EDGE-001 root entry while sitemap.xml itself passes
+    every check above. scripts/site_hooks/sitemap.py regenerates the .gz
+    alongside its .xml edit for exactly this reason; this check is the
+    backstop that catches a future hook or build-step change that edits one
+    without the other.
+    """
+    robots = site_dir / "robots.txt"
+    sitemap = site_dir / "sitemap.xml"
+    sitemap_gz = site_dir / "sitemap.xml.gz"
+    missing = [str(p) for p in (robots, sitemap, sitemap_gz) if not p.is_file()]
+    if missing:
+        raise CheckFailed(
+            "Missing required SEO surface(s) at the build root:\n"
+            + "\n".join(f"  {m}" for m in missing)
+            + "\nrobots.txt ships as a site/ companion; sitemap.xml/sitemap.xml.gz are "
+            "written by MkDocs itself once mkdocs.yml's site_url is set — check all "
+            "three are present on disk and that scripts/site_hooks/landing.py ran."
+        )
+
+    site_url_prefix, _ = _read_site_url_prefix()
+    sitemap_bytes = sitemap.read_bytes()
+    text = sitemap_bytes.decode("utf-8", errors="replace")
+    locs = re.findall(r"<loc>(.*?)</loc>", text)
+    off_origin = sorted({loc for loc in locs if not loc.startswith(site_url_prefix)})
+    if off_origin:
+        raise CheckFailed(
+            f"{sitemap} contains <loc> entries not on {site_url_prefix!r}:\n"
+            + "\n".join(f"  {loc}" for loc in off_origin)
+        )
+
+    if f"<loc>{site_url_prefix}</loc>" not in text:
+        raise CheckFailed(
+            f"{sitemap} is missing the site-root entry <loc>{site_url_prefix}</loc> "
+            "(EDGE-001) — MkDocs' own sitemap template only covers docs/-sourced "
+            "pages, and there is no docs/index.md for the bespoke landing page, so "
+            "scripts/site_hooks/sitemap.py must append it; check that hook is "
+            "registered in mkdocs.yml's `hooks:` list and ran."
+        )
+
+    try:
+        gunzipped = gzip.decompress(sitemap_gz.read_bytes())
+    except OSError as exc:
+        raise CheckFailed(
+            f"{sitemap_gz} could not be decompressed ({exc}) — it should be a valid "
+            f"gzip of {sitemap}."
+        ) from exc
+    if gunzipped != sitemap_bytes:
+        raise CheckFailed(
+            f"{sitemap_gz} does not gunzip to the same bytes as {sitemap}. Google (and "
+            "other crawlers) may fetch the .gz variant directly — if it's stale it can "
+            "silently miss the EDGE-001 root entry, or advertise off-origin <loc> "
+            "entries, even though sitemap.xml itself passes every check above. Check "
+            "that scripts/site_hooks/sitemap.py regenerated sitemap.xml.gz when it "
+            "edited sitemap.xml (see that hook's on_post_build)."
+        )
+
+
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
@@ -1054,6 +1217,8 @@ CHECKS = (
     check_no_facts_fallback_leak,
     check_legacy_redirects,
     check_key_pages,
+    check_no_legacy_domain,
+    check_sitemap_and_robots,
 )
 
 

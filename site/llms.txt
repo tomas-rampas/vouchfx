@@ -1,0 +1,36 @@
+# vouchfx
+
+> vouchfx is an end-to-end integration testing framework that compiles declarative
+> `.e2e.yaml` tests into Turing-complete C#, runs them through Roslyn, and orchestrates
+> the required container topology with .NET Aspire and Testcontainers. It is built on
+> .NET but tests distributed systems written in any language — Java, Kotlin, Python,
+> Go, Node.js — running as containers, proving one business transaction end-to-end
+> across a REST call, a Kafka event, a database mutation and an outbound webhook.
+
+## Start here
+
+- [Getting started](https://vouchfx.io/getting-started/): a 60-minute path from a ready environment to your first PASS verdict.
+- [Recipes](https://vouchfx.io/recipes/): task-oriented, runnable patterns — SQL seeding, test doubles, secrets, capture/substitution, RETRY polling.
+- [Common patterns](https://vouchfx.io/common-patterns/): the structural shapes most `.e2e.yaml` files share.
+- [Troubleshooting](https://vouchfx.io/troubleshooting/): real failure modes and how to fix them.
+
+## Design docs
+
+- [Technical Architecture & Engineering Blueprint](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/): the single source of truth for how the engine is built.
+- [YAML DSL Specification & VSCode Extension](https://vouchfx.io/02_YAML_DSL_Specification_and_VSCode_Extension_Design/): the `.e2e.yaml` grammar and editor tooling.
+- [Language reference](https://vouchfx.io/language-reference/): every field, generated from the composed JSON Schema the compiler validates against.
+
+## Operating vouchfx
+
+- [Telemetry & privacy](https://vouchfx.io/telemetry/): the privacy-first, opt-in telemetry design.
+- [The memory-leak harness](https://vouchfx.io/memory-harness/): the heap-measurement tool behind the permanent CI memory-safety gate.
+- [Accessibility](https://vouchfx.io/accessibility/): the WCAG 2.1 AA conformance record for the report renderers.
+- [KB: DCP orchestrator not found](https://vouchfx.io/kb/dcp-orchestrator-portability/): an incident write-up — symptom, root cause, resolution.
+
+## Project
+
+- [The ecosystem](https://vouchfx.io/ecosystem/): the four vouchfx repositories, what each is for, and where its site lives.
+- [Roadmap](https://vouchfx.io/roadmap/): what has shipped, what is next, and what stays free permanently.
+- [Changelog](https://vouchfx.io/changelog/): the delivered-capability record.
+- [Governance](https://vouchfx.io/governance/): how providers earn the Vouched badge and how disputes are resolved.
+- [Project README](https://vouchfx.io/project-readme/): what vouchfx is, how it works, and the repository layout.

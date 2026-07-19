@@ -241,7 +241,7 @@ Hub-hosted Community providers are published as individual NuGet packages from t
 
 Refer to:
 
-- **Worked examples:** [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete, fully-documented provider with its authoring journey; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal copyable template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical real-world reference, demonstrating a complete protocol provider with substitution, capture, negative testing and the four-verdict mapping; the hub's [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html) walks the end-to-end provider workflow.
+- **Worked examples:** [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete, fully-documented provider with its authoring journey; [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal copyable template. The hub's first Community-tier provider, [`community/Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc), is the canonical real-world reference, demonstrating a complete protocol provider with substitution, capture, negative testing and the four-verdict mapping; the hub's [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html) walks the end-to-end provider workflow.
 - **The architecture blueprint:** [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](docs/01_Technical_Architecture_and_Engineering_Blueprint.md) — section 13 covers provider architecture in detail, section 13.3.1 the CsxFragment composition rules, section 5.6 the reserved-namespace hygiene rule.
 - **Governance:** [`GOVERNANCE.md`](GOVERNANCE.md) — who decides what enters Core, the Vouched badge rubric, commit rights, and dispute resolution.
 - **This repository's rules:** [`CLAUDE.md`](CLAUDE.md) — the hard invariants every contributor must honour, including the provider contract and memory-model rules.
@@ -258,7 +258,7 @@ All contributions are made under the Apache-2.0 licence and must be compatible w
 
 ## Building the documentation site locally
 
-The documentation site is built with **Material for MkDocs**, live at https://tomas-rampas.github.io/vouchfx/. Run all of the following from the repository root (the config's snippet paths resolve against the working directory):
+The documentation site is built with **Material for MkDocs**, live at https://vouchfx.io/. Run all of the following from the repository root (the config's snippet paths resolve against the working directory):
 
 ```bash
 # Install dependencies
