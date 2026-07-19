@@ -134,8 +134,10 @@ __pycache__/
 scripts/site-tools/build/
 
 # Maintainer-local delivery/planning material — deliberately not published
-# (internal: sprint plans, commercial planning, human-only checklists, review evidence)
+# (internal: sprint plans, commercial planning, human-only checklists, review
+# evidence, approved feature specs)
 /plan/
 /HUMAN_TODO.md
 /docs/03_MVP_Project_Plan.md
 /docs/reviews/
+/specs/

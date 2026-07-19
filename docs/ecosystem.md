@@ -8,10 +8,10 @@ vouchfx is a coordinated ecosystem of four repositories and associated documenta
 
 | Repository | What it is | Site | Source |
 |---|---|---|---|
-| **vouchfx** (main) | The engine: compiler, orchestration, CLI, provider SDK, core providers, and documentation | [https://tomas-rampas.github.io/vouchfx/](https://tomas-rampas.github.io/vouchfx/) | [github.com/tomas-rampas/vouchfx](https://github.com/tomas-rampas/vouchfx) |
-| **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://tomas-rampas.github.io/vouchfx-providers/](https://tomas-rampas.github.io/vouchfx-providers/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
-| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://tomas-rampas.github.io/vouchfx-samples/](https://tomas-rampas.github.io/vouchfx-samples/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
-| **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://tomas-rampas.github.io/vouchfx-telemetry-backend/](https://tomas-rampas.github.io/vouchfx-telemetry-backend/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
+| **vouchfx** (main) | The engine: compiler, orchestration, CLI, provider SDK, core providers, and documentation | [https://vouchfx.io/](https://vouchfx.io/) | [github.com/tomas-rampas/vouchfx](https://github.com/tomas-rampas/vouchfx) |
+| **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://providers.vouchfx.io/](https://providers.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
+| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://samples.vouchfx.io/](https://samples.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
+| **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://telemetry.vouchfx.io/](https://telemetry.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
 
 ## The vouchfx engine
 
@@ -32,9 +32,9 @@ The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire/Testconta
 Two governance tiers (Core and Community) plus the maintainer-awarded Vouched badge. Submit your own provider via pull request and have it conformance-tested and listed.
 
 **Start here:**
-- **[Consuming a provider](https://tomas-rampas.github.io/vouchfx-providers/docs/consuming-a-provider.html)** — How to use a community provider in your suites
-- **[Implementing a provider](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html)** — The complete journey from contract to conformance
-- **[Provider hub](https://tomas-rampas.github.io/vouchfx-providers/)** — Registry of all listed providers
+- **[Consuming a provider](https://providers.vouchfx.io/docs/consuming-a-provider.html)** — How to use a community provider in your suites
+- **[Implementing a provider](https://providers.vouchfx.io/docs/implementing-a-provider.html)** — The complete journey from contract to conformance
+- **[Provider hub](https://providers.vouchfx.io/)** — Registry of all listed providers
 
 ## Sample applications
 
@@ -43,15 +43,15 @@ Two governance tiers (Core and Community) plus the maintainer-awarded Vouched ba
 Real microservices in C#, Python, Node.js and Java with complete end-to-end test suites demonstrating vouchfx patterns across multiple providers and technologies. Clone, run one command, see a complete suite execute.
 
 **The samples:**
-- **[Orders (C# + ASP.NET)](https://tomas-rampas.github.io/vouchfx-samples/samples/orders-dotnet/README.html)** — REST, PostgreSQL, Kafka, webhooks
-- **[Inventory (Python + FastAPI)](https://tomas-rampas.github.io/vouchfx-samples/samples/inventory-python/README.html)** — HTTP, MySQL, RabbitMQ, Redis
-- **[Payments (Java + Spring Boot)](https://tomas-rampas.github.io/vouchfx-samples/samples/payments-java/README.html)** — REST, SQL Server, NATS, email
-- **[Ledger (Node.js + JSON-RPC)](https://tomas-rampas.github.io/vouchfx-samples/samples/ledger-jsonrpc/README.html)** — Custom community provider (rpc.json-rpc), PostgreSQL, Kafka
+- **[Orders (C# + ASP.NET)](https://samples.vouchfx.io/samples/orders-dotnet/README.html)** — REST, PostgreSQL, Kafka, webhooks
+- **[Inventory (Python + FastAPI)](https://samples.vouchfx.io/samples/inventory-python/README.html)** — HTTP, MySQL, RabbitMQ, Redis
+- **[Payments (Java + Spring Boot)](https://samples.vouchfx.io/samples/payments-java/README.html)** — REST, SQL Server, NATS, email
+- **[Ledger (Node.js + JSON-RPC)](https://samples.vouchfx.io/samples/ledger-jsonrpc/README.html)** — Custom community provider (rpc.json-rpc), PostgreSQL, Kafka
 
 **Start here:**
-- **[Run a sample](https://tomas-rampas.github.io/vouchfx-samples/docs/RUNNING.html)** — Clone and run any sample in minutes
-- **[Migrating to vouchfx](https://tomas-rampas.github.io/vouchfx-samples/docs/migrating.html)** — Worked examples porting a Postman collection, an xUnit integration test and a SpecFlow feature, each with a field-by-field mapping table
-- **[Custom runner](https://tomas-rampas.github.io/vouchfx-samples/docs/custom-runner.html)** — How the Ledger sample uses a custom runner to consume the Community provider
+- **[Run a sample](https://samples.vouchfx.io/docs/RUNNING.html)** — Clone and run any sample in minutes
+- **[Migrating to vouchfx](https://samples.vouchfx.io/docs/migrating.html)** — Worked examples porting a Postman collection, an xUnit integration test and a SpecFlow feature, each with a field-by-field mapping table
+- **[Custom runner](https://samples.vouchfx.io/docs/custom-runner.html)** — How the Ledger sample uses a custom runner to consume the Community provider
 
 ## The telemetry backend
 
@@ -62,10 +62,10 @@ The telemetry system is privacy-first and OFF by default. When enabled, it colle
 A reference backend implementing the frozen ingest contract is open-source and available for self-hosting.
 
 **Start here:**
-- **[Why telemetry?](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/why-telemetry.html)** — What is collected, what is never collected, the privacy guarantees
-- **[Self-hosting](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/self-hosting.html)** — Deploy your own telemetry backend
-- **[Verify what would be sent](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/why-telemetry.html#verify-exactly-what-would-be-sent-the-local-outbox)** — Inspect your local outbox before any data leaves your machine
-- **[Privacy](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/privacy.html)** — Data retention, deletion, and consent model
+- **[Why telemetry?](https://telemetry.vouchfx.io/docs/why-telemetry.html)** — What is collected, what is never collected, the privacy guarantees
+- **[Self-hosting](https://telemetry.vouchfx.io/docs/self-hosting.html)** — Deploy your own telemetry backend
+- **[Verify what would be sent](https://telemetry.vouchfx.io/docs/why-telemetry.html#verify-exactly-what-would-be-sent-the-local-outbox)** — Inspect your local outbox before any data leaves your machine
+- **[Privacy](https://telemetry.vouchfx.io/docs/privacy.html)** — Data retention, deletion, and consent model
 
 For configuration details and backend availability, see [Telemetry & privacy](telemetry.md) in the main engine documentation.
 

@@ -59,9 +59,9 @@ dotnet tool install --global vouchfx --prerelease
 The alphas exist for real-world validation. What remains for GA is validation and packaging, not construction:
 
 - Validation of the end-to-end experience in real use — gathered in the open through the published
-  [sample applications](https://tomas-rampas.github.io/vouchfx-samples/), the
-  [migration guide](https://tomas-rampas.github.io/vouchfx-samples/docs/migrating.html) (worked Postman,
-  xUnit and SpecFlow ports), and the [community provider hub](https://tomas-rampas.github.io/vouchfx-providers/),
+  [sample applications](https://samples.vouchfx.io/), the
+  [migration guide](https://samples.vouchfx.io/docs/migrating.html) (worked Postman,
+  xUnit and SpecFlow ports), and the [community provider hub](https://providers.vouchfx.io/),
   rather than a formal pilot cohort.
 - The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published to NuGet.org through the release pipeline; the GA task narrows to stabilising the SDK at 1.0.0 final.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
@@ -81,7 +81,7 @@ within v1.x. Within that constraint, the near-term direction is:
   additional step family (realtime-expect) for future growth — `trace-expect` graduated out of that reserved
   state with `trace-expect.otlp` shipping as its Core provider, and `http.soap` joined `http.rest` as the
   `http` family's second Core provider. The first Community-tier provider (`rpc.json-rpc`, the tier's hub-hosted
-  reference implementation) and a comprehensive [implementation guide](https://tomas-rampas.github.io/vouchfx-providers/docs/implementing-a-provider.html)
+  reference implementation) and a comprehensive [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html)
   are live on the hub.
 - **Provider distribution and consumption** — the first Community provider package
   ([`Vouchfx.Community.JsonRpc`](https://www.nuget.org/packages/Vouchfx.Community.JsonRpc)) is published on

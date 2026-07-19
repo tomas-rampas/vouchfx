@@ -5,9 +5,11 @@
 # (`mkdocs build --strict`, run from the repo root so mkdocs.yml's
 # relative snippet and hook paths resolve). The markdown files under docs/
 # stay the single source of truth; this regenerates the static site on
-# every run, so the published docs never drift. Two MkDocs hooks
-# (scripts/site_hooks/landing.py, scripts/site_hooks/facts.py) splice the
-# landing page over the build root and resolve {{fact:...}} tokens.
+# every run, so the published docs never drift. Four MkDocs hooks
+# (scripts/site_hooks/: landing.py splices the bespoke landing page over
+# the build root, facts.py resolves {{fact:...}} tokens, redirects.py
+# writes legacy-URL redirect stubs, sitemap.py tops up the site-root entry
+# in MkDocs' generated sitemap.xml/.xml.gz) run in that order.
 # `scripts/check_site.py` then runs as a HARD DEPLOY GATE straight after
 # the build: a non-zero exit fails the job before anything reaches Pages,
 # enforcing the confidential-content boundary, legacy-redirect presence,

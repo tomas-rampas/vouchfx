@@ -5,7 +5,7 @@ how providers move between governance tiers, how contributors gain commit rights
 resolved. It exists so the rules are known in advance, not discovered during a disagreement.
 
 Everything here governs the open-source project. The permanent open-source feature boundary is published on
-the [roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/).
+the [roadmap](https://vouchfx.io/roadmap/).
 
 ## The two provider tiers
 
