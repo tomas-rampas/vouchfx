@@ -203,27 +203,44 @@ dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run ./tests/e2e
 ```
 
 **What it means:**
-`dotnet run` changes the working directory to the **project directory** (`src/Cli/Vouchfx.Cli/`), not your current directory. So a relative path like `./tests/e2e` resolves relative to that project directory, not your repository root, and fails.
+This gotcha is specific to running the CLI from source via `dotnet run --project`. When you use `dotnet run`, it changes the working directory to the **project directory** (`src/Cli/Vouchfx.Cli/`), not your current directory. So a relative path like `./tests/e2e` resolves relative to that project directory, not your repository root, and fails.
+
+If you are using the packaged `vouchfx` CLI (installed via `dotnet tool install`), you will not encounter this issue — the tool runs from your current working directory, so relative paths work as expected.
 
 **Fix:**
 
 Use one of these approaches:
 
-1. **Run the built binary directly** (recommended):
+1. **Use the packaged vouchfx CLI (recommended):**
    ```bash
+   # Install (pre-release channel — required whilst published versions are 1.0.0-alpha.x)
+   dotnet tool install --global vouchfx --prerelease
+
+   # Then run from your current directory
+   vouchfx run ./tests/e2e
+   ```
+
+   The packaged tool runs from your current directory, so relative paths behave as expected and this gotcha never applies.
+
+2. **If you are contributing to vouchfx from source,** build the CLI once and run the binary directly:
+   ```bash
+   # Build once
+   dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
+
+   # Run the built binary
    src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run ./tests/e2e
    ```
    (On Windows: `src\Cli\Vouchfx.Cli\bin\Release\net8.0\vouchfx.exe run .\tests\e2e`)
 
    The binary runs from your current directory, so relative paths work as expected.
 
-2. **Pass an absolute path to `dotnet run`:**
+3. **Pass an absolute path to `dotnet run`:**
    ```bash
    dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $(pwd)/tests/e2e
    ```
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
-**Best practice:** For local development, build the CLI once and run the binary directly. This is faster (skips compilation) and avoids path-resolution surprises.
+**Best practice:** For running vouchfx test suites, use the packaged CLI — it is simpler, requires no path-resolution workarounds, and works on any machine with .NET 8 installed. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
 
 ---
 
