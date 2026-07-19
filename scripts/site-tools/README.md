@@ -34,8 +34,10 @@ build(config, out_dir)
 ```
 
 The `site_url` optional parameter, when set, directs `build()` to emit
-`robots.txt` and `sitemap.xml` with the site root as a bare origin URL; it
-also provides a per-page `{canonical}` value for use in `page_template`.
+`robots.txt` (allow-all, with a `Sitemap:` line pointing at the sitemap)
+and `sitemap.xml`, whose root-page entry is listed as the bare origin URL
+rather than `.../index.html`; it also provides a per-page `{canonical}`
+value for use in `page_template`.
 Unset, the pre-existing behaviour applies: the module itself generates no
 SEO files — though any hand-authored companions under `site/` (including a
 `site/robots.txt`) still pass through to the output unchanged, as they
