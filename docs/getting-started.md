@@ -2,7 +2,7 @@
 
 **Welcome to vouchfx** — a declarative testing platform for distributed systems.
 
-This 60-minute guide walks you through your first end-to-end integration test: from checking that your environment is ready, through building vouchfx from source, authoring a minimal `.e2e.yaml` test file, running it, and interpreting the verdict. By the end, you will have a PASS and a working understanding of how the platform works.
+This 60-minute guide walks you through your first end-to-end integration test: from checking that your environment is ready, through installing the `vouchfx` CLI, authoring a minimal `.e2e.yaml` test file, running it, and interpreting the verdict. By the end, you will have a PASS and a working understanding of how the platform works.
 
 ## What is vouchfx?
 
@@ -50,6 +50,8 @@ dotnet tool update --global vouchfx --prerelease
 ```
 
 From the v1.0 GA release onwards the plain commands (without `--prerelease`) work too.
+
+The installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell — the installer only updates `PATH` for new sessions.
 
 **The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator. At run time the engine locates the DCP binaries in your per-user NuGet package cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`), in the `aspire.hosting.orchestration.<rid>` package matching your machine's platform and the engine's pinned Aspire version (currently 13.4.2). Any machine that has restored a project carrying `Aspire.AppHost.Sdk` 13.4.2 already has it. On a completely fresh machine, populate the cache once before your first run — clone this repository and restore it:
 
@@ -160,7 +162,32 @@ You can save it anywhere in your project tree. For example:
 
 ## Running your test
 
-Once you have authored `hello-world.e2e.yaml`, build the CLI and run it from the repository root. The binary resolves scenario paths relative to your current directory, so you must invoke it directly (not via `dotnet run`, which changes the working directory).
+You now have the packaged `vouchfx` CLI installed on your PATH (from "Installing vouchfx"). From the repository root (scenario paths resolve relative to your current directory), run the example:
+
+**Using the packaged global tool (recommended):**
+
+```bash
+vouchfx run examples/getting-started
+```
+
+To run a single file instead of a directory, specify it directly:
+
+```bash
+vouchfx run examples/getting-started/hello-world.e2e.yaml
+```
+
+These commands run the repository's bundled copy of the example; if you authored your own `hello-world.e2e.yaml` elsewhere (as in the previous section), point `vouchfx run` at that file or directory instead.
+
+This command:
+
+1. Discovers all `.e2e.yaml` files in `examples/getting-started/` (or runs the single file if given).
+2. Validates each file against the JSON Schema.
+3. For each scenario, starts the container topology (the `whoami` service), health-gates it, runs the steps in order, and collects verdicts.
+4. Renders a terminal report with per-step verdicts.
+
+### Building from source (contributors)
+
+If you are building vouchfx from source (as a contributor), you can invoke the CLI directly from its build output instead of the global tool.
 
 **Build the CLI once:**
 
@@ -168,7 +195,7 @@ Once you have authored `hello-world.e2e.yaml`, build the CLI and run it from the
 dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 ```
 
-**Run the example:**
+**Run the example from the built binary:**
 
 ```bash
 src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started
@@ -176,14 +203,7 @@ src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started
 
 (On Windows the binary is `vouchfx.exe`, so the command is `…\net8.0\vouchfx.exe run examples\getting-started`.)
 
-This command:
-
-1. Discovers all `.e2e.yaml` files in `examples/getting-started/`.
-2. Validates each file against the JSON Schema.
-3. For each scenario, starts the container topology (the `whoami` service), health-gates it, runs the steps in order, and collects verdicts.
-4. Renders a terminal report with per-step verdicts.
-
-**Tip:** Add the `bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>` — exactly how the packaged tool works. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
+**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
 
 ```bash
 dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run "$(pwd)/examples/getting-started"
@@ -234,7 +254,7 @@ By default, `vouchfx run` prints a plain-text terminal report. You can also emit
 A self-contained, interactive HTML file with per-step details, captured variables, and the reproducibility envelope (no secret values embedded):
 
 ```bash
-src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started --html report.html
+vouchfx run examples/getting-started --html report.html
 ```
 
 Open `report.html` in your browser to see a detailed timeline of each step, captured values, and any failures.
@@ -244,7 +264,7 @@ Open `report.html` in your browser to see a detailed timeline of each step, capt
 For CI integration (GitHub Actions, GitLab, Jenkins):
 
 ```bash
-src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started --junit results.xml
+vouchfx run examples/getting-started --junit results.xml
 ```
 
 The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for Fail, `<error>` for EnvironmentError, `<skipped>` for Inconclusive), so your CI system can ingest and visualise results natively.
@@ -252,7 +272,7 @@ The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for F
 ### Both together
 
 ```bash
-src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started --html report.html --junit results.xml
+vouchfx run examples/getting-started --html report.html --junit results.xml
 ```
 
 ## Next steps
@@ -294,7 +314,7 @@ Once you're comfortable with the built-in steps, you can write your own. See the
 You now have:
 
 1. ✓ Verified the .NET 8 SDK and Docker daemon are installed.
-2. ✓ Built vouchfx from source.
+2. ✓ Installed the `vouchfx` CLI (or built it from source).
 3. ✓ Authored a minimal `.e2e.yaml` test file.
 4. ✓ Run the test and seen a **PASS** verdict.
 5. ✓ Generated HTML and JUnit reports.
