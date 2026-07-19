@@ -45,7 +45,7 @@ dotnet test --filter "requires=docker&FullyQualifiedName~Sprint11Reference"
 
 ### Via the `vouchfx` CLI
 
-With the `vouchfx` global tool installed (see the [getting-started guide](../../docs/getting-started.md)), run:
+With the `vouchfx` global tool installed (see the [getting-started guide](../../docs/getting-started.md)), run from the repository root (the scenario path below is repo-relative):
 
 ```bash
 # Set the bearer token (required for the scenario to execute)
