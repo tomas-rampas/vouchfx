@@ -47,12 +47,26 @@
 
 /* =====================================================================
    1. MATERIAL CUSTOM PROPERTIES — the slate scheme, remapped to tokens.
-   Body always carries data-md-color-scheme="slate" (no toggle exists),
-   so overriding that attribute selector (equal specificity to :root,
-   later in source order) is enough to win over palette.*.min.css.
+   Body always carries data-md-color-scheme="slate" data-md-color-
+   primary="indigo" data-md-color-accent="indigo" (no toggle exists, and
+   mkdocs.yml sets no explicit primary/accent, so Material falls back to
+   its "indigo" default for both). A single [data-md-color-scheme=slate]
+   override beats palette.*.min.css's own single-attribute rules by
+   source order (extra.css loads last) at equal specificity — but
+   palette.*.min.css ALSO ships one COMPOUND rule scoped to our exact
+   attribute combination, [data-md-color-scheme=slate][data-md-color-
+   primary=indigo]{--md-typeset-a-color:#5488e8}, whose two-attribute
+   specificity beats a single-attribute selector regardless of source
+   order. Repeating that same compound selector below closes the gap —
+   verified there is exactly one such compound rule for our fixed
+   scheme+primary+accent combination (grepped every [data-md-color-
+   scheme=slate][data-md-color-*=indigo] rule in the compiled CSS), so
+   this is a complete fix, not a partial one.
    ===================================================================== */
 :root,
-[data-md-color-scheme="slate"] {
+[data-md-color-scheme="slate"],
+[data-md-color-scheme="slate"][data-md-color-primary="indigo"],
+[data-md-color-scheme="slate"][data-md-color-accent="indigo"] {
   /* ---- Base surfaces / text ---- */
   --md-default-bg-color:          var(--bg);
   --md-default-bg-color--light:   var(--bg-alt);
@@ -184,6 +198,75 @@ body, input, .md-typeset { font-family: var(--sans); }
    `color:inherit` on .md-search__input (--md-primary-bg-color); its own
    background is a semi-opaque black overlay from Material, which reads
    correctly over our translucent blurred header without any change. */
+
+/* =====================================================================
+   4B. NAVIGATION TABS (navigation.tabs) — the top-level sections (Design
+   docs / User guides / Knowledge base / Ecosystem / Project / Blog) as a
+   second translucent-blur bar joined directly under the header, same
+   rgba(11,15,26,.72) + 14px blur + hairline-border family so the two
+   read as one frosted dark unit while scrolling (navigation.tabs.sticky
+   keeps this bar pinned even after the plain header portion auto-hides
+   — see the mkdocs.yml comment for why).
+
+   Verified against real output: `<nav class="md-tabs" ...><div
+   class="md-grid"><ul class="md-tabs__list"><li class="md-tabs__item
+   [md-tabs__item--active]"><a class="md-tabs__link">`. Material paints
+   .md-tabs from --md-primary-fg-color (mapped to var(--violet) above for
+   legible use elsewhere, e.g. .md-button) — left alone it renders a
+   solid violet bar, so it gets the same decoupled scoped-rule treatment
+   as .md-header just above rather than fighting that variable.
+   ===================================================================== */
+.md-tabs {
+  background-color: rgba(11,15,26,.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Material's own default only differentiates inactive/active via
+   opacity (.7 vs 1) on an inherited colour — replaced with explicit
+   muted -> text tokens so it tracks the same two-stop palette as every
+   other hover/active state in this file (nav links, TOC, footer). */
+.md-tabs__link {
+  color: var(--muted);
+  opacity: 1;
+  font-weight: 600;
+  transition: color .15s;
+}
+.md-tabs__link:hover,
+.md-tabs__item--active .md-tabs__link {
+  color: var(--text);
+  opacity: 1;
+}
+
+/* Active-tab indicator: Material ships no underline on .md-tabs itself
+   (the --md-indicator-* variables belong to a different component, the
+   in-page pymdownx.tabbed content tabs) — this is a scoped ::after,
+   opacity-animated between hover and active, using the same two-stop
+   brand gradient as the landing page's own accent bars (.flow__node
+   ::before in styles.css), so the active section tab reads as clearly
+   "branded" rather than a plain colour swap. */
+.md-tabs__item {
+  position: relative;
+}
+.md-tabs__item::after {
+  content: "";
+  position: absolute;
+  left: .6rem;
+  right: .6rem;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--grad);
+  opacity: 0;
+  transition: opacity .15s;
+}
+.md-tabs__item:hover::after {
+  opacity: .45;
+}
+.md-tabs__item--active::after {
+  opacity: 1;
+}
 
 /* =====================================================================
    5. NAVIGATION (left sidebar + right TOC) — violet active/hover
