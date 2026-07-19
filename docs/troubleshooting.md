@@ -216,6 +216,9 @@ Use one of these approaches:
    # Install (pre-release channel — required whilst published versions are 1.0.0-alpha.x)
    dotnet tool install --global vouchfx --prerelease
 
+   # Already installed? Upgrade instead
+   dotnet tool update --global vouchfx --prerelease
+
    # Then run from your current directory
    vouchfx run ./tests/e2e
    ```
