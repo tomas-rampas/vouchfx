@@ -288,7 +288,7 @@ vouchfx run tests/integrations
 - **Secret references are resolved at execution time**, not compile time — the resolved value never enters source code, logs, or reports.
 - The `${secret:env/VAR_NAME}` reference appears in output **only with the value redacted**: `${secret:env/EXTERNAL_API_KEY} (redacted)`.
 - The **resolved value never appears anywhere** — not in terminal output, not in `--events` JSON Lines, not in the HTML report.
-- Any verbatim occurrence of a resolved secret value in a step's observation text (e.g. a thrown exception message in a `script.csharp` step) is automatically redacted before reaching `--events` or any report; however, authors should still avoid embedding secrets in exception messages because the scrub cannot catch deliberately transformed values (base64, HMAC, substrings).
+- Any verbatim occurrence of a resolved secret value in a step's observation text (e.g. a thrown exception message in a `script.csharp` step) is automatically redacted before reaching the terminal output, the `--events` stream, or any report; however, authors should still avoid embedding secrets in exception messages because the scrub cannot catch deliberately transformed values (base64, HMAC, substrings).
 - The reproducibility envelope records a **hash of the reference path** (`env/EXTERNAL_API_KEY`), never the resolved value — this supports reproducibility without baking secrets into the record.
 
 ---
