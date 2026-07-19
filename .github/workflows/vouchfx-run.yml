@@ -268,23 +268,35 @@ jobs:
       #    the engine is inert unless ALL of them are present and valid (environment-
       #    configured telemetry, docs/telemetry.md), so empty values change nothing. They
       #    enter only via env:, never the shell line, per the injection-safety pattern.
+      #    EXIT-CODE ECHO: the verdict token the CLI prints and the process exit code are
+      #    two distinct trust signals. The taxonomy allows an Environment-error or
+      #    Inconclusive verdict to exit 0 when the matching --fail-on-* flag above is off,
+      #    so the exit code is not always implied by the verdict text — and today it is
+      #    only visible on failure, via the step's own failure banner. We capture it
+      #    explicitly (`|| exit_code=$?`, which does not trip the default `bash -e` shell)
+      #    and echo it on every run, pass or fail, so the exit-code table above is
+      #    auditable at a glance in the log instead of inferred. The trailing
+      #    `exit $exit_code` keeps step/job gating byte-identical to a bare `dotnet run …`.
       - name: Run vouchfx suite
         env:
           SCENARIO_PATH: ${{ inputs.scenario-path }}
           VOUCHFX_TELEMETRY_ENDPOINT: ${{ inputs.telemetry-endpoint }}
           VOUCHFX_TELEMETRY_INSTALL_ID: ${{ inputs.telemetry-install-id }}
           VOUCHFX_TELEMETRY_TOKEN: ${{ secrets.telemetry-token }}
-        run: >-
-          dotnet run
-          --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj
-          -c Release
-          --no-build
-          --
-          run "$GITHUB_WORKSPACE/$SCENARIO_PATH"
-          --junit "$GITHUB_WORKSPACE/results.xml"
-          --html "$GITHUB_WORKSPACE/report.html"
-          ${{ inputs.fail-on-env-error && '--fail-on-env-error' || '' }}
-          ${{ inputs.fail-on-inconclusive && '--fail-on-inconclusive' || '' }}
+        run: |
+          exit_code=0
+          dotnet run \
+            --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            -c Release \
+            --no-build \
+            -- \
+            run "$GITHUB_WORKSPACE/$SCENARIO_PATH" \
+            --junit "$GITHUB_WORKSPACE/results.xml" \
+            --html "$GITHUB_WORKSPACE/report.html" \
+            ${{ inputs.fail-on-env-error && '--fail-on-env-error' || '' }} \
+            ${{ inputs.fail-on-inconclusive && '--fail-on-inconclusive' || '' }} || exit_code=$?
+          echo "vouchfx exit code: $exit_code (0=Pass · 1=Fail · 2=usage · 3=EnvironmentError, gated by --fail-on-env-error · 4=Inconclusive, gated by --fail-on-inconclusive)"
+          exit $exit_code
 
       # 7. ALWAYS publish the reports, even when the run step failed (a Fail still produces
       #    a results.xml + report.html — those artefacts are most valuable precisely when
