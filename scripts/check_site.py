@@ -134,10 +134,8 @@ from _text_like import TEXT_LIKE_SUFFIXES, iter_text_like_files  # noqa: E402
 LANDING_MARKER = "brand__name"
 
 # The retired GitHub Pages host every vouchfx site canonicalised on before
-# the custom-domain migration (specs/seo-custom-domains.md) — deliberately
-# a plain string constant, matched as-is wherever it might leak back in
-# (built output content, `check_sitemap_and_robots`'s origin check via
-# `_read_site_url_prefix`'s fallback below).
+# the custom-domain migration (specs/seo-custom-domains.md). Matched
+# case-insensitively over built output content by `check_no_legacy_domain`.
 LEGACY_DOMAIN = "tomas-rampas.github.io"
 
 KEY_PAGE_SLUGS = (

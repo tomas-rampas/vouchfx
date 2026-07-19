@@ -46,6 +46,21 @@ def on_post_build(config: dict[str, Any], **kwargs: Any) -> None:
     if not site_url:
         return  # no canonical origin configured — nothing to append against
 
+    # Normalise to a trailing slash — mirrors vouchfx_site_tools.site_url_join's
+    # same tolerance (scripts/site-tools/src/vouchfx_site_tools/__init__.py)
+    # and, more importantly, scripts/check_site.py's own _read_site_url_prefix,
+    # which always returns mkdocs.yml's site_url with a trailing slash
+    # appended if missing. Without this, an un-slashed mkdocs.yml site_url
+    # (e.g. "https://vouchfx.io") would make this hook insert
+    # <loc>https://vouchfx.io</loc> while check_sitemap_and_robots's EDGE-001
+    # check looks for <loc>https://vouchfx.io/</loc> — a spurious CI failure
+    # today, and a duplicate root entry if the slash convention ever changed
+    # between builds (the idempotency check below also needs the normalised
+    # form, or it would fail to recognise its own unslashed entry as already
+    # present).
+    if not site_url.endswith("/"):
+        site_url += "/"
+
     site_dir = Path(config["site_dir"])
     sitemap = site_dir / "sitemap.xml"
     if not sitemap.is_file():
