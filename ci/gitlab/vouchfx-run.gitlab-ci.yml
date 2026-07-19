@@ -39,16 +39,19 @@
 # ready-to-run `vouchfx-run` job that simply `extends:` it. Use whichever caller shape you
 # prefer.)
 #
-# ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
-# vouchfx is NOT (yet) a published `dotnet tool` or container — it is an Aspire-host
-# executable (src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj, OutputType Exe, IsAspireHost).
-# So by default this template INSTALLS vouchfx by building it from source: it clones the
-# vouchfx repository at a pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path,
-# runs `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
-#   Real packaging (a published binary / container image) is a LATER
-#   dependency — exactly as in the GitHub template. When it lands, a consumer keeps this
-#   same template contract and simply overrides VOUCHFX_REPO_URL / VOUCHFX_REF to track
-#   the packaged release; the install step is intentionally the only thing that changes.
+# ── How vouchfx is installed (build-from-source here; a packaged tool also exists) ──
+# vouchfx IS published as a NuGet global tool since the 1.0.0-alpha series
+# (`dotnet tool install --global vouchfx --prerelease`) — the recommended way to run
+# suites locally; it is not published as a container image. This template nevertheless
+# DELIBERATELY installs by building from source: it clones the vouchfx repository at a
+# pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path, runs
+# `dotnet build -c Release`, and invokes the CLI with `dotnet run --project`.
+#   Pinning the `include:` ref and VOUCHFX_REF together keeps the engine and this
+#   template definition in lock-step, and a SHA/tag-pinned source build is an immutable
+#   supply-chain reference — exactly as in the GitHub template. A consumer tracking a
+#   released engine pins VOUCHFX_REF to the release tag (e.g. `v1.0.0-alpha.9`) — still
+#   a source build. A packaged-tool install could become an optional mode later; the
+#   install step is intentionally the only thing that would change.
 #
 # ── Docker is REQUIRED (the topology) — and the privileged-runner caveat ────────────
 # vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a
@@ -216,7 +219,7 @@
     #    single-branch clone keeps it fast. VOUCHFX_REPO_URL / VOUCHFX_REF are consumer-
     #    supplied, so they are dereferenced as shell variables (never spliced) — a value
     #    with shell metacharacters is passed as one argument, it cannot be executed.
-    #    (Real packaging will later replace this build-from-source step; see the header.)
+    #    (The from-source install is deliberate; see the header.)
     - |
       # The URL is deliberately NOT echoed: if a consumer overrides VOUCHFX_REPO_URL with a
       # URL that embeds credentials, printing it would leak them to the job log. (The default
@@ -268,13 +271,27 @@
   #      --fail-on-env-error / --fail-on-inconclusive → appended ONLY when opted in
   #    Exit-code gating is the engine's: 0 Pass / 1 Fail (always gates) / 2 usage /
   #    3 EnvError (only with --fail-on-env-error) / 4 Inconclusive (only with
-  #    --fail-on-inconclusive). A non-zero exit fails this script line, and so the job — so a
-  #    product Fail gates the consumer's CI by default, env-errors/inconclusives only on opt-in.
+  #    --fail-on-inconclusive). A non-zero exit is captured, then the trailing
+  #    `exit $exit_code` re-raises it so the job is gated — a product Fail gates the
+  #    consumer's CI by default, env-errors/inconclusives only on opt-in.
   #    `--` separates `dotnet run` options from the vouchfx arguments. The fail-on flags are
   #    assembled into a shell array from the truthy-ness of the two variables (the analogue of
   #    the GH workflow's `${{ … && '--flag' || '' }}`), so the only thing the variables can
   #    contribute is the fixed flag literal or nothing — no injection surface. VOUCHFX_SCENARIO_PATH
   #    is dereferenced as "$VOUCHFX_SCENARIO_PATH", never spliced.
+  #    EXIT-CODE ECHO: the verdict token the CLI prints and the process exit code are two
+  #    distinct trust signals. The taxonomy allows an Environment-error or Inconclusive
+  #    verdict to exit 0 when the matching --fail-on-* flag above is off, so the exit code is
+  #    not always implied by the verdict text — and today it is only visible on failure, via
+  #    the job's own failure marker. We capture it explicitly (`|| exit_code=$?`, which stays
+  #    POSIX-sh safe and does not trip errexit because the failing command sits before `||`)
+  #    and echo it on every run, pass or fail, so the exit-code table above is auditable at a
+  #    glance in the log instead of inferred. The trailing `exit $exit_code` keeps script/job
+  #    gating byte-identical to a bare `dotnet run …` — same exit code, same job outcome,
+  #    log-only.
+  #    (The legend text below is assembled across short shell-variable-append lines,
+  #    purely to satisfy this template's yamllint line-length gate (max 120 chars,
+  #    ci/gitlab/.yamllint.yml) — not a change in what actually gets printed.)
   script:
     - |
       # Assemble the opt-in gating flags from the two variables. A value of
@@ -292,6 +309,7 @@
       # `dotnet run --project <csproj>` runs the app with its CWD set to the PROJECT
       # directory, NOT $CI_PROJECT_DIR — so a RELATIVE scenario path would misresolve under
       # the vouchfx source tree. Pass it (and the report paths) as ABSOLUTE $CI_PROJECT_DIR/…
+      exit_code=0
       dotnet run \
         --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
         -c Release \
@@ -300,7 +318,15 @@
         run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
         --junit "$CI_PROJECT_DIR/results.xml" \
         --html "$CI_PROJECT_DIR/report.html" \
-        $FAIL_FLAGS
+        $FAIL_FLAGS || exit_code=$?
+      # Legend assembled across short lines (not one long literal) to stay within this
+      # template's yamllint line-length gate (ci/gitlab/.yamllint.yml, max 120 chars);
+      # the PRINTED text is byte-identical to the GH workflow's single-line echo.
+      legend='0=Pass · 1=Fail · 2=usage'
+      legend="$legend · 3=EnvironmentError, gated by --fail-on-env-error"
+      legend="$legend · 4=Inconclusive, gated by --fail-on-inconclusive"
+      echo "vouchfx exit code: $exit_code ($legend)"
+      exit $exit_code
 
   # 7. ALWAYS publish the reports, even when the run failed (a Fail still produces a
   #    results.xml + report.html — those artefacts are most valuable precisely when the suite
