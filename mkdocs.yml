@@ -47,6 +47,12 @@ theme:
   palette:
     - scheme: slate
   features:
+    # Top-level sections (Design docs … Blog) as a header tab bar on every
+    # docs/blog page. sticky keeps the tabs pinned after the plain header
+    # row auto-hides on scroll — the same always-reachable-navigation idiom
+    # as the landing page's own position:sticky nav, and the long design
+    # docs (~1200 lines) genuinely need a persistent section switcher.
+    # The bar's brand styling lives in docs/stylesheets/extra.css §4B.
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
