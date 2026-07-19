@@ -160,7 +160,7 @@ You can save it anywhere in your project tree. For example:
 
 ## Running your test
 
-You now have the packaged `vouchfx` CLI installed on your PATH (from "Installing vouchfx"). Run the example:
+You now have the packaged `vouchfx` CLI installed on your PATH (from "Installing vouchfx"). From the repository root (scenario paths resolve relative to your current directory), run the example:
 
 **Using the packaged global tool (recommended):**
 
@@ -310,7 +310,7 @@ Once you're comfortable with the built-in steps, you can write your own. See the
 You now have:
 
 1. ✓ Verified the .NET 8 SDK and Docker daemon are installed.
-2. ✓ Built vouchfx from source.
+2. ✓ Installed the `vouchfx` CLI (or built it from source).
 3. ✓ Authored a minimal `.e2e.yaml` test file.
 4. ✓ Run the test and seen a **PASS** verdict.
 5. ✓ Generated HTML and JUnit reports.
