@@ -45,7 +45,7 @@ dotnet test --filter "requires=docker&FullyQualifiedName~Sprint11Reference"
 
 ### Via the `vouchfx` CLI
 
-Build the CLI first, then run:
+With the `vouchfx` global tool installed (see the [getting-started guide](../../docs/getting-started.md)), run:
 
 ```bash
 # Set the bearer token (required for the scenario to execute)
@@ -54,12 +54,14 @@ export VOUCHFX_REF_BEARER_TOKEN="test-token-any-value"
 # Run the scenario
 vouchfx run examples/reference/reference.e2e.yaml
 
-# Generate HTML and JUnit reports
-vouchfx run examples/reference/reference.e2e.yaml --html report.html --junit results.xml
+# Generate HTML, JUnit, and event stream reports
+vouchfx run examples/reference/reference.e2e.yaml --html report.html --junit results.xml --events events.jsonl
 
 # Render as plain text (WCAG 1.4.1 accessible, no colour)
 vouchfx run examples/reference/reference.e2e.yaml --no-decorations
 ```
+
+The `--events` flag writes a schema-versioned JSON Lines event stream; secret values never appear in its structured fields — only references and hashes — and any resolved secret value that surfaces verbatim in a step's observation text is automatically redacted as well.
 
 ## Topology
 
