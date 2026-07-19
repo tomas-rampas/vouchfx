@@ -20,10 +20,10 @@ vouchfx is a coordinated ecosystem of four repositories and associated documenta
 The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire/Testcontainers orchestration layer, the five-layer architecture, twenty-five Core providers across eleven families (HTTP, databases, message publishing and consumption, caches, storage, metrics, traces, mail, webhooks, scripts), the CLI, and the full set of design documentation.
 
 **Start here:**
-- **[Getting started](https://tomas-rampas.github.io/vouchfx/docs/getting-started.html)** — 60-minute path to your first PASS
-- **[Recipes](https://tomas-rampas.github.io/vouchfx/docs/recipes.html)** — Task-oriented, runnable patterns
-- **[Technical Architecture Blueprint](https://tomas-rampas.github.io/vouchfx/docs/01_Technical_Architecture_and_Engineering_Blueprint.html)** — The five layers, orchestration, memory model, and the frozen provider contract
-- **[YAML DSL Specification](https://tomas-rampas.github.io/vouchfx/docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.html)** — The `.e2e.yaml` grammar and VSCode extension
+- **[Getting started](getting-started.md)** — 60-minute path to your first PASS
+- **[Recipes](recipes.md)** — Task-oriented, runnable patterns
+- **[Technical Architecture Blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md)** — The five layers, orchestration, memory model, and the frozen provider contract
+- **[YAML DSL Specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md)** — The `.e2e.yaml` grammar and VSCode extension
 
 ## The community provider hub
 
@@ -67,7 +67,7 @@ A reference backend implementing the frozen ingest contract is open-source and a
 - **[Verify what would be sent](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/why-telemetry.html#verify-exactly-what-would-be-sent-the-local-outbox)** — Inspect your local outbox before any data leaves your machine
 - **[Privacy](https://tomas-rampas.github.io/vouchfx-telemetry-backend/docs/privacy.html)** — Data retention, deletion, and consent model
 
-For configuration details and backend availability, see [Telemetry & privacy](https://tomas-rampas.github.io/vouchfx/docs/telemetry.html) in the main engine documentation.
+For configuration details and backend availability, see [Telemetry & privacy](telemetry.md) in the main engine documentation.
 
 ## Where to ask questions
 

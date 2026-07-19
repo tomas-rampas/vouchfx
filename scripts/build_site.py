@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Build the vouchfx GitHub Pages site.
+"""Legacy builder for the vouchfx GitHub Pages site — RETIRED for the engine.
 
-Copies the static landing page (site/) into the output directory, then renders
-the repository's markdown design docs and user guides into styled HTML that
-matches the landing page. The markdown files remain the single source of truth;
-this generates their HTML on every run, so a CI deploy keeps the published docs
-current with every push.
+The engine's Pages site is now built by MkDocs Material (see mkdocs.yml and
+.github/workflows/pages.yml); this script no longer builds or deploys it.
+It remains in-tree for two reasons only:
 
-The rendering machinery is shared with the other three vouchfx sites — see
-scripts/site-tools/ (the vouchfx-site-tools package, vouchfx issue #200). This
-file only carries what is specific to the engine's own site: the doc set, the
-page/portal HTML, and the publication scoping. It needs no pip install: the
-package is imported straight from this checkout.
+1. The three satellite repos' build_site.py wrappers still follow this file's
+   pattern and consume scripts/site-tools/ (the vouchfx-site-tools package,
+   vouchfx issue #200) pinned by SHA — nothing here may break for them.
+2. The DOCS list below is the authoritative source for the legacy-URL
+   redirect table: scripts/site_hooks/_redirect_table.py AST-parses it at
+   build time to emit a redirect stub at every URL this builder used to
+   publish. Editing DOCS therefore still changes the deployed site (the
+   redirect set), which is why pages.yml keeps this file in its triggers.
 
-    python scripts/build_site.py [output_dir]   # default: _site
+Running it still works (python scripts/build_site.py [output_dir]) but the
+output is not what CI deploys for the engine.
 
 Requires: markdown, pygments  (pip install markdown pygments)
 """

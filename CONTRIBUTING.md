@@ -256,6 +256,23 @@ All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). D
 
 All contributions are made under the Apache-2.0 licence and must be compatible with it. See [`LICENSE`](LICENSE).
 
-## Volatile facts on the documentation site
+## Building the documentation site locally
 
-Version numbers and registry counts shown on the rendered site are resolved at build time via `{{fact:...}}` tokens in `scripts/build_site.py` (with a checked-in fallback in `site/facts-fallback.json`). When writing documentation prose, do not hard-code the current engine or package version — reference the mechanism (a pin file, "the current release") or use a fact token, so pages cannot silently rot. Sibling repos trigger a rebuild here through the `repository_dispatch` trigger in `.github/workflows/pages.yml` (the workflow's `notify` job is the outbound half — it tells the siblings when this repo's own docs change). `scripts/check_docs_drift.py` (run weekly and on demand by `.github/workflows/docs-drift.yml`) crawls all four project sites for broken links, leaked internal-planning terminology, and facts that have drifted out of sync with their live source; findings are filed to a single tracking issue labelled `docs-drift`.
+The documentation site is built with **Material for MkDocs**, live at https://tomas-rampas.github.io/vouchfx/. Run all of the following from the repository root (the config's snippet paths resolve against the working directory):
+
+```bash
+# Install dependencies
+py -3.12 -m pip install -r requirements-docs.txt
+
+# Build the static site
+mkdocs build --strict
+
+# Serve locally with live reload
+mkdocs serve
+```
+
+Pass `VOUCHFX_SITE_FACTS=offline` to skip live fact resolution when authoring offline (uses the fallback cache). Version numbers and registry counts are resolved at build time via `{{fact:...}}` tokens — the same tokens as before, now applied by MkDocs hooks rather than a standalone script. When writing documentation prose, do not hard-code version numbers — use a fact token or reference the mechanism ("the current release") so pages cannot silently rot.
+
+The publication gate runs `py -3.12 scripts/check_site.py _site` to enforce the confidentiality boundary, detect unresolved facts, and validate redirects. This gate is required in CI (`.github/workflows/pages.yml`) and should be run before submitting documentation changes.
+
+Sibling repositories trigger a rebuild here through the `repository_dispatch` trigger in `.github/workflows/pages.yml` (the workflow's `notify` job is the outbound half — it tells the siblings when this repo's own docs change). `scripts/check_docs_drift.py` (run weekly and on demand by `.github/workflows/docs-drift.yml`) crawls all four project sites for broken links, leaked internal-planning terminology, and facts that have drifted out of sync with their live source; findings are filed to a single tracking issue labelled `docs-drift`.

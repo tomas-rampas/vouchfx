@@ -5,8 +5,8 @@ sequenced by **risk, not visibility** — the hardest problems (the dynamic-comp
 health-gated container orchestration) were solved and CI-gated first, before any surface features.
 Milestones, not dates, are the measure of progress; where dates appear they are quarters, deliberately.
 
-For what changed when, see the [changelog](../CHANGELOG.md). For how project decisions are made, see
-[`GOVERNANCE.md`](../GOVERNANCE.md).
+For what changed when, see the [changelog](changelog.md). For how project decisions are made, see
+[governance](governance.md).
 
 ## Delivered
 

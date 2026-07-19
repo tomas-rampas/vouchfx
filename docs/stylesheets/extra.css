@@ -1,0 +1,428 @@
+/* vouchfx brand skin for MkDocs Material.
+ *
+ * Reskins Material's `slate` scheme (the site's only palette — no light mode,
+ * no toggle) to match the bespoke landing page and legacy docs portal:
+ *   site/styles.css  — brand tokens (:root block below, copied verbatim)
+ *   site/docs.css    — how the docs portal/prose is actually laid out
+ *
+ * Strategy: set Material's own `--md-*` custom properties first (they reach
+ * almost every component — header, search, nav, typeset, code, tables,
+ * admonitions, footer — without fighting Material's markup), then add a
+ * small number of scoped rules only where a bare variable can't express the
+ * look (backdrop-filter blur, inline-code "pill" style, blockquote accent
+ * border, per-type admonition colour, table zebra/header). No !important is
+ * used anywhere; every scoped rule matches or exceeds the specificity of the
+ * Material rule it overrides, and extra.css loads after main.css/palette.css
+ * so equal-specificity rules resolve in our favour by source order.
+ *
+ * Verified against the actual compiled output of mkdocs-material 9.7.7
+ * (grepped assets/stylesheets/main.*.min.css for real selectors/variables —
+ * nothing here is guessed from an older Material version).
+ */
+
+:root {
+  --bg:        #0b0f1a;
+  --bg-alt:    #0e1322;
+  --surface:   #121829;
+  --surface-2: #161d31;
+  --border:    rgba(255,255,255,.08);
+  --border-2:  rgba(255,255,255,.14);
+  --text:      #e7eaf3;
+  --muted:     #9aa3b8;
+  --muted-2:   #6b7488;
+  --indigo:    #6366f1;
+  --violet:    #818cf8;
+  --cyan:      #22d3ee;
+  --teal:      #2dd4bf;
+  --amber:     #fbbf24;
+  --green:     #34d399;
+  --rose:      #fb7185;
+  --grad:      linear-gradient(100deg, var(--violet) 0%, var(--cyan) 100%);
+  --radius:    16px;
+  --maxw:      1120px;
+  /* System font stacks only — the site ships no external webfont requests. */
+  --mono:      ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans:      system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* =====================================================================
+   1. MATERIAL CUSTOM PROPERTIES — the slate scheme, remapped to tokens.
+   Body always carries data-md-color-scheme="slate" (no toggle exists),
+   so overriding that attribute selector (equal specificity to :root,
+   later in source order) is enough to win over palette.*.min.css.
+   ===================================================================== */
+:root,
+[data-md-color-scheme="slate"] {
+  /* ---- Base surfaces / text ---- */
+  --md-default-bg-color:          var(--bg);
+  --md-default-bg-color--light:   var(--bg-alt);
+  --md-default-bg-color--lighter: var(--surface);
+  --md-default-bg-color--lightest:var(--surface-2);
+  --md-default-fg-color:          var(--text);
+  --md-default-fg-color--light:   var(--muted);
+  --md-default-fg-color--lighter: var(--muted-2);
+  --md-default-fg-color--lightest:var(--border);
+
+  /* ---- "Primary" drives the header. We take the header's actual paint
+     off the variable (see the scoped .md-header rule below, which matches
+     the landing nav's translucent-blur treatment exactly) and instead use
+     --md-primary-fg-color as the legible accent for the few components
+     that key text/border colour off it directly (e.g. .md-button). ---- */
+  --md-primary-fg-color:       var(--violet);
+  --md-primary-fg-color--light:var(--cyan);
+  --md-primary-fg-color--dark: #05070c;
+  --md-primary-bg-color:       var(--text);
+  --md-primary-bg-color--light:var(--muted);
+
+  /* ---- Accent: nav hover/active, focus rings, search-match highlight
+     background, buttons. docs.css uses violet as the one interactive
+     accent everywhere (active nav border, TOC hover, card hover border),
+     so that's the mapping here; cyan is reserved for the mark/highlight
+     tint and code keyword colour, echoing the two-stop brand gradient. ---- */
+  --md-accent-fg-color:             var(--violet);
+  --md-accent-fg-color--transparent:rgba(129,140,248,.14);
+  --md-accent-bg-color:             #0a0e18;
+  --md-accent-bg-color--light:      rgba(10,14,24,.7);
+
+  /* ---- Typeset (prose) ---- */
+  --md-typeset-color:            #cdd4e4;   /* matches .prose */
+  --md-typeset-a-color:          #8fb6ff;   /* matches .prose a */
+  --md-typeset-mark-color:       rgba(34,211,238,.28);
+  --md-typeset-del-color:        rgba(251,113,133,.16);
+  --md-typeset-ins-color:        rgba(52,211,153,.16);
+  --md-typeset-kbd-color:        var(--surface-2);
+  --md-typeset-kbd-accent-color: #1c2440;
+  --md-typeset-kbd-border-color: #05070c;
+  --md-typeset-table-color:      var(--border);
+  --md-typeset-table-color--light: rgba(255,255,255,.02);
+
+  /* ---- Code (fenced blocks + inline) ---- */
+  --md-code-fg-color:            #c9d2e8;   /* matches .code code / .prose pre code */
+  --md-code-bg-color:            #0a0e18;   /* matches .code / .prose pre */
+  --md-code-bg-color--light:     #0d1220;   /* matches .code__bar */
+  --md-code-bg-color--lighter:   #11182b;
+  --md-code-hl-color:            rgba(129,140,248,.15);
+  --md-code-hl-color--light:     rgba(34,211,238,.12);
+  --md-code-hl-comment-color:    var(--muted-2);
+  --md-code-hl-constant-color:   var(--muted);
+  --md-code-hl-function-color:   var(--teal);
+  --md-code-hl-generic-color:    var(--rose);
+  --md-code-hl-keyword-color:    #7dd3fc;   /* matches landing's .k (keys) */
+  --md-code-hl-name-color:       #c9d2e8;
+  --md-code-hl-number-color:     var(--green); /* matches landing's .n */
+  --md-code-hl-operator-color:   var(--muted);
+  --md-code-hl-punctuation-color:var(--muted);
+  --md-code-hl-special-color:    var(--rose);
+  --md-code-hl-string-color:     var(--amber);  /* matches landing's .s */
+  --md-code-hl-variable-color:   var(--cyan);
+
+  /* ---- Admonitions (base; per-type colour is scoped further down) ---- */
+  --md-admonition-fg-color: var(--text);
+  --md-admonition-bg-color: var(--surface);
+
+  /* ---- Warning banner (version-outdated etc.) ---- */
+  --md-warning-fg-color: #0a0e18;
+  --md-warning-bg-color: var(--amber);
+
+  /* ---- Footer ---- */
+  --md-footer-bg-color:          #080b14;   /* matches .footer */
+  --md-footer-bg-color--dark:    #05070c;
+  --md-footer-fg-color:          var(--text);
+  --md-footer-fg-color--light:   var(--muted);
+  --md-footer-fg-color--lighter: rgba(255,255,255,.25);
+
+  /* ---- Fonts (theme.font: false already skips the Google Fonts request;
+     these make sure Material's own font-family variables agree, and the
+     scoped block below is a belt-and-suspenders fallback). ---- */
+  --md-text-font-family: var(--sans);
+  --md-code-font-family: var(--mono);
+
+  /* ---- Shadows: soften Material's default near-black shadows to the
+     same big soft blur the landing page's cards/code blocks use. ---- */
+  --md-shadow-z1: 0 4px 18px -8px rgba(0,0,0,.6);
+  --md-shadow-z2: 0 10px 30px -12px rgba(0,0,0,.7);
+  --md-shadow-z3: 0 30px 80px -40px rgba(0,0,0,.8);
+}
+
+/* =====================================================================
+   2. LAYOUT — echo docs.css's ~1120-1240px shell without touching
+   Material's grid mechanics. Material's own "wide" content width
+   (normally unlocked by the navigation.tabs feature) is 76.25rem/1220px;
+   reusing that stock value keeps the change inside Material's own
+   tested range rather than inventing a new one.
+   ===================================================================== */
+.md-grid { max-width: 76.25rem; }
+
+/* =====================================================================
+   3. BASE / FONTS — safety net alongside the --md-*-font-family vars.
+   ===================================================================== */
+body, input, .md-typeset { font-family: var(--sans); }
+.md-typeset code, .md-typeset pre, .md-typeset kbd { font-family: var(--mono); }
+
+::selection { background: rgba(129,140,248,.35); color: var(--text); }
+
+/* =====================================================================
+   4. HEADER — translucent blurred dark bar, matching .nav in styles.css
+   exactly (rgba(11,15,26,.72) + 14px blur + 1px border, no drop shadow).
+   ===================================================================== */
+.md-header,
+.md-header--shadow {
+  background-color: rgba(11,15,26,.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.md-header__title,
+.md-header__topic {
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+/* The in-header search box already inherits header text colour via
+   `color:inherit` on .md-search__input (--md-primary-bg-color); its own
+   background is a semi-opaque black overlay from Material, which reads
+   correctly over our translucent blurred header without any change. */
+
+/* =====================================================================
+   5. NAVIGATION (left sidebar + right TOC) — violet active/hover
+   indicator, matching docs.css's .doc-side / .doc-toc treatment. A
+   box-shadow inset is used instead of border-left so Material's sticky
+   "active section title" masking trick (background + box-shadow trick
+   on .md-nav__item--active > .md-nav__link) is left completely intact.
+   ===================================================================== */
+.md-nav__link {
+  transition: color .15s;
+}
+.md-nav__link:hover,
+.md-nav__link:focus {
+  color: var(--text);
+}
+.md-nav__link--active,
+.md-nav__item--active > .md-nav__link {
+  color: var(--text);
+  box-shadow: inset 2px 0 0 0 var(--violet);
+}
+.md-nav__title {
+  color: var(--muted-2);
+}
+
+/* Secondary (TOC) nav: hover accent, matching .doc-toc a:hover. */
+.md-nav--secondary .md-nav__link:hover,
+.md-nav--secondary .md-nav__link:focus {
+  color: var(--text);
+  box-shadow: inset 2px 0 0 0 var(--violet);
+}
+
+/* =====================================================================
+   6. TYPESET — headings, links, blockquotes, hr, tables, kbd.
+   ===================================================================== */
+.md-typeset h1 { letter-spacing: -.02em; font-weight: 700; }
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 { letter-spacing: -.01em; font-weight: 700; }
+
+/* :not(.md-icon) excludes icon-only anchors that happen to live inside
+   .md-typeset content (e.g. the "edit this page" pencil button, which is
+   `<a class="md-content__button md-icon">` right inside <article
+   class="md-content__inner md-typeset">) — without it they would grow a
+   stray underline beneath the SVG. */
+.md-typeset a:not(.md-icon) {
+  text-decoration: none;
+  border-bottom: 1px solid rgba(143,182,255,.3);
+}
+.md-typeset a:not(.md-icon):hover { border-bottom-color: #8fb6ff; }
+.md-typeset a.headerlink { border-bottom: none; }
+
+/* Blockquotes: violet accent bar + tinted fill, matching .prose blockquote
+   (Material's default reuses --md-default-fg-color--lighter for the rule,
+   shared with <hr>, so it needs a scoped override to stay violet here). */
+.md-typeset blockquote {
+  border-left: 3px solid var(--violet);
+  background: rgba(129,140,248,.06);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+}
+
+.md-typeset hr {
+  border-bottom-color: var(--border);
+}
+
+/* Tables: header row + zebra striping, matching .prose table/th/tr. */
+.md-typeset table:not([class]) {
+  border-radius: 10px;
+}
+.md-typeset table:not([class]) th {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+.md-typeset table:not([class]) tr:nth-child(2n) {
+  background-color: rgba(255,255,255,.02);
+}
+
+.md-typeset kbd {
+  box-shadow: inset 0 -1px 0 var(--md-typeset-kbd-border-color);
+}
+
+/* =====================================================================
+   7. CODE — inline "pill" style (matches styles.css :not(pre) > code
+   exactly) layered on top of the --md-code-* variables that already
+   drive the fenced-block look; block wrapper gets docs.css's border +
+   12px radius.
+   ===================================================================== */
+.md-typeset :not(pre) > code {
+  background: rgba(129,140,248,.12);
+  border: 1px solid rgba(129,140,248,.2);
+  color: #c7d0ff;
+  border-radius: 6px;
+  padding: .08em .4em;
+}
+
+/* Radius + border go on the .highlight wrapper div, with overflow:hidden
+   to clip the inner <pre><code> — the code element (not pre) carries
+   --md-code-bg-color as a plain rectangle, so without clipping it would
+   visibly poke past the wrapper's rounded corners. The code element's own
+   overflow:auto (Material's default, for long lines) still scrolls fine
+   inside a clipped parent. */
+.md-typeset .highlight {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.md-clipboard {
+  color: var(--md-default-fg-color--lighter);
+}
+.md-clipboard:hover {
+  color: var(--violet);
+}
+
+/* =====================================================================
+   8. ADMONITIONS — base card look matches docs.css blockquote/card
+   idiom; per-type left-border + icon colour uses the palette so each
+   kind stays visually distinct (Material hardcodes these per-type
+   colours in its own SCSS with no variable hook, hence the scoped rules).
+   ===================================================================== */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 12px;
+  border-width: 1px;
+  background-color: var(--surface);
+}
+.md-typeset .admonition-title,
+.md-typeset summary {
+  background-color: rgba(255,255,255,.03);
+}
+
+.md-typeset .admonition.note,        .md-typeset .note > .admonition-title,
+.md-typeset .admonition.info,        .md-typeset .info > .admonition-title,
+.md-typeset .admonition.todo,        .md-typeset .todo > .admonition-title {
+  border-color: var(--cyan);
+}
+.md-typeset .note > .admonition-title::before,
+.md-typeset .info > .admonition-title::before,
+.md-typeset .todo > .admonition-title::before { background-color: var(--cyan); }
+
+.md-typeset .admonition.abstract,    .md-typeset .abstract > .admonition-title,
+.md-typeset .admonition.summary,     .md-typeset .summary > .admonition-title,
+.md-typeset .admonition.tldr,        .md-typeset .tldr > .admonition-title,
+.md-typeset .admonition.tip,         .md-typeset .tip > .admonition-title,
+.md-typeset .admonition.hint,        .md-typeset .hint > .admonition-title,
+.md-typeset .admonition.important,   .md-typeset .important > .admonition-title,
+.md-typeset .admonition.question,    .md-typeset .question > .admonition-title,
+.md-typeset .admonition.help,        .md-typeset .help > .admonition-title,
+.md-typeset .admonition.faq,         .md-typeset .faq > .admonition-title {
+  border-color: var(--violet);
+}
+.md-typeset .abstract > .admonition-title::before, .md-typeset .summary > .admonition-title::before,
+.md-typeset .tldr > .admonition-title::before,     .md-typeset .tip > .admonition-title::before,
+.md-typeset .hint > .admonition-title::before,     .md-typeset .important > .admonition-title::before,
+.md-typeset .question > .admonition-title::before, .md-typeset .help > .admonition-title::before,
+.md-typeset .faq > .admonition-title::before { background-color: var(--violet); }
+
+.md-typeset .admonition.success,     .md-typeset .success > .admonition-title,
+.md-typeset .admonition.check,       .md-typeset .check > .admonition-title,
+.md-typeset .admonition.done,        .md-typeset .done > .admonition-title,
+.md-typeset .admonition.example,     .md-typeset .example > .admonition-title {
+  border-color: var(--green);
+}
+.md-typeset .success > .admonition-title::before, .md-typeset .check > .admonition-title::before,
+.md-typeset .done > .admonition-title::before,     .md-typeset .example > .admonition-title::before {
+  background-color: var(--green);
+}
+
+.md-typeset .admonition.warning,     .md-typeset .warning > .admonition-title,
+.md-typeset .admonition.caution,     .md-typeset .caution > .admonition-title,
+.md-typeset .admonition.attention,   .md-typeset .attention > .admonition-title {
+  border-color: var(--amber);
+}
+.md-typeset .warning > .admonition-title::before, .md-typeset .caution > .admonition-title::before,
+.md-typeset .attention > .admonition-title::before { background-color: var(--amber); }
+
+.md-typeset .admonition.failure,     .md-typeset .failure > .admonition-title,
+.md-typeset .admonition.fail,        .md-typeset .fail > .admonition-title,
+.md-typeset .admonition.missing,     .md-typeset .missing > .admonition-title,
+.md-typeset .admonition.danger,      .md-typeset .danger > .admonition-title,
+.md-typeset .admonition.error,       .md-typeset .error > .admonition-title,
+.md-typeset .admonition.bug,         .md-typeset .bug > .admonition-title {
+  border-color: var(--rose);
+}
+.md-typeset .failure > .admonition-title::before, .md-typeset .fail > .admonition-title::before,
+.md-typeset .missing > .admonition-title::before, .md-typeset .danger > .admonition-title::before,
+.md-typeset .error > .admonition-title::before,   .md-typeset .bug > .admonition-title::before {
+  background-color: var(--rose);
+}
+
+.md-typeset .admonition.quote,       .md-typeset .quote > .admonition-title,
+.md-typeset .admonition.cite,        .md-typeset .cite > .admonition-title {
+  border-color: var(--muted-2);
+}
+
+/* =====================================================================
+   9. BUTTONS — matches .btn--primary / .btn--ghost gradient treatment
+   for any Markdown `{: .md-button }` links.
+   ===================================================================== */
+.md-typeset .md-button {
+  border-radius: 10px;
+  font-weight: 600;
+}
+.md-typeset .md-button--primary {
+  background: var(--grad);
+  border-color: transparent;
+  color: #0a0e18;
+}
+.md-typeset .md-button:hover {
+  border-color: var(--violet);
+}
+
+/* =====================================================================
+   10. FOOTER — dark bar + prev/next accent, matching .footer idiom.
+   ===================================================================== */
+.md-footer-meta {
+  border-top: 1px solid var(--border);
+}
+.md-footer__link:hover .md-footer__title,
+.md-footer__link:focus .md-footer__title {
+  color: var(--violet);
+}
+
+/* =====================================================================
+   11. BLOG (Material blog plugin) — the skin above already reaches post
+   listings/articles for free: .md-post__content/.md-post__authors carry
+   their own .md-typeset class, and .md-meta / .md-meta__link (the
+   date/category/read-time line) already key off --md-default-fg-color--
+   light and --md-typeset-a-color respectively, so both inherit the
+   brand palette with no scoped rule needed. Verified against the two
+   real posts in docs/blog/posts/ (not a guess): the excerpt card on the
+   index/category/archive listings is `article.md-post.md-post--excerpt`
+   (no .md-typeset ancestor — a bare `.md-post` selector would silently
+   match nothing), while the single-post page uses a different, unrelated
+   markup (.md-post__back/.md-post__title) with no .md-post wrapper at all.
+   ===================================================================== */
+.md-post--excerpt {
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--border);
+}
+.md-author img { filter: grayscale(60%) opacity(85%); }
+.md-author:hover img { filter: grayscale(0%) opacity(100%); }

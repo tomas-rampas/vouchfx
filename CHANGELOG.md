@@ -15,6 +15,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Changed
+
+- **Documentation site rebuilt on Material for MkDocs** — the GitHub Pages site migrated from a custom static builder to Material for MkDocs with identical visual design, all legacy `.html` URLs redirecting to their new homes, and a new blog platform seeded with launch and alpha.9 posts. Publication boundary (confidential content detection, snippet allowlist, unresolved-fact detection) is now enforced by a hard CI gate (`scripts/check_site.py`) that runs before every Pages deployment. Development workflow unchanged: local `mkdocs build --strict` and `mkdocs serve`, fact tokens `{{fact:...}}` still work identically (now applied by MkDocs hooks instead of the old build script), offline authoring supported with `VOUCHFX_SITE_FACTS=offline`. The legacy `scripts/build_site.py` remains in-tree as the DOCS-list source of truth for the redirect table but no longer runs in the engine's CI; satellite repositories' wrappers and SHA pins are unaffected.
+
 ## [1.0.0-alpha.9] — 2026-07-18
 
 A single-fix correctness release: the step `timeout` field now does what the language reference has always

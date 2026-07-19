@@ -5,7 +5,7 @@ how providers move between governance tiers, how contributors gain commit rights
 resolved. It exists so the rules are known in advance, not discovered during a disagreement.
 
 Everything here governs the open-source project. The permanent open-source feature boundary is published on
-the [roadmap](docs/roadmap.md).
+the [roadmap](https://tomas-rampas.github.io/vouchfx/roadmap/).
 
 ## The two provider tiers
 
@@ -35,7 +35,7 @@ Earning the Vouched badge is a checklist, not a conversation. The minimum bar:
   confirmed it follows the CsxFragment composition contract (Architecture Blueprint §13.3.1).
 
 A provider listed in Community that does not yet meet the rubric will remain unbadged; the rubric itself is the
-actionable feedback for what is needed to earn the Vouched badge. The badge is point-in-time and records the exact reviewed version. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full authoring
+actionable feedback for what is needed to earn the Vouched badge. The badge is point-in-time and records the exact reviewed version. See [CONTRIBUTING.md](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md) for the full authoring
 guide.
 
 ## Contributor sign-off
@@ -57,8 +57,8 @@ requires no separate signing infrastructure, and matches .NET Foundation practic
 Serious but good-faith disputes — a contested badge award or Core-promotion decision, a rejected engine change, a conduct
 concern that is not a Code of Conduct violation — are handled through a written process before anything
 escalates: state the disagreement in an issue, the platform team responds in writing with reasons, and the
-exchange stays on the record. Code-of-Conduct matters follow [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md);
-security matters follow [`SECURITY.md`](SECURITY.md).
+exchange stays on the record. Code-of-Conduct matters follow [CODE_OF_CONDUCT.md](https://github.com/tomas-rampas/vouchfx/blob/main/CODE_OF_CONDUCT.md);
+security matters follow [SECURITY.md](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md).
 
 Decision authority deliberately rests with the platform team while the project establishes its quality bar.
 Broader structures (a foundation, elected stewards) become appropriate if and when the project's scale

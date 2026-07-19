@@ -461,7 +461,7 @@ Stating the threat model in one place serves two purposes. It gives security rev
 
 **Explicitly out of scope. **The platform does not defend against: a malicious developer with legitimate write access to test files and access to customer credentials (this is the same threat any test framework faces and is an authorisation concern at the customer organisation); supply-chain compromise of the upstream .NET runtime, Aspire, or Testcontainers (defence-in-depth via package signature verification, but not a primary defence); the customer's own network or cloud-provider compromise (out of the platform's control). The platform's protection of customer secrets in transit and at rest assumes the customer's machine itself is not already compromised; defending against rootkit-level attackers on the developer's laptop is not the platform's job.
 
-**Vulnerability reporting.** The published vulnerability-disclosure policy, supported versions, coordinated-disclosure SLA, and in/out-scope guidance live in [`SECURITY.md`](../SECURITY.md) at the repository root.
+**Vulnerability reporting.** The published vulnerability-disclosure policy, supported versions, coordinated-disclosure SLA, and in/out-scope guidance live in [SECURITY.md](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md) at the repository root.
 
 **Release signing and provenance.** All releases are signed keylessly using Sigstore (OIDC-federated, no long-lived key management) and include verifiable SLSA build provenance. Consumers verify release artefacts with `gh attestation verify` or `cosign verify-blob`. The signing pipeline is defined in `.github/workflows/release.yml` and activates when binary packaging ships; see that file for the keyless model and verification procedure.
 
