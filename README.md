@@ -524,6 +524,7 @@ engine internals.
 - **[vouchfx-providers](https://providers.vouchfx.io/)** — The community provider hub. Hosts community providers, with PR-gated conformance testing and the Vouched badge rubric. ([source](https://github.com/tomas-rampas/vouchfx-providers))
 - **[vouchfx-samples](https://samples.vouchfx.io/)** — Four production-grade sample applications (C#, Python, Node.js, Java) and complete end-to-end test suites demonstrating common patterns and provider usage. ([source](https://github.com/tomas-rampas/vouchfx-samples))
 - **[vouchfx-telemetry-backend](https://telemetry.vouchfx.io/)** — The optional, privacy-first, self-hostable telemetry backend. Why telemetry, deployment, outbox verification, and privacy guarantees. ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend))
+- **[vouchfx-mcp](https://github.com/tomas-rampas/vouchfx-mcp)** — Model Context Protocol (MCP) server for AI-assisted test authoring (in active development, not yet published as a tool). No documentation site yet; the GitHub repository is the source.
 
 ## Contributing
 

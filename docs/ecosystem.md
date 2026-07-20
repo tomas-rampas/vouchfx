@@ -1,10 +1,10 @@
 # The vouchfx ecosystem
 
-vouchfx is a coordinated ecosystem of four repositories and associated documentation sites. This page maps the landscape, so you can find what you need and understand how the pieces fit together.
+vouchfx is a coordinated ecosystem of five repositories, most with an associated documentation site. This page maps the landscape, so you can find what you need and understand how the pieces fit together.
 
 ## Overview
 
-**vouchfx is one engine and three companion repositories.** The engine lives in the main repository and is the declarative YAML platform itself. The three companions host reusable providers, production-grade sample applications, and an opt-in telemetry backend.
+**vouchfx is one engine and four companion repositories.** The engine lives in the main repository and is the declarative YAML platform itself. The companions host reusable providers, production-grade sample applications, an opt-in telemetry backend, and an MCP server for AI-assisted test authoring.
 
 | Repository | What it is | Site | Source |
 |---|---|---|---|
@@ -12,6 +12,7 @@ vouchfx is a coordinated ecosystem of four repositories and associated documenta
 | **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://providers.vouchfx.io/](https://providers.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
 | **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://samples.vouchfx.io/](https://samples.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
 | **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://telemetry.vouchfx.io/](https://telemetry.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
+| **vouchfx-mcp** | Model Context Protocol (MCP) server for AI-assisted test authoring — will provide schema validation, step-type catalogue lookup, suite execution, and event-stream diagnostics | — (in development) | [github.com/tomas-rampas/vouchfx-mcp](https://github.com/tomas-rampas/vouchfx-mcp) |
 
 ## The vouchfx engine
 
@@ -69,9 +70,21 @@ A reference backend implementing the frozen ingest contract is open-source and a
 
 For configuration details and backend availability, see [Telemetry & privacy](telemetry.md) in the main engine documentation.
 
+## The MCP companion
+
+**AI-assisted test authoring — currently in active development.**
+
+A local, stdio Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code). When released, it will expose the engine's capabilities programmatically: validate `.e2e.yaml` suites against the frozen v1 JSON Schema, browse the step-type catalogue and detailed provider documentation, run suites and collect results, and diagnose run event streams with per-step observations.
+
+The companion will be distributed as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) that wraps the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet** and is currently under active development.
+
+**Start here:**
+- **[GitHub repository](https://github.com/tomas-rampas/vouchfx-mcp)** — Source, development status, and roadmap
+
 ## Where to ask questions
 
 - **Engine, language, or telemetry product questions?** Open an issue on [github.com/tomas-rampas/vouchfx/issues](https://github.com/tomas-rampas/vouchfx/issues) — the main repository.
 - **Provider registry, listings, or submissions?** Open an issue on [github.com/tomas-rampas/vouchfx-providers/issues](https://github.com/tomas-rampas/vouchfx-providers/issues).
 - **Sample bugs or patterns?** Open an issue on [github.com/tomas-rampas/vouchfx-samples/issues](https://github.com/tomas-rampas/vouchfx-samples/issues).
 - **Backend deployment or self-hosting?** Open an issue on [github.com/tomas-rampas/vouchfx-telemetry-backend/issues](https://github.com/tomas-rampas/vouchfx-telemetry-backend/issues).
+- **MCP server bugs or feature requests?** Open an issue on [github.com/tomas-rampas/vouchfx-mcp/issues](https://github.com/tomas-rampas/vouchfx-mcp/issues).
