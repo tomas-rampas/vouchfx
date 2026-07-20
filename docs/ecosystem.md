@@ -12,7 +12,7 @@ vouchfx is a coordinated ecosystem of five repositories, most with an associated
 | **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://providers.vouchfx.io/](https://providers.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
 | **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://samples.vouchfx.io/](https://samples.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
 | **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://telemetry.vouchfx.io/](https://telemetry.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
-| **vouchfx-mcp** | Model Context Protocol (MCP) server for AI-assisted test authoring: schema validation, step-type catalogue, suite execution, and event-stream diagnostics | — (in development) | [github.com/tomas-rampas/vouchfx-mcp](https://github.com/tomas-rampas/vouchfx-mcp) |
+| **vouchfx-mcp** | Model Context Protocol (MCP) server for AI-assisted test authoring — will provide schema validation, step-type catalogue lookup, suite execution, and event-stream diagnostics | — (in development) | [github.com/tomas-rampas/vouchfx-mcp](https://github.com/tomas-rampas/vouchfx-mcp) |
 
 ## The vouchfx engine
 
@@ -76,7 +76,7 @@ For configuration details and backend availability, see [Telemetry & privacy](te
 
 A local, stdio Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code). When released, it will expose the engine's capabilities programmatically: validate `.e2e.yaml` suites against the frozen v1 JSON Schema, browse the step-type catalogue and detailed provider documentation, run suites and collect results, and diagnose run event streams with per-step observations.
 
-The companion is packaged as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) that wraps the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet** and is currently under active development.
+The companion will be distributed as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) that wraps the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet** and is currently under active development.
 
 **Start here:**
 - **[GitHub repository](https://github.com/tomas-rampas/vouchfx-mcp)** — Source, development status, and roadmap
