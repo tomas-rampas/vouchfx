@@ -4,7 +4,7 @@ vouchfx is a coordinated ecosystem of five repositories and associated documenta
 
 ## Overview
 
-**vouchfx is one engine and four companion repositories.** The engine lives in the main repository and is the declarative YAML platform itself. The companions host reusable providers, production-grade sample applications, an opt-in telemetry backend, and an MCP server for AI-assisted suite authoring.
+**vouchfx is one engine and four companion repositories.** The engine lives in the main repository and is the declarative YAML platform itself. The companions host reusable providers, production-grade sample applications, an opt-in telemetry backend, and an MCP server for AI-assisted test authoring.
 
 | Repository | What it is | Site | Source |
 |---|---|---|---|
@@ -74,9 +74,9 @@ For configuration details and backend availability, see [Telemetry & privacy](te
 
 **AI-assisted test authoring — currently in active development.**
 
-A local, stdio Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code). It exposes the engine's capabilities programmatically: validate `.e2e.yaml` suites against the frozen v1 JSON Schema, browse the step-type catalogue and detailed provider documentation, run suites and collect results, and diagnose run event streams with per-step observations.
+A local, stdio Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code). When released, it will expose the engine's capabilities programmatically: validate `.e2e.yaml` suites against the frozen v1 JSON Schema, browse the step-type catalogue and detailed provider documentation, run suites and collect results, and diagnose run event streams with per-step observations.
 
-The companion is a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) that wraps the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet** and is currently under active development.
+The companion is packaged as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) that wraps the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet** and is currently under active development.
 
 **Start here:**
 - **[GitHub repository](https://github.com/tomas-rampas/vouchfx-mcp)** — Source, development status, and roadmap
