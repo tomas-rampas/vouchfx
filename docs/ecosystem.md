@@ -1,6 +1,6 @@
 # The vouchfx ecosystem
 
-vouchfx is a coordinated ecosystem of five repositories and associated documentation sites. This page maps the landscape, so you can find what you need and understand how the pieces fit together.
+vouchfx is a coordinated ecosystem of five repositories, most with an associated documentation site. This page maps the landscape, so you can find what you need and understand how the pieces fit together.
 
 ## Overview
 
