@@ -44,9 +44,12 @@ public sealed class ValidateCommandTests : IDisposable
         {
             Directory.Delete(_root, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Best-effort temp cleanup; a locked file must not fail the test.
+            // Best-effort temp cleanup; a locked or read-only file must not fail the test.
+            // UnauthorizedAccessException (not just IOException) is possible here too — e.g.
+            // a read-only file on some platforms — so both are swallowed (Copilot review
+            // finding, #260 follow-up).
         }
     }
 
@@ -104,6 +107,44 @@ public sealed class ValidateCommandTests : IDisposable
 
         Assert.Equal(ExitCodes.UsageError, exitCode);
         Assert.Contains(".e2e.yaml", sw.ToString(), StringComparison.Ordinal);
+    }
+
+    // ── Copilot review finding #1: ScenarioDiscovery.Discover's OWN Path.GetFullPath /
+    //    Directory.EnumerateFiles calls can throw exceptions beyond DirectoryNotFoundException
+    //    / ScenarioDiscoveryException (ArgumentException, NotSupportedException,
+    //    PathTooLongException, UnauthorizedAccessException, IOException,
+    //    System.Security.SecurityException) on a malformed/inaccessible path. These MUST map
+    //    to the same clean usage error (exit 2), never an unhandled-exception crash. A NUL
+    //    character is the deterministic, cross-platform trigger used here: Path.GetFullPath
+    //    unconditionally rejects it (ArgumentException: "Null character in path.") on every
+    //    .NET platform/OS — confirmed by direct inspection — unlike most other "invalid path
+    //    character" checks, which are platform-dependent or have been relaxed on .NET
+    //    Core/.NET 5+. This exercises the SAME broadened catch RunCommand.ExecuteAsync now
+    //    shares (kept in lock-step, #260 follow-up).
+
+    [Fact]
+    public void Execute_PathContainsNullCharacter_ReturnsUsageError_WithoutUnhandledException()
+    {
+        var sw = new StringWriter();
+        var badPath = "bad\0path";
+
+        var exitCode = Execute(badPath, json: false, sw);
+
+        Assert.Equal(ExitCodes.UsageError, exitCode);
+    }
+
+    [Fact]
+    public void Execute_PathContainsNullCharacter_Json_StdoutIsEmpty_MessageGoesToStderr()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var badPath = "bad\0path";
+
+        var exitCode = ValidateCommand.Execute(badPath, json: true, stdout, stderr);
+
+        Assert.Equal(ExitCodes.UsageError, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        Assert.NotEmpty(stderr.ToString());
     }
 
     [Fact]

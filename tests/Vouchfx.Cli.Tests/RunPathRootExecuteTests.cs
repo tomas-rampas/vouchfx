@@ -88,6 +88,22 @@ public sealed class RunPathRootExecuteTests : IDisposable
         Assert.Contains(".e2e.yaml", sw.ToString(), StringComparison.Ordinal);
     }
 
+    // Copilot review finding #1 parity (#260 follow-up): RunCommand.ExecuteAsync's discovery
+    // catch was broadened in lock-step with ValidateCommand.Execute's (see
+    // ValidateCommandTests.Execute_PathContainsNullCharacter_* for the full rationale). A NUL
+    // character is the deterministic, cross-platform trigger: Path.GetFullPath unconditionally
+    // rejects it (ArgumentException) on every .NET platform/OS.
+    [Fact]
+    public async Task ExecuteAsync_PathContainsNullCharacter_ReturnsUsageError_WithoutUnhandledException()
+    {
+        var sw = new StringWriter();
+        var badPath = "bad\0path";
+
+        var exitCode = await ExecuteAsync(badPath, criteria: null, sw);
+
+        Assert.Equal(ExitCodes.UsageError, exitCode);
+    }
+
     [Fact]
     public async Task ExecuteAsync_FileRoot_TagFilterMatchesNothing_ReturnsSuccessWithMessage()
     {

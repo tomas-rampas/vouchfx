@@ -54,10 +54,16 @@ public enum ValidationStage
     Schema,
 
     /// <summary>
-    /// The document parsed as YAML but failed to build into a <see cref="ScenarioAst"/>
-    /// (e.g. an internal AST-builder invariant). This is a distinct, narrower stage than
-    /// <see cref="Schema"/>: a schema-valid document can still fail here in principle,
-    /// though in practice a schema-valid document almost always builds cleanly.
+    /// The schema-valid document failed either the YAML parse itself (a syntax error the
+    /// composed-schema check does not catch, since that check validates the document's
+    /// JSON-equivalent shape, not its literal YAML syntax) or the subsequent build into a
+    /// <see cref="ScenarioAst"/> (e.g. an internal AST-builder invariant). Both failure
+    /// modes are folded into this ONE stage — <see cref="ScenarioValidator.ValidateScenario"/>
+    /// wraps the YAML parse and the AST build in a single <c>try</c>/<c>catch</c>, so a
+    /// diagnostic here does not distinguish which of the two actually failed. This is a
+    /// distinct, narrower stage than <see cref="Schema"/>: a schema-valid document can
+    /// still fail here in principle, though in practice a schema-valid document almost
+    /// always parses and builds cleanly.
     /// </summary>
     Parse,
 

@@ -114,7 +114,25 @@ internal static class ValidateCommand
         {
             discovered = ScenarioDiscovery.Discover(path, registry);
         }
-        catch (Exception ex) when (ex is DirectoryNotFoundException or ScenarioDiscoveryException)
+        // Broadened beyond DirectoryNotFoundException/ScenarioDiscoveryException (Copilot
+        // review finding, #260 follow-up): Discover's OWN Path.GetFullPath(root) call can
+        // throw ArgumentException / NotSupportedException / PathTooLongException on a
+        // malformed path string, and its Directory.EnumerateFiles(..., AllDirectories) walk
+        // can throw UnauthorizedAccessException / IOException / SecurityException when the
+        // root itself (or a directory beneath it) is inaccessible. Every one of these is
+        // caused by a bad USER-SUPPLIED path, not a genuine engine fault, so it maps to the
+        // SAME clean usage error (exit 2) as the two exceptions already handled — never an
+        // unhandled-exception crash with a non-taxonomy exit code. Deliberately NOT a bare
+        // `catch (Exception ex)`: a genuinely unexpected fault must still propagate. Kept in
+        // lock-step with RunCommand.ExecuteAsync's identically-broadened discovery catch.
+        catch (Exception ex) when (ex is DirectoryNotFoundException
+            or ScenarioDiscoveryException
+            or UnauthorizedAccessException
+            or IOException
+            or ArgumentException
+            or NotSupportedException
+            or PathTooLongException
+            or System.Security.SecurityException)
         {
             // --json must leave stdout carrying ONLY a JSON document (or nothing, on a
             // usage error) — a tool parsing stdout as one document must never choke on a
