@@ -269,10 +269,32 @@ vouchfx run examples/getting-started --junit results.xml
 
 The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for Fail, `<error>` for EnvironmentError, `<skipped>` for Inconclusive), so your CI system can ingest and visualise results natively.
 
-### Both together
+### Streaming JSON Lines events
+
+For live tailing and downstream processing (CI progress, real-time analysis, or integration with tools like the vouchfx MCP server):
 
 ```bash
-vouchfx run examples/getting-started --html report.html --junit results.xml
+vouchfx run examples/getting-started --events-stream events.jsonl
+```
+
+The `--events-stream` flag writes the same schema-versioned JSON Lines event records as the buffered `--events` archive, but incrementally as the run proceeds to a tailable file. The engine holds the write handle and grants shared read access; external tools can tail it in real time (UTF-8 without BOM) — useful for:
+
+- **Live CI progress tracking** — display test results to the user as they complete, rather than waiting for the full suite to finish.
+- **Downstream consumers** — tools like the vouchfx MCP server or a custom dashboard can read from the stream as events arrive.
+- **Structured logging** — integrate vouchfx runs into centralised log aggregation systems.
+
+**Important caveats:**
+
+- **Scenario-level granularity, not per-step.** Each scenario's events are flushed when that scenario completes. For a single-suite run, all of a suite's step lines therefore appear together at the scenario's completion — genuine per-step/attempt live progress is a planned future enhancement.
+- **Parallel mode writes in completion order.** When you run with `--parallel <n>`, scenarios complete in whatever order the orchestrator finishes them, so the `--events-stream` file reflects completion order, not declaration order. The `--events` archive (if written) still respects declaration order.
+- **Tailing requires shared access.** The engine holds the write handle and grants shared read access; a concurrent reader must open the file with shared read/write access (on Windows, `FileShare.ReadWrite`; on Unix, the file is readable immediately).
+- **`--events` and `--events-stream` are independent.** You can use both together; they write to separate files and have no interaction. The `--events` archive remains a buffered, declaration-ordered snapshot written once at the end of the run.
+- **Best-effort file path.** If the path is unwritable or incorrect, the engine prints a short diagnostic and continues — a bad stream path does not change the run's verdict or exit code.
+
+### All three reports together
+
+```bash
+vouchfx run examples/getting-started --html report.html --junit results.xml --events-stream events.jsonl
 ```
 
 ## Validating without running

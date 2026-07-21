@@ -17,6 +17,7 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
+- **`vouchfx run --events-stream <file>` flag** (#258) — writes the schema-versioned JSON Lines event stream incrementally to a tailable file as each scenario completes, independent of the buffered `--events` archive. The engine holds the write handle and grants shared read access; a tailing reader must open the file with shared read/write access (on Windows, `FileShare.ReadWrite`; on Unix, the file is readable immediately). UTF-8 without BOM. Enables live tailing by downstream consumers such as the vouchfx MCP server and CI progress tracking. Events are flushed at scenario completion (scenario-level granularity); in parallel mode the stream reflects completion order, not declaration order. Best-effort on unwritable paths: prints a diagnostic and does not affect the run's verdict or exit code.
 - **`vouchfx validate` subcommand** (#260) — compile-level validation without Docker: JSON-Schema validation → parse/AST → provider pipeline (bind/validate/emit) → full Roslyn compile. Discovers `.e2e.yaml` files from a file or directory path (recursive). Exit codes: 0 all valid, 2 usage error, 4 one or more invalid. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, per-scenario diagnostics by stage).
 - **`vouchfx list` subcommand** (#260) — list the sealed Core step-type catalogue (twenty-five dotted `family.provider` types). Exit codes: 0 success. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, sorted stepTypes array).
 

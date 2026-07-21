@@ -58,6 +58,7 @@ public sealed class RunPathRootExecuteTests : IDisposable
             htmlReportPath: null,
             junitReportPath: null,
             eventsReportPath: null,
+            eventsStreamPath: null,
             decorate: false,
             output: output,
             telemetryHook: null,
