@@ -382,6 +382,49 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 
 The output is a terminal report with colour-coded verdicts.
 
+### Validating without running
+
+The `vouchfx validate` subcommand validates `.e2e.yaml` files without running them — no containers, no orchestration, no Docker required. It performs the full compile-time validation pipeline (JSON Schema, parsing, AST, provider binding, and Roslyn compilation) and exits immediately, making it ideal for tight feedback during authoring:
+
+```bash
+# Validate a file or directory (recursive discovery)
+vouchfx validate ./tests/e2e
+
+# Machine-readable JSON output for tooling integration
+vouchfx validate ./tests/e2e --json
+```
+
+Exit codes:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | All scenarios are valid. |
+| **2** | Usage error (bad arguments, missing path). |
+| **4** | One or more scenarios are invalid (schema, parse, provider, or Roslyn errors). |
+
+> **Security note:** `validate` compiles your test in-process using the same Roslyn compiler as `run`, with no sandboxing. This is safe for suites you author and trust, but not for actively hostile input — a malicious `script.csharp` body can exhaust resources or crash the validating process. For use cases involving untrusted input (such as the vouchfx MCP server), isolate validation in a separate worker process.
+
+### Listing step types
+
+The `vouchfx list` subcommand displays the sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types shipped in this engine build. Use it to discover available step types or integrate with tooling:
+
+```bash
+# List step types (default mode)
+vouchfx list
+
+# Machine-readable JSON output
+vouchfx list --json
+```
+
+Exit codes:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | Success. |
+| **2** | Usage error (unrecognised flag). |
+
+The `--json` output includes the engine version and a sorted array of step types, for consumption by editor plugins and downstream tooling.
+
 ## Telemetry
 
 vouchfx can collect **anonymous, aggregate usage telemetry** (tool/engine/.NET versions, step and scenario verdict counts, which built-in Core step kinds ran, and startup timings) to help prioritise the engine. **Telemetry is OFF by default — nothing is collected or sent unless you explicitly opt in.** Your test contents, captured values, secrets, URLs, image names, scenario names, and step IDs are **never** collected. Custom-provider step kinds are bucketed under a constant `"custom"` key so author-chosen provider ids never leave the machine. This privacy guarantee is enforced by permanent CI gates that prevent sensitive fields from being added to the telemetry allowlist.

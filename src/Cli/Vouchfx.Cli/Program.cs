@@ -23,7 +23,13 @@ rootCommand.Add(RunCommand.Build());
 //   vouchfx telemetry enable|disable|status
 rootCommand.Add(TelemetryCommand.Build());
 
-// TODO(S08+): additional top-level subcommands (validate, list, …) attach here.
+// Topology-free compile-validation (#260):
+//   vouchfx validate [<path>] [--json]
+rootCommand.Add(ValidateCommand.Build());
+
+// Catalogue listing (#260):
+//   vouchfx list [--step-types] [--json]
+rootCommand.Add(ListCommand.Build());
 
 // Ctrl-C teardown budget (S08-T10, S1): System.CommandLine's DEFAULT ProcessTerminationTimeout
 // is ~2s — after that it force-kills the process even mid-DisposeAsync.  Watch mode keeps an

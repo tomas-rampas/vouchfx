@@ -275,6 +275,51 @@ The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for F
 vouchfx run examples/getting-started --html report.html --junit results.xml
 ```
 
+## Validating without running
+
+The `vouchfx validate` command compiles and validates `.e2e.yaml` files to check whether they are acceptable to the engine, **without** starting any containers, orchestrating a topology, or running steps. It performs the full validation pipeline — JSON Schema validation, parsing, AST construction, provider binding, and Roslyn compilation — but stops before execution. This is ideal for the author loop: tight feedback on syntax and step correctness before paying the Docker startup cost.
+
+```bash
+# Validate a single file or all files in a directory (recursive)
+vouchfx validate examples/getting-started
+
+# Validate with machine-readable JSON output (for tooling)
+vouchfx validate examples/getting-started --json
+```
+
+Exit codes for `vouchfx validate`:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | All scenarios are valid. |
+| **2** | Usage error (bad arguments, missing path). |
+| **4** | One or more scenarios are invalid (schema, parse, provider, or Roslyn errors). |
+
+The `--json` output carries the schema version and a per-scenario diagnostics list (stage: schema, parse, pipeline, or roslyn), suitable for editor plugins, CI gates, or downstream analysis.
+
+> **Security note:** `validate` compiles your test in-process using the same Roslyn compiler as `run`, with no sandboxing. This is safe for suites you author and trust, but not for actively hostile input — a malicious `script.csharp` body can exhaust resources or crash the validating process. For use cases involving untrusted input (such as the vouchfx MCP server), isolate validation in a separate worker process.
+
+## Listing step types
+
+The `vouchfx list` command displays the engine's sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types compiled into this build. It reflects what the engine ships, not community or external providers.
+
+```bash
+# List all step types (default)
+vouchfx list
+
+# Get machine-readable JSON (for tooling)
+vouchfx list --json
+```
+
+Exit codes for `vouchfx list`:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | Success. |
+| **2** | Usage error (unrecognised flag). |
+
+The `--json` output is a versioned document carrying the engine version and a sorted array of step types (each with family and provider fields), intended for integration with tooling such as vouchfx-mcp.
+
 ## Next steps
 
 Now that you have a passing test, here's where to go:

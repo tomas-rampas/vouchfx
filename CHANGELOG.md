@@ -15,6 +15,11 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Added
+
+- **`vouchfx validate` subcommand** (#260) — compile-level validation without Docker: JSON-Schema validation → parse/AST → provider pipeline (bind/validate/emit) → full Roslyn compile. Discovers `.e2e.yaml` files from a file or directory path (recursive). Exit codes: 0 all valid, 2 usage error, 4 one or more invalid. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, per-scenario diagnostics by stage).
+- **`vouchfx list` subcommand** (#260) — list the sealed Core step-type catalogue (twenty-five dotted `family.provider` types). Exit codes: 0 success, 2 usage error. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, sorted stepTypes array).
+
 ### Changed
 
 - **Documentation site rebuilt on Material for MkDocs** — the GitHub Pages site migrated from a custom static builder to Material for MkDocs with identical visual design, all legacy `.html` URLs redirecting to their new homes, and a new blog platform seeded with launch and alpha.9 posts. Publication boundary (confidential content detection, snippet allowlist, unresolved-fact detection) is now enforced by a hard CI gate (`scripts/check_site.py`) that runs before every Pages deployment. Development workflow unchanged: local `mkdocs build --strict` and `mkdocs serve`, fact tokens `{{fact:...}}` still work identically (now applied by MkDocs hooks instead of the old build script), offline authoring supported with `VOUCHFX_SITE_FACTS=offline`. The legacy `scripts/build_site.py` remains in-tree as the DOCS-list source of truth for the redirect table but no longer runs in the engine's CI; satellite repositories' wrappers and SHA pins are unaffected.
