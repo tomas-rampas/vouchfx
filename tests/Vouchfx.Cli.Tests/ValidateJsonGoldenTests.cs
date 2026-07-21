@@ -4,8 +4,9 @@
 // future vouchfx-mcp validate worker) can parse it without depending on any
 // Vouchfx.Cli-internal type. This test serialises a FIXED, hand-built ValidateJsonDocument
 // (never the real engineVersion / a real registry) through the SAME CliJsonContract.Options
-// ValidateCommand uses, and asserts the result is byte-for-byte identical to the committed
-// golden Golden/validate-json-document.v1.json. Using fixed sample data (not a live
+// ValidateCommand uses, and asserts the result matches the committed golden
+// Golden/validate-json-document.v1.json — compared with line endings and any trailing
+// newline normalised, so the check is stable across Windows and Git checkouts. Using fixed sample data (not a live
 // AssemblyInformationalVersion or a live registry) keeps the golden reproducible across
 // builds and machines — only the WIRE SHAPE (property names, order, nesting, enum tokens)
 // is under test here, not any particular build's version string.

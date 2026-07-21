@@ -18,7 +18,7 @@ to published pre-releases on 2026-07-14.
 ### Added
 
 - **`vouchfx validate` subcommand** (#260) — compile-level validation without Docker: JSON-Schema validation → parse/AST → provider pipeline (bind/validate/emit) → full Roslyn compile. Discovers `.e2e.yaml` files from a file or directory path (recursive). Exit codes: 0 all valid, 2 usage error, 4 one or more invalid. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, per-scenario diagnostics by stage).
-- **`vouchfx list` subcommand** (#260) — list the sealed Core step-type catalogue (twenty-five dotted `family.provider` types). Exit codes: 0 success, 2 usage error. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, sorted stepTypes array).
+- **`vouchfx list` subcommand** (#260) — list the sealed Core step-type catalogue (twenty-five dotted `family.provider` types). Exit codes: 0 success. `--json` flag produces a versioned machine document (schemaVersion, engineVersion, sorted stepTypes array).
 
 ### Changed
 

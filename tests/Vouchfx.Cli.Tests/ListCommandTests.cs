@@ -27,7 +27,7 @@ public sealed class ListCommandTests
     }
 
     [Fact]
-    public void Execute_Json_YieldsExactlyTheSealedRegistrysStepTypes()
+    public void Execute_Json_YieldsExactlyTheSealedRegistryStepTypes()
     {
         var sw = new StringWriter();
         ListCommand.Execute(json: true, sw);

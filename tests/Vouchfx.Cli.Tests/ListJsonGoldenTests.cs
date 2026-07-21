@@ -3,8 +3,9 @@
 // The `list --json` document is a FROZEN contract, exactly like `validate --json` (see
 // ValidateJsonGoldenTests' header for the full rationale). This test serialises a FIXED,
 // hand-built ListJsonDocument (never the live registry / a real engineVersion) through the
-// SAME CliJsonContract.Options ListCommand uses, and asserts byte-for-byte identity against
-// Golden/list-json-document.v1.json.
+// SAME CliJsonContract.Options ListCommand uses, and asserts identity against
+// Golden/list-json-document.v1.json — compared with line endings and any trailing newline
+// normalised, so the check is stable across Windows and Git checkouts.
 //
 // REGENERATION:
 //   VOUCHFX_REGEN_LIST_JSON=1 dotnet test tests/Vouchfx.Cli.Tests \
