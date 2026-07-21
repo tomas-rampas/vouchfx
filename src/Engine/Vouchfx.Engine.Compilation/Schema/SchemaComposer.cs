@@ -232,7 +232,7 @@ public static class SchemaComposer
             if (results.IsValid)
                 return SchemaValidationResult.Valid;
 
-            var errors = CollectErrors(results);
+            var errors = SchemaErrorCollector.CollectErrors(results);
             return new SchemaValidationResult(false, errors);
         }
     }
@@ -308,46 +308,7 @@ public static class SchemaComposer
         return clauses;
     }
 
-    /// <summary>
-    /// Walks the flat <c>Details</c> list produced by the <c>List</c> output
-    /// format and collects every leaf node that is invalid and carries at least
-    /// one keyword error.
-    /// </summary>
-    private static List<SchemaValidationError> CollectErrors(EvaluationResults results)
-    {
-        var errors = new List<SchemaValidationError>();
-        CollectErrorsRecursive(results, errors);
-
-        if (errors.Count == 0)
-        {
-            errors.Add(new SchemaValidationError(
-                results.InstanceLocation.ToString(),
-                "Schema validation failed with no detailed error messages."));
-        }
-
-        return errors;
-    }
-
-    private static void CollectErrorsRecursive(EvaluationResults node, List<SchemaValidationError> sink)
-    {
-        if (node.IsValid)
-            return;
-
-        if (node.Errors is { Count: > 0 })
-        {
-            var location = node.InstanceLocation.ToString();
-            foreach (var (keyword, message) in node.Errors)
-            {
-                sink.Add(new SchemaValidationError(location, $"[{keyword}] {message}"));
-            }
-        }
-
-        if (node.Details is { Count: > 0 })
-        {
-            foreach (var child in node.Details)
-            {
-                CollectErrorsRecursive(child, sink);
-            }
-        }
-    }
+    // Error collection itself (the flat-Details walk plus "if"-discriminator
+    // noise filtering, issue #259) lives in SchemaErrorCollector, shared with
+    // YamlSchemaValidator so the walk is written exactly once.
 }
