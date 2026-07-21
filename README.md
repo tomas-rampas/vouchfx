@@ -400,7 +400,7 @@ Exit codes:
 |---|---|
 | **0** | All scenarios are valid. |
 | **2** | Usage error — the path is missing or is not a readable .e2e.yaml file or directory. |
-| **4** | One or more scenarios are invalid (schema, parse, provider, or Roslyn errors). |
+| **4** | One or more scenarios are invalid (schema, parse, pipeline, or Roslyn errors). |
 
 `validate` models an unfiltered pre-flight: it resolves relative `file:` and seed paths against the first discovered scenario's directory exactly as an unfiltered `vouchfx run` does, so a passing `validate` predicts path resolution success in an unfiltered run.
 
