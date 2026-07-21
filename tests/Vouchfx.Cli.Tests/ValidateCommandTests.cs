@@ -9,6 +9,17 @@
 //
 // Code-review MINOR-2 (--json stdout purity) and MINOR-3 (discovery I/O errors losing
 // their message) are each covered by a dedicated test below.
+//
+// Peer-review MAJOR (validate-vs-run base-directory drift): a recursive multi-directory
+// scan MUST resolve every scenario's compile-time relative file-path fields (e.g.
+// script.csharp's `file:`) against the SAME single base directory RunCommand.ExecuteAsync
+// uses — Path.GetDirectoryName of the FIRST discovery-clean scenario — never a
+// per-scenario directory. Two tests below prove both directions of the fix: a scenario
+// several directories away from the first one now compiles when `run` would let it
+// compile (helper file lives in the FIRST scenario's directory), and it now correctly
+// FAILS when `run` would also fail (helper file lives only in the referencing scenario's
+// OWN directory, which is not the shared base). Before the fix, both cases disagreed
+// with `run` (the exact drift the peer review flagged).
 
 using System.Text.Json;
 using Vouchfx.Cli;
@@ -279,5 +290,120 @@ public sealed class ValidateCommandTests : IDisposable
         var diagnostic = Assert.Single(entry.Diagnostics);
         Assert.Equal(ValidationStage.Parse, diagnostic.Stage);
         Assert.Contains("Parse / AST error", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    // ── Peer-review MAJOR: validate must resolve compile-time relative paths using the
+    //    SAME single suite-wide base directory `run` uses, not a per-scenario directory ──
+
+    // A trivially-valid, always-compiling scenario used purely to occupy the FIRST
+    // ordinal-sorted discovery slot (its directory becomes the shared suite base).
+    private const string AnchorScenario =
+        "steps:\n" +
+        "  - id: check\n" +
+        "    type: http.rest\n" +
+        "    target: svc\n" +
+        "    method: GET\n" +
+        "    path: /health\n";
+
+    // References a bare 'helper.csx' filename — deliberately no path segments, so its
+    // resolution is entirely determined by WHICH directory is chosen as the base, which
+    // is exactly the ambiguity this test exploits. script.csharp splices trivially-valid
+    // C# (a comment only) so that once the file resolves, the scenario compiles cleanly.
+    private const string ScriptWithFileReference =
+        "steps:\n" +
+        "  - id: run-helper\n" +
+        "    type: script.csharp\n" +
+        "    file: helper.csx\n";
+
+    private const string HelperCsxContents = "// no-op\n";
+
+    /// <summary>
+    /// The helper file lives in the FIRST discovered scenario's directory ('a'), NOT in
+    /// the referencing scenario's own directory ('b'). <c>run</c> resolves EVERY
+    /// scenario's relative file-path fields against the first scenario's directory
+    /// (RunCommand.ExecuteAsync's <c>suiteBaseDirectory</c>), so 'y' compiles under a real
+    /// run. Before the fix, <c>validate</c> resolved 'y' against its OWN directory ('b') —
+    /// where 'helper.csx' does NOT exist — wrongly reporting 'y' invalid (a Pipeline
+    /// "file not found" diagnostic) even though `run` would accept it. This test FAILS
+    /// against that per-scenario code and PASSES once validate matches run's single
+    /// shared base directory.
+    /// </summary>
+    [Fact]
+    public void Execute_MultiDirectoryScan_FileReferenceResolvesAgainstFirstScenariosDirectory_MatchingRun()
+    {
+        var dirA = Path.Combine(_root, "a");
+        var dirB = Path.Combine(_root, "b");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+
+        // 'a' sorts before 'b' ordinally, so ScenarioDiscovery.Discover's ordinal-sorted
+        // walk makes x.e2e.yaml (in 'a') the FIRST discovery-clean scenario — its
+        // directory becomes the shared suite base, exactly as RunCommand computes it.
+        File.WriteAllText(Path.Combine(dirA, "x.e2e.yaml"), AnchorScenario);
+        File.WriteAllText(Path.Combine(dirA, "helper.csx"), HelperCsxContents);
+        File.WriteAllText(Path.Combine(dirB, "y.e2e.yaml"), ScriptWithFileReference);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(_root, json: true, sw);
+
+        var document = JsonSerializer.Deserialize<ValidateJsonDocument>(sw.ToString(), CliJsonContract.Options);
+        Assert.NotNull(document);
+        Assert.Equal(2, document!.Scenarios.Count);
+
+        var yEntry = document.Scenarios.Single(
+            s => s.Path.Contains("y.e2e.yaml", StringComparison.Ordinal));
+        Assert.True(
+            yEntry.Valid,
+            "y.e2e.yaml's 'file: helper.csx' must resolve against the FIRST scenario's "
+            + $"directory ('a', where helper.csx exists) — matching what `run` would do — "
+            + $"not against y's own directory ('b'). Diagnostics: "
+            + string.Join("; ", yEntry.Diagnostics.Select(d => $"[{d.Stage}] {d.Message}")));
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// The reversed case: the helper file lives ONLY in the referencing scenario's OWN
+    /// directory ('b'), NOT in the first scenario's directory ('a') — the shared base
+    /// <c>run</c> would actually use. A real <c>run</c> would therefore FAIL to resolve
+    /// 'y's <c>file:</c> reference (it never looks in 'b'). Before the fix, per-scenario
+    /// <c>validate</c> resolved 'y' against its own directory ('b') and found the file —
+    /// wrongly reporting 'y' VALID, exactly the "validate passes what run rejects" defect
+    /// the peer review flagged. After the fix, validate must agree with run and report 'y'
+    /// INVALID too — proving the fix is a faithful match, not merely "always succeeds".
+    /// </summary>
+    [Fact]
+    public void Execute_MultiDirectoryScan_ReversedFileLocation_CorrectlyFailsMatchingRun()
+    {
+        var dirA = Path.Combine(_root, "a");
+        var dirB = Path.Combine(_root, "b");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+
+        File.WriteAllText(Path.Combine(dirA, "x.e2e.yaml"), AnchorScenario);
+        // No helper.csx in 'a' (the shared suite base) this time.
+        File.WriteAllText(Path.Combine(dirB, "y.e2e.yaml"), ScriptWithFileReference);
+        File.WriteAllText(Path.Combine(dirB, "helper.csx"), HelperCsxContents);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(_root, json: true, sw);
+
+        var document = JsonSerializer.Deserialize<ValidateJsonDocument>(sw.ToString(), CliJsonContract.Options);
+        Assert.NotNull(document);
+
+        var yEntry = document!.Scenarios.Single(
+            s => s.Path.Contains("y.e2e.yaml", StringComparison.Ordinal));
+        Assert.False(
+            yEntry.Valid,
+            "y.e2e.yaml's 'file: helper.csx' must resolve against the FIRST scenario's "
+            + "directory ('a', where helper.csx does NOT exist) — matching what `run` "
+            + "would do — not against y's own directory ('b'), where it happens to exist.");
+        Assert.Contains(
+            yEntry.Diagnostics,
+            d => d.Stage == ValidationStage.Pipeline
+                && d.Message.Contains("helper.csx", StringComparison.Ordinal)
+                && d.Message.Contains("not found", StringComparison.Ordinal));
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 }

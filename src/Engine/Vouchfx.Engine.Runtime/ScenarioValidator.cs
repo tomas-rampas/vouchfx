@@ -145,14 +145,26 @@ public sealed record ValidationReport(IReadOnlyList<ScenarioValidationResult> Sc
 /// </param>
 /// <param name="YamlText">The scenario's raw <c>.e2e.yaml</c> text.</param>
 /// <param name="SeedBaseDirectory">
-/// The base directory for the scenario's own relative file-path fields. Pass
-/// <see langword="null"/> to fall back to the process's current directory (mirrors
-/// <see cref="ProviderPipeline.Compile"/>'s own <c>suiteDirectory</c> default). Each
-/// scenario carries its OWN base directory — deliberately not a single suite-wide
-/// directory — because, unlike a suite run, <see cref="ScenarioValidator.Validate"/>
-/// makes no assumption that the scenarios it validates share one <c>environment</c> block
-/// or even live in the same directory (a directory scan may discover files nested at
-/// different depths).
+/// The base directory this scenario's relative file-path fields (e.g.
+/// <c>script.csharp</c>'s <c>file</c>, <c>environment.seed</c> fixtures) resolve against.
+/// Pass <see langword="null"/> to fall back to the process's current directory (mirrors
+/// <see cref="ProviderPipeline.Compile"/>'s own <c>suiteDirectory</c> default).
+/// <para>
+/// <strong>Deliberately per-<see cref="ScenarioSource"/>, not suite-wide, at the API
+/// level</strong> — this record makes no assumption that the scenarios passed to
+/// <see cref="ScenarioValidator.Validate"/> share one directory or one
+/// <c>environment</c> block. But this is a COMPILE-TIME input (existence-checked at
+/// emit time, not merely a string), so a CALLER that means to predict what
+/// <c>run</c> would do (e.g. <c>vouchfx validate</c> over a directory tree) MUST
+/// resolve it EXACTLY the way <c>run</c> does — one value, computed once from the
+/// first discovery-clean scenario's own directory, applied to every
+/// <see cref="ScenarioSource"/> in that invocation (mirroring
+/// <c>RunCommand.ExecuteAsync</c>'s <c>suiteBaseDirectory</c> /
+/// <c>ScenarioRunner.RunSuiteAsync</c>'s <c>seedBaseDirectory</c>) — never a
+/// per-scenario directory computed independently per file. Getting this wrong lets
+/// <c>validate</c> disagree with <c>run</c> on whether a scenario several
+/// directories away from the first one even compiles.
+/// </para>
 /// </param>
 public sealed record ScenarioSource(string Path, string YamlText, string? SeedBaseDirectory = null);
 
@@ -277,8 +289,10 @@ public static class ScenarioValidator
     /// </summary>
     /// <param name="scenarios">
     /// The scenarios to validate, each carrying its own path, YAML text, and (optional)
-    /// seed base directory — see <see cref="ScenarioSource"/> for why the base directory is
-    /// per-scenario rather than shared.
+    /// seed base directory. The base directory field is per-<see cref="ScenarioSource"/>
+    /// at the API level, but a caller predicting <c>run</c>'s behaviour over a directory
+    /// scan MUST supply the SAME value for every entry — see <see cref="ScenarioSource"/>'s
+    /// <c>SeedBaseDirectory</c> remarks for why.
     /// </param>
     /// <param name="registry">The frozen provider registry to validate against.</param>
     /// <returns>

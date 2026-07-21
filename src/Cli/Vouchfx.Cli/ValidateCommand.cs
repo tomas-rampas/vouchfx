@@ -153,14 +153,29 @@ internal static class ValidateCommand
         // ScenarioValidator would re-validate a possibly EMPTY YamlText (the I/O-failure
         // case leaves it string.Empty) and surface a misleading generic schema diagnostic
         // ("document is empty") instead of discovery's real message (e.g. "Could not read
-        // file: Access to the path '...' is denied."). Each scenario also carries its OWN
-        // seed base directory (its containing folder) — a directory scan may discover files
-        // nested at different depths, so there is no single suite-wide directory to fall
-        // back to (see ScenarioSource's remarks).
-        var sources = discovered
-            .Where(s => !s.Failed)
-            .Select(s => new ScenarioSource(
-                s.AbsolutePath, s.YamlText, Path.GetDirectoryName(s.AbsolutePath)))
+        // file: Access to the path '...' is denied.").
+        var parsed = discovered.Where(s => !s.Failed).ToList();
+
+        // ONE suite-wide base directory — the FIRST discovery-clean scenario's own
+        // directory — applied to EVERY scenario's compile, deliberately matching
+        // RunCommand.ExecuteAsync's suiteBaseDirectory exactly
+        // (Path.GetDirectoryName(parsed[0].AbsolutePath), threaded into
+        // ScenarioRunner.RunSuiteAsync as seedBaseDirectory). This base directory is a
+        // COMPILE-TIME input: script.csharp resolves a `file:` reference (and existence-
+        // checks it) against it at emit time, and environment.seed fixtures resolve the
+        // same way — so validate MUST resolve it identically to run, or a scenario
+        // several directories away from the first one could validate against a DIFFERENT
+        // base than run will actually use, letting validate pass what run would reject
+        // (or vice versa). A per-scenario base directory (each scenario's own folder)
+        // would defeat validate's entire purpose of predicting run. Null when there is
+        // nothing discovery-clean to validate (parsed.Count == 0) — unused in that case,
+        // since `sources` below is then empty too.
+        string? suiteBaseDirectory = parsed.Count > 0
+            ? Path.GetDirectoryName(parsed[0].AbsolutePath)
+            : null;
+
+        var sources = parsed
+            .Select(s => new ScenarioSource(s.AbsolutePath, s.YamlText, suiteBaseDirectory))
             .ToList();
 
         var validated = ScenarioValidator.Validate(sources, registry).Scenarios;

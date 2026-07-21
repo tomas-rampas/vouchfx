@@ -399,7 +399,7 @@ Exit codes:
 | Exit code | Meaning |
 |---|---|
 | **0** | All scenarios are valid. |
-| **2** | Usage error (bad arguments, missing path). |
+| **2** | Usage error — the path is missing or is not a readable .e2e.yaml file or directory. |
 | **4** | One or more scenarios are invalid (schema, parse, provider, or Roslyn errors). |
 
 > **Security note:** `validate` compiles your test in-process using the same Roslyn compiler as `run`, with no sandboxing. This is safe for suites you author and trust, but not for actively hostile input — a malicious `script.csharp` body can exhaust resources or crash the validating process. For use cases involving untrusted input (such as the vouchfx MCP server), isolate validation in a separate worker process.
@@ -421,7 +421,6 @@ Exit codes:
 | Exit code | Meaning |
 |---|---|
 | **0** | Success. |
-| **2** | Usage error (unrecognised flag). |
 
 The `--json` output includes the engine version and a sorted array of step types, for consumption by editor plugins and downstream tooling.
 

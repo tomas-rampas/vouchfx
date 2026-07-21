@@ -4,8 +4,10 @@
 // subcommand) and dispatches via System.CommandLine 2.0.x GA:
 //   rootCommand.Parse(args).InvokeAsync(config, ct).
 //
-// System.CommandLine resolves --help / --version and parse errors itself (exit code 2 on
-// a parse error). The `run` action returns the suite exit code (see ExitCodes).
+// System.CommandLine resolves --help / --version and parse errors itself (its default:
+// exit code 1 on a parse error such as an unrecognised option). A subcommand action returns
+// the app's taxonomy-aware exit code — see ExitCodes (e.g. 2 for the app's own usage errors
+// such as a bad or missing path, which are detected in the action, not by the parser).
 //
 // This assembly is the Aspire host (Aspire.AppHost.Sdk + IsAspireHost in the csproj); its
 // name "vouchfx" is what RunCommand passes to ScenarioRunner.RunSuiteAsync as
