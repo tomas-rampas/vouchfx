@@ -144,7 +144,7 @@ public sealed class EventsStreamCollisionTests : IDisposable
             eventsStreamPath: Path.Combine(_root, "events-stream.jsonl"));
 
         Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.Contains("No", sw.ToString(), StringComparison.Ordinal);
+        Assert.Contains("scenarios found", sw.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(CollisionMessage, sw.ToString(), StringComparison.Ordinal);
     }
 
