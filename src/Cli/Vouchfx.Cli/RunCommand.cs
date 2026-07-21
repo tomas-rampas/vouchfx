@@ -69,6 +69,7 @@ internal static class RunCommand
         var eventsStreamOption = BuildEventsStreamOption();
         var noDecorationsOption = BuildNoDecorationsOption();
         var noTelemetryOption = BuildNoTelemetryOption();
+        var shutdownOnStdinEofOption = BuildShutdownOnStdinEofOption();
         command.Add(tagOption);
         command.Add(ownerOption);
         command.Add(pathOption);
@@ -83,6 +84,7 @@ internal static class RunCommand
         command.Add(eventsStreamOption);
         command.Add(noDecorationsOption);
         command.Add(noTelemetryOption);
+        command.Add(shutdownOnStdinEofOption);
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
@@ -100,6 +102,7 @@ internal static class RunCommand
             var eventsStreamPath = parseResult.GetValue(eventsStreamOption);
             var noDecorations = parseResult.GetValue(noDecorationsOption);
             var noTelemetry = parseResult.GetValue(noTelemetryOption);
+            var shutdownOnStdinEof = parseResult.GetValue(shutdownOnStdinEofOption);
 
             // Accessibility (S10-G-03a): decorate the terminal report (ANSI colour + per-verdict
             // shape glyph) ONLY for an interactive TTY that has not opted out.  Plain text is the
@@ -133,7 +136,8 @@ internal static class RunCommand
                 decorate,
                 Console.Out,
                 telemetryHook,
-                cancellationToken);
+                cancellationToken,
+                shutdownOnStdinEof);
         });
 
         return command;
@@ -400,6 +404,75 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The shared force-termination budget, in seconds, for BOTH termination paths: Program.cs's
+    /// non-watch <c>InvocationConfiguration.ProcessTerminationTimeout</c> (Ctrl-C / SIGTERM) and
+    /// <see cref="ShutdownBackstop"/> (stdin EOF, vouchfx-mcp#17). Kept as ONE constant so the two
+    /// budgets can never drift apart.
+    /// </summary>
+    /// <remarks>
+    /// 30s comfortably covers the PATHOLOGICAL sum of <c>HeadlessTopology.DisposeAsync</c>'s two
+    /// sequential bounded waits (§4.5): its own 15s <c>StopAsync</c> CTS, PLUS the subsequent
+    /// (unconditional, un-timeout-wrapped in that method) <c>_app.DisposeAsync()</c> call, which
+    /// DCP's own internal dispose/cleanup path can itself take up to ~10s to complete — a worst
+    /// case of ~25s. An earlier 20s value covered only the 15s <c>StopAsync</c> bound in isolation
+    /// and left a narrow re-leak window against that combined ~25s worst case; 30s clears it with
+    /// headroom while remaining FINITE, so a genuinely wedged run still eventually terminates.
+    /// </remarks>
+    internal const int TeardownBudgetSeconds = 30;
+
+    /// <summary>
+    /// The <c>--shutdown-on-stdin-eof</c> flag (vouchfx-mcp#17): opt in to a graceful-shutdown
+    /// seam for a host process (e.g. an MCP server) that spawns this CLI with a redirected
+    /// standard input and wants to request a clean stop simply by closing that pipe.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// STRICTLY opt-in and OFF by default. When off (the default), <see cref="ExecuteAsync"/>
+    /// never touches standard input at all — behaviour is byte-for-byte identical to today. This
+    /// matters because stdin is frequently already at end-of-file under CI / non-interactive
+    /// redirection (and is never closed at all in a plain interactive terminal run); a non-opt-in
+    /// watch would self-cancel those runs.
+    /// </para>
+    /// <para>
+    /// <strong>Operator warning:</strong> do NOT combine this flag with a non-interactive or
+    /// already-closed/redirected-null stdin (e.g. <c>vouchfx run --shutdown-on-stdin-eof &lt;
+    /// /dev/null</c>) unless a LIVE pipe a host process actually controls is wired up instead — an
+    /// already-EOF stdin is observed on the very first read, so the run is cancelled IMMEDIATELY.
+    /// </para>
+    /// <para>
+    /// When set, <see cref="ExecuteAsync"/> starts a background <see cref="StdinShutdownWatcher"/>
+    /// over <see cref="Console.OpenStandardInput()"/>. On end-of-file it cancels a LINKED
+    /// <see cref="CancellationTokenSource"/> that every downstream runner then uses instead of the
+    /// raw System.CommandLine <see cref="CancellationToken"/> — the SAME cancellation-PROPAGATION
+    /// path a Ctrl-C / SIGTERM takes (the engine's teardown discipline, §4.5). This is
+    /// <strong>not</strong> full signal-path parity, though:
+    /// <see cref="CancellationTokenSource.CreateLinkedTokenSource(CancellationToken)"/> only
+    /// propagates cancellation DOWNSTREAM, so cancelling the linked source never touches the
+    /// ORIGINAL System.CommandLine token — <c>InvocationConfiguration.ProcessTerminationTimeout</c>
+    /// (see Program.cs), armed only by a REAL OS Ctrl-C/SIGTERM, is never engaged by this path. The
+    /// EOF callback therefore ALSO arms a dedicated <see cref="ShutdownBackstop"/>: if the process
+    /// is still alive <see cref="TeardownBudgetSeconds"/> seconds after EOF (something is wedged
+    /// and ignoring cancellation), the backstop force-exits the process itself — see
+    /// <see cref="ExecuteAsync"/>'s wiring for the exit-code rationale. An MCP host that redirects
+    /// this process's standard input can therefore request a graceful stop simply by closing the
+    /// child's stdin, backed by the engine's OWN bounded force-exit guarantee, independent of
+    /// System.CommandLine's.
+    /// </para>
+    /// </remarks>
+    internal static Option<bool> BuildShutdownOnStdinEofOption() => new("--shutdown-on-stdin-eof")
+    {
+        Description =
+            "Opt in to graceful shutdown on stdin end-of-file: when a host process (e.g. an MCP "
+            + "server) closes this process's redirected standard input, cancel the run and, if it "
+            + "has not finished within the teardown budget, force-exit the process. Off by "
+            + "default; never touches stdin unless set, so behaviour is unchanged for CI / "
+            + "non-interactive runs where stdin is often already at EOF. WARNING: do not combine "
+            + "with a non-interactive or already-closed/redirected-null stdin (e.g. `< /dev/null`) "
+            + "unless a live pipe a host process controls is actually wired up, or the run will "
+            + "cancel immediately.",
+    };
+
+    /// <summary>
     /// Folds the four selection options out of a <see cref="ParseResult"/> into the
     /// immutable <see cref="SelectionCriteria"/> the selector consumes.
     /// </summary>
@@ -530,7 +603,11 @@ internal static class RunCommand
     /// outbox.  EVERY hook call is wrapped so telemetry can never change the suite verdict or exit
     /// code.
     /// </param>
-    /// <param name="cancellationToken">Propagated to the runner.</param>
+    /// <param name="cancellationToken">
+    /// The System.CommandLine action's own token (cancelled on Ctrl-C / SIGTERM, bounded by
+    /// <c>InvocationConfiguration.ProcessTerminationTimeout</c> — see Program.cs). Propagated to
+    /// the runner UNCHANGED unless <paramref name="shutdownOnStdinEof"/> is set — see its remarks.
+    /// </param>
     /// <param name="parallel">
     /// The <c>--parallel</c> value: when non-<see langword="null"/>, run up to this many
     /// scenarios concurrently (each owning its own topology) via
@@ -593,6 +670,29 @@ internal static class RunCommand
     /// / <c>--events</c> it is NOT threaded into watch mode (same scope note as those flags below):
     /// the watch loop renders plain.
     /// </param>
+    /// <param name="shutdownOnStdinEof">
+    /// The <c>--shutdown-on-stdin-eof</c> flag (vouchfx-mcp#17). STRICTLY opt-in; OFF by default.
+    /// <see langword="false"/> (the default): <paramref name="cancellationToken"/> flows through
+    /// to every downstream runner completely UNCHANGED, and standard input is never opened,
+    /// read, or otherwise touched — this path is byte-for-byte identical to before this flag
+    /// existed.
+    /// <see langword="true"/>: a background <see cref="StdinShutdownWatcher"/> is started over
+    /// <see cref="Console.OpenStandardInput()"/>. On end-of-file (or a read error) it cancels a
+    /// LINKED <see cref="CancellationTokenSource"/> derived from <paramref name="cancellationToken"/>
+    /// — every downstream runner below is given THAT linked token instead, unwinding the SAME way
+    /// a Ctrl-C / SIGTERM would (cancellation PROPAGATION parity). It is deliberately
+    /// <strong>not</strong> full termination-enforcement parity, though: linking only propagates
+    /// downstream, so the ORIGINAL System.CommandLine token is never cancelled and
+    /// <c>ProcessTerminationTimeout</c> (Program.cs) — armed only by a real OS signal — never
+    /// fires for this path. The EOF callback therefore ALSO arms a dedicated
+    /// <see cref="ShutdownBackstop"/> with its OWN wall-clock budget, independent of the run's own
+    /// (possibly-ignored) cancellation: if the process has not exited within
+    /// <see cref="TeardownBudgetSeconds"/> seconds of EOF, the backstop force-exits it — see the
+    /// wiring below for the exit-code choice. This gives a stdin-EOF shutdown request the same
+    /// BOUNDED guarantee a signal gets, via its own dedicated mechanism rather than shared
+    /// System.CommandLine plumbing. Lets a host process (e.g. an MCP server) that spawns this CLI
+    /// with a redirected stdin request a graceful stop simply by closing that pipe.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
@@ -603,7 +703,10 @@ internal static class RunCommand
     /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
     /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, the
     /// <c>--parallel</c> / <c>--watch</c> arg-parse, and the <c>--watch</c>+<c>--parallel</c>
-    /// usage-error short-circuit) are each tested in isolation.
+    /// usage-error short-circuit) are each tested in isolation. The
+    /// <c>--shutdown-on-stdin-eof</c> plumbing itself (the linked-token wiring, and
+    /// <see cref="StdinShutdownWatcher"/> in isolation) is ALSO Docker-free and IS covered
+    /// directly.
     /// </remarks>
     internal static async Task<int> ExecuteAsync(
         string path,
@@ -619,13 +722,75 @@ internal static class RunCommand
         bool decorate,
         TextWriter output,
         TelemetryRunHook? telemetryHook,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool shutdownOnStdinEof = false)
     {
         // First-run notice (S10-G-04): when telemetry consent is Undecided and the notice has not
         // been shown, print a one-time stderr notice (what's collected, that NOTHING is sent until
         // the user opts in, how to opt out).  The notice collects and sends nothing.  Wrapped
         // inside the hook so it can never break the run.
         telemetryHook?.MaybeShowFirstRunNotice(Console.Error);
+
+        // Opt-in graceful-shutdown seam (vouchfx-mcp#17). STRICTLY additive: when the flag is
+        // absent (the default), `linkedShutdownSource`, `shutdownBackstop` and
+        // `stdinShutdownWatcher` are ALL null — nothing is constructed, standard input is never
+        // opened or read, and `runCancellationToken` is the EXACT SAME token as
+        // `cancellationToken` — byte-for-byte identical to today.
+        //
+        // When set, closing stdin fires the watcher's EOF (or read-error) callback, which does
+        // TWO things:
+        //   1. Cancels `linkedShutdownSource` — every downstream runner below observes this via
+        //      `runCancellationToken` and unwinds the SAME way a Ctrl-C / SIGTERM would
+        //      (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5). This is
+        //      cancellation-PROPAGATION parity only.
+        //   2. Arms `shutdownBackstop` — a WALL-CLOCK, budget-bound force-exit timer.
+        // Security-review finding (MAJOR-1): step 1 alone is NOT signal-path parity for
+        // TERMINATION ENFORCEMENT. CancellationTokenSource.CreateLinkedTokenSource only
+        // propagates cancellation DOWNSTREAM — cancelling `linkedShutdownSource` never touches
+        // the ORIGINAL `cancellationToken`, so System.CommandLine's own
+        // InvocationConfiguration.ProcessTerminationTimeout watchdog (Program.cs — armed only by
+        // a REAL OS Ctrl-C/SIGTERM acting on THAT original token) is NEVER engaged by a
+        // stdin-EOF-triggered stop. Without step 2, a run wedged somewhere that does not observe
+        // cancellation promptly (a step/provider await, not just teardown) would hang forever
+        // once stdin closes. `shutdownBackstop` closes that gap: if the process is still alive
+        // TeardownBudgetSeconds after EOF, it force-exits via Environment.Exit — see the
+        // exit-code rationale below.
+        //
+        // Declared in THIS order — linkedShutdownSource, shutdownBackstop, stdinShutdownWatcher —
+        // so `await using` disposes in REVERSE: the WATCHER first (so no MORE EOF callbacks can
+        // fire), `shutdownBackstop` SECOND (cancelling its timer if teardown already completed —
+        // this is what guarantees a graceful EOF shutdown that finishes within budget never
+        // force-exits), and the linked CTS LAST. `ShutdownBackstop.Arm`/`DisposeAsync` are
+        // internally lock-serialised (see its remarks), so a race between an in-flight EOF
+        // callback and this method's own normal-completion teardown can never leave the timer
+        // either double-armed or armed against an already-disposed CancellationTokenSource.
+        using var linkedShutdownSource = shutdownOnStdinEof
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+        var runCancellationToken = linkedShutdownSource?.Token ?? cancellationToken;
+
+        // Exit-code choice for a forced backstop exit: Inconclusive (4), not TestFailure (1) and
+        // not EnvironmentError (3). The run was cancelled via a deliberate, legitimate
+        // graceful-stop request (stdin EOF) — that is the engine failing to reach a verdict in
+        // time (§12.1's Inconclusive: "timeout / … the engine could not determine correctness"),
+        // NOT a certain product defect the suite observed, so this must never exit TestFailure.
+        // It is arguably closer to infrastructure trouble (something wedged), but Inconclusive is
+        // the SAFER default per §12.1 ("only Fail breaks CI by default") — cancellation is not
+        // proof of either a product Fail or an environment fault, and a forced-exit stop must
+        // never risk being conflated with either.
+        await using var shutdownBackstop = shutdownOnStdinEof
+            ? new ShutdownBackstop(
+                TimeSpan.FromSeconds(TeardownBudgetSeconds),
+                () => Environment.Exit(ExitCodes.Inconclusive))
+            : null;
+
+        await using var stdinShutdownWatcher = shutdownOnStdinEof
+            ? StdinShutdownWatcher.Start(Console.OpenStandardInput(), () =>
+              {
+                  linkedShutdownSource!.Cancel();
+                  shutdownBackstop!.Arm();
+              })
+            : null;
 
         // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
         // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
@@ -752,7 +917,7 @@ internal static class RunCommand
         // deliberately left out rather than half-wired (the watch loop renders plain).
         if (watch)
         {
-            return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
+            return await WatchRunner.RunAsync(discovered, registry, output, runCancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -828,7 +993,7 @@ internal static class RunCommand
                     eventsReportPath: runnerEventsPath,
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
-                    cancellationToken: cancellationToken).ConfigureAwait(false)
+                    cancellationToken: runCancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
                     names,
@@ -842,7 +1007,7 @@ internal static class RunCommand
                     eventsReportPath: runnerEventsPath,
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                    cancellationToken: runCancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
         }
@@ -854,7 +1019,7 @@ internal static class RunCommand
         // any error), so telemetry can NEVER affect the verdict or the exit code below.
         if (telemetryHook is not null)
         {
-            await telemetryHook.EmitAsync(runnerEventsPath, isTempEventsFile, cancellationToken)
+            await telemetryHook.EmitAsync(runnerEventsPath, isTempEventsFile, runCancellationToken)
                 .ConfigureAwait(false);
         }
 
