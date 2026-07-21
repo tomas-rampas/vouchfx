@@ -149,6 +149,26 @@ public sealed class EventsStreamCollisionTests : IDisposable
     }
 
     [Fact]
+    public async Task EventsStreamSameMalformedPathAsEvents_DoesNotTripTheCollisionGuard()
+    {
+        // Copilot review follow-up: two IDENTICAL malformed paths (embedded NUL — the same
+        // deterministic, cross-platform Path.GetFullPath-throws trigger used elsewhere in the
+        // CLI tests, e.g. RunPathRootExecuteTests) must NOT be treated as a collision. A path
+        // malformed enough for GetFullPath to throw cannot be opened by EITHER the appender or
+        // FileReportWriter anyway, so there is no successful --events archive for this guard to
+        // protect — the malformed path instead falls through to the existing write-time
+        // handling, never this new usage-error guard.
+        var sw = new StringWriter();
+        const string malformedPath = "bad\0path.jsonl";
+
+        var exitCode = await ExecuteAsync(
+            sw, eventsReportPath: malformedPath, eventsStreamPath: malformedPath);
+
+        Assert.NotEqual(ExitCodes.UsageError, exitCode);
+        Assert.DoesNotContain(CollisionMessage, sw.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EventsStreamAbsent_NeverTripsTheGuard_RegardlessOfOtherPaths()
     {
         // No --events-stream at all: the guard is a no-op even if --events / --html / --junit
@@ -199,5 +219,30 @@ public sealed class EventsStreamCollisionTests : IDisposable
     public void PathsEqual_NullOrEmptyEitherSide_ReturnsFalse(string? a, string? b)
     {
         Assert.False(RunCommand.PathsEqual(a, b));
+    }
+
+    [Fact]
+    public void PathsEqual_BothPathsMalformedButIdentical_ReturnsFalse()
+    {
+        // Copilot review follow-up: an embedded NUL makes Path.GetFullPath throw
+        // ArgumentException deterministically, cross-platform (the same trigger
+        // FileReportWriterTests.InvalidPath / EventStreamAppenderTests.InvalidPath use). Two
+        // paths that are BYTE-IDENTICAL but both fail to normalise must NOT be reported as
+        // equal — a normalisation failure means "not comparable", never "the same file",
+        // regardless of how the raw strings compare.
+        const string malformedPath = "bad\0path.jsonl";
+
+        Assert.False(RunCommand.PathsEqual(malformedPath, malformedPath));
+    }
+
+    [Fact]
+    public void PathsEqual_OneMalformedOneWellFormed_ReturnsFalse()
+    {
+        // Asymmetric case: only one side fails to normalise. Still not comparable, so still not
+        // a collision, even though nothing here suggests the two strings coincide.
+        const string malformedPath = "bad\0path.jsonl";
+
+        Assert.False(RunCommand.PathsEqual(malformedPath, "well-formed.jsonl"));
+        Assert.False(RunCommand.PathsEqual("well-formed.jsonl", malformedPath));
     }
 }

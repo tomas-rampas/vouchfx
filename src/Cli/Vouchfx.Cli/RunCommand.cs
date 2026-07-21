@@ -439,10 +439,16 @@ internal static class RunCommand
     /// </para>
     /// <para>
     /// <see langword="false"/> when either input is <see langword="null"/> or empty (nothing to
-    /// collide with) or when <see cref="Path.GetFullPath(string)"/> throws on a malformed path —
-    /// a malformed report path is not this guard's concern (it is diagnosed later, at write time,
-    /// by <c>FileReportWriter</c> / <c>EventStreamAppender</c>'s own per-file exception handling),
-    /// so this NEW guard must never itself throw or manufacture a spurious usage error.
+    /// collide with), AND <see langword="false"/> whenever <see cref="Path.GetFullPath(string)"/>
+    /// throws for EITHER operand — a path malformed enough to make <c>GetFullPath</c> throw
+    /// cannot be opened by <c>FileReportWriter</c> or <c>EventStreamAppender</c> EITHER, so there
+    /// is no successful archive for this guard to protect: both writers will independently fail
+    /// visibly, at write time, with an accurate "bad path" diagnostic. Treating an unnormalisable
+    /// path as "not comparable" (rather than falling back to a raw-string compare) also avoids a
+    /// false positive: two DIFFERENT malformed paths could otherwise coincide on the same raw
+    /// text by construction, and — the sharper case — two IDENTICAL malformed paths must NOT be
+    /// treated as a collision here, since neither one is a file this guard can meaningfully
+    /// reason about; this guard must never itself throw or manufacture a spurious usage error.
     /// </para>
     /// </remarks>
     internal static bool PathsEqual(string? a, string? b)
@@ -452,19 +458,31 @@ internal static class RunCommand
             return false;
         }
 
+        var normalisedA = NormalisePathForComparison(a);
+        var normalisedB = NormalisePathForComparison(b);
+        if (normalisedA is null || normalisedB is null)
+        {
+            // Either path failed to normalise: not comparable, so NOT a collision (defer to the
+            // existing write-time diagnostics). Deliberately NOT "both null ⇒ equal" — a failed
+            // normalisation is "unknown", never a match.
+            return false;
+        }
+
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-        return string.Equals(NormalisePathForComparison(a), NormalisePathForComparison(b), comparison);
+        return string.Equals(normalisedA, normalisedB, comparison);
     }
 
     /// <summary>
-    /// Resolves <paramref name="path"/> to its full form for <see cref="PathsEqual"/>, falling
-    /// back to the raw string when <see cref="Path.GetFullPath(string)"/> itself rejects it (a
-    /// malformed path is diagnosed later, at write time, not by this guard).
+    /// Resolves <paramref name="path"/> to its full form for <see cref="PathsEqual"/>, returning
+    /// <see langword="null"/> when <see cref="Path.GetFullPath(string)"/> itself rejects it — a
+    /// malformed path is not this guard's concern (both the eventual writers fail visibly, at
+    /// write time, with their own accurate diagnostic), so it must never be treated as equal to
+    /// anything, including another equally malformed path.
     /// </summary>
-    private static string NormalisePathForComparison(string path)
+    private static string? NormalisePathForComparison(string path)
     {
         try
         {
@@ -475,7 +493,7 @@ internal static class RunCommand
             or PathTooLongException
             or System.Security.SecurityException)
         {
-            return path;
+            return null;
         }
     }
 
@@ -637,7 +655,11 @@ internal static class RunCommand
         // be used together with --events" guarantee. Rejected here, at parse time, before
         // discovery/Docker/anything else runs — a usage error (exit 2), not a silent no-op.
         // Collisions AMONG --events / --html / --junit themselves are pre-existing and OUT OF
-        // SCOPE (not this guard's concern).
+        // SCOPE (not this guard's concern). PathsEqual only fires when BOTH sides normalise
+        // successfully to the SAME file — a malformed path (on either side, including two
+        // IDENTICAL malformed paths) is deliberately treated as "not comparable", never as a
+        // collision, and is left to the existing write-time diagnostics instead (see
+        // PathsEqual's remarks).
         if (eventsStreamPath is not null
             && (PathsEqual(eventsStreamPath, eventsReportPath)
                 || PathsEqual(eventsStreamPath, htmlReportPath)
