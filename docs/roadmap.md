@@ -36,6 +36,11 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   at the source; the redaction path has passed a penetration test.
 - **Reporting off one event stream** — terminal (WCAG-conscious), self-contained HTML, JUnit XML and a raw
   JSON Lines `--events` feed, all rendered from the same schema-versioned stream.
+- **Live event streaming** — `vouchfx run --events-stream <path>` writes an incremental, tailable JSON Lines
+  stream to a file as scenarios complete (scenario-level granularity), useful for real-time tailing, CI progress
+  streaming, and downstream consumers.
+- **Compile-level suite tooling** — `validate` and `list` subcommands perform Docker-free YAML validation
+  and step-type discovery (machine-readable `--json` output), executed once at suite load time.
 - **A headless CLI** with tag/owner/path/change-set selection, taxonomy-aware exit codes (only `Fail` breaks
   CI by default), parallel topology-per-scenario runs, and watch mode.
 - **Editor tooling** — a VSCode extension with schema-driven validation and autocomplete, C# highlighting in
@@ -47,7 +52,7 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 ## Pre-releases are live; v1.0 GA targeted Q4 2026
 
 The first public releases shipped on 2026-07-08 and the **`v1.0.0-alpha` series** (currently
-`v1.0.0-alpha.9`) is published as pre-releases with signed artefacts (cosign, SLSA provenance,
+`v1.0.0-alpha.10`) is published as pre-releases with signed artefacts (cosign, SLSA provenance,
 CycloneDX SBOMs), and the `vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing
 (packages for every alpha are on NuGet.org, and every alpha now has a published GitHub release
 page):
