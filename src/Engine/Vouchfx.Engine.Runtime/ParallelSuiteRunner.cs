@@ -152,6 +152,16 @@ public static class ParallelSuiteRunner
     /// additive raw passthrough of the frozen v1 stream.  <see langword="null"/> ⇒ no events
     /// artifact.
     /// </param>
+    /// <param name="eventsStreamPath">
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258).
+    /// When non-<see langword="null"/>, an <see cref="Reporting.EventStreamAppender"/> is opened
+    /// ONCE and each scenario slot's event buffer is appended — and flushed — to it as soon as
+    /// that slot COMPLETES (success, cancellation, or an escaped exception), i.e. in COMPLETION
+    /// order, not declaration order — acceptable for a live tail, and unrelated to the
+    /// deterministic, declaration-order <paramref name="eventsReportPath"/> archive, which is
+    /// still written ONCE, at the end, from the declaration-order concatenation.
+    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single render over
     /// the declaration-order concatenation decorates each step-verdict line with an ANSI colour + a
@@ -183,6 +193,7 @@ public static class ParallelSuiteRunner
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
+        string? eventsStreamPath = null,
         bool decorate = false,
         CancellationToken cancellationToken = default)
     {
@@ -212,6 +223,7 @@ public static class ParallelSuiteRunner
             htmlReportPath,
             junitReportPath,
             eventsReportPath,
+            eventsStreamPath,
             decorate,
             cancellationToken).ConfigureAwait(false);
     }
@@ -234,6 +246,12 @@ public static class ParallelSuiteRunner
     /// <param name="htmlReportPath">Optional HTML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="junitReportPath">Optional JUnit XML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="eventsReportPath">Optional raw JSON Lines events destination (S10); null ⇒ none.</param>
+    /// <param name="eventsStreamPath">
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258); an
+    /// <see cref="Reporting.EventStreamAppender"/> is opened once (guarded on non-null) and each
+    /// slot's buffer is appended to it as that slot completes — in COMPLETION order.
+    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): decorate the single render with ANSI colour + a
     /// per-verdict shape glyph when <see langword="true"/>; plain text when <see langword="false"/>
@@ -255,6 +273,7 @@ public static class ParallelSuiteRunner
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
+        string? eventsStreamPath = null,
         bool decorate = false,
         CancellationToken ct = default)
     {
@@ -299,6 +318,17 @@ public static class ParallelSuiteRunner
         // SemaphoreSlim gate caps concurrency at the configured degree.  Disposed after WhenAll.
         var gate = new SemaphoreSlim(degree, degree);
 
+        // ── Incremental events stream (issue #258) ────────────────────────────────
+        // Opened ONCE, guarded on a non-null path, and disposed (via `await using`) once this
+        // method returns — after every slot has completed and RenderAndAggregate has run.
+        // Each completing slot appends its OWN buffer below (COMPLETION order, not declaration
+        // order — see the parameter doc). Entirely separate from `eventsReportPath`: the
+        // --events / --json archive is still written once, at the end, by RenderAndAggregate's
+        // FileReportWriter.WriteFileReports call, from the declaration-order concatenation.
+        await using var eventsStreamAppender = eventsStreamPath is not null
+            ? new EventStreamAppender(eventsStreamPath, output)
+            : null;
+
         // Launch every scenario as a task; the gate (not the launch loop) bounds concurrency.
         // We do NOT pass `ct` to Task.Run / the launch loop in a way that would abandon tasks:
         // every launched task is included in WhenAll so its topology disposes (complete-all).
@@ -324,6 +354,7 @@ public static class ParallelSuiteRunner
                     index,
                     slotVerdicts,
                     slotBuffers,
+                    eventsStreamAppender,
                     ct);
             }
 
@@ -353,6 +384,14 @@ public static class ParallelSuiteRunner
     /// <see cref="Task.WhenAll(System.Collections.Generic.IEnumerable{Task})"/> always completes and
     /// every topology disposes (complete-all, no fail-fast).
     /// </summary>
+    /// <param name="eventsStreamAppender">
+    /// The optional incremental events-stream sink (issue #258). When non-<see langword="null"/>,
+    /// this slot's buffer is appended — and flushed — to it the moment the slot reaches a terminal
+    /// state (success, cancellation, or an escaped exception), so a concurrent tail sees this
+    /// scenario's lines as soon as IT finishes, in completion order (not declaration order). The
+    /// appender is shared across every concurrently-running slot and internally synchronises its
+    /// writes, so concurrent calls here can never interleave mid-record.
+    /// </param>
     private static async Task RunOneSlotAsync(
         StepKindRegistry registry,
         string scenarioName,
@@ -365,6 +404,7 @@ public static class ParallelSuiteRunner
         int index,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
+        EventStreamAppender? eventsStreamAppender,
         CancellationToken ct)
     {
         // Yield so the launch loop completes promptly and all slots are pending before any runs —
@@ -381,6 +421,7 @@ public static class ParallelSuiteRunner
         {
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            eventsStreamAppender?.AppendLines(slotBuffers[index]);
             return;
         }
 
@@ -397,6 +438,7 @@ public static class ParallelSuiteRunner
 
             slotVerdicts[index] = verdict;
             slotBuffers[index] = buffer;
+            eventsStreamAppender?.AppendLines(buffer);
         }
         catch (OperationCanceledException)
         {
@@ -404,6 +446,7 @@ public static class ParallelSuiteRunner
             // Inconclusive, NEVER Fail (§12.1) — the engine could not determine correctness.
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            eventsStreamAppender?.AppendLines(slotBuffers[index]);
         }
         catch (Exception ex)
         {
@@ -418,6 +461,7 @@ public static class ParallelSuiteRunner
                 $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}");
             slotVerdicts[index] = Verdict.EnvironmentError;
             slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
+            eventsStreamAppender?.AppendLines(slotBuffers[index]);
         }
         finally
         {

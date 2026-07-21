@@ -66,6 +66,7 @@ internal static class RunCommand
         var htmlReportOption = BuildHtmlReportOption();
         var junitReportOption = BuildJunitReportOption();
         var eventsOption = BuildEventsOption();
+        var eventsStreamOption = BuildEventsStreamOption();
         var noDecorationsOption = BuildNoDecorationsOption();
         var noTelemetryOption = BuildNoTelemetryOption();
         command.Add(tagOption);
@@ -79,6 +80,7 @@ internal static class RunCommand
         command.Add(htmlReportOption);
         command.Add(junitReportOption);
         command.Add(eventsOption);
+        command.Add(eventsStreamOption);
         command.Add(noDecorationsOption);
         command.Add(noTelemetryOption);
 
@@ -95,6 +97,7 @@ internal static class RunCommand
             var htmlReportPath = parseResult.GetValue(htmlReportOption);
             var junitReportPath = parseResult.GetValue(junitReportOption);
             var eventsReportPath = parseResult.GetValue(eventsOption);
+            var eventsStreamPath = parseResult.GetValue(eventsStreamOption);
             var noDecorations = parseResult.GetValue(noDecorationsOption);
             var noTelemetry = parseResult.GetValue(noTelemetryOption);
 
@@ -126,6 +129,7 @@ internal static class RunCommand
                 htmlReportPath,
                 junitReportPath,
                 eventsReportPath,
+                eventsStreamPath,
                 decorate,
                 Console.Out,
                 telemetryHook,
@@ -331,6 +335,44 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The <c>--events-stream</c> option (issue #258): incrementally APPEND the JSON Lines event
+    /// stream to the given path as each scenario completes, so a concurrent reader can tail it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a SEPARATE, opt-in file from <c>--events</c> / <c>--json</c>: that archive is
+    /// still written exactly once, at the very end of the run, byte-for-byte unchanged (the
+    /// existing frozen behaviour every downstream consumer — e.g. the telemetry capture path —
+    /// already relies on). <c>--events-stream</c> may be used together with or independently of
+    /// <c>--events</c>; the two never share a file and never affect one another.
+    /// </para>
+    /// <para>
+    /// Scope (approved): SCENARIO-granular liveness only. A scenario's step / step-attempt
+    /// records are reconstructed from <c>Vars</c> after the compiled delegate returns, so a
+    /// flush lands a whole scenario's lines at once — a single suite's step lines still appear
+    /// together, at that scenario's completion, not one-by-one as each step executes. Genuine
+    /// per-step streaming is a separate, larger change (tracked as a follow-up) and is
+    /// deliberately out of scope here.
+    /// </para>
+    /// <para>
+    /// Absent ⇒ no incremental stream (today's behaviour unchanged). Not wired into
+    /// <c>--watch</c>, for the SAME reason <c>--events</c> / <c>--html</c> / <c>--junit</c> are
+    /// not (see the scope note where watch mode is dispatched below): watch renders per re-run
+    /// from its own topology, not from one suite-wide buffer.
+    /// </para>
+    /// </remarks>
+    internal static Option<string?> BuildEventsStreamOption() => new("--events-stream")
+    {
+        Description =
+            "Incrementally append the JSON Lines event stream to <path> as each scenario "
+            + "completes (scenario-granular liveness), so a concurrent reader (e.g. `tail -f`) "
+            + "sees lines as they land rather than only after the whole run finishes. Separate "
+            + "from --events / --json, which still writes once, at the end, byte-for-byte "
+            + "unchanged; the two may be used together or independently. Not wired into --watch. "
+            + "Omit for no incremental events stream (the default).",
+    };
+
+    /// <summary>
     /// The <c>--no-decorations</c> flag (S10-G-03a): render the terminal report as PLAIN text —
     /// no ANSI colour and no per-verdict shape glyph — for a screen-reader / CI-clean view.
     /// </summary>
@@ -380,6 +422,62 @@ internal static class RunCommand
     /// <summary>Treats an empty/whitespace option value as "not supplied".</summary>
     private static string? Normalise(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// Whether two option-supplied paths resolve to the SAME file, for the
+    /// <c>--events-stream</c> / <c>--events</c> / <c>--html</c> / <c>--junit</c> collision guard.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each path is normalised via <see cref="Path.GetFullPath(string)"/> before comparison, so
+    /// e.g. a relative and an equivalent absolute path are recognised as the same file. Comparison
+    /// then uses the platform-appropriate case sensitivity: <see cref="StringComparison.OrdinalIgnoreCase"/>
+    /// on Windows (whose filesystem is case-insensitive by default), <see cref="StringComparison.Ordinal"/>
+    /// elsewhere. This is a best-effort, no-filesystem-access check (no symlink / hard-link
+    /// resolution) — adequate for catching the literal "typed the same path twice" mistake this
+    /// guard exists for.
+    /// </para>
+    /// <para>
+    /// <see langword="false"/> when either input is <see langword="null"/> or empty (nothing to
+    /// collide with) or when <see cref="Path.GetFullPath(string)"/> throws on a malformed path —
+    /// a malformed report path is not this guard's concern (it is diagnosed later, at write time,
+    /// by <c>FileReportWriter</c> / <c>EventStreamAppender</c>'s own per-file exception handling),
+    /// so this NEW guard must never itself throw or manufacture a spurious usage error.
+    /// </para>
+    /// </remarks>
+    internal static bool PathsEqual(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+        {
+            return false;
+        }
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        return string.Equals(NormalisePathForComparison(a), NormalisePathForComparison(b), comparison);
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="path"/> to its full form for <see cref="PathsEqual"/>, falling
+    /// back to the raw string when <see cref="Path.GetFullPath(string)"/> itself rejects it (a
+    /// malformed path is diagnosed later, at write time, not by this guard).
+    /// </summary>
+    private static string NormalisePathForComparison(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException
+            or NotSupportedException
+            or PathTooLongException
+            or System.Security.SecurityException)
+        {
+            return path;
+        }
+    }
 
     /// <summary>
     /// Builds the optional positional <c>&lt;path&gt;</c> argument that defaults to the
@@ -456,6 +554,17 @@ internal static class RunCommand
     /// artifact.  Like <c>--html</c> / <c>--junit</c> it is NOT wired into watch mode (same scope
     /// note as those flags below).
     /// </param>
+    /// <param name="eventsStreamPath">
+    /// The <c>--events-stream</c> path (issue #258): when non-<see langword="null"/>, the runner
+    /// opens an <see cref="Vouchfx.Engine.Reporting.EventStreamAppender"/> over this path and
+    /// appends — and flushes — each scenario's event lines to it as that scenario completes, so a
+    /// concurrent reader can tail scenario-granular liveness rather than waiting for the whole run
+    /// to finish. Entirely SEPARATE from <paramref name="eventsReportPath"/>, which is still
+    /// written once, at the end, byte-for-byte unchanged. <see langword="null"/> ⇒ no incremental
+    /// stream. Like <c>--html</c> / <c>--junit</c> / <c>--events</c> it is NOT wired into watch
+    /// mode (same scope note as those flags below), and it is deliberately kept OUT of the
+    /// telemetry capture path (which reads back <paramref name="eventsReportPath"/> only).
+    /// </param>
     /// <param name="decorate">
     /// The computed terminal-decoration flag (S10-G-03a): when <see langword="true"/>, the
     /// non-watch runners decorate each step-verdict line with an ANSI colour + a per-verdict shape
@@ -488,6 +597,7 @@ internal static class RunCommand
         string? htmlReportPath,
         string? junitReportPath,
         string? eventsReportPath,
+        string? eventsStreamPath,
         bool decorate,
         TextWriter output,
         TelemetryRunHook? telemetryHook,
@@ -516,6 +626,26 @@ internal static class RunCommand
         if (parallel is { } degree && degree < 1)
         {
             await output.WriteLineAsync("--parallel must be 1 or greater.").ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        // --events-stream must not collide with any END-OF-RUN file output (--events / --html /
+        // --junit): EventStreamAppender holds its path open with FileShare.Read for the WHOLE
+        // run, so FileReportWriter's later FileShare.None open on the SAME path would hit a
+        // sharing violation — that archive would then be silently never written (only a
+        // diagnostic, no verdict change), quietly breaking the documented "--events-stream may
+        // be used together with --events" guarantee. Rejected here, at parse time, before
+        // discovery/Docker/anything else runs — a usage error (exit 2), not a silent no-op.
+        // Collisions AMONG --events / --html / --junit themselves are pre-existing and OUT OF
+        // SCOPE (not this guard's concern).
+        if (eventsStreamPath is not null
+            && (PathsEqual(eventsStreamPath, eventsReportPath)
+                || PathsEqual(eventsStreamPath, htmlReportPath)
+                || PathsEqual(eventsStreamPath, junitReportPath)))
+        {
+            await output.WriteLineAsync(
+                "--events-stream must not point at the same file as --events/--html/--junit.")
+                .ConfigureAwait(false);
             return ExitCodes.UsageError;
         }
 
@@ -590,13 +720,14 @@ internal static class RunCommand
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
         //
-        // NOTE (S09-T3 / S10 scope): --html / --junit / --events / --no-decorations are NOT wired
-        // into watch mode.  Watch renders per re-run (not from one suite-wide buffer), and threading
-        // the report / events paths through WatchRunner / WatchSession /
-        // RunScenarioAgainstKeptTopologyAsync — plus deciding the overwrite-on-every-save semantics
-        // — is meaningful complexity for an interactive loop whose value is the terminal feedback.
-        // --events and the --no-decorations `decorate` flag follow the SAME scope as --html /
-        // --junit: deliberately left out rather than half-wired (the watch loop renders plain).
+        // NOTE (S09-T3 / S10 / #258 scope): --html / --junit / --events / --events-stream /
+        // --no-decorations are NOT wired into watch mode.  Watch renders per re-run (not from one
+        // suite-wide buffer), and threading the report / events paths through WatchRunner /
+        // WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
+        // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
+        // whose value is the terminal feedback. --events, --events-stream, and the
+        // --no-decorations `decorate` flag all follow the SAME scope as --html / --junit:
+        // deliberately left out rather than half-wired (the watch loop renders plain).
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, cancellationToken)
@@ -673,6 +804,7 @@ internal static class RunCommand
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,
+                    eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
@@ -686,6 +818,7 @@ internal static class RunCommand
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,
+                    eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 

@@ -590,6 +590,17 @@ public static class ScenarioRunner
     /// passthrough of the frozen v1 stream for a downstream consumer.  <see langword="null"/> ⇒ no
     /// events artifact.
     /// </param>
+    /// <param name="eventsStreamPath">
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258).
+    /// When non-<see langword="null"/>, an <see cref="Reporting.EventStreamAppender"/> is opened
+    /// ONCE before the scenario loop and each scenario's event lines are appended — and flushed —
+    /// to it as soon as that scenario's own buffer is folded into <c>allBuffers</c>, so a
+    /// concurrent reader tailing the file observes scenario-granular liveness instead of waiting
+    /// for the whole suite to finish.  This is a SEPARATE file from
+    /// <paramref name="eventsReportPath"/> — the <c>--events</c> / <c>--json</c> archive is still
+    /// written ONCE, at the end, from the complete <c>allBuffers</c>, byte-for-byte unchanged.
+    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single suite-level
     /// terminal render decorates each step-verdict line with an ANSI colour + a per-verdict shape
@@ -634,6 +645,7 @@ public static class ScenarioRunner
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
+        string? eventsStreamPath = null,
         bool decorate = false,
         CancellationToken cancellationToken = default)
     {
@@ -785,6 +797,17 @@ public static class ScenarioRunner
             var suiteAggregate = Verdict.Pass;
             var allBuffers = new List<string>();
 
+            // ── Incremental events stream (issue #258) ────────────────────────────
+            // Opened ONCE, guarded on a non-null path, and disposed automatically when this
+            // `await using` block's own scope is left (return or exception) — BEFORE `suite`
+            // (the enclosing `await using (suite.ConfigureAwait(false))` resource) tears down.
+            // Completely separate from `eventsReportPath`: the --events / --json archive is
+            // still written once, at the end, from the finished `allBuffers` (see
+            // FileReportWriter.WriteFileReports below) — byte-for-byte unchanged.
+            await using var eventsStreamAppender = eventsStreamPath is not null
+                ? new EventStreamAppender(eventsStreamPath, output)
+                : null;
+
             try
             {
                 for (int i = 0; i < compilations.Count; i++)
@@ -819,6 +842,7 @@ public static class ScenarioRunner
                         results.Add((name, earlyVerdict.Value));
                         suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
                         allBuffers.AddRange(buffer);
+                        eventsStreamAppender?.AppendLines(buffer);
                         continue;
                     }
 
@@ -848,6 +872,7 @@ public static class ScenarioRunner
                         results.Add((name, Verdict.EnvironmentError));
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         allBuffers.AddRange(buffer);
+                        eventsStreamAppender?.AppendLines(buffer);
 
                         // Isolation failure → abort the suite (subsequent scenarios
                         // would run against an unknown DB state).
@@ -875,6 +900,7 @@ public static class ScenarioRunner
                     results.Add((name, scenarioVerdict));
                     suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
                     allBuffers.AddRange(buffer);
+                    eventsStreamAppender?.AppendLines(buffer);
 
                     // ── EndScenario (isolation / reset) ────────────────────────────
                     try
@@ -887,8 +913,11 @@ public static class ScenarioRunner
                         // event stream (the scenario's own events are already in
                         // allBuffers), so every renderer sees WHICH dependency's
                         // reset failed — parity with the BeginScenarioAsync path.
-                        allBuffers.Add(EnvironmentErrorEvents.ToLine(
-                            oex.Info, runId, DateTimeOffset.UtcNow));
+                        var isolationFailureLine = EnvironmentErrorEvents.ToLine(
+                            oex.Info, runId, DateTimeOffset.UtcNow);
+                        allBuffers.Add(isolationFailureLine);
+                        var isolationFailureLines = new[] { isolationFailureLine };
+                        eventsStreamAppender?.AppendLines(isolationFailureLines);
 
                         await output.WriteLineAsync(
                             $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +

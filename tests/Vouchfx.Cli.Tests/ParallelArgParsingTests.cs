@@ -72,6 +72,7 @@ public sealed class ParallelArgParsingTests
             htmlReportPath: null,
             junitReportPath: null,
             eventsReportPath: null,
+            eventsStreamPath: null,
             decorate: false,
             output: sw,
             telemetryHook: null,

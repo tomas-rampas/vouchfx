@@ -69,6 +69,7 @@ public sealed class WatchArgParsingTests
             htmlReportPath: null,
             junitReportPath: null,
             eventsReportPath: null,
+            eventsStreamPath: null,
             decorate: false,
             output: sw,
             telemetryHook: null,
