@@ -80,7 +80,7 @@ public static class YamlSchemaValidator
                 return SchemaValidationResult.Valid;
             }
 
-            var errors = CollectErrors(results);
+            var errors = SchemaErrorCollector.CollectErrors(results);
             return new SchemaValidationResult(false, errors);
         }
     }
@@ -99,61 +99,9 @@ public static class YamlSchemaValidator
         return JsonSchema.FromText(schemaText);
     }
 
-    /// <summary>
-    /// Walks the flat <c>Details</c> list produced by the <c>List</c> output
-    /// format and collects every leaf node that is invalid and carries at least
-    /// one keyword error.
-    /// </summary>
-    /// <param name="results">The top-level evaluation results.</param>
-    /// <returns>
-    /// A non-empty list of <see cref="SchemaValidationError"/> entries.  When the
-    /// details list is empty (e.g. the root itself fails with no children), a
-    /// single synthetic error at the root location is returned so the caller
-    /// always receives at least one actionable message.
-    /// </returns>
-    private static List<SchemaValidationError> CollectErrors(EvaluationResults results)
-    {
-        var errors = new List<SchemaValidationError>();
-        CollectErrorsRecursive(results, errors);
-
-        if (errors.Count == 0)
-        {
-            // Fallback: the schema reports failure but produced no detailed errors
-            // (this can happen with Flag-level results or nested $ref chains).
-            errors.Add(new SchemaValidationError(
-                results.InstanceLocation.ToString(),
-                "Schema validation failed with no detailed error messages."));
-        }
-
-        return errors;
-    }
-
-    /// <summary>
-    /// Recursively collects validation errors from an <see cref="EvaluationResults"/>
-    /// tree, harvesting only the nodes that are invalid and carry keyword errors.
-    /// </summary>
-    private static void CollectErrorsRecursive(EvaluationResults node, List<SchemaValidationError> sink)
-    {
-        if (node.IsValid)
-        {
-            return;
-        }
-
-        if (node.Errors is { Count: > 0 })
-        {
-            var location = node.InstanceLocation.ToString();
-            foreach (var (keyword, message) in node.Errors)
-            {
-                sink.Add(new SchemaValidationError(location, $"[{keyword}] {message}"));
-            }
-        }
-
-        if (node.Details is { Count: > 0 })
-        {
-            foreach (var child in node.Details)
-            {
-                CollectErrorsRecursive(child, sink);
-            }
-        }
-    }
+    // Error collection itself (the flat-Details walk plus "if"-discriminator
+    // noise filtering, issue #259) lives in SchemaErrorCollector, shared with
+    // SchemaComposer. This class's root-only schema never carries a provider
+    // 'allOf' clause, so the noise filter is a no-op here — sharing the walk
+    // is purely deduplication, not a behaviour change for this validator.
 }
