@@ -297,6 +297,20 @@ The `--events-stream` flag writes the same schema-versioned JSON Lines event rec
 vouchfx run examples/getting-started --html report.html --junit results.xml --events-stream events.jsonl
 ```
 
+## Advanced: Graceful shutdown for programmatic usage
+
+When vouchfx is launched by a parent process that manages its lifecycle (such as the vouchfx MCP server), use the `--shutdown-on-stdin-eof` flag to enable graceful shutdown:
+
+```bash
+vouchfx run ./tests --shutdown-on-stdin-eof
+```
+
+When enabled, the engine monitors its standard input stream and gracefully initiates shutdown (equivalent to Ctrl+C) when the stream closes. This allows the engine's own container and topology teardown to run to completion before the process exits, preventing orphaned containers. This flag is **opt-in and off by default** — normal interactive and CI runs are completely unaffected. If graceful shutdown does not complete within the teardown budget (approximately 30 seconds), the engine force-exits itself, making the flag self-safe — a host that closes stdin is guaranteed termination without needing to send a kill signal. A forced exit always yields exit code 4 (Inconclusive), independent of the `--fail-on-inconclusive` flag.
+
+**Caveat:** do not combine `--shutdown-on-stdin-eof` with runs whose stdin is already closed or redirected-from-nothing (e.g., `< /dev/null`), which would cause the run to cancel immediately.
+
+The engine has also improved its handling of Ctrl+C interruption: when you press Ctrl+C during a run, the engine now allocates approximately 30 seconds for clean container and topology teardown, ensuring orphaned containers and Aspire session networks are no longer left behind. For an immediate hard abort, send SIGKILL or close the terminal.
+
 ## Validating without running
 
 The `vouchfx validate` command compiles and validates `.e2e.yaml` files to check whether they are acceptable to the engine, **without** starting any containers, orchestrating a topology, or running steps. It performs the full validation pipeline — JSON Schema validation, parsing, AST construction, provider binding, and Roslyn compilation — but stops before execution. This is ideal for the author loop: tight feedback on syntax and step correctness before paying the Docker startup cost.

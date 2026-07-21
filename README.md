@@ -382,6 +382,18 @@ vouchfx run ./tests --fail-on-env-error --fail-on-inconclusive
 
 The output is a terminal report with colour-coded verdicts.
 
+### Graceful shutdown for programmatic usage
+
+When vouchfx is launched by a parent process that needs to request orderly shutdown (such as the vouchfx MCP server), use:
+
+```bash
+vouchfx run ./tests --shutdown-on-stdin-eof
+```
+
+When this flag is enabled, the engine monitors its standard input and gracefully initiates shutdown (as if Ctrl+C was pressed) when the stream closes. This allows the engine's own container and topology teardown to complete cleanly before the process exits. If graceful shutdown does not complete within the teardown budget (approximately 30 seconds), the engine force-exits itself, making the flag self-safe — a host that closes stdin is guaranteed termination without the caller needing to send a separate kill signal. A forced exit always yields exit code 4 (Inconclusive), independent of the `--fail-on-inconclusive` flag. **Caveat:** `--shutdown-on-stdin-eof` requires the parent to hold stdin open for the run's duration and close it to signal shutdown; do not combine it with runs whose stdin is already closed (e.g., `< /dev/null`), which would cause immediate cancellation.
+
+Additionally, the engine has improved its handling of interruption signals (Ctrl+C / SIGTERM): it now allocates approximately 30 seconds for container and topology cleanup, ensuring orphaned containers are avoided when the process is interrupted.
+
 ### Validating without running
 
 The `vouchfx validate` subcommand validates `.e2e.yaml` files without running them — no containers, no orchestration, no Docker required. It performs the full compile-time validation pipeline (JSON Schema, parsing, AST, provider binding, and Roslyn compilation) and exits immediately, making it ideal for tight feedback during authoring:

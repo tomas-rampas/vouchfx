@@ -1,4 +1,5 @@
-// Vouchfx.Cli — Program (S07-C-01; watch teardown budget S08-T10).
+// Vouchfx.Cli — Program (S07-C-01; watch teardown budget S08-T10; `run`-scoped teardown budget
+// widened for vouchfx-mcp#17).
 //
 // Entry point for the `vouchfx` executable. Builds the root command (with the `run`
 // subcommand) and dispatches via System.CommandLine 2.0.x GA:
@@ -33,21 +34,51 @@ rootCommand.Add(ValidateCommand.Build());
 //   vouchfx list [--step-types] [--json]
 rootCommand.Add(ListCommand.Build());
 
-// Ctrl-C teardown budget (S08-T10, S1): System.CommandLine's DEFAULT ProcessTerminationTimeout
-// is ~2s — after that it force-kills the process even mid-DisposeAsync.  Watch mode keeps an
-// Aspire topology alive across re-runs; a force-kill during its teardown LEAKS containers (the
-// repo's known teardown-leak gotcha).  So for the watch path we DISABLE the timeout (null), giving
-// the kept SuiteTopology a real teardown budget on Ctrl-C; every other path keeps the default.
+// Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
+// to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
+// — after that it force-kills the process even mid-DisposeAsync.  HeadlessTopology.DisposeAsync
+// (reached via SuiteTopology — the engine's single teardown chokepoint, §4.5) calls
+// _app.StopAsync with a fresh, bounded 15s CTS (WaitForResourceCleanup=true) to synchronously
+// delete containers + the aspire-session-network-* network, THEN unconditionally calls
+// _app.DisposeAsync() — a second, separate wait that DCP's own internal dispose/cleanup path can
+// itself take up to ~10s to complete.  A ~2s force-kill guillotines any of that mid-flight and
+// LEAKS containers on EVERY genuine Ctrl-C / SIGTERM during `vouchfx run` — not just watch mode's
+// already-known teardown-leak gotcha.
+//   - ONLY `run` stands up a container topology (via ScenarioRunner/ParallelSuiteRunner/WatchRunner)
+//     — `validate` / `list` / `telemetry` (and a bare `--help` / `--version`) never touch Docker
+//     or HeadlessTopology, so NONE of them needs (or should get) a widened budget.  Peer-review
+//     finding: an earlier version of this gate widened the budget for EVERY non-watch invocation
+//     (gating only on IsWatchInvocation), so a Ctrl-C on a slow `validate` would ALSO wait up to
+//     the widened budget instead of the ~2s default — an accidental, unjustified widening this
+//     scoping removes.  Only a `run` invocation touches ProcessTerminationTimeout at all; every
+//     other subcommand is left at System.CommandLine's own default, exactly as before this
+//     feature existed.
+//   - Within `run`: watch mode keeps an Aspire topology alive across re-runs indefinitely, so it
+//     still DISABLES the timeout entirely (null) — unchanged from before.  A plain `run` (whether
+//     stopped by a human's Ctrl-C or by a host process's SIGTERM — e.g. an MCP server that spawns
+//     this CLI) gets a BOUNDED, FINITE budget instead of the ~2s default. An earlier value here
+//     was 20s — comfortably above the 15s StopAsync bound ALONE, but not above the PATHOLOGICAL
+//     sum of that 15s StopAsync wait plus the subsequent ~10s DisposeAsync wait (~25s worst
+//     case), leaving a narrow re-leak window. RunCommand.TeardownBudgetSeconds (30) clears that
+//     combined worst case with headroom while staying deliberately NOT null, so a genuinely
+//     wedged run still eventually gets force-killed rather than hanging forever. THE SAME
+//     constant also bounds ShutdownBackstop — the stdin-EOF graceful-shutdown seam's own
+//     force-exit timer (RunCommand.ExecuteAsync) — so both termination paths give a wedged `run`
+//     an identical grace period.
+var nonWatchTeardownBudget = TimeSpan.FromSeconds(RunCommand.TeardownBudgetSeconds);
+
+// IsRunInvocation / IsWatchInvocation are factored into InvocationScope (not local functions
+// here) specifically so they are directly unit-testable across assemblies — see its remarks.
 var invocationConfiguration = new InvocationConfiguration();
-if (IsWatchInvocation(args))
+if (InvocationScope.IsRunInvocation(args))
 {
-    invocationConfiguration.ProcessTerminationTimeout = null;
+    invocationConfiguration.ProcessTerminationTimeout = InvocationScope.IsWatchInvocation(args)
+        ? null
+        : nonWatchTeardownBudget;
 }
 
-return await rootCommand.Parse(args).InvokeAsync(invocationConfiguration);
+// Any NON-run invocation (validate / list / telemetry / a bare --help / --version) deliberately
+// leaves ProcessTerminationTimeout untouched — System.CommandLine's own ~2s default applies,
+// exactly as it did before this feature existed.
 
-// Whether this invocation is a watch run (`--watch` present anywhere in the args).  A bare
-// token scan is sufficient: --watch is the engine's only long-lived (kept-topology) mode, so a
-// false positive only widens the teardown budget — never the wrong behaviour.
-static bool IsWatchInvocation(string[] args) =>
-    Array.Exists(args, a => string.Equals(a, "--watch", StringComparison.Ordinal));
+return await rootCommand.Parse(args).InvokeAsync(invocationConfiguration);
