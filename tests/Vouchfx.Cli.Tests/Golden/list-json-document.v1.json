@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "1.2.3-golden",
+  "stepTypes": [
+    {
+      "type": "db-assert.postgres",
+      "family": "db-assert",
+      "provider": "postgres"
+    },
+    {
+      "type": "http.rest",
+      "family": "http",
+      "provider": "rest"
+    },
+    {
+      "type": "mq-publish.kafka",
+      "family": "mq-publish",
+      "provider": "kafka"
+    }
+  ]
+}

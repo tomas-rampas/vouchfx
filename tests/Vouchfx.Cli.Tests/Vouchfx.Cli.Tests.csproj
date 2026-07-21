@@ -26,4 +26,17 @@
     <ProjectReference Include="..\..\src\Cli\Vouchfx.Cli\Vouchfx.Cli.csproj" />
   </ItemGroup>
 
+  <ItemGroup Label="#260 — frozen validate/list --json wire-shape golden artifacts">
+    <!--
+      The committed goldens ValidateJsonGoldenTests / ListJsonGoldenTests diff against.
+      Copied next to the test DLL so the tests read them from AppContext.BaseDirectory/Golden.
+    -->
+    <Content Include="Golden\validate-json-document.v1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Golden\list-json-document.v1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

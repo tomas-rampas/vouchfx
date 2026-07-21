@@ -132,7 +132,10 @@ public sealed record SuiteResult(
 public static class ScenarioRunner
 {
     // Fixed suite namespace injected into every ICompileContext during emit.
-    private const string SuiteNamespace = "VouchfxGenerated";
+    // internal (not private, #260): ScenarioValidator's topology-free compile-only
+    // pipeline reuses this SAME constant so a validated scenario's namespace can never
+    // drift from what a real run would use.
+    internal const string SuiteNamespace = "VouchfxGenerated";
 
     // Compiled-once regex that matches {identifier} placeholder tokens (S04-G-01).
     // Identical pattern to Substitute_Helpers inside the CSX — used here for
@@ -2106,8 +2109,11 @@ public static class ScenarioRunner
     /// change to the frozen <c>IStepValidator&lt;T&gt;</c> interface. It reuses
     /// <see cref="CollectSubstitutableTexts"/> so the set of validated fields stays
     /// in lock-step with the set of fields the providers actually substitute.
+    /// internal (not private, #260): this pass is entirely topology-free (it scans
+    /// AST text only, never resolves a secret), so <see cref="ScenarioValidator"/>
+    /// reuses it verbatim rather than duplicating the scan.
     /// </remarks>
-    private static bool TryValidateSecretReferences(ScenarioAst ast, out string? error)
+    internal static bool TryValidateSecretReferences(ScenarioAst ast, out string? error)
     {
         foreach (var node in ast.Steps)
         {
@@ -2570,7 +2576,12 @@ public static class ScenarioRunner
     /// passing to <see cref="RoslynScriptCompiler.CompileOnce"/> as
     /// <c>additionalReferencePaths</c>.
     /// </summary>
-    private static string[] BclReferencePaths() =>
+    /// <remarks>
+    /// internal (not private, #260): promoted to a shared helper so
+    /// <see cref="ScenarioValidator"/>'s topology-free <c>CompileOnce</c> call passes the
+    /// SAME TPA list a real run would, rather than duplicating this lookup.
+    /// </remarks>
+    internal static string[] BclReferencePaths() =>
         ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 }
