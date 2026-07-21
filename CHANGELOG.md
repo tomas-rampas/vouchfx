@@ -15,6 +15,15 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.0-alpha.10] — 2026-07-21
+
+A developer-tooling and run-lifecycle release: incremental JSON Lines event streaming to a tailable file,
+Docker-free compile-level `validate` and `list` subcommands, opt-in stdin-driven graceful shutdown for
+programmatic hosts, a wider Ctrl+C/SIGTERM teardown budget preventing container leaks, and cleaner schema-validation
+errors at full provider scale. The language schema, provider SDK surface and event-wire contract are unchanged (all
+frozen-contract-safe: new `--json` outputs and the new `--events-stream` file are additive contracts; the schema-noise
+fix leaves the composed schema byte-unchanged).
+
 ### Added
 
 - **`vouchfx run --events-stream <file>` flag** (#258) — writes the schema-versioned JSON Lines event stream incrementally to a tailable file as each scenario completes, independent of the buffered `--events` archive. The engine holds the write handle and grants shared read access; a tailing reader must open the file with shared read/write access (on Windows, `FileShare.ReadWrite`; on Unix, the file is readable immediately). UTF-8 without BOM. Enables live tailing by downstream consumers such as the vouchfx MCP server and CI progress tracking. Events are flushed at scenario completion (scenario-level granularity); in parallel mode the stream reflects completion order, not declaration order. Best-effort on unwritable paths: prints a diagnostic and does not affect the run's verdict or exit code.
