@@ -76,17 +76,27 @@ public sealed class ShutdownBackstopTests
         // The stdin watcher's callback only ever needs to arm this once, but a second call must
         // be a harmless no-op — never a second, independent timer.
         var invokeCount = 0;
-        await using var backstop = new ShutdownBackstop(
-            SmallBudget, () => Interlocked.Increment(ref invokeCount));
+        var firstFireSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var backstop = new ShutdownBackstop(SmallBudget, () =>
+        {
+            if (Interlocked.Increment(ref invokeCount) == 1)
+            {
+                firstFireSignal.TrySetResult(true);
+            }
+        });
 
         backstop.Arm();
         backstop.Arm();
         backstop.Arm();
 
-        // No signal to await deterministically for "exactly once", so wait comfortably past the
-        // budget and assert the final count — flakiness-safe because a SECOND spurious timer
-        // firing would also have had ample time to do so by then.
-        await Task.Delay(WaitBound);
+        // Wait DETERMINISTICALLY for the first fire (bounded by WaitBound, not a fixed sleep),
+        // then only a SHORT settle period comfortably longer than the budget — long enough for a
+        // hypothetical second, spurious timer to also have fired by then, but far cheaper than
+        // unconditionally waiting the full WaitBound regardless of how fast the first fire was.
+        var completed = await Task.WhenAny(firstFireSignal.Task, Task.Delay(WaitBound));
+        Assert.Same(firstFireSignal.Task, completed);
+
+        await Task.Delay(SmallBudget + SmallBudget);
 
         Assert.Equal(1, invokeCount);
     }
