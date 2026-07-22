@@ -1175,7 +1175,7 @@ The runner's exit codes carry the verdict taxonomy all the way to the CI system,
 |---|---|---|---|
 | 0 | Pass, EnvironmentError, Inconclusive | All scenarios passed, or only non-breaking verdicts occurred. | – |
 | 1 | Fail | One or more scenarios failed — a genuine defect in the system under test. Breaks CI by default. | – |
-| 2 | UsageError | Bad arguments, missing path, invalid `--parallel` value, or `--watch` combined with `--parallel`. The suite never ran. | – |
+| 2 | UsageError | Bad arguments, missing path, invalid `--parallel` value, `--watch` combined with `--parallel`, or unrecognised option/flag. The suite never ran. | – |
 | 3 | EnvironmentError | The aggregate verdict was EnvironmentError (infrastructure breakage: unhealthy container, image-pull failure, seed failure, tunnel collapse). Off by default; breaks CI only when `--fail-on-env-error` is set. | `--fail-on-env-error` |
 | 4 | Inconclusive | The aggregate verdict was Inconclusive (timeout, network partition outlasted grace, upstream capture unmet — the engine could not determine correctness). Off by default; breaks CI only when `--fail-on-inconclusive` is set. | `--fail-on-inconclusive` |
 
