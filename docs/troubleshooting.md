@@ -7,7 +7,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
-- [Compile-path size and nesting limits](#compile-path-size-and-nesting-limits)
+- [Script body and document size limits](#script-body-and-document-size-limits)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
 - [Secret leakage in exception messages](#secret-leakage-in-exception-messages)
 - [Build fails with warnings-as-errors](#build-fails-with-warnings-as-errors)
@@ -253,13 +253,13 @@ Use one of these approaches:
 **Symptom:**
 
 ```
-Scenario validation rejected: script body exceeds 64 KiB
+script.csharp: 'code' size 72000 characters exceeds the 65536-characters limit (a plain resource bound, not a security control — see this file's header comment); reduce its size or split the script.
 ```
 
 or
 
 ```
-Scenario validation rejected: document exceeds 1 MiB
+File size 1200000 bytes exceeds the 1048576-byte (1 MiB) limit for a single *.e2e.yaml document (a guard against pathological input); split the suite into smaller files.
 ```
 
 **What it means:**
