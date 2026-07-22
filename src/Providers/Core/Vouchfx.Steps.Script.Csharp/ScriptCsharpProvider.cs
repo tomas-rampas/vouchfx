@@ -256,11 +256,35 @@ public sealed class ScriptCsharpProvider
             // Checking the on-disk length first rejects an oversized file on size alone,
             // with no read at all. Emit still reads the (now size-bounded) file content
             // exactly as before.
-            var fileInfo = new System.IO.FileInfo(resolvedPath);
-            if (fileInfo.Length > MaxBodyLength)
+            //
+            // Copilot review (#277): File.Exists just returned true, but the .Length stat
+            // below can still throw — a permissions problem (UnauthorizedAccessException /
+            // SecurityException), an I/O fault, or a racey delete/replace between the
+            // Exists check and here (IOException covers FileNotFoundException and
+            // DirectoryNotFoundException too). Validate's contract is to NEVER throw — an
+            // unhandled exception here would surface as an engine crash instead of a clean
+            // ValidationResult.Failure (→ Inconclusive, §12.1) — so the stat is guarded and
+            // any failure is reported as an ordinary validation failure. The exception TYPE
+            // NAME only is reported (never ex.Message): the message text is not vetted for
+            // terminal-safety the way author-controlled text is elsewhere (DisplaySanitiser,
+            // issue #266 Item 4), and the type name alone is already actionable.
+            long length;
+            try
+            {
+                length = new System.IO.FileInfo(resolvedPath).Length;
+            }
+            catch (Exception ex) when (ex is System.IO.IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
             {
                 return ValidationResult.Failure(
-                    BuildSizeLimitMessage("'file'", fileInfo.Length, "bytes"));
+                    $"script.csharp: could not stat file '{model.File}': {ex.GetType().Name}");
+            }
+
+            if (length > MaxBodyLength)
+            {
+                return ValidationResult.Failure(
+                    BuildSizeLimitMessage("'file'", length, "bytes"));
             }
         }
 

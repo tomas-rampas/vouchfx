@@ -145,6 +145,18 @@ public static class DisplaySanitiser
             return text;
         }
 
+        // Fast path (Copilot review #277, perf): most diagnostic text is ordinary and has
+        // NOTHING that needs stripping — the common case for every field TerminalRenderer's
+        // GetStr/GetStrFromObject choke points route through, for every rendered step. When
+        // that is true, return the ORIGINAL string reference — no StringBuilder, no new
+        // string, no allocation at all. Only text that actually contains a control
+        // character / escape sequence falls through to the allocating pass below; its
+        // behaviour (including idempotence) is unchanged.
+        if (!NeedsSanitising(text))
+        {
+            return text;
+        }
+
         var sb = new StringBuilder(text.Length);
         var i = 0;
         while (i < text.Length)
@@ -191,6 +203,33 @@ public static class DisplaySanitiser
 
     private static bool IsControlChar(char c) =>
         c <= 0x1F || (c >= 0x7F && c <= 0x9F);
+
+    /// <summary>
+    /// Cheap, allocation-free pre-scan: <see langword="true"/> as soon as
+    /// <paramref name="text"/> contains at least one character the allocating pass below
+    /// would strip or treat specially. <see cref="Esc"/> (0x1B) and
+    /// <see cref="C1CsiIntroducer"/> (0x9B) both already satisfy <see cref="IsControlChar"/>
+    /// (0x1B &lt;= 0x1F; 0x9B falls in the 0x7F-0x9F range), so this mirrors the main loop's
+    /// classification exactly — <c>\t</c>/<c>\n</c> are the only control characters treated
+    /// as ordinary text — without duplicating the escape/CSI dispatch logic.
+    /// </summary>
+    private static bool NeedsSanitising(string text)
+    {
+        foreach (var c in text)
+        {
+            if (c == '\t' || c == '\n')
+            {
+                continue;
+            }
+
+            if (IsControlChar(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Skips a single 7-bit escape character at <paramref name="index"/> and, when it

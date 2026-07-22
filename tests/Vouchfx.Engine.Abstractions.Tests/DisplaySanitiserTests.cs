@@ -47,6 +47,49 @@ public sealed class DisplaySanitiserTests
         Assert.Equal(text, DisplaySanitiser.SanitiseForDisplay(text));
     }
 
+    // -- Copilot review (#277, perf): the no-op fast path returns the SAME reference,
+    //    no allocation, for text with nothing to strip; text that DOES need stripping
+    //    still goes through the allocating pass and is still correct. -----------------
+
+    [Fact]
+    public void SanitiseForDisplay_TextWithNoControlCharacters_ReturnsSameReference()
+    {
+        // A fresh, non-interned string (built at runtime, not a literal) so a pass means
+        // the method itself returned the SAME object - not that the runtime happened to
+        // intern two equal literals to one instance.
+        var text = "Step '" + "check-health" + "' failed: expected 200, got 503.";
+
+        var result = DisplaySanitiser.SanitiseForDisplay(text);
+
+        Assert.Same(text, result);
+    }
+
+    [Fact]
+    public void SanitiseForDisplay_TabAndNewlineOnly_ReturnsSameReference()
+    {
+        // \t and \n are the ONE pair of control characters treated as ordinary text, so a
+        // string containing only them (plus plain text) must still take the no-allocation
+        // fast path, not the allocating pass.
+        var text = "line one" + '\t' + "indented" + '\n' + "line two";
+
+        var result = DisplaySanitiser.SanitiseForDisplay(text);
+
+        Assert.Same(text, result);
+    }
+
+    [Fact]
+    public void SanitiseForDisplay_TextWithControlCharacter_DoesNotReturnSameReference_AndIsStillCorrect()
+    {
+        // The allocating path must still kick in - and still be correct - the moment ANY
+        // character actually needs stripping (the fast path must not over-reach).
+        var text = "before" + (char)0x0D + "after";
+
+        var result = DisplaySanitiser.SanitiseForDisplay(text);
+
+        Assert.NotSame(text, result);
+        Assert.Equal("beforeafter", result);
+    }
+
     // -- \t and \n are preserved -----------------------------------------------------
 
     [Fact]

@@ -776,6 +776,21 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
+    // Copilot review (#277): Validate's File.Exists(resolvedPath) check is immediately
+    // followed by a new FileInfo(resolvedPath).Length stat, now wrapped in a try/catch for
+    // IOException/UnauthorizedAccessException/SecurityException (see ScriptCsharpProvider,
+    // just below the size-cap comment) so a permissions problem or a racey delete between
+    // the two calls returns a clean ValidationResult.Failure instead of an unhandled
+    // exception. NO test exercises the catch through Validate itself: empirical probing
+    // confirmed File.Exists(path) returns FALSE for a directory (so a directory 'file:'
+    // target is rejected by the EARLIER "not found" branch above, never reaching the
+    // stat), and the one case that DOES make FileInfo.Length throw after File.Exists saw
+    // the file - deleting it between the two calls - can only be reproduced by racing a
+    // concurrent deletion against Validate's own two sequential, back-to-back calls (no
+    // seam exists to inject a delay between them without an invasive refactor of a small,
+    // targeted fix). That is an inherently flaky trigger, not a deterministic one, so per
+    // this fix's brief it is intentionally left untested rather than added as a racy test.
+
     /// <summary>
     /// The 'file' size check reads ONLY <see cref="FileInfo.Length"/> — never the file's
     /// content — so a file this large costs one filesystem stat, not a 65 KB read (and,

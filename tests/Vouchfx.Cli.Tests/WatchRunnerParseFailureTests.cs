@@ -109,7 +109,18 @@ public sealed class WatchRunnerParseFailureTests : IDisposable
             path,
             "steps:\n  - id: call-api\n    type: \"hostile.provider\\x1B[31mHACKED\\x1B[0m\"\n");
 
-        var output = new StringWriter();
+        // Copilot review (#277): WatchRunner.RunAsync below writes to `output` from its OWN
+        // async continuations while the poll loop concurrently reads it back on this thread —
+        // StringWriter/StringBuilder are NOT thread-safe, so a bare read-while-write race here
+        // is undefined (torn reads, or a rare throw), regardless of how unlikely it looked in
+        // practice. `sw` is wrapped in TextWriter.Synchronized so every WRITE RunAsync performs
+        // goes through its instance-synchronized (MethodImpl.Synchronized, i.e. `lock (this)`)
+        // methods; every READ below takes `lock (output)` — the SAME lock object those
+        // synchronized methods use — before calling the UNDERLYING sw.ToString() (Synchronized's
+        // wrapper does not itself override ToString(), so it must be read from `sw`, just under
+        // that shared lock). This makes every snapshot mutually exclusive with every write.
+        var sw = new StringWriter();
+        var output = TextWriter.Synchronized(sw);
         using var cts = new CancellationTokenSource();
 
         // The compile failure short-circuits OnChangeAsync before any build/run seam fires, so
@@ -121,8 +132,19 @@ public sealed class WatchRunnerParseFailureTests : IDisposable
         var runTask = WatchRunner.RunAsync(new[] { selected }, _registry, output, cts.Token);
 
         var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!output.ToString().Contains("Parse / AST error", StringComparison.Ordinal))
+        while (true)
         {
+            string snapshot;
+            lock (output)
+            {
+                snapshot = sw.ToString();
+            }
+
+            if (snapshot.Contains("Parse / AST error", StringComparison.Ordinal))
+            {
+                break;
+            }
+
             if (DateTime.UtcNow > deadline)
             {
                 Assert.Fail(
@@ -137,7 +159,12 @@ public sealed class WatchRunnerParseFailureTests : IDisposable
 
         Assert.Equal(ExitCodes.Success, exitCode);
 
-        var rendered = output.ToString();
+        string rendered;
+        lock (output)
+        {
+            rendered = sw.ToString();
+        }
+
         // The surrounding diagnostic text survives sanitisation intact...
         Assert.Contains("HACKED", rendered, StringComparison.Ordinal);
         Assert.Contains("Parse / AST error", rendered, StringComparison.Ordinal);
