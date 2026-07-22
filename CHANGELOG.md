@@ -15,6 +15,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unrecognised option or flag now exits 2 (UsageError) instead of 1** (#269) — any vouchfx subcommand now exits with code 2 when given an unrecognised or unknown option or flag, making it possible for CI to distinguish a CLI-misuse from a genuine test failure. Exit code 1 remains reserved for the Fail verdict (one or more test scenarios failed); exit codes 0, 3, and 4 (`--help`, `--version`, and conditional verdicts) are unchanged.
+
 ## [1.0.0-alpha.10] — 2026-07-21
 
 A developer-tooling and run-lifecycle release: incremental JSON Lines event streaming to a tailable file,

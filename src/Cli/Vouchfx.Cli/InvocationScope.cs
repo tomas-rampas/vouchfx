@@ -1,4 +1,5 @@
-// Vouchfx.Cli — InvocationScope (vouchfx-mcp#17; peer-review MINOR-1 fix).
+// Vouchfx.Cli — InvocationScope (vouchfx-mcp#17; peer-review MINOR-1 fix; parse-error exit
+// code remap #269).
 //
 // Program.cs's ProcessTerminationTimeout gate needs to know which SUBCOMMAND is being invoked
 // (only `run` stands up a container topology and therefore needs a widened teardown budget) and
@@ -8,6 +9,12 @@
 // way an internal static method can (via this project's InternalsVisibleTo to
 // Vouchfx.Cli.Tests). Program.cs itself is NOT exercised by the unit tests (there is nothing
 // left in it to test once this gate is factored out); this seam is.
+//
+// #269 adds a second, unrelated concern to this same file for the same reason: Program.cs's
+// single root-invocation seam is also where a System.CommandLine parse error (an unrecognised
+// option or extra token on ANY subcommand) needs remapping from its own default exit code (1 —
+// the same code the app's taxonomy reserves for a genuine Verdict.Fail) to ExitCodes.UsageError
+// (2). See ResolveExitCode's remarks.
 
 namespace Vouchfx.Cli;
 
@@ -66,4 +73,48 @@ internal static class InvocationScope
     /// </remarks>
     internal static bool IsWatchInvocation(string[] args) =>
         Array.Exists(args, a => string.Equals(a, "--watch", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Resolves the process exit code Program.cs returns to the OS from a single invocation,
+    /// remapping a System.CommandLine parse error to <see cref="ExitCodes.UsageError"/> (#269).
+    /// </summary>
+    /// <param name="parseErrorCount">
+    /// <c>ParseResult.Errors.Count</c> from the same <c>ParseResult</c> that produced
+    /// <paramref name="invokeResult"/> — i.e. computed BEFORE <c>InvokeAsync</c> is called (it
+    /// does not change once parsing has happened).
+    /// </param>
+    /// <param name="invokeResult">
+    /// The exit code returned by <c>ParseResult.InvokeAsync</c> for the same invocation.
+    /// </param>
+    /// <returns>
+    /// <see cref="ExitCodes.UsageError"/> (2) when <paramref name="parseErrorCount"/> is greater
+    /// than zero — regardless of <paramref name="invokeResult"/>; otherwise
+    /// <paramref name="invokeResult"/>, unchanged.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// An unrecognised option or extra token (e.g. <c>vouchfx validate &lt;suite&gt; --bogus</c>)
+    /// is a genuine System.CommandLine parse error, and System.CommandLine's own
+    /// <c>InvokeAsync</c> default for one is exit code 1 — colliding with
+    /// <see cref="ExitCodes.TestFailure"/>, the code the app's own taxonomy reserves for a
+    /// genuine <c>Verdict.Fail</c>. Left unremapped, a CI pipeline keying on the exit code
+    /// cannot tell a malformed invocation apart from a real test failure. This method is the
+    /// single place that correction happens, so it is directly unit-testable without spawning a
+    /// process — Program.cs (a top-level-statement script) is not itself unit-testable.
+    /// </para>
+    /// <para>
+    /// A parse error and a subcommand action's own return value are mutually exclusive in
+    /// practice: when <c>ParseResult.Errors</c> is non-empty, System.CommandLine's
+    /// <c>InvokeAsync</c> prints the errors and help WITHOUT invoking the matched command's
+    /// action, so <paramref name="invokeResult"/> is always its own parse-error default in that
+    /// case — this method ignores it and returns <see cref="ExitCodes.UsageError"/> regardless,
+    /// which is also why passing <paramref name="invokeResult"/> through unchanged is safe and
+    /// correct whenever <paramref name="parseErrorCount"/> is zero: it is then, and only then,
+    /// the subcommand action's OWN taxonomy-aware exit code (0 / 1 / 2 / 3 / 4), which must
+    /// never be second-guessed here. <c>--help</c> / <c>--version</c> resolve via their own
+    /// System.CommandLine actions with NO parse errors, so they are never remapped and stay 0.
+    /// </para>
+    /// </remarks>
+    internal static int ResolveExitCode(int parseErrorCount, int invokeResult) =>
+        parseErrorCount > 0 ? ExitCodes.UsageError : invokeResult;
 }

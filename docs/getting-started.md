@@ -328,7 +328,7 @@ Exit codes for `vouchfx validate`:
 | Exit code | Meaning |
 |---|---|
 | **0** | All scenarios are valid. |
-| **2** | Usage error — the path is missing or is not a readable .e2e.yaml file or directory. |
+| **2** | Usage error — an unrecognised option or flag, the path is missing, or the path is not a readable .e2e.yaml file or directory. |
 | **4** | One or more scenarios are invalid (schema, parse, pipeline, or Roslyn errors). |
 
 The `--json` output carries the schema version and a per-scenario diagnostics list (stage: schema, parse, pipeline, or roslyn), suitable for editor plugins, CI gates, or downstream analysis.
@@ -354,6 +354,7 @@ Exit codes for `vouchfx list`:
 | Exit code | Meaning |
 |---|---|
 | **0** | Success. |
+| **2** | Usage error — an unrecognised option or flag. |
 
 The `--json` output is a versioned document carrying the engine version and a sorted array of step types (each with family and provider fields), intended for integration with tooling such as vouchfx-mcp.
 

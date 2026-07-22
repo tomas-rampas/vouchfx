@@ -102,16 +102,16 @@ public sealed class ValidateArgParsingTests
     //     which is NOT what this test wants to exercise). Supplying a real path value
     //     first fills that one positional slot, so a SECOND unrecognised token has
     //     nowhere left to go and is genuinely rejected.
-    //   • Program.cs's own header comment claims a parse error exits 2
-    //     ("System.CommandLine resolves ... parse errors itself (exit code 2 on a parse
-    //     error)"). Empirically (confirmed here, both via a standalone Command AND via a
-    //     RootCommand shaped exactly like Program.cs's own) a genuine parse error exits
-    //     **1**, matching System.CommandLine's own documented default ("prints errors to
-    //     stderr, prints help to stdout, returns 1") — NOT 2. ExitCodes.UsageError (2) is
-    //     produced ONLY by the application's OWN detected usage errors (a bad/missing
-    //     <path>, a bad --parallel value, …), never by System.CommandLine's parse-error
-    //     path itself. This is a pre-existing discrepancy in Program.cs's comment, out of
-    //     scope for this fix (not touched here) — flagged for the maintainer.
+    //   • Empirically (confirmed here, both via a standalone Command AND via a RootCommand
+    //     shaped exactly like Program.cs's own), calling ParseResult.InvokeAsync DIRECTLY
+    //     on a genuine parse error still returns System.CommandLine's own documented
+    //     default, **1** ("prints errors to stderr, prints help to stdout, returns 1") —
+    //     this fact is unchanged by #269 and is exactly what this test pins. Program.cs
+    //     itself no longer surfaces that raw 1 to the OS, though: since #269 it remaps a
+    //     parse error to ExitCodes.UsageError (2) via InvocationScope.ResolveExitCode — see
+    //     ParseErrorExitCodeTests, which pins that remap end to end (this file's direct
+    //     InvokeAsync call intentionally bypasses it, because Program.cs's own top-level
+    //     wiring is not itself unit-testable).
     private static RootCommand BuildRootWithValidate()
     {
         var root = new RootCommand("test root");
@@ -136,8 +136,10 @@ public sealed class ValidateArgParsingTests
 
         var exitCode = await parseResult.InvokeAsync(new InvocationConfiguration());
 
-        // 1, NOT ExitCodes.UsageError (2) — System.CommandLine's own documented default
-        // for a parse error, verified empirically (see the remarks above).
+        // 1 — System.CommandLine's own documented InvokeAsync default for a parse error,
+        // verified empirically (see the remarks above). Program.cs itself no longer RETURNS
+        // this raw value on a parse error (#269 remaps it to ExitCodes.UsageError (2) via
+        // InvocationScope.ResolveExitCode) — see ParseErrorExitCodeTests.
         Assert.Equal(1, exitCode);
     }
 }
