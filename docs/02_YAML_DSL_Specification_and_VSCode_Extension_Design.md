@@ -1309,7 +1309,7 @@ The positional `<path>` argument specifies the directory to search for scenarios
 |---|---|---|
 | 0 | Success — all scenarios passed, or only environment errors / inconclusive (the default, **only `Fail` breaks CI by default**). | Default. All scenarios Pass, or only EnvironmentError / Inconclusive and no opt-in flags set. |
 | 1 | Test failure — at least one scenario failed (the test assertions did not hold). | Default; always exits 1 on Fail. |
-| 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref, or unrecognised option). | The CLI's usage-error code. Includes System.CommandLine parse errors (e.g. unrecognised option), which SCL itself exits 1 for but the CLI remaps to 2 (see #269). |
+| 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref, or unrecognised option). | The CLI's usage-error code. It also covers System.CommandLine parse errors (e.g. an unrecognised option): SCL itself returns exit 1 for those, and the CLI remaps that to 2 (see #269). |
 | 3 | Environment error — the aggregate verdict was EnvironmentError and the author opted in. | Set `--fail-on-env-error` to exit 3 instead of 0 when infrastructure breaks (container fails to start, tunnel collapses, etc.). |
 | 4 | Inconclusive — the aggregate verdict was Inconclusive and the author opted in. | Set `--fail-on-inconclusive` to exit 4 instead of 0 on timeout or unmet capture dependency. |
 
