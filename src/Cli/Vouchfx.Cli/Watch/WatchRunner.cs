@@ -66,8 +66,12 @@ internal static class WatchRunner
         var scenario = selected[0];
         if (scenario.Failed)
         {
+            // Issue #266, Item 4: scenario.ParseError embeds raw author YAML content verbatim
+            // (see RunCommand's equivalent site); AbsolutePath is filesystem-derived but
+            // sanitised too for consistency.
             await output.WriteLineAsync(
-                $"--watch: '{scenario.AbsolutePath}' did not parse: {scenario.ParseError}")
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"--watch: '{scenario.AbsolutePath}' did not parse: {scenario.ParseError}"))
                 .ConfigureAwait(false);
             return ExitCodes.UsageError;
         }
@@ -133,7 +137,13 @@ internal static class WatchRunner
                 await topology.DisposeAsync().ConfigureAwait(false);
             },
 
-            report: line => output.WriteLine(line));
+            // Issue #266, Item 4: this is the sink for WatchCompileResult's Error message (see
+            // Compile below, "Parse / AST error: {ex.Message}") — the SAME AstBuilder-derived
+            // author-content leak as RunCommand's parse-failure loop, just reached via the
+            // watch-loop's re-run seam instead. Sanitising HERE, at the single sink, covers
+            // this call today and any future WatchSession _report call without needing a
+            // separate fix at each call site.
+            report: line => output.WriteLine(DisplaySanitiser.SanitiseForDisplay(line)));
 
         await output.WriteLineAsync(
             $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while the "
@@ -218,8 +228,11 @@ internal static class WatchRunner
         {
             // A topology build/reset failure is an environment problem (§12.1): report it and
             // KEEP WATCHING so the next save can retry, rather than crashing the loop.
+            // Issue #266, Item 4: oex.Message reflects author environment.services/dependencies
+            // config (e.g. an EnvironmentMapper diagnostic quoting a declared name) — sanitise.
             await output.WriteLineAsync(
-                $"--watch: environment error during run: {oex.Message}").ConfigureAwait(false);
+                DisplaySanitiser.SanitiseForDisplay($"--watch: environment error during run: {oex.Message}"))
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -230,8 +243,12 @@ internal static class WatchRunner
             // DIE on the next bad save.  The loop must survive ANY run/build error and only stop
             // on Ctrl-C — so report a CONCISE message (type + message only; never any captured
             // secret/token) and KEEP WATCHING.
+            // Issue #266, Item 4: ex.Message can carry author-declared config (e.g. the
+            // ArgumentException from a malformed environment block) — sanitise before writing;
+            // reachable on every save-triggered re-run.
             await output.WriteLineAsync(
-                $"--watch: error during run ({ex.GetType().Name}): {ex.Message}")
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"--watch: error during run ({ex.GetType().Name}): {ex.Message}"))
                 .ConfigureAwait(false);
         }
     }

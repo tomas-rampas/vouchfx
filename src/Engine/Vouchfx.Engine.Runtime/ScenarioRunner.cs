@@ -354,7 +354,11 @@ public static class ScenarioRunner
 
             foreach (var error in validationResult.Errors)
             {
-                await output.WriteLineAsync(error.Message).ConfigureAwait(false);
+                // Issue #266, Item 4: a schema error's Message can echo untrusted YAML
+                // content (a field value, a step id) back verbatim — sanitise it before it
+                // reaches the terminal/CI log.
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(error.Message))
+                    .ConfigureAwait(false);
             }
 
             return (Verdict.Inconclusive, buffer);
@@ -386,8 +390,11 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
 
+            // Issue #266, Item 4: ex.Message can echo untrusted YAML/AST-builder text back
+            // verbatim — sanitise it before it reaches the terminal/CI log.
             await output.WriteLineAsync(
-                $"Parse / AST error: {ex.Message}").ConfigureAwait(false);
+                DisplaySanitiser.SanitiseForDisplay($"Parse / AST error: {ex.Message}"))
+                .ConfigureAwait(false);
 
             return (Verdict.Inconclusive, buffer);
         }
@@ -410,7 +417,10 @@ public static class ScenarioRunner
                 Verdict = Verdict.Inconclusive,
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
-            await output.WriteLineAsync(pipelineResult.Failure.Message)
+            // Issue #266, Item 4: the pipeline-failure Message can echo untrusted YAML
+            // content (a step id, a field value) back verbatim — sanitise before writing.
+            await output.WriteLineAsync(
+                DisplaySanitiser.SanitiseForDisplay(pipelineResult.Failure.Message))
                 .ConfigureAwait(false);
             return (Verdict.Inconclusive, buffer);
         }
@@ -437,7 +447,10 @@ public static class ScenarioRunner
                 Verdict = Verdict.Inconclusive,
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
-            await output.WriteLineAsync(secretError).ConfigureAwait(false);
+            // Issue #266, Item 4: secretError names the offending step id/field text from
+            // untrusted YAML — sanitise before writing.
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(secretError))
+                .ConfigureAwait(false);
             return (Verdict.Inconclusive, buffer);
         }
 
@@ -492,8 +505,11 @@ public static class ScenarioRunner
                 Verdict = Verdict.Inconclusive,
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
+            // Issue #266, Item 4: aex.Message can echo untrusted YAML content (an
+            // environment.services/dependencies reference) back verbatim — sanitise.
             await output.WriteLineAsync(
-                $"Environment configuration error: {aex.Message}").ConfigureAwait(false);
+                DisplaySanitiser.SanitiseForDisplay($"Environment configuration error: {aex.Message}"))
+                .ConfigureAwait(false);
             return (Verdict.Inconclusive, buffer);
         }
         catch (OrchestrationException oex)
@@ -707,10 +723,13 @@ public static class ScenarioRunner
             var envJson = SerialiseEnvironment(scenarios[i].Environment);
             if (!string.Equals(envJson, firstEnvJson, StringComparison.Ordinal))
             {
+                // Issue #266, Item 4: scenarioNames[i] is author-controlled (a scenario's
+                // metadata.name or file-derived identity) — sanitise before writing.
                 await output.WriteLineAsync(
-                    $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
-                    "environment block than the first scenario.  All scenarios in a suite " +
-                    "must share one topology.  Suite aborted with EnvironmentError.")
+                    DisplaySanitiser.SanitiseForDisplay(
+                        $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
+                        "environment block than the first scenario.  All scenarios in a suite " +
+                        "must share one topology.  Suite aborted with EnvironmentError."))
                     .ConfigureAwait(false);
 
                 return new SuiteResult(
@@ -798,8 +817,11 @@ public static class ScenarioRunner
             // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
             // (unreachable by construction given that same eager validation) would surface as
             // OrchestrationException instead, via the catch below.
+            // Issue #266, Item 4: aex.Message can echo untrusted YAML content back
+            // verbatim — sanitise before writing.
             await output.WriteLineAsync(
-                $"RunSuiteAsync: environment configuration error — {aex.Message}")
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"RunSuiteAsync: environment configuration error — {aex.Message}"))
                 .ConfigureAwait(false);
 
             var inconclusiveVerdicts = compilations
@@ -809,8 +831,11 @@ public static class ScenarioRunner
         }
         catch (OrchestrationException oex)
         {
+            // Issue #266, Item 4: oex.Message is usually an infra-fault message, but is
+            // sanitised for consistency with every sibling diagnostic write in this method.
             await output.WriteLineAsync(
-                $"RunSuiteAsync: topology failed to start — {oex.Message}")
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"RunSuiteAsync: topology failed to start — {oex.Message}"))
                 .ConfigureAwait(false);
 
             // Every scenario receives EnvironmentError.
@@ -871,7 +896,12 @@ public static class ScenarioRunner
                         }));
                         if (!string.IsNullOrEmpty(earlyMessage))
                         {
-                            await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+                            // Issue #266, Item 4: earlyMessage carries a schema/pipeline/
+                            // secret-reference diagnostic that may echo untrusted YAML
+                            // content verbatim — sanitise before writing.
+                            await output.WriteLineAsync(
+                                DisplaySanitiser.SanitiseForDisplay(earlyMessage))
+                                .ConfigureAwait(false);
                         }
 
                         results.Add((name, earlyVerdict.Value));
@@ -911,9 +941,13 @@ public static class ScenarioRunner
 
                         // Isolation failure → abort the suite (subsequent scenarios
                         // would run against an unknown DB state).
+                        //
+                        // Issue #266, Item 4: 'name' is author-controlled and oex.Message may
+                        // echo untrusted content — sanitise before writing.
                         await output.WriteLineAsync(
-                            $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
-                            "aborting suite.").ConfigureAwait(false);
+                            DisplaySanitiser.SanitiseForDisplay(
+                                $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
+                                "aborting suite.")).ConfigureAwait(false);
                         break;
                     }
 
@@ -960,9 +994,12 @@ public static class ScenarioRunner
                         var isolationFailureLines = new[] { isolationFailureLine };
                         eventsStreamAppender?.AppendLines(isolationFailureLines);
 
+                        // Issue #266, Item 4: 'name' is author-controlled and oex.Message may
+                        // echo untrusted content — sanitise before writing.
                         await output.WriteLineAsync(
-                            $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
-                            "aborting suite — subsequent scenarios may run against unclean state.")
+                            DisplaySanitiser.SanitiseForDisplay(
+                                $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
+                                "aborting suite — subsequent scenarios may run against unclean state."))
                             .ConfigureAwait(false);
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         break;
@@ -1173,7 +1210,11 @@ public static class ScenarioRunner
         {
             if (!string.IsNullOrEmpty(earlyMessage))
             {
-                await output.WriteLineAsync(earlyMessage).ConfigureAwait(false);
+                // Issue #266, Item 4: earlyMessage carries a schema/pipeline/secret-reference
+                // diagnostic that may echo untrusted YAML content verbatim — sanitise before
+                // writing.
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(earlyMessage))
+                    .ConfigureAwait(false);
             }
 
             TerminalRenderer.Render(buffer, output, diffLookup);
@@ -1611,10 +1652,37 @@ public static class ScenarioRunner
             CompiledScript compiled;
             try
             {
-                compiled = RoslynScriptCompiler.CompileOnce(
-                    assembled.CsxSource,
-                    additionalOptions: null,
-                    additionalReferencePaths: tpaPaths);
+                // Bound the compile-once call to a fresh token LINKED to this scenario's own
+                // cancellationToken — cancelling the run cancels the compile immediately —
+                // and ALSO time-boxed to RoslynScriptCompiler.DefaultCompileBudget, so a
+                // slow-but-legitimate compile cannot silently consume the run's whole
+                // budget. Scoped to a `using` block around ONLY this call (compiled once,
+                // above), so its timer cannot fire during the later RunIsolatedAsync
+                // execution below.
+                //
+                // Partial mitigation only (see RoslynScriptCompiler.CompileOnce's
+                // cancellationToken remarks for the full picture): this token is consulted
+                // during Emit only. It does NOT help a hostile body that HANGS inside the
+                // earlier GetCompilation call (unbounded — that call simply never returns,
+                // so CompileOnce never reaches Emit at all), and it CANNOT intercept a
+                // hostile body that overflows the native stack during Emit itself
+                // (uncatchable). ScriptCsharpProvider.Validate applies only a plain 64 KiB
+                // size bound before this method is ever reached — a resource limit, not a
+                // guard against either failure mode. Whatever THIS budget's own expiry does
+                // produce (OperationCanceledException, for the in-between case of a
+                // legitimately slow compile) is handled uniformly by the generic
+                // `catch (Exception ex)` below, exactly like any other compile failure — no
+                // special-casing needed.
+                using (var compileBudget =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    compileBudget.CancelAfter(RoslynScriptCompiler.DefaultCompileBudget);
+                    compiled = RoslynScriptCompiler.CompileOnce(
+                        assembled.CsxSource,
+                        additionalOptions: null,
+                        additionalReferencePaths: tpaPaths,
+                        cancellationToken: compileBudget.Token);
+                }
 
                 await RoslynScriptCompiler.RunIsolatedAsync(
                     compiled,
@@ -1636,6 +1704,12 @@ public static class ScenarioRunner
                 // REFERENCE-ONLY: only the source/path coordinates are written to output —
                 // never sre.Message verbatim (here Message carries only the path, but we keep
                 // the surface reference-only for consistency and future-proofing, §17).
+                //
+                // Issue #266, Item 4: SecretSource is restricted to [A-Za-z0-9_-]+ (safe), but
+                // SecretPath's grammar is [^}]+ — ANY character except '}', including control
+                // characters and ANSI escape sequences an author's `${secret:source/path}`
+                // field value could embed — so it is sanitised the same as every other
+                // author-controlled text reaching this human output stream.
                 var nowSE = DateTimeOffset.UtcNow;
                 buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
                 {
@@ -1653,8 +1727,9 @@ public static class ScenarioRunner
                 }));
 
                 await output.WriteLineAsync(
-                    "Secret resolution failed (EnvironmentError): " +
-                    $"source '{sre.SecretSource}', path '{sre.SecretPath}'.")
+                    DisplaySanitiser.SanitiseForDisplay(
+                        "Secret resolution failed (EnvironmentError): " +
+                        $"source '{sre.SecretSource}', path '{sre.SecretPath}'."))
                     .ConfigureAwait(false);
 
                 return Verdict.EnvironmentError;
@@ -1687,8 +1762,16 @@ public static class ScenarioRunner
                 // stream (the developer terminal / CI log) — an exfiltration surface every bit as
                 // real as the event stream — so scrub it through the SAME ledger the observation
                 // path uses before it leaves the engine.  Type-based redaction stays primary.
+                //
+                // Issue #266, Item 4: composed with DisplaySanitiser.SanitiseForDisplay so BOTH
+                // nets run on this write — ScrubDiagnostic redacts resolved secret VALUES first,
+                // then SanitiseForDisplay strips control characters / neutralises ANSI escape
+                // sequences the (already-scrubbed) text might still carry (e.g. from a hostile
+                // step id or an author exception message), before either ever reaches the
+                // terminal/CI log.
                 await output.WriteLineAsync(
-                    $"Compile/run error (Inconclusive): {ScrubDiagnostic(secretAccessor, diagnosis)}")
+                    $"Compile/run error (Inconclusive): " +
+                    $"{DisplaySanitiser.SanitiseForDisplay(ScrubDiagnostic(secretAccessor, diagnosis))}")
                     .ConfigureAwait(false);
 
                 return Verdict.Inconclusive;

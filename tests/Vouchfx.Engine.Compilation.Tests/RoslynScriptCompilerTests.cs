@@ -511,6 +511,57 @@ public sealed class RoslynScriptCompilerTests
     }
 
     // -------------------------------------------------------------------------
+    // Issue #266, Threat B — CompileOnce honours a CancellationToken on the emit path.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A pre-cancelled <see cref="CancellationToken"/> passed to
+    /// <see cref="RoslynScriptCompiler.CompileOnce"/> must throw
+    /// <see cref="OperationCanceledException"/> — proving the token is genuinely wired
+    /// through, rather than silently ignored (issue #266, Threat B: bounding a
+    /// runaway-but-non-crashing compile). This does NOT exercise Roslyn's own
+    /// binder/emit-phase cooperative check (the source below is trivial and would compile
+    /// near-instantly); it proves CompileOnce's own defensive up-front
+    /// <c>cancellationToken.ThrowIfCancellationRequested()</c> fires deterministically for
+    /// an already-cancelled token, regardless of exactly where inside Roslyn's pipeline the
+    /// first cooperative check would otherwise fall.
+    /// </summary>
+    [Fact]
+    public void CompileOnce_PreCancelledToken_ThrowsOperationCanceledException()
+    {
+        const string csxSource = """
+            Vars["never_reached"] = 1;
+            """;
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => RoslynScriptCompiler.CompileOnce(csxSource, cancellationToken: cts.Token));
+    }
+
+    /// <summary>
+    /// A live (not cancelled) token passed to <see cref="RoslynScriptCompiler.CompileOnce"/>
+    /// does not interfere with a normal compile — the token is genuinely optional /
+    /// additive, not a behaviour change for the overwhelming majority of callers that pass
+    /// none (the default <see cref="CancellationToken.None"/>).
+    /// </summary>
+    [Fact]
+    public void CompileOnce_LiveToken_CompilesNormally()
+    {
+        const string csxSource = """
+            Vars["with_live_token"] = 1;
+            """;
+
+        using var cts = new CancellationTokenSource();
+
+        var compiled = RoslynScriptCompiler.CompileOnce(csxSource, cancellationToken: cts.Token);
+
+        Assert.NotNull(compiled);
+        Assert.NotEmpty(compiled.Image);
+    }
+
+    // -------------------------------------------------------------------------
     // ScriptCompilationException — null-guard regression (Fix 1 / PR #126).
     // -------------------------------------------------------------------------
 

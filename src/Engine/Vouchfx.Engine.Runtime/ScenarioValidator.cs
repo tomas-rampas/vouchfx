@@ -277,14 +277,46 @@ public static class ScenarioValidator
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
+            // Bound the compile to a fresh, time-boxed budget. ValidateScenario has no
+            // ambient CancellationToken of its own to link — it is a synchronous,
+            // topology-free entry point — so a standalone CancellationTokenSource IS the
+            // whole budget.
+            //
+            // Partial mitigation only (see RoslynScriptCompiler.CompileOnce's
+            // cancellationToken remarks for the full picture): this token is consulted
+            // during Emit only, so it bounds a legitimately slow compile, nothing more. It
+            // does NOT help a hostile body that HANGS earlier, inside GetCompilation
+            // (unbounded — CompileOnce never reaches Emit in that case), and it CANNOT
+            // intercept a hostile body that overflows the native stack during Emit itself
+            // (uncatchable). ScriptCsharpProvider.Validate, which ran earlier in this same
+            // pipeline call, applies only a plain 64 KiB size bound — a resource limit, not
+            // a guard against either failure mode.
+            using var compileBudget =
+                new CancellationTokenSource(RoslynScriptCompiler.DefaultCompileBudget);
+
             RoslynScriptCompiler.CompileOnce(
                 pipelineResult.Assembled!.CsxSource,
                 additionalOptions: null,
-                additionalReferencePaths: referencePaths);
+                additionalReferencePaths: referencePaths,
+                cancellationToken: compileBudget.Token);
         }
         catch (ScriptCompilationException sce)
         {
             return SingleDiagnostic(path, ValidationStage.Roslyn, sce.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            // The compile exceeded its bounded budget while emitting — a legitimate-but-slow
+            // compile (see the compileBudget remarks above for what this budget does and
+            // does not cover) — so this is reported the same way as any other Roslyn-stage
+            // failure rather than left to escape as an unhandled exception out of a
+            // topology-free validator.
+            return SingleDiagnostic(
+                path,
+                ValidationStage.Roslyn,
+                $"Script compile exceeded the {RoslynScriptCompiler.DefaultCompileBudget.TotalSeconds:0}s "
+                + "compile budget and was cancelled (a guard against a runaway, non-crashing "
+                + "compile); reduce script size/complexity.");
         }
 
         return new ScenarioValidationResult(path, IsValid: true, Array.Empty<ValidationDiagnostic>());

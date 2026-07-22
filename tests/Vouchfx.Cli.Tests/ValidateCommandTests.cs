@@ -337,6 +337,128 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Contains("Parse / AST error", diagnostic.Message, StringComparison.Ordinal);
     }
 
+    // -- Issue #266, Item 4: display sanitisation of an embedded control character --
+
+    // A script.csharp 'file:' reference that does not exist produces a Pipeline diagnostic
+    // that echoes the field's raw value verbatim ("file '{model.File}' not found ...") - a
+    // realistic, schema-legal vector for a hostile field value (unlike 'id', which the
+    // schema restricts to [A-Za-z_][A-Za-z0-9_-]*, 'file' is an unconstrained string).
+    //
+    // The embedded control character is FORM FEED (0x0C), not ESC (0x1B): DocumentValidator's
+    // schema-validation stage bridges the whole YAML document through YamlDotNet's
+    // JsonCompatible serialiser before it ever reaches Pipeline, and that serialiser emits
+    // several control characters -- including ESC -- as a non-JSON short escape (e.g. "\e"),
+    // which then fails re-parsing as JSON at the SCHEMA stage with a generic "Failed to parse
+    // YAML" message that never echoes the field's actual content at all (confirmed by direct
+    // probing while writing this test: 0x01/0x02/0x07/0x0B/0x1F/0x7F/0x9F all fail the same
+    // way; only 0x08 (backspace) and 0x0C (form feed) round-trip, because JSON has native
+    // single-character escapes for them). This is a pre-existing YamlDotNet limitation
+    // unrelated to issue #266 (out of scope to fix here), so FF is used as the control
+    // character that both (a) survives to reach a Pipeline-stage diagnostic that echoes it
+    // back, and (b) is exactly the kind of byte DisplaySanitiser strips (every C0 control
+    // character except \t/\n).
+    private const string HostileFieldValueScenario =
+        "steps:\n" +
+        "  - id: run-helper\n" +
+        "    type: script.csharp\n" +
+        "    file: \"before\\u000cafter.csx\"\n";
+
+    [Fact]
+    public void Execute_DiagnosticWithEmbeddedControlCharacter_HumanReport_RendersInert()
+    {
+        var file = Path.Combine(_root, "hostile.e2e.yaml");
+        File.WriteAllText(file, HostileFieldValueScenario);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: false, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        var text = sw.ToString();
+        Assert.Contains("[Pipeline]", text, StringComparison.Ordinal);
+        // The surrounding text survives sanitisation intact...
+        Assert.Contains("beforeafter.csx", text, StringComparison.Ordinal);
+        // ...but the embedded control character itself does not.
+        Assert.DoesNotContain((char)0x0C, text);
+    }
+
+    [Fact]
+    public void Execute_DiagnosticWithEmbeddedControlCharacter_Json_StaysByteClean()
+    {
+        var file = Path.Combine(_root, "hostile.e2e.yaml");
+        File.WriteAllText(file, HostileFieldValueScenario);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: true, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        var jsonText = sw.ToString();
+
+        // --json needs no DisplaySanitiser treatment: System.Text.Json always escapes
+        // control characters inside a JSON string (mandated by the JSON spec itself), so a
+        // raw control byte can never appear literally -- confirmed here rather than merely
+        // asserted in a comment.
+        Assert.DoesNotContain((char)0x0C, jsonText);
+        Assert.Contains("\\f", jsonText, StringComparison.Ordinal);
+
+        var document = JsonSerializer.Deserialize<ValidateJsonDocument>(jsonText, CliJsonContract.Options);
+        Assert.NotNull(document);
+        var entry = Assert.Single(document!.Scenarios);
+        Assert.False(entry.Valid);
+        // Deserialising round-trips the JSON escape back to a real control character in the
+        // in-memory string -- proving the document carries the ORIGINAL text faithfully
+        // (--json is a tooling contract, so it must never silently mutate diagnostic
+        // content the way the human report's DisplaySanitiser deliberately does).
+        Assert.Contains(entry.Diagnostics, d => d.Message.Contains((char)0x0C));
+    }
+
+    // ── Issue #266: document-size cap at the ScenarioDiscovery.ParseFile read seam ──
+
+    /// <summary>
+    /// A <c>.e2e.yaml</c> file exceeding <see cref="ScenarioDiscovery.MaxDocumentSizeBytes"/>
+    /// (1 MiB) is rejected as a Parse-stage diagnostic — the SAME code path an unreadable
+    /// file already used (<see cref="ScenarioDiscovery.ParseFile"/>) — never read into
+    /// memory in full, and never reaching schema/pipeline/Roslyn.
+    /// </summary>
+    [Fact]
+    public void Execute_OversizedDocument_ReturnsInconclusive_WithParseStageSizeDiagnostic()
+    {
+        // Comfortably over the 1 MiB limit; content is irrelevant — the size check runs
+        // before any read/parse.
+        var oversized = "# " + new string('a', 1_100_000) + "\n";
+        var file = Path.Combine(_root, "oversized.e2e.yaml");
+        File.WriteAllText(file, oversized);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: false, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        var text = sw.ToString();
+        Assert.Contains("[Parse]", text, StringComparison.Ordinal);
+        Assert.Contains("exceeds", text, StringComparison.Ordinal);
+        Assert.Contains("1 MiB", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Execute_OversizedDocument_Json_ReportsParseStageWithSizeDiagnostic()
+    {
+        var oversized = "# " + new string('a', 1_100_000) + "\n";
+        var file = Path.Combine(_root, "oversized.e2e.yaml");
+        File.WriteAllText(file, oversized);
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: true, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        var document = JsonSerializer.Deserialize<ValidateJsonDocument>(sw.ToString(), CliJsonContract.Options);
+        Assert.NotNull(document);
+        var entry = Assert.Single(document!.Scenarios);
+        Assert.False(entry.Valid);
+        var diagnostic = Assert.Single(entry.Diagnostics);
+        Assert.Equal(ValidationStage.Parse, diagnostic.Stage);
+        Assert.Contains("exceeds", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("1 MiB", diagnostic.Message, StringComparison.Ordinal);
+    }
+
     // ── Issue #268: validate must resolve compile-time relative paths using EACH
     //    scenario's OWN directory, never a single directory shared across scenarios ──
 

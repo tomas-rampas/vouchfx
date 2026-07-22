@@ -244,6 +244,38 @@ public sealed class TerminalRendererTests
     }
 
     // -------------------------------------------------------------------------
+    // Issue #266, Item 4: an EnvironmentError event's resourceName/registryHost/detail
+    // fields can ultimately reflect untrusted content (e.g. an author-declared dependency
+    // or image name); an embedded control character / ANSI escape sequence must be
+    // rendered inert rather than corrupting/spoofing the terminal. The JSON \u001b escape
+    // decodes to a raw ESC byte in the DESERIALISED string value (GetStr's input) — this
+    // is standard JSON syntax, not a hostile-input trick in itself; the point under test
+    // is that GetStr's DisplaySanitiser.SanitiseForDisplay call neutralises it before the
+    // renderer ever writes it out.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_EnvironmentErrorEvent_HostileFieldsWithControlSequence_AreRenderedInert()
+    {
+        const string envErrorLine =
+            """{"v":1,"schemaVersion":"v1","type":"environment-error","ts":"2026-01-01T00:00:00Z","runId":"run-3","verdict":"ENV_ERROR","errorKind":"ImagePull","resourceName":"evil\u001b[31mresource","registryHost":"evil\u001b]0;pwned\u0007host","authStatus":"unauthenticated","detail":"evil\u001b[2J\u001b[Hdetail"}""";
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => TerminalRenderer.Render(new[] { envErrorLine }, writer));
+
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        // The surrounding text survives sanitisation intact…
+        Assert.Contains("evilresource", output, StringComparison.Ordinal);
+        Assert.Contains("evilhost", output, StringComparison.Ordinal);
+        Assert.Contains("evildetail", output, StringComparison.Ordinal);
+        // …but no raw ESC byte reaches the rendered output.
+        Assert.DoesNotContain((char)0x1B, output);
+    }
+
+    // -------------------------------------------------------------------------
     // Test 8 (S03-G-01): step-completed must include the duration in ms.
     // -------------------------------------------------------------------------
 

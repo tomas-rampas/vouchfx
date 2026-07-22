@@ -143,6 +143,46 @@ public sealed class TerminalRendererCapturedVarThreadTests
         Assert.DoesNotContain(secretValueMustNeverAppear, output, StringComparison.Ordinal);
     }
 
+    // ── Issue #266, Item 4: a hostile capture path is rendered inert ───────────
+    //
+    // A captured variable's JSONPath is author-controlled (it comes straight from the
+    // step's own `capture:` block in the .e2e.yaml) — an embedded ANSI escape sequence
+    // must not corrupt/spoof the terminal. GetStrFromObject (the choke point every
+    // capture/substitution string field passes through, see TerminalRenderer's header
+    // comment) applies DisplaySanitiser.SanitiseForDisplay before the path ever reaches
+    // this renderer's output.
+
+    [Fact]
+    public void Render_CapturedVarWithHostilePath_RendersInert()
+    {
+        var esc = (char)0x1B;
+        var hostilePath = "$.id" + esc + "[31m" + esc + "[0m";
+
+        var lines = new[]
+        {
+            Line(new StepStartedEvent { RunId = "run-5", StepId = "create-order", Kind = "http.rest" }),
+            Line(new StepCompletedEvent
+            {
+                RunId      = "run-5",
+                StepId     = "create-order",
+                Verdict    = Verdict.Pass,
+                DurationMs = 12,
+                Captured   = new[] { new CapturedVar("orderId", hostilePath, Matched: true) },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => TerminalRenderer.Render(lines, writer));
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        // The surrounding path text survives sanitisation intact…
+        Assert.Contains("$.id", output, StringComparison.Ordinal);
+        // …but no raw ESC byte reaches the rendered output.
+        Assert.DoesNotContain(esc, output);
+    }
+
     // ── A step with neither captures nor substitutions emits no thread noise ───
     //
     // The provenance section is only drawn when there is provenance to show, so a

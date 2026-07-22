@@ -267,7 +267,8 @@ public static class ProviderTestHarness
             TimeoutMs: node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
             PollIntervalMs: null);
         var assembled = CsxAssembler.Assemble(new[] { plan });
-        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource);
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            assembled.CsxSource, cancellationToken: cancellationToken);
 
         // 5. Run in a fresh collectible context; the step writes its StepOutcome to Vars.
         //    Every artefact here is method-local — nothing roots the collectible ALC.

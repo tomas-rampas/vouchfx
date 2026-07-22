@@ -237,7 +237,7 @@ public static class MemoryProbe
         CancellationToken ct = default)
     {
         // ── Step 1: compile ONCE ────────────────────────────────────────────────
-        var compiled = RoslynScriptCompiler.CompileOnce(TrivialProbeScript);
+        var compiled = RoslynScriptCompiler.CompileOnce(TrivialProbeScript, cancellationToken: ct);
 
         // ── Step 2: warm up ─────────────────────────────────────────────────────
         // Run a handful of load-unload cycles through a NoInlining helper so the
@@ -440,7 +440,8 @@ public static class MemoryProbe
         // ── Step 1: compile ONCE with the canonical-client metadata references ──
         var compiled = RoslynScriptCompiler.CompileOnce(
             ClosureProbeScript.Source,
-            additionalReferencePaths: additionalRefs);
+            additionalReferencePaths: additionalRefs,
+            cancellationToken: ct);
 
         // Capture the singleton reset list once (used in reporting and the result).
         var singletonsReset = SingletonReset.ResetAll();

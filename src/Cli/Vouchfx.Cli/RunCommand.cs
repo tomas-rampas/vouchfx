@@ -937,10 +937,18 @@ internal static class RunCommand
         }
 
         // Report each parse-failure as an Inconclusive scenario (it never ran — §12.1).
+        // Issue #266, Item 4: failure.ParseError embeds raw author YAML content verbatim
+        // (AstBuilder's unknown-step-type / duplicate-step-id messages splice the offending
+        // type/id straight from the document) — this is the MOST reachable human-terminal
+        // surface for hostile suite content (a plain `vouchfx run` on a malformed suite), so
+        // the whole composed line is sanitised before it ever reaches the terminal/CI log.
+        // AbsolutePath is filesystem-derived (lower risk) but sanitised too for consistency —
+        // sanitising clean text is a no-op.
         foreach (var failure in failures)
         {
             await output.WriteLineAsync(
-                $"{failure.AbsolutePath}: {failure.ParseError} (Inconclusive)")
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"{failure.AbsolutePath}: {failure.ParseError} (Inconclusive)"))
                 .ConfigureAwait(false);
         }
 

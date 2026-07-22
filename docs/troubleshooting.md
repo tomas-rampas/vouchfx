@@ -7,6 +7,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
+- [Script body and document size limits](#script-body-and-document-size-limits)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
 - [Secret leakage in exception messages](#secret-leakage-in-exception-messages)
 - [Build fails with warnings-as-errors](#build-fails-with-warnings-as-errors)
@@ -244,6 +245,52 @@ Use one of these approaches:
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
 **Best practice:** For running vouchfx test suites, use the packaged CLI — it is simpler, requires no path-resolution workarounds, and works on any machine with .NET 8 installed. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
+
+---
+
+## Script body and document size limits
+
+**Symptom:**
+
+```
+script.csharp: 'code' size 72000 characters exceeds the 65536-character limit (a plain resource bound, not a security control — see this file's header comment); reduce its size or split the script.
+```
+
+or
+
+```
+File size 1200000 bytes exceeds the 1048576-byte (1 MiB) limit for a single *.e2e.yaml document (a guard against pathological input); split the suite into smaller files.
+```
+
+**What it means:**
+
+The engine enforces two resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), and 1 MiB per `.e2e.yaml` document. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse).
+
+When a limit is exceeded, the scenario is marked **Inconclusive** on `run` (exit code 4 with `--fail-on-inconclusive`), and **invalid** on `validate` (exit code 4). Validation completes normally and names the specific limit — it is not a crash.
+
+**Fix:**
+
+1. **Script body too large?** Split a large `script.csharp` body across multiple steps:
+   ```yaml
+   - id: validate-part-1
+     type: script.csharp
+     code: |
+       // First portion of logic
+
+   - id: validate-part-2
+     type: script.csharp
+     code: |
+       // Next portion of logic
+   ```
+
+2. **Document too large?** Split into separate `.e2e.yaml` files:
+   ```bash
+   # Before: one large scenario file (1.5 MiB)
+   # After: split by concern
+   create-tests.e2e.yaml       # Creation tests (~200 KiB)
+   fulfillment-tests.e2e.yaml  # Fulfillment tests (~300 KiB)
+   audit-tests.e2e.yaml        # Audit trail tests (~250 KiB)
+   ```
 
 ---
 

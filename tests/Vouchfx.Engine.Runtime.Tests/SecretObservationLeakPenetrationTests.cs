@@ -500,13 +500,16 @@ public sealed class SecretObservationLeakPenetrationTests
     /// (<c>RunScenarioCoreAsync</c>, the <c>Compile/run error (Inconclusive): …</c> write): it
     /// formats the diagnostic exactly as the catch does (<c>{TypeName}: {Message}</c>), routes
     /// it through <see cref="ScenarioRunner.ScrubDiagnostic"/> (the SAME ledger scrub the
-    /// observation path uses), and writes it to the supplied <paramref name="output"/> — the
+    /// observation path uses) COMPOSED with <see cref="DisplaySanitiser.SanitiseForDisplay"/>
+    /// (issue #266, Item 4 — the same composition the production site now applies, so a
+    /// control character / ANSI escape sequence in the message is ALSO neutralised, not just
+    /// a resolved secret value), and writes it to the supplied <paramref name="output"/> — the
     /// developer terminal / CI log.  Returns the captured terminal text.
     /// </summary>
     private static string EmitScenarioDiagnosticLine(SecretAccessor accessor, Exception ex, TextWriter output)
     {
         var diagnosis = $"{ex.GetType().Name}: {ex.Message}";
-        var scrubbed = ScenarioRunner.ScrubDiagnostic(accessor, diagnosis);
+        var scrubbed = DisplaySanitiser.SanitiseForDisplay(ScenarioRunner.ScrubDiagnostic(accessor, diagnosis));
         output.WriteLine($"Compile/run error (Inconclusive): {scrubbed}");
         return output.ToString()!;
     }
@@ -581,5 +584,102 @@ public sealed class SecretObservationLeakPenetrationTests
         {
             cleanup();
         }
+    }
+
+    // ── 9. TERMINAL: a scenario-level exception message carrying an ANSI/control sequence
+    //        is rendered inert, not just secret-scrubbed (issue #266, Item 4) ──
+
+    /// <summary>
+    /// The SCENARIO-LEVEL catch-all in <c>RunScenarioCoreAsync</c> (the
+    /// <c>Compile/run error (Inconclusive): …</c> write <see cref="EmitScenarioDiagnosticLine"/>
+    /// mirrors) fires for an exception that escapes the compile/run call ITSELF — a genuine
+    /// unexpected engine/infra fault — and can carry a control character / ANSI escape sequence
+    /// in its message rather than — or in addition to — a resolved secret value. This is a
+    /// DIFFERENT path from <see cref="Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider"/>'s
+    /// <c>__obs_&lt;safeId&gt; = __ex_&lt;safeId&gt;.Message</c> wrapper (tests 1-6 above): a
+    /// script.csharp author's OWN thrown exception is caught INSIDE the emitted CSX submission
+    /// and becomes a <c>StepOutcome.Observation</c> — it never reaches this scenario-level
+    /// catch at all. <see cref="EmitScenarioDiagnosticLine"/> mirrors the CURRENT production
+    /// site exactly (§17 secret scrub composed with <see cref="DisplaySanitiser"/>), so this
+    /// proves the composition, not a hand-rolled reproduction of it: the ANSI sequence must not
+    /// reach the developer terminal / CI log.
+    /// </summary>
+    [Fact]
+    public void ScenarioLevelExceptionMessage_EmbeddingAnsiControlSequence_IsInertInTerminalOutput()
+    {
+        var (accessor, _, cleanup) = AccessorWithResolvedSecret("unrelated-ansi-pentest-secret");
+        try
+        {
+            var esc = (char)0x1B;
+            // A realistic unexpected engine/infra exception whose message embeds an ANSI
+            // colour-set/reset sequence, no secret involved. This simulates whatever an
+            // exception escaping RunIsolatedAsync/CompileOnce itself might carry — NOT a
+            // script.csharp author's own thrown exception (that is caught INSIDE the CSX and
+            // never reaches this catch — see the test's own summary above).
+            var thrown = new InvalidOperationException(
+                "auth failed" + esc + "[31m" + " for user" + esc + "[0m");
+            var terminal = new StringWriter();
+            var captured = EmitScenarioDiagnosticLine(accessor, thrown, terminal);
+
+            // The surrounding message text survives sanitisation intact…
+            Assert.Contains("auth failed", captured, StringComparison.Ordinal);
+            Assert.Contains("for user", captured, StringComparison.Ordinal);
+            Assert.Contains("Compile/run error (Inconclusive):", captured, StringComparison.Ordinal);
+            // …but no raw ESC byte reaches the terminal output.
+            Assert.DoesNotContain(esc, captured);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    // ── 10. TERMINAL: a SecretResolutionException's SecretPath carrying an ANSI/control
+    //         sequence is rendered inert (issue #266, Item 4) ──
+
+    /// <summary>
+    /// Emulates the runner's <c>SecretResolutionException</c> scenario-level catch site
+    /// (<c>RunScenarioCoreAsync</c>, the "Secret resolution failed (EnvironmentError): …"
+    /// write): composes the diagnostic exactly as the catch does — <c>SecretSource</c> and
+    /// <c>SecretPath</c> spliced verbatim, NEVER <c>sre.Message</c> (§17 reference-only
+    /// discipline) — and routes the composed line through
+    /// <see cref="DisplaySanitiser.SanitiseForDisplay"/>, the SAME composition the production
+    /// site now applies. Writes it to the supplied <paramref name="output"/> and returns the
+    /// captured terminal text.
+    /// </summary>
+    private static string EmitSecretResolutionFailureLine(SecretResolutionException sre, TextWriter output)
+    {
+        output.WriteLine(
+            DisplaySanitiser.SanitiseForDisplay(
+                "Secret resolution failed (EnvironmentError): " +
+                $"source '{sre.SecretSource}', path '{sre.SecretPath}'."));
+        return output.ToString()!;
+    }
+
+    /// <summary>
+    /// <c>SecretReference</c>'s grammar restricts <c>source</c> to <c>[A-Za-z0-9_-]+</c>
+    /// (safe) but leaves <c>path</c> unrestricted (<c>[^}]+</c>) — an author's
+    /// <c>${secret:source/path}</c> field value can embed a control character / ANSI escape
+    /// sequence in the PATH segment, which then reaches this catch site's diagnostic verbatim
+    /// unless sanitised. No secret VALUE is ever involved here (resolution FAILED — there is
+    /// no value to leak), so this is purely the control-sequence threat, distinct from the
+    /// ledger-scrub concern sections 8/9 above cover.
+    /// </summary>
+    [Fact]
+    public void SecretResolutionExceptionMessage_PathWithAnsiControlSequence_IsInertInTerminalOutput()
+    {
+        var esc = (char)0x1B;
+        var hostilePath = "API" + esc + "[31mHACKED" + esc + "[0m_TOKEN";
+        var sre = new SecretResolutionException("env", hostilePath, "secret not found for source 'env'");
+        var terminal = new StringWriter();
+
+        var captured = EmitSecretResolutionFailureLine(sre, terminal);
+
+        // The surrounding diagnostic text survives sanitisation intact...
+        Assert.Contains("Secret resolution failed (EnvironmentError):", captured, StringComparison.Ordinal);
+        Assert.Contains("source 'env'", captured, StringComparison.Ordinal);
+        Assert.Contains("HACKED", captured, StringComparison.Ordinal);
+        // ...but no raw ESC byte reaches the terminal.
+        Assert.DoesNotContain(esc, captured);
     }
 }

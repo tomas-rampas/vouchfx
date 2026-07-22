@@ -12,6 +12,25 @@
 //   • CsxFragment rules: RequiredUsings are bare namespace strings; RequiredHelpers
 //     is empty (no shared static class needed); StatementBlock is assembled with
 //     a StringBuilder — the author body is NEVER placed inside a $$"""…""" hole.
+//
+// Resource bound, NOT a crash-closer (see Validate below): script.csharp's body — the
+// inline `code` text, or the `file` reference's ON-DISK SIZE (never its content; Validate
+// checks FileInfo.Length only, so a `file:` pointing at a multi-GB file is rejected on size
+// alone, without ever being read into memory) — is capped at 64 KiB. That is a sane size
+// limit for a hand-authored test body; it is NOT a defence against a determined hostile
+// author. RoslynScriptCompiler.CompileOnce can still crash or hang the process on a body
+// well under this cap: a ~2 KB deeply-nested NON-bracket body (e.g. chained generic type
+// arguments) overflows the native stack inside the BINDER during Compilation.Emit — parsing
+// itself succeeds — and a short (~100-char) deeply-nested string-interpolation expression
+// can HANG the parse inside CSharpScript.Create/GetCompilation, unboundedly (the compile
+// budget's CancellationToken only bounds Emit — see RoslynScriptCompiler.CompileOnce — it
+// never reaches the parse phase). A bracket/paren nesting-depth scan was tried here and
+// removed: proven incomplete (it does not, and structurally cannot, count angle brackets,
+// generics, or the many non-bracket constructs that also recurse the compiler), so it gave
+// false confidence rather than real protection. Closing this off completely requires
+// isolating the in-process compile so a crash/hang there cannot take the host process down
+// with it — tracked separately as follow-up #276; until then, script.csharp is bounded
+// only against accidental/pathological SIZE, not against a deliberately hostile body.
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
@@ -72,6 +91,15 @@ namespace Vouchfx.Steps.Script.Csharp;
 /// reserved-key namespaces (<c>__outcome::</c>, <c>conn::</c>, <c>svc::</c>)
 /// against author writes, and redacting credentials (§17 <c>SecretString</c>),
 /// are post-MVP hardening items.
+/// </para>
+/// <para>
+/// <strong>The compile itself is not hardened against a hostile author.</strong>
+/// <see cref="Validate"/> applies a plain 64&#160;KiB size bound (see its remarks) — a
+/// sane limit for a hand-authored body, not a security control. A small, deliberately
+/// pathological body can still crash or hang <c>RoslynScriptCompiler.CompileOnce</c>
+/// well under that size (see this file's header comment for specifics). Closing that off
+/// requires running the in-process compile somewhere a crash cannot take the host process
+/// down with it — out of scope for this provider, tracked separately.
 /// </para>
 /// </remarks>
 [StepProvider]
@@ -162,6 +190,25 @@ public sealed class ScriptCsharpProvider
 
     // ── IStepValidator<ScriptCsharpModel> ────────────────────────────────────
 
+    /// <summary>
+    /// The maximum permitted size of a <c>script.csharp</c> body — the inline <c>code</c>
+    /// text (measured in characters) or the <c>file</c> reference's ON-DISK size (measured
+    /// in bytes, via <see cref="System.IO.FileInfo.Length"/> — the file's content is never
+    /// read for this check). 64 KiB is a plain, generous resource bound: real author bodies
+    /// run from a few hundred bytes to low single-digit KiB, so this only ever rejects
+    /// pathological input.
+    /// </summary>
+    /// <remarks>
+    /// This is a SIZE bound, not a security control. It does not, and cannot, close the
+    /// in-process compiler crash/hang surface described in this file's header comment — a
+    /// body comfortably under this limit can still crash or hang
+    /// <c>RoslynScriptCompiler.CompileOnce</c>. A bracket-nesting-depth companion check was
+    /// tried and removed: it could not, even in principle, catch the non-bracket
+    /// constructs (e.g. chained generics) that actually recurse the compiler, so it gave
+    /// false confidence rather than real protection.
+    /// </remarks>
+    private const int MaxBodyLength = 65536; // 64 KiB.
+
     /// <inheritdoc />
     public ValidationResult Validate(ScriptCsharpModel model, IProjectContext ctx)
     {
@@ -180,6 +227,16 @@ public sealed class ScriptCsharpProvider
                 "script.csharp: 'code' and 'file' are mutually exclusive.");
         }
 
+        if (hasCode)
+        {
+            var length = model.Code!.Length;
+            if (length > MaxBodyLength)
+            {
+                return ValidationResult.Failure(
+                    BuildSizeLimitMessage("'code'", length, "characters"));
+            }
+        }
+
         if (hasFile)
         {
             var resolvedPath = System.IO.Path.GetFullPath(
@@ -190,9 +247,71 @@ public sealed class ScriptCsharpProvider
                 return ValidationResult.Failure(
                     $"script.csharp: file '{model.File}' not found (resolved to '{resolvedPath}').");
             }
+
+            // Size-only check via FileInfo.Length — the content is deliberately NEVER read
+            // here. Reading it (a prior revision of this guard did, in order to also scan
+            // for nesting depth) would let a 'file:' reference pointing at an arbitrarily
+            // large file (a multi-GB file, a device node, …) be pulled fully into memory
+            // before any bound was applied — a denial-of-service surface in its own right.
+            // Checking the on-disk length first rejects an oversized file on size alone,
+            // with no read at all. Emit still reads the (now size-bounded) file content
+            // exactly as before.
+            //
+            // Copilot review (#277): File.Exists just returned true, but the .Length stat
+            // below can still throw — a permissions problem (UnauthorizedAccessException /
+            // SecurityException), an I/O fault, or a racey delete/replace between the
+            // Exists check and here (IOException covers FileNotFoundException and
+            // DirectoryNotFoundException too). Validate's contract is to NEVER throw — an
+            // unhandled exception here would surface as an engine crash instead of a clean
+            // ValidationResult.Failure (→ Inconclusive, §12.1) — so the stat is guarded and
+            // any failure is reported as an ordinary validation failure. The exception TYPE
+            // NAME only is reported (never ex.Message): the message text is not vetted for
+            // terminal-safety the way author-controlled text is elsewhere (DisplaySanitiser,
+            // issue #266 Item 4), and the type name alone is already actionable.
+            long length;
+            try
+            {
+                length = new System.IO.FileInfo(resolvedPath).Length;
+            }
+            catch (Exception ex) when (ex is System.IO.IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+            {
+                return ValidationResult.Failure(
+                    $"script.csharp: could not stat file '{model.File}': {ex.GetType().Name}");
+            }
+
+            if (length > MaxBodyLength)
+            {
+                return ValidationResult.Failure(
+                    BuildSizeLimitMessage("'file'", length, "bytes"));
+            }
         }
 
         return ValidationResult.Success;
+    }
+
+    /// <summary>
+    /// Builds the human-readable error message for a <c>script.csharp</c> body exceeding
+    /// <see cref="MaxBodyLength"/>.
+    /// </summary>
+    /// <param name="fieldName">Either <c>"'code'"</c> or <c>"'file'"</c>.</param>
+    /// <param name="length">The measured length (characters for <c>code</c>, bytes for <c>file</c>).</param>
+    /// <param name="unit">Either <c>"characters"</c> or <c>"bytes"</c>, matching <paramref name="length"/>.</param>
+    /// <remarks>
+    /// Copilot review (#277, grammar): <paramref name="unit"/> is plural and correct for the
+    /// measured COUNT ("72000 characters"), but a hyphenated adjective before "limit" wants the
+    /// SINGULAR form ("a 65536-character limit", not "a 65536-characters limit") — the same
+    /// count noun is used both ways in one sentence, so the singular form is derived here
+    /// (trimming the trailing 's'; both recognised units are regular plurals) rather than
+    /// threading a second parameter through every call site.
+    /// </remarks>
+    private static string BuildSizeLimitMessage(string fieldName, long length, string unit)
+    {
+        var singularUnit = unit.EndsWith('s') ? unit[..^1] : unit;
+        return $"script.csharp: {fieldName} size {length} {unit} exceeds the "
+            + $"{MaxBodyLength}-{singularUnit} limit (a plain resource bound, not a security "
+            + "control — see this file's header comment); reduce its size or split the script.";
     }
 
     // ── IStepCompiler<ScriptCsharpModel> ─────────────────────────────────────

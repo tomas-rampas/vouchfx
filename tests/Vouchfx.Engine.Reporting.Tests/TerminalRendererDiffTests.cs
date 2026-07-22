@@ -268,4 +268,50 @@ public sealed class TerminalRendererDiffTests
         // existing 2-arg overload (no diff spliced).
         Assert.Equal(twoArg.ToString(), threeArgNull.ToString());
     }
+
+    // ── Issue #266, Item 4: hostile diff text is rendered inert ────────────────
+    //
+    // The diff text is the ONE rendered field that does not pass through
+    // GetStr/GetStrFromObject's own choke point (it arrives from the diffLookup
+    // delegate, i.e. a provider's IStepDiffRenderer) — RenderStepDiff sanitises it
+    // separately, at its own write site, before splicing it under the step line.
+
+    [Fact]
+    public void Render_WithDiffLookup_HostileDiffText_RendersInert()
+    {
+        var esc = (char)0x1B;
+        var hostileDiff = "expected: 200" + esc + "[31m" + "\nactual: 503" + esc + "[0m";
+
+        var lines = new[]
+        {
+            Line(new StepStartedEvent
+            {
+                RunId  = "run-hostile",
+                StepId = "assert-status",
+                Kind   = "http.rest",
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId       = "run-hostile",
+                StepId      = "assert-status",
+                Verdict     = Verdict.Fail,
+                DurationMs  = 8,
+                Observation = Parse("""{"status":503}"""),
+            }),
+        };
+
+        Func<string, JsonElement, string?> lookup = (_, _) => hostileDiff;
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => TerminalRenderer.Render(lines, writer, lookup));
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        // The surrounding diff text survives sanitisation intact…
+        Assert.Contains("expected: 200", output, StringComparison.Ordinal);
+        Assert.Contains("actual: 503", output, StringComparison.Ordinal);
+        // …but no raw ESC byte reaches the rendered output.
+        Assert.DoesNotContain(esc, output);
+    }
 }

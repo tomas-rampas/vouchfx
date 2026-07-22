@@ -17,9 +17,12 @@
 //  10. M3 fix: return; in author body does NOT abort downstream steps (local-function containment).
 //  11. M3 fix: author body using await compiles and runs correctly.
 //  12. M3 fix: brace-injection into local function still yields compile error.
-//  13. 'file' field: Bind reads it, Validate enforces exclusivity/existence, Emit
-//      reads the referenced .csx file's content and splices it verbatim, exactly
-//      like an inline 'code' body.
+//  13. 'file' field: Bind reads it, Validate enforces exclusivity/existence/size (via
+//      FileInfo.Length — content is never read at Validate time), Emit reads the
+//      referenced .csx file's content and splices it verbatim, exactly like an inline
+//      'code' body.
+//  14. Size bound (plain resource limit, NOT a crash-closer): 'code'/'file' body size
+//      is capped at 64 KiB.
 using System.IO;
 using System.Linq;
 using Vouchfx.Engine.Abstractions;
@@ -737,6 +740,105 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         Assert.True(vars.ContainsKey("greeting"),
             "Expected Vars[\"greeting\"] to be set by the external file's code.");
         Assert.Equal("hi from file", vars["greeting"]);
+    }
+
+    // ── 14. Size bound (NOT a crash-closer — see class/file remarks) ─────────
+    //
+    // A plain 64 KiB resource bound on the script.csharp body: the inline 'code' text
+    // (characters) and the 'file' reference's on-disk size (bytes, via FileInfo.Length —
+    // content is never read for this check). Each is tested at its exact boundary and
+    // one-over. A bracket-nesting-depth companion check was tried and removed (it could
+    // not, even in principle, catch the non-bracket constructs that actually recurse the
+    // compiler) — there is deliberately no nesting-depth test here any more.
+
+    [Fact]
+    public void Validate_CodeSizeExceeds64KiB_IsInvalid()
+    {
+        // Exactly 65537 chars: one over the 64 KiB / 65536-char limit.
+        var model = new ScriptCsharpModel(Code: new string('a', 65537), File: null);
+
+        var result = _provider.Validate(model, s_projectCtx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("size 65537 characters", StringComparison.Ordinal) &&
+            // Copilot review (#277, grammar): the hyphenated adjective before "limit" is
+            // SINGULAR ("65536-character limit") even though the measured count just before
+            // it is plural ("65537 characters") - the trailing " limit" here is load-bearing:
+            // it is what distinguishes the correct "65536-character limit" from the buggy
+            // "65536-characters limit" this assertion would otherwise also match, since
+            // "65536-character" alone is a substring of both.
+            e.Contains("65536-character limit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_CodeSizeAt64KiB_IsValid()
+    {
+        // Exactly 65536 chars: AT the limit, not exceeding it.
+        var model = new ScriptCsharpModel(Code: new string('a', 65536), File: null);
+
+        var result = _provider.Validate(model, s_projectCtx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    // Copilot review (#277): Validate's File.Exists(resolvedPath) check is immediately
+    // followed by a new FileInfo(resolvedPath).Length stat, now wrapped in a try/catch for
+    // IOException/UnauthorizedAccessException/SecurityException (see ScriptCsharpProvider,
+    // just below the size-cap comment) so a permissions problem or a racey delete between
+    // the two calls returns a clean ValidationResult.Failure instead of an unhandled
+    // exception. NO test exercises the catch through Validate itself: empirical probing
+    // confirmed File.Exists(path) returns FALSE for a directory (so a directory 'file:'
+    // target is rejected by the EARLIER "not found" branch above, never reaching the
+    // stat), and the one case that DOES make FileInfo.Length throw after File.Exists saw
+    // the file - deleting it between the two calls - can only be reproduced by racing a
+    // concurrent deletion against Validate's own two sequential, back-to-back calls (no
+    // seam exists to inject a delay between them without an invasive refactor of a small,
+    // targeted fix). That is an inherently flaky trigger, not a deterministic one, so per
+    // this fix's brief it is intentionally left untested rather than added as a racy test.
+
+    /// <summary>
+    /// The 'file' size check reads ONLY <see cref="FileInfo.Length"/> — never the file's
+    /// content — so a file this large costs one filesystem stat, not a 65 KB read (and,
+    /// by the same code path, would cost a stat rather than a multi-GB read for a
+    /// pathologically large file).
+    /// </summary>
+    [Fact]
+    public void Validate_FileSizeExceeds64KiB_IsInvalid()
+    {
+        var fileName = "big-" + Guid.NewGuid().ToString("n") + ".csx";
+        // Exactly 65537 bytes: one over the 64 KiB / 65536-byte limit. File.WriteAllText
+        // defaults to UTF-8 WITHOUT a byte-order mark, so the on-disk byte count exactly
+        // matches the character count written here (all-ASCII content).
+        File.WriteAllText(Path.Combine(_root, fileName), new string('a', 65537));
+
+        var model = new ScriptCsharpModel(Code: null, File: fileName);
+        var ctx = new StubProjectContext(_root);
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("size 65537 bytes", StringComparison.Ordinal) &&
+            // Copilot review (#277, grammar): see the analogous comment on
+            // Validate_CodeSizeExceeds64KiB_IsInvalid above - "65536-byte limit" (singular)
+            // is the correct wording; the trailing " limit" distinguishes it from the buggy
+            // plural "65536-bytes limit".
+            e.Contains("65536-byte limit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_FileSizeAt64KiB_IsValid()
+    {
+        var fileName = "big-ok-" + Guid.NewGuid().ToString("n") + ".csx";
+        File.WriteAllText(Path.Combine(_root, fileName), new string('a', 65536));
+
+        var model = new ScriptCsharpModel(Code: null, File: fileName);
+        var ctx = new StubProjectContext(_root);
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

@@ -143,4 +143,41 @@ public sealed class RunPathRootExecuteTests : IDisposable
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
+
+    /// <summary>
+    /// Issue #266, Item 4: <c>AstBuilder</c>'s unknown-step-type message splices the
+    /// declared, dotted step <c>type:</c> straight from the document verbatim
+    /// (<c>"unknown step type '{raw}' — no registered provider"</c>), and this is the MOST
+    /// reachable human-terminal surface for hostile suite content — a plain <c>vouchfx run</c>
+    /// on a malformed suite reaches <see cref="RunCommand"/>'s parse-failure loop with no
+    /// flag needed. The file on disk stays plain ASCII (a YAML double-quoted scalar's
+    /// <c>\x1B</c> escape is the spec-compliant way to encode a C0 control character — an
+    /// UNESCAPED control byte is not valid YAML content and would fail at the YAML-syntax
+    /// stage before ever reaching AstBuilder); YamlDotNet decodes the escape back to the raw
+    /// ESC character during parsing, which is exactly the point at which the hostile text
+    /// must already be inert by the time it reaches the terminal.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_FileRoot_ParseFailure_HostileTypeWithAnsiSequence_RendersInert()
+    {
+        var sw = new StringWriter();
+        var bad = Path.Combine(_root, "hostile-type.e2e.yaml");
+        File.WriteAllText(
+            bad,
+            "steps:\n"
+            + "  - id: call-api\n"
+            + "    type: \"hostile.provider\\x1B[31mHACKED\\x1B[0m\"\n");
+
+        var exitCode = await ExecuteAsync(bad, criteria: null, sw);
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+
+        var rendered = sw.ToString();
+        Assert.Contains("(Inconclusive)", rendered, StringComparison.Ordinal);
+        // The surrounding diagnostic text survives sanitisation intact...
+        Assert.Contains("HACKED", rendered, StringComparison.Ordinal);
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+        // ...but no raw ESC byte reaches the terminal.
+        Assert.DoesNotContain((char)0x1B, rendered);
+    }
 }
