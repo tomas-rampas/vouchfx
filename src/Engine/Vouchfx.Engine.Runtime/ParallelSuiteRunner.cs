@@ -499,8 +499,14 @@ public static class ParallelSuiteRunner
             // Leave a minimal, redaction-safe trace (exception TYPE only, never the message — §17)
             // on this slot's raw writer so a genuine engine fault is at least diagnosable; the raw
             // writers flush in declaration order, so this stays deterministic.
+            //
+            // Issue #266, Item 4: scenarioName is author-controlled (metadata.name) and this raw
+            // writer's content is flushed VERBATIM to the terminal by RenderAndAggregate below
+            // (output.Write(raw)) — it bypasses TerminalRenderer's own GetStr choke entirely, so
+            // it must be sanitised at THIS write site.
             rawWriter.WriteLine(
-                $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}");
+                DisplaySanitiser.SanitiseForDisplay(
+                    $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}"));
             slotVerdicts[index] = Verdict.EnvironmentError;
             slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
             eventsStreamAppender?.AppendLines(slotBuffers[index]);

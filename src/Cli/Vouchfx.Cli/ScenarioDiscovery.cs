@@ -72,6 +72,16 @@ internal static class ScenarioDiscovery
     public const string ScenarioGlob = "*.e2e.yaml";
 
     /// <summary>
+    /// The maximum permitted size, in bytes, of a single <c>.e2e.yaml</c> document
+    /// (issue #266 — hostile-input hardening). 1 MiB is deliberately generous: real
+    /// scenario files run from a few hundred bytes to low single-digit KiB; this bound
+    /// only ever rejects pathological input, guarding the file-read seam itself
+    /// (independent of, and in addition to, <c>script.csharp</c>'s own body-size guard —
+    /// see <c>ScriptCsharpProvider.Validate</c>).
+    /// </summary>
+    internal const long MaxDocumentSizeBytes = 1024 * 1024; // 1 MiB.
+
+    /// <summary>
     /// Recursively finds every <c>*.e2e.yaml</c> file under <paramref name="root"/> and
     /// parses each into a <see cref="DiscoveredScenario"/>; a root naming a single
     /// <c>*.e2e.yaml</c> file yields exactly that scenario.
@@ -158,13 +168,32 @@ internal static class ScenarioDiscovery
         string yamlText;
         try
         {
+            // Document-size cap (issue #266 — hostile-input hardening): reject an
+            // oversized file BEFORE reading its full contents into memory. Checked here,
+            // at the seam nearest the raw file read, so it applies uniformly to every
+            // discovered scenario regardless of its content — independent of (and in
+            // addition to) script.csharp's own inline-body/file-reference size guard,
+            // which only bounds ONE step's body, not the whole document.
+            var fileInfo = new FileInfo(absolutePath);
+            if (fileInfo.Length > MaxDocumentSizeBytes)
+            {
+                return new DiscoveredScenario(absolutePath, string.Empty, Ast: null,
+                    ParseError: $"File size {fileInfo.Length} bytes exceeds the "
+                        + $"{MaxDocumentSizeBytes}-byte (1 MiB) limit for a single "
+                        + $"{ScenarioGlob} document (a guard against pathological input); "
+                        + "split the suite into smaller files.");
+            }
+
             yamlText = File.ReadAllText(absolutePath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // An unreadable file (I/O fault or access denied — the latter is NOT an
             // IOException) is captured, not thrown: discovery of the rest of the suite
-            // must proceed.  The empty YAML keeps the record well-formed.
+            // must proceed.  The empty YAML keeps the record well-formed.  This also
+            // catches a FileInfo.Length fault on an inaccessible/racy path (e.g. deleted
+            // between EnumerateFiles and here), keeping that failure mode identical to an
+            // unreadable file rather than a new, unhandled exception shape.
             return new DiscoveredScenario(absolutePath, string.Empty, Ast: null,
                 ParseError: $"Could not read file: {ex.Message}");
         }

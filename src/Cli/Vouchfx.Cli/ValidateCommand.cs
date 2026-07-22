@@ -20,9 +20,18 @@
 //                                system); an invalid scenario here never ran at all — the
 //                                same "authoring error, not a product defect" class the
 //                                engine already calls Inconclusive (§12.1).
+//
+// Display safety (issue #266, Item 4): WriteHumanReport sanitises each diagnostic's Message
+// through Vouchfx.Engine.Abstractions.DisplaySanitiser before it reaches stdout — a Message
+// can echo untrusted suite content (a step id, a field value) back verbatim, and a hostile
+// author could otherwise embed control characters / ANSI escape sequences that corrupt or
+// spoof the terminal. The --json path (ToJsonDocument below) needs no equivalent step:
+// System.Text.Json always \u-escapes control characters inside a JSON string — required by
+// the JSON spec itself — so a raw ESC/CSI byte can never appear literally there.
 
 using System.CommandLine;
 using System.Text.Json.Serialization;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 
@@ -243,7 +252,13 @@ internal static class ValidateCommand
 
             foreach (var diagnostic in scenario.Diagnostics)
             {
-                output.WriteLine($"    [{diagnostic.Stage}] {diagnostic.Message}");
+                // Issue #266, Item 4: a diagnostic's Message may echo text derived from
+                // untrusted suite content (a step id, a field value) back verbatim — sanitise
+                // it before it reaches the terminal/CI log. The --json path needs no
+                // equivalent treatment: System.Text.Json always \u-escapes control characters
+                // inside a JSON string (see ToJsonDocument below and this file's header).
+                output.WriteLine(
+                    $"    [{diagnostic.Stage}] {DisplaySanitiser.SanitiseForDisplay(diagnostic.Message)}");
             }
         }
 

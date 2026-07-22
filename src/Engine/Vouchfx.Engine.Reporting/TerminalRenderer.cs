@@ -18,10 +18,28 @@
 //     (e.g. "  step 'ping': PASS (42 ms)").  When durationMs is absent the
 //     suffix is omitted rather than throwing.  step-attempt lines include tMs
 //     when present.  scenario-completed appends durationMs when present.
+//
+// Display safety (issue #266, Item 4): every string field this renderer reads out of the
+// event stream — resourceName/errorKind/registryHost/detail (EnvironmentError), a step's
+// captured-variable JSONPath, a substitution placeholder, … — can ultimately originate from
+// untrusted suite content (a script.csharp author's own thrown exception message, a field
+// value) that a hostile author controls. GetStr and GetStrFromObject are the SOLE choke
+// points every such field value passes through before reaching this renderer's string
+// domain, so DisplaySanitiser.SanitiseForDisplay is applied THERE, once, rather than at each
+// of the many call sites individually — any future field read through either accessor is
+// covered by construction. The one value that does NOT flow through either accessor is the
+// provider-rendered expected-vs-observed diff text (RenderStepDiff, below): it arrives from
+// an IStepDiffRenderer delegate, not from Extra, so it is sanitised separately at its own
+// write site. This does NOT touch the accessibility decorations (Decorations.GlyphPrefix /
+// Colourise, at the bottom of this file): those are engine-authored ANSI/glyphs, never
+// derived from event-stream content, and are spliced into the rendered line AFTER the
+// (already-sanitised) verdict token — sanitising them away would break the --decorate
+// feature entirely.
 
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 
 namespace Vouchfx.Engine.Reporting;
@@ -373,6 +391,13 @@ public sealed class TerminalRenderer
     /// carries a structured <c>observation</c> whose kind resolves to a provider that
     /// can render it (S07-G-01).  A no-op otherwise.
     /// </summary>
+    /// <remarks>
+    /// Display safety (issue #266, Item 4): the rendered diff text is run through
+    /// <see cref="DisplaySanitiser.SanitiseForDisplay"/> before being split into lines and
+    /// written — it is the one field this renderer shows that does not pass through
+    /// <c>GetStr</c>/<c>GetStrFromObject</c>'s own choke point (see this file's header
+    /// comment).
+    /// </remarks>
     private static void RenderStepDiff(
         EventEnvelope envelope,
         TextWriter output,
@@ -409,6 +434,18 @@ public sealed class TerminalRenderer
         }
 
         var diff = diffLookup(kind, observation);
+        if (string.IsNullOrEmpty(diff))
+        {
+            return;
+        }
+
+        // Display safety (issue #266, Item 4): unlike every other field this renderer
+        // reads, the diff text does NOT flow through GetStr/GetStrFromObject — it is
+        // produced by a provider's IStepDiffRenderer from the structured observation,
+        // which can ultimately reflect untrusted content (the SUT's own response, a
+        // YAML-authored expected value, …). Sanitised here, once, before it is split into
+        // lines and written.
+        diff = DisplaySanitiser.SanitiseForDisplay(diff);
         if (string.IsNullOrEmpty(diff))
         {
             return;
@@ -676,13 +713,19 @@ public sealed class TerminalRenderer
     /// <see cref="EventEnvelope.Extra"/>, or <see langword="null"/> when the key
     /// is absent or not a JSON string.
     /// </summary>
+    /// <remarks>
+    /// Display safety (issue #266, Item 4): the returned value is run through
+    /// <see cref="DisplaySanitiser.SanitiseForDisplay"/> before it reaches the caller — this
+    /// is the SOLE choke point for every string field this renderer reads out of the event
+    /// stream (see this file's header comment).
+    /// </remarks>
     private static string? GetStr(EventEnvelope envelope, string key)
     {
         if (envelope.Extra is not null
             && envelope.Extra.TryGetValue(key, out var element)
             && element.ValueKind == JsonValueKind.String)
         {
-            return element.GetString();
+            return DisplaySanitiser.SanitiseForDisplay(element.GetString());
         }
 
         return null;
@@ -792,12 +835,18 @@ public sealed class TerminalRenderer
     /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="null"/> if the
     /// property is absent or not a JSON string.
     /// </summary>
+    /// <remarks>
+    /// Display safety (issue #266, Item 4): the returned value is run through
+    /// <see cref="DisplaySanitiser.SanitiseForDisplay"/> before it reaches the caller — this
+    /// is the choke point for every capture/substitution string field (name, JSONPath,
+    /// placeholder, origin step id — see this file's header comment) this renderer reads.
+    /// </remarks>
     private static string? GetStrFromObject(JsonElement obj, string propertyName)
     {
         if (obj.TryGetProperty(propertyName, out var prop)
             && prop.ValueKind == JsonValueKind.String)
         {
-            return prop.GetString();
+            return DisplaySanitiser.SanitiseForDisplay(prop.GetString());
         }
 
         return null;

@@ -467,6 +467,64 @@ public sealed class RunParallelAsyncTests
         Assert.Equal(Verdict.Pass, result.ScenarioVerdicts[3].Verdict);
     }
 
+    /// <summary>
+    /// Issue #266, Item 4: when the core throws, <c>RunOneSlotAsync</c> writes a diagnostic
+    /// straight to the scenario's raw <see cref="StringWriter"/>
+    /// (<c>"[environment-error] scenario '{scenarioName}' did not complete: ..."</c>), which
+    /// <c>RenderAndAggregate</c> then flushes to the terminal VERBATIM
+    /// (<c>output.Write(raw)</c>) — bypassing <c>TerminalRenderer</c>'s own
+    /// <c>GetStr</c>/<c>GetStrFromObject</c> sanitisation choke entirely. Since
+    /// <c>scenarioName</c> is author-controlled (<c>metadata.name</c>), an embedded ANSI
+    /// escape sequence must still be rendered inert. The assertion isolates the RAW
+    /// writer's OWN line (via its unique "did not complete" phrase, which never appears in
+    /// TerminalRenderer's own event-based rendering) so this test cannot pass merely because
+    /// a DIFFERENT, already-sanitised path (e.g. the scenarioId TerminalRenderer separately
+    /// renders from the structured event) happens to be safe.
+    /// </summary>
+    [Fact]
+    public async Task RunParallelCoreAsync_CoreThrows_ScenarioNameWithAnsiSequence_RawDiagnosticRendersInert()
+    {
+        const int n = 2;
+        var (asts, _, yamls) = MakeInputs(n);
+        var esc = (char)0x1B;
+        var hostileName = "scenario-hostile" + esc + "[31mHACKED" + esc + "[0m";
+        var names = new[] { "scenario-0", hostileName };
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            {
+                if (string.Equals(scenarioName, hostileName, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("boom from core");
+                }
+
+                return Task.FromResult((Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass)));
+            };
+
+        var sw = new StringWriter();
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry, asts, names, yamls,
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 2,
+            runScenario: fake,
+            seedBaseDirectory: null,
+            ct: default);
+
+        Assert.Equal(Verdict.EnvironmentError, result.ScenarioVerdicts[1].Verdict);
+
+        var rendered = sw.ToString();
+        var rawDiagnosticLine = rendered
+            .Split('\n')
+            .Single(l => l.Contains("did not complete", StringComparison.Ordinal));
+
+        // The surrounding diagnostic text survives sanitisation intact...
+        Assert.Contains("HACKED", rawDiagnosticLine, StringComparison.Ordinal);
+        // ...but no raw ESC byte reaches this specific raw-writer line.
+        Assert.DoesNotContain(esc, rawDiagnosticLine);
+    }
+
     // ── (g) Argument validation ───────────────────────────────────────────────
 
     /// <summary>An empty scenario list returns <see cref="Verdict.Pass"/> immediately.</summary>

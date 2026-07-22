@@ -97,4 +97,67 @@ public sealed class WatchRunnerGuardTests
         // Nothing was reported as a run error — cancellation is not a run failure.
         Assert.DoesNotContain("error during run", output.ToString(), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Issue #266, Item 4: <c>oex.Message</c> can reflect author <c>environment.*</c> config (an
+    /// <see cref="Vouchfx.Engine.Orchestration.EnvironmentMapper"/> diagnostic quoting a declared
+    /// resource name, for instance) — reachable on every save-triggered re-run, so it must be
+    /// rendered inert before reaching the terminal.
+    /// </summary>
+    [Fact]
+    public async Task OrchestrationException_WithAnsiSequenceInMessage_RendersInert()
+    {
+        // OrchestrationException.Message is built from OrchestrationErrorInfo's OWN fields (see
+        // OrchestrationError.cs's BuildMessage), not the inner exception — so the author-declared
+        // value that reaches oex.Message is the resource NAME (environment.services/dependencies),
+        // not the inner exception's message.
+        var esc = (char)0x1B;
+        var output = new StringWriter();
+        var info = new OrchestrationErrorInfo(
+            Kind: OrchestrationErrorKind.Provision,
+            ResourceName: "postgres" + esc + "[31mHACKED" + esc + "[0m",
+            RegistryHost: null,
+            AuthStatus: null,
+            Detail: "container failed to start");
+
+        await WatchRunner.ProcessChangeGuardedAsync(
+            _ => throw new OrchestrationException(info, new InvalidOperationException("boom")),
+            output,
+            CancellationToken.None);
+
+        var rendered = output.ToString();
+        Assert.Contains("--watch: environment error during run", rendered, StringComparison.Ordinal);
+        // The surrounding diagnostic text survives sanitisation intact...
+        Assert.Contains("HACKED", rendered, StringComparison.Ordinal);
+        // ...but no raw ESC byte reaches the terminal.
+        Assert.DoesNotContain(esc, rendered);
+    }
+
+    /// <summary>
+    /// Issue #266, Item 4: the catch-all path's <c>ex.Message</c> can carry author-declared
+    /// config (e.g. the <see cref="ArgumentException"/> from a malformed <c>environment</c>
+    /// block, as in <see cref="NonCancellationException_IsReported_AndDoesNotEscape_SoLoopContinues"/>
+    /// above) — reachable on every save-triggered re-run, so it must be rendered inert too.
+    /// </summary>
+    [Fact]
+    public async Task NonCancellationException_WithAnsiSequenceInMessage_RendersInert()
+    {
+        var esc = (char)0x1B;
+        var output = new StringWriter();
+        var hostileMessage =
+            "Service 'api" + esc + "[31mHACKED" + esc + "[0m' has neither 'image' nor 'project' set.";
+
+        await WatchRunner.ProcessChangeGuardedAsync(
+            _ => throw new ArgumentException(hostileMessage, "env"),
+            output,
+            CancellationToken.None);
+
+        var rendered = output.ToString();
+        Assert.Contains("--watch: error during run", rendered, StringComparison.Ordinal);
+        Assert.Contains("ArgumentException", rendered, StringComparison.Ordinal);
+        // The surrounding diagnostic text survives sanitisation intact...
+        Assert.Contains("HACKED", rendered, StringComparison.Ordinal);
+        // ...but no raw ESC byte reaches the terminal.
+        Assert.DoesNotContain(esc, rendered);
+    }
 }

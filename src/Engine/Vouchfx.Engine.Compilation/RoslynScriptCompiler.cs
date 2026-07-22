@@ -80,6 +80,29 @@ public static class RoslynScriptCompiler
     /// must be made available either via the Default context or via
     /// <c>collectibleProbingPaths</c> on <see cref="RunIsolatedAsync"/>.
     /// </param>
+    /// <param name="cancellationToken">
+    /// Propagated to Roslyn's <c>Compilation.Emit</c> call — bounds a compile whose
+    /// binding/lowering/emit phase is simply taking a long time, which Roslyn's compiler
+    /// pipeline checks cooperatively. <strong>This is a narrow, partial mitigation, not a
+    /// general defence.</strong> It does NOT bound the earlier phase
+    /// (<c>CSharpScript.Create</c> / <c>GetCompilation</c>, below), where the syntax parse
+    /// and initial binding happen — a hostile-enough body can HANG there unboundedly (a
+    /// short, deeply-nested string-interpolation expression is one observed trigger), and
+    /// this token is never consulted while that is happening. Separately, a hostile-enough
+    /// body can also overflow the native call stack during the Emit phase itself (observed
+    /// with deeply-nested non-bracket constructs, e.g. chained generic type arguments) —
+    /// an UNCATCHABLE <see cref="StackOverflowException"/> that no
+    /// <see cref="CancellationToken"/> anywhere in .NET can intercept, cooperative checks
+    /// included. This parameter only helps the case in between: a compile that is legitimately
+    /// slow but not stuck or crashing. Closing off the hang/crash surfaces requires isolating
+    /// the compile itself (out of process) so a hang/crash there cannot take the caller down
+    /// with it — tracked separately, not attempted here. Callers wanting the partial,
+    /// slow-compile mitigation should link this token to a fresh, time-boxed
+    /// <see cref="CancellationTokenSource"/> (see <see cref="DefaultCompileBudget"/>) rather
+    /// than passing their own long-lived run token directly, so a slow compile cannot
+    /// silently consume the whole run's budget. Defaults to <see cref="CancellationToken.None"/>
+    /// for source compatibility with every pre-existing caller.
+    /// </param>
     /// <returns>
     /// A <see cref="CompiledScript"/> whose <see cref="CompiledScript.Image"/> contains
     /// the emitted PE bytes.  The image is safe to store and pass to
@@ -90,12 +113,25 @@ public static class RoslynScriptCompiler
     /// The <see cref="ScriptCompilationException.Diagnostics"/> property carries the
     /// full list for structured rendering.
     /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// Thrown when <paramref name="cancellationToken"/> is already cancelled, or becomes
+    /// cancelled while Roslyn's binder/emitter is running. Never thrown for a hang during
+    /// <c>GetCompilation</c> (that call never returns, so this method never gets as far as
+    /// checking the token again) or for a binder/emit-phase stack overflow (uncatchable) —
+    /// see the <paramref name="cancellationToken"/> remarks above.
+    /// </exception>
     public static CompiledScript CompileOnce(
         string csxSource,
         ScriptOptions? additionalOptions = null,
-        IReadOnlyList<string>? additionalReferencePaths = null)
+        IReadOnlyList<string>? additionalReferencePaths = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(csxSource);
+
+        // Defensive, cheap up-front check: guarantees an ALREADY-cancelled token throws
+        // immediately and deterministically, without depending on exactly where inside
+        // Roslyn's own pipeline the first cooperative check happens to fall.
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Build ScriptOptions that include references for:
         //   • mscorlib / System.Private.CoreLib  (object, Task, …)
@@ -106,6 +142,15 @@ public static class RoslynScriptCompiler
 
         // CSharpScript.Create<object> — compile-time initialisation only.
         // NEVER call RunAsync / EvaluateAsync on this script or its state.
+        //
+        // NOTE: this call, and script.GetCompilation() below, is where the syntax parse and
+        // initial binding happen. cancellationToken is NOT consulted here, and a hostile-
+        // enough body (a short, deeply-nested string-interpolation expression is one
+        // observed trigger) can HANG this call unboundedly — GetCompilation simply never
+        // returns, so this method never reaches the Emit call below at all, let alone a
+        // cancellation check. There is no in-process mitigation for that hang; see the
+        // CompileOnce cancellationToken parameter's remarks for what this token does and
+        // does not cover.
         var script = CSharpScript.Create<object>(
             csxSource,
             options,
@@ -114,7 +159,17 @@ public static class RoslynScriptCompiler
         var compilation = script.GetCompilation();
 
         using var ms = new MemoryStream();
-        var emitResult = compilation.Emit(ms);
+
+        // Verified against the pinned Microsoft.CodeAnalysis.Common 4.14.0: Compilation.Emit
+        // has an overload accepting a trailing CancellationToken (the same overload this
+        // call already resolved to when the token was implicitly CancellationToken.None) —
+        // Roslyn's binder/lowering/emit pipeline checks it cooperatively while compiling
+        // method bodies, so a legitimately SLOW compile can be aborted mid-emit. This is a
+        // partial mitigation only: a body that overflows the native call stack DURING this
+        // same Emit call (observed with deeply-nested non-bracket constructs, e.g. chained
+        // generic type arguments) produces an uncatchable StackOverflowException that no
+        // cancellation check — cooperative or otherwise — can intercept.
+        var emitResult = compilation.Emit(ms, cancellationToken: cancellationToken);
 
         if (!emitResult.Success)
         {
@@ -123,6 +178,26 @@ public static class RoslynScriptCompiler
 
         return new CompiledScript(ms.ToArray());
     }
+
+    /// <summary>
+    /// The recommended bounded compile-time budget for a caller that links a fresh
+    /// <see cref="CancellationTokenSource"/> around a single <see cref="CompileOnce"/>
+    /// call — e.g. <c>CancellationTokenSource.CreateLinkedTokenSource(ambientToken)</c>
+    /// followed by <c>.CancelAfter(DefaultCompileBudget)</c>. Not enforced inside
+    /// <see cref="CompileOnce"/> itself (it has no opinion on how long a compile should be
+    /// allowed to run) — this is merely the single source of truth both known in-repo
+    /// callers (the CLI's <c>validate</c> path and the scenario runner's <c>run</c> path)
+    /// share, so the bound cannot silently drift between them. 30 seconds is generous for
+    /// any legitimate suite-sized CSX submission.
+    /// </summary>
+    /// <remarks>
+    /// This budget bounds only a SLOW <c>Emit</c> (see <see cref="CompileOnce"/>'s
+    /// <c>cancellationToken</c> remarks) — it has no effect on, and cannot recover from, a
+    /// parse-time hang inside <c>GetCompilation</c> or a binder/emit-phase stack overflow.
+    /// It is a partial mitigation for one specific failure mode, not a general compile-time
+    /// crash/hang guard.
+    /// </remarks>
+    public static readonly TimeSpan DefaultCompileBudget = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Loads <paramref name="compiled"/>'s image into a fresh collectible
