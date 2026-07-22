@@ -569,9 +569,29 @@ public static class ScenarioRunner
     /// The <see cref="TextWriter"/> that receives the rendered terminal output.
     /// </param>
     /// <param name="seedBaseDirectory">
-    /// The base directory against which relative <c>environment.seed</c> SQL file
-    /// paths are resolved (S05-A-01).  Defaults to the current working directory
-    /// when <see langword="null"/>.
+    /// The base directory against which the ONE shared topology's
+    /// <c>environment.seed</c> SQL file paths are resolved (S05-A-01), and against which the
+    /// reproducibility envelope's seed-fixture digests are hashed. Defaults to the current
+    /// working directory when <see langword="null"/>. This stays rooted at the FIRST
+    /// scenario's own directory regardless of <paramref name="scenarioBaseDirectories"/>
+    /// (issue #268): the shared topology is built ONCE from <c>scenarios[0].Environment</c>
+    /// and seeded ONCE against ONE base directory — <c>environment.seed</c> is genuinely
+    /// single-rooted in this sequential, shared-topology path, unlike a step's own <c>file:</c>
+    /// reference (see <paramref name="scenarioBaseDirectories"/>).
+    /// </param>
+    /// <param name="scenarioBaseDirectories">
+    /// Per-scenario base directories (issue #268), in the same order as
+    /// <paramref name="scenarios"/>: each scenario's OWN directory, used to resolve that
+    /// scenario's <c>script.csharp</c> <c>file:</c> reference at compile time (via
+    /// <see cref="ProviderPipeline.Compile"/>'s <c>suiteDirectory</c> parameter) and to hash it
+    /// for that scenario's reproducibility-envelope script-file digest. Unlike
+    /// <paramref name="seedBaseDirectory"/> (the shared topology's single seed root),
+    /// <c>script.csharp</c> is compiled PER SCENARIO with no single-root constraint, so a
+    /// non-first scenario's relative <c>file:</c> reference must resolve against ITS OWN
+    /// directory, never the first scenario's. <see langword="null"/> (the default) or a
+    /// <see langword="null"/> element falls back to <paramref name="seedBaseDirectory"/> for
+    /// that scenario, preserving pre-#268 behaviour for callers that do not supply this list.
+    /// When supplied, must have the same length as <paramref name="scenarios"/>.
     /// </param>
     /// <param name="htmlReportPath">
     /// Optional destination for a self-contained HTML report (S09-D-01, T3).  When
@@ -642,6 +662,7 @@ public static class ScenarioRunner
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory = null,
+        IReadOnlyList<string?>? scenarioBaseDirectories = null,
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
@@ -660,10 +681,13 @@ public static class ScenarioRunner
             return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>());
         }
 
-        if (scenarioNames.Count != scenarios.Count || yamlTexts.Count != scenarios.Count)
+        if (scenarioNames.Count != scenarios.Count
+            || yamlTexts.Count != scenarios.Count
+            || (scenarioBaseDirectories is not null && scenarioBaseDirectories.Count != scenarios.Count))
         {
             throw new ArgumentException(
-                "scenarios, scenarioNames, and yamlTexts must all have the same length.",
+                "scenarios, scenarioNames, yamlTexts, and (when supplied) scenarioBaseDirectories "
+                + "must all have the same length.",
                 nameof(scenarios));
         }
 
@@ -702,7 +726,8 @@ public static class ScenarioRunner
             ScenarioAst Ast,
             PipelineResult? Pipeline,
             Verdict? EarlyVerdict,
-            string? EarlyMessage)>();
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)>();
 
         for (int i = 0; i < scenarios.Count; i++)
         {
@@ -710,12 +735,21 @@ public static class ScenarioRunner
             var yaml = yamlTexts[i];
             var ast = scenarios[i];
 
+            // Issue #268: each scenario compiles against its OWN directory — falling back to
+            // the shared seed base directory only when the caller supplied no per-scenario
+            // list (pre-#268 callers). This is the value script.csharp's `file:` resolves
+            // against (via ProviderPipeline.Compile below) and the value the reproducibility
+            // envelope later hashes this scenario's script-file digest against — it does NOT
+            // affect the ONE shared topology's seed, which stays rooted at seedBaseDirectory.
+            var scenarioBaseDirectory = scenarioBaseDirectories?[i] ?? seedBaseDirectory;
+
             // Schema-validate the YAML.
             var validationResult = DocumentValidator.Validate(yaml, registry);
             if (!validationResult.IsValid)
             {
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
-                    string.Join("; ", validationResult.Errors.Select(e => e.Message))));
+                    string.Join("; ", validationResult.Errors.Select(e => e.Message)),
+                    scenarioBaseDirectory));
                 continue;
             }
 
@@ -723,20 +757,21 @@ public static class ScenarioRunner
             // before the topology is built so a bad reference costs no containers.
             if (TryValidateSecretReferences(ast, out var secretError))
             {
-                compilations.Add((name, ast, null, Verdict.Inconclusive, secretError));
+                compilations.Add((name, ast, null, Verdict.Inconclusive, secretError, scenarioBaseDirectory));
                 continue;
             }
 
-            // Provider pipeline compile.
-            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
+            // Provider pipeline compile — resolves `file:`/other relative step fields against
+            // THIS scenario's own directory (#268), not the suite-wide seed base directory.
+            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, scenarioBaseDirectory);
             if (pipelineResult.Failure is not null)
             {
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
-                    pipelineResult.Failure.Message));
+                    pipelineResult.Failure.Message, scenarioBaseDirectory));
                 continue;
             }
 
-            compilations.Add((name, ast, pipelineResult, null, null));
+            compilations.Add((name, ast, pipelineResult, null, null, scenarioBaseDirectory));
         }
 
         // ── Build topology once ────────────────────────────────────────────────
@@ -812,7 +847,7 @@ public static class ScenarioRunner
             {
                 for (int i = 0; i < compilations.Count; i++)
                 {
-                    var (name, ast, pipeline, earlyVerdict, earlyMessage) = compilations[i];
+                    var (name, ast, pipeline, earlyVerdict, earlyMessage, scenarioBaseDirectory) = compilations[i];
                     var runId = Guid.NewGuid().ToString("n");
                     var buffer = new List<string>();
 
@@ -883,6 +918,11 @@ public static class ScenarioRunner
                     }
 
                     // ── Run scenario ───────────────────────────────────────────────
+                    // seedBaseDirectory (unchanged): the ONE shared topology's seed root.
+                    // scenarioBaseDirectory (#268): THIS scenario's own directory, for its
+                    // script.csharp file: digest in the reproducibility envelope — matching
+                    // the base directory ProviderPipeline.Compile already resolved file:
+                    // against, above.
                     var scenarioVerdict = await RunScenarioAgainstTopologyAsync(
                         ast,
                         name,
@@ -895,7 +935,8 @@ public static class ScenarioRunner
                         new NullScenarioIsolation(), // isolation already handled above/below
                         output,
                         seedBaseDirectory,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        scriptBaseDirectory: scenarioBaseDirectory).ConfigureAwait(false);
 
                     results.Add((name, scenarioVerdict));
                     suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
@@ -1253,6 +1294,20 @@ public static class ScenarioRunner
     /// The parameter exists for future flexibility and to preserve the call-site shape.
     /// </para>
     /// </remarks>
+    /// <param name="seedBaseDirectory">
+    /// The base directory the reproducibility envelope hashes this scenario's seed-fixture
+    /// digests against (unchanged by issue #268 — a single scenario, or the ONE shared suite
+    /// topology's seed root, in every caller).
+    /// </param>
+    /// <param name="scriptBaseDirectory">
+    /// The base directory the reproducibility envelope hashes THIS scenario's
+    /// <c>script.csharp</c> <c>file:</c> digest against (issue #268). <see langword="null"/>
+    /// (the default) falls back to <paramref name="seedBaseDirectory"/> — the single-scenario
+    /// callers (<see cref="RunAsync"/>, watch mode) never pass this explicitly because their
+    /// one scenario's own directory already equals its seed base directory. Only
+    /// <see cref="RunSuiteAsync"/>'s per-scenario loop supplies a distinct value, when a
+    /// non-first scenario's own directory differs from the shared seed root.
+    /// </param>
     private static async Task<Verdict> RunScenarioAgainstTopologyAsync(
         ScenarioAst ast,
         string scenarioName,
@@ -1265,7 +1320,8 @@ public static class ScenarioRunner
         IScenarioIsolation isolation,
         TextWriter output,
         string? seedBaseDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? scriptBaseDirectory = null)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
         _ = isolation;
@@ -1410,7 +1466,8 @@ public static class ScenarioRunner
                 buffer,
                 output,
                 seedBaseDirectory,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                scriptBaseDirectory: scriptBaseDirectory).ConfigureAwait(false);
         }
         finally
         {
@@ -1487,6 +1544,11 @@ public static class ScenarioRunner
     /// stage / dispose) wraps this body in a single try/finally without duplicating the many
     /// early-return event-emission paths (S07-F-01a).
     /// </summary>
+    /// <param name="scriptBaseDirectory">
+    /// Per-scenario <c>script.csharp</c> <c>file:</c> digest base directory (issue #268) — see
+    /// <see cref="RunScenarioAgainstTopologyAsync"/>'s parameter of the same name. Threaded
+    /// through unchanged to <see cref="BuildReproducibilityEnvelope"/>.
+    /// </param>
     private static async Task<Verdict> RunScenarioCoreAsync(
         ScenarioAst ast,
         string scenarioName,
@@ -1500,7 +1562,8 @@ public static class ScenarioRunner
         List<string> buffer,
         TextWriter output,
         string? seedBaseDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? scriptBaseDirectory = null)
     {
         // ── Stage the `variables` block constants (DSL §3) ────────────────────
         // Pre-loaded into the shared context under their bare names (no prefix) so
@@ -1759,7 +1822,11 @@ public static class ScenarioRunner
             // reference text + fixture content ONLY — the secret resolver is never
             // invoked here, so by construction no resolved secret value can enter the
             // envelope.  Reuses SeedFixtures.ComputeContentHash for fixture digests.
-            var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory);
+            // seedBaseDirectory roots the seed-fixture digests (the shared topology's single
+            // seed root, unchanged); scriptBaseDirectory roots THIS scenario's own
+            // script.csharp file: digest (issue #268) — falls back to seedBaseDirectory when
+            // null (every single-scenario caller).
+            var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory, scriptBaseDirectory);
             buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
             {
                 RunId = runId,
@@ -2271,6 +2338,15 @@ public static class ScenarioRunner
     /// (S05-A-01).  When <see langword="null"/>, the current working directory is
     /// used — matching <see cref="SuiteTopology.StartAsync"/>.
     /// </param>
+    /// <param name="scriptBaseDirectory">
+    /// The base directory against which THIS scenario's <c>script.csharp</c> <c>file:</c>
+    /// reference is hashed (issue #268) — the scenario's OWN directory, which for a
+    /// non-first scenario in a shared-topology suite can differ from
+    /// <paramref name="seedBaseDirectory"/> (the suite's single seed root).
+    /// <see langword="null"/> (the default) falls back to <paramref name="seedBaseDirectory"/>,
+    /// preserving the pre-#268 single-scenario behaviour where the two directories are one
+    /// and the same.
+    /// </param>
     /// <returns>
     /// The assembled <see cref="ReproducibilityEnvelope"/>.
     /// </returns>
@@ -2308,7 +2384,8 @@ public static class ScenarioRunner
     /// </remarks>
     internal static ReproducibilityEnvelope BuildReproducibilityEnvelope(
         ScenarioAst ast,
-        string? seedBaseDirectory)
+        string? seedBaseDirectory,
+        string? scriptBaseDirectory = null)
     {
         // ── 1. Distinct secret references across every substitutable field ──────
         // Reuse the exact compile-time scan used for provenance + validation so the
@@ -2323,9 +2400,12 @@ public static class ScenarioRunner
             }
         }
 
-        // ── 2. Fixture content hashes from the seed block ──────────────────────
+        // ── 2. Fixture content hashes from the seed block + script.csharp file: refs ────
+        // Seed fixtures stay rooted at seedBaseDirectory (the suite's single seed root);
+        // script.csharp file: digests root at THIS scenario's own directory (issue #268),
+        // falling back to seedBaseDirectory when the caller supplies no distinct value.
         var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory)
-            .Concat(CollectScriptFileDigests(ast.Steps, seedBaseDirectory))
+            .Concat(CollectScriptFileDigests(ast.Steps, scriptBaseDirectory ?? seedBaseDirectory))
             .ToList();
 
         // Compute() is pure: reference text + fixture digests only, no resolver.

@@ -333,7 +333,7 @@ Exit codes for `vouchfx validate`:
 
 The `--json` output carries the schema version and a per-scenario diagnostics list (stage: schema, parse, pipeline, or roslyn), suitable for editor plugins, CI gates, or downstream analysis.
 
-`validate` models an unfiltered pre-flight: it resolves relative `file:` and seed paths against the first discovered scenario's directory exactly as an unfiltered `vouchfx run` does, so a passing `validate` predicts path resolution success in an unfiltered run.
+`validate` models an unfiltered pre-flight: each scenario's relative `file:` references resolve against that scenario's own directory in both `validate` and `run`, so a passing `validate` predicts path resolution success. Note: in an unfiltered sequential `run`, the shared topology's seed is applied from the first scenario's directory; in `--parallel` runs, each scenario's topology applies its seed from its own directory.
 
 > **Security note:** `validate` compiles your test in-process using the same Roslyn compiler as `run`, with no sandboxing. This is safe for suites you author and trust, but not for actively hostile input — a malicious `script.csharp` body can exhaust resources or crash the validating process. For use cases involving untrusted input (such as the vouchfx MCP server), isolate validation in a separate worker process.
 

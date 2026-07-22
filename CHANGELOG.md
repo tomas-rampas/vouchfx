@@ -15,6 +15,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Changed
+
+- **Scenario file resolution roots per scenario** (#268) — relative `script.csharp file:` references now resolve against each scenario's own directory in both `run` and `validate`, rather than the first discovered scenario's directory. A scenario in a subdirectory now correctly finds helper scripts beside it. Sequential unfiltered `run` topology seeding remains rooted at the first scenario's directory; parallel runs seed from each scenario's own directory.
+
 ### Fixed
 
 - **Unrecognised option or flag now exits 2 (UsageError) instead of 1** (#269) — any vouchfx subcommand now exits with code 2 when given an unrecognised or unknown option or flag, making it possible for CI to distinguish a CLI-misuse from a genuine test failure. Exit code 1 remains reserved for the Fail verdict (one or more test scenarios failed); exit codes 0, 3, and 4 (`--help`, `--version`, and conditional verdicts) are unchanged.
