@@ -253,7 +253,7 @@ Use one of these approaches:
 **Symptom:**
 
 ```
-script.csharp: 'code' size 72000 characters exceeds the 65536-characters limit (a plain resource bound, not a security control — see this file's header comment); reduce its size or split the script.
+script.csharp: 'code' size 72000 characters exceeds the 65536-character limit (a plain resource bound, not a security control — see this file's header comment); reduce its size or split the script.
 ```
 
 or

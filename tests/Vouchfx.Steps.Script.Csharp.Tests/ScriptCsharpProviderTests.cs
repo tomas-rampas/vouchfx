@@ -761,8 +761,14 @@ public sealed class ScriptCsharpProviderTests : IDisposable
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
-            e.Contains("size 65537", StringComparison.Ordinal) &&
-            e.Contains("65536-character", StringComparison.Ordinal));
+            e.Contains("size 65537 characters", StringComparison.Ordinal) &&
+            // Copilot review (#277, grammar): the hyphenated adjective before "limit" is
+            // SINGULAR ("65536-character limit") even though the measured count just before
+            // it is plural ("65537 characters") - the trailing " limit" here is load-bearing:
+            // it is what distinguishes the correct "65536-character limit" from the buggy
+            // "65536-characters limit" this assertion would otherwise also match, since
+            // "65536-character" alone is a substring of both.
+            e.Contains("65536-character limit", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -813,8 +819,12 @@ public sealed class ScriptCsharpProviderTests : IDisposable
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
-            e.Contains("size 65537", StringComparison.Ordinal) &&
-            e.Contains("65536-byte", StringComparison.Ordinal));
+            e.Contains("size 65537 bytes", StringComparison.Ordinal) &&
+            // Copilot review (#277, grammar): see the analogous comment on
+            // Validate_CodeSizeExceeds64KiB_IsInvalid above - "65536-byte limit" (singular)
+            // is the correct wording; the trailing " limit" distinguishes it from the buggy
+            // plural "65536-bytes limit".
+            e.Contains("65536-byte limit", StringComparison.Ordinal));
     }
 
     [Fact]

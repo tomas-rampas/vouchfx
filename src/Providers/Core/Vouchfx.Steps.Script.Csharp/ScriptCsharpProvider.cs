@@ -298,10 +298,21 @@ public sealed class ScriptCsharpProvider
     /// <param name="fieldName">Either <c>"'code'"</c> or <c>"'file'"</c>.</param>
     /// <param name="length">The measured length (characters for <c>code</c>, bytes for <c>file</c>).</param>
     /// <param name="unit">Either <c>"characters"</c> or <c>"bytes"</c>, matching <paramref name="length"/>.</param>
-    private static string BuildSizeLimitMessage(string fieldName, long length, string unit) =>
-        $"script.csharp: {fieldName} size {length} {unit} exceeds the {MaxBodyLength}-{unit} "
-        + "limit (a plain resource bound, not a security control — see this file's header "
-        + "comment); reduce its size or split the script.";
+    /// <remarks>
+    /// Copilot review (#277, grammar): <paramref name="unit"/> is plural and correct for the
+    /// measured COUNT ("72000 characters"), but a hyphenated adjective before "limit" wants the
+    /// SINGULAR form ("a 65536-character limit", not "a 65536-characters limit") — the same
+    /// count noun is used both ways in one sentence, so the singular form is derived here
+    /// (trimming the trailing 's'; both recognised units are regular plurals) rather than
+    /// threading a second parameter through every call site.
+    /// </remarks>
+    private static string BuildSizeLimitMessage(string fieldName, long length, string unit)
+    {
+        var singularUnit = unit.EndsWith('s') ? unit[..^1] : unit;
+        return $"script.csharp: {fieldName} size {length} {unit} exceeds the "
+            + $"{MaxBodyLength}-{singularUnit} limit (a plain resource bound, not a security "
+            + "control — see this file's header comment); reduce its size or split the script.";
+    }
 
     // ── IStepCompiler<ScriptCsharpModel> ─────────────────────────────────────
 
