@@ -528,4 +528,39 @@ public sealed class RunParallelAsyncTests
                 output: sw,
                 maxConcurrency: 0));
     }
+
+    /// <summary>
+    /// <see cref="ParallelSuiteRunner.RunParallelCoreAsync"/> throws <see cref="ArgumentException"/>
+    /// when the optional <c>seedBaseDirectories</c> list (issue #268) is supplied but its length
+    /// does not match <c>scenarios</c>. This guard fires immediately after the empty-list
+    /// short-circuit and BEFORE any scenario slot is launched — the injected fake core below must
+    /// NEVER be invoked, proving the guard is reached (and the exception thrown) with no topology
+    /// — and therefore no Docker — ever touched.
+    /// </summary>
+    [Fact]
+    public async Task RunParallelCoreAsync_MismatchedSeedBaseDirectoriesLength_ThrowsArgumentException()
+    {
+        var (asts, names, yamls) = MakeInputs(1);
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+                throw new InvalidOperationException(
+                    "The scenario core must never be invoked: the length-mismatch guard should "
+                    + "fire before any scenario slot is launched.");
+
+        var sw = new StringWriter();
+        var twoBaseDirectories = new string?[] { "dir-a", "dir-b" }; // mismatch: 2 dirs for 1 scenario
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            ParallelSuiteRunner.RunParallelCoreAsync(
+                Registry, asts, names, yamls,
+                appHostAssemblyName: null,
+                output: sw,
+                diffLookup: NoDiff,
+                maxConcurrency: 4,
+                runScenario: fake,
+                seedBaseDirectory: null,
+                seedBaseDirectories: twoBaseDirectories,
+                ct: default));
+    }
 }

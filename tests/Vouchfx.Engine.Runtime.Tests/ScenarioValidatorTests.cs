@@ -246,12 +246,21 @@ public sealed class ScenarioValidatorTests
     // scenarioBaseDirectories and ValidateCommand.Execute's per-source directory now do.
 
     /// <summary>
-    /// Two scenarios in SEPARATE directories, each referencing a <c>script.csharp</c>
-    /// <c>file:</c> helper that lives BESIDE it (and only there — never beside the other
-    /// scenario). Passing each <see cref="ScenarioSource"/> its OWN directory must resolve
-    /// BOTH references correctly (issue #268): neither scenario's compile leaks into, or
-    /// depends on, the other's directory.
+    /// Two scenarios in SEPARATE directories, each referencing a DIFFERENTLY-NAMED
+    /// <c>script.csharp</c> <c>file:</c> helper that exists ONLY beside that scenario — never
+    /// beside the other. Passing each <see cref="ScenarioSource"/> its OWN directory must
+    /// resolve BOTH references correctly (issue #268).
     /// </summary>
+    /// <remarks>
+    /// The two helpers are DELIBERATELY differently named (<c>helperA.csx</c> /
+    /// <c>helperB.csx</c>) rather than sharing one filename: a shared filename present in
+    /// BOTH directories would let this test pass even under a broken (suite-wide,
+    /// first-scenario-only) base-directory resolution — it would not actually discriminate
+    /// per-scenario resolution from the pre-#268 bug. With a distinct helper beside each
+    /// scenario and nowhere else, a resolver that mistakenly broadcasts ONE shared directory
+    /// to every scenario finds at most one of the two helpers, so at least one scenario fails
+    /// — only genuine per-scenario resolution makes BOTH valid.
+    /// </remarks>
     [Fact]
     public void Validate_TwoScenariosInSeparateDirectories_EachResolvesFileReferenceAgainstItsOwnDirectory()
     {
@@ -264,26 +273,35 @@ public sealed class ScenarioValidatorTests
 
         try
         {
-            // Deliberately a BARE filename (no path segments) so resolution is entirely
-            // determined by which directory is passed as the base — exactly the ambiguity
-            // per-scenario resolution must get right.
-            const string scriptWithFileReference = """
+            // Each scenario references a DIFFERENTLY-NAMED helper — deliberately a bare
+            // filename (no path segments) so resolution is entirely determined by which
+            // directory is passed as the base for THAT scenario.
+            const string scenarioAYaml = """
                 steps:
                   - id: run-helper
                     type: script.csharp
-                    file: helper.csx
+                    file: helperA.csx
+                """;
+            const string scenarioBYaml = """
+                steps:
+                  - id: run-helper
+                    type: script.csharp
+                    file: helperB.csx
                 """;
             const string helperCsxContents = "// no-op\n";
 
-            File.WriteAllText(Path.Combine(dirA, "helper.csx"), helperCsxContents);
-            File.WriteAllText(Path.Combine(dirB, "helper.csx"), helperCsxContents);
+            // helperA.csx exists ONLY in 'a'; helperB.csx exists ONLY in 'b' — a
+            // shared-base-directory resolution would miss one or the other, whichever
+            // directory it broadcasts.
+            File.WriteAllText(Path.Combine(dirA, "helperA.csx"), helperCsxContents);
+            File.WriteAllText(Path.Combine(dirB, "helperB.csx"), helperCsxContents);
 
             var sources = new[]
             {
                 new ScenarioSource(
-                    Path.Combine(dirA, "scenario-a.e2e.yaml"), scriptWithFileReference, dirA),
+                    Path.Combine(dirA, "scenario-a.e2e.yaml"), scenarioAYaml, dirA),
                 new ScenarioSource(
-                    Path.Combine(dirB, "scenario-b.e2e.yaml"), scriptWithFileReference, dirB),
+                    Path.Combine(dirB, "scenario-b.e2e.yaml"), scenarioBYaml, dirB),
             };
 
             var report = ScenarioValidator.Validate(sources, s_registry);
@@ -291,12 +309,12 @@ public sealed class ScenarioValidatorTests
             Assert.Equal(2, report.Scenarios.Count);
             Assert.True(
                 report.Scenarios[0].IsValid,
-                "scenario-a must resolve 'file: helper.csx' against ITS OWN directory ('a'). "
+                "scenario-a must resolve 'file: helperA.csx' against ITS OWN directory ('a'). "
                 + "Diagnostics: "
                 + string.Join("; ", report.Scenarios[0].Diagnostics.Select(d => $"[{d.Stage}] {d.Message}")));
             Assert.True(
                 report.Scenarios[1].IsValid,
-                "scenario-b must resolve 'file: helper.csx' against ITS OWN directory ('b'). "
+                "scenario-b must resolve 'file: helperB.csx' against ITS OWN directory ('b'). "
                 + "Diagnostics: "
                 + string.Join("; ", report.Scenarios[1].Diagnostics.Select(d => $"[{d.Stage}] {d.Message}")));
             Assert.True(report.IsValid);
