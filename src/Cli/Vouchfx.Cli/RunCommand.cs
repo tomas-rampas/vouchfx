@@ -962,12 +962,29 @@ internal static class RunCommand
             var names = parsed.Select(ScenarioName).ToList();
             var yamlTexts = parsed.Select(p => p.YamlText).ToList();
 
-            // Base directory for relative paths in step/seed fields (e.g. script.csharp's
-            // `file`, environment.seed fixtures) — the first scenario's own directory, matching
-            // WatchRunner's Path.GetDirectoryName(filePath) convention. All scenarios in a suite
-            // already share one `environment` block (validated below in ScenarioRunner), so
-            // sharing one base directory here is consistent with that invariant.
-            var suiteBaseDirectory = Path.GetDirectoryName(parsed[0].AbsolutePath);
+            // Per-scenario base directories (issue #268): each scenario's OWN directory. This
+            // is what resolves a step's relative `file:` reference (e.g. script.csharp) — and
+            // hashes it for that scenario's reproducibility-envelope script-file digest — at
+            // COMPILE time, per scenario. Each scenario compiles independently
+            // (ProviderPipeline.Compile runs once per scenario), so there is no reason a
+            // non-first scenario's relative reference should resolve against a DIFFERENT
+            // scenario's folder.
+            var scenarioBaseDirectories = parsed
+                .Select(p => Path.GetDirectoryName(p.AbsolutePath))
+                .ToList();
+
+            // The suite-wide SEED base directory stays rooted at the FIRST scenario's own
+            // directory (unchanged), matching WatchRunner's Path.GetDirectoryName(filePath)
+            // convention. All scenarios in a sequential suite already share one `environment`
+            // block (validated below in ScenarioRunner), and ScenarioRunner.RunSuiteAsync
+            // builds exactly ONE shared topology from scenarios[0].Environment and applies its
+            // ONE seed ONCE against ONE base directory — environment.seed is genuinely
+            // single-rooted there, unlike a step's own file: reference above. The parallel path
+            // (ParallelSuiteRunner) needs no such single root — each scenario owns its own
+            // topology, so it is passed scenarioBaseDirectories for EVERYTHING (seed included).
+            var suiteBaseDirectory = scenarioBaseDirectories.Count > 0
+                ? scenarioBaseDirectories[0]
+                : null;
 
             // appHostAssemblyName = THIS executable's name ("vouchfx"): the Aspire host that
             // carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost). Passing
@@ -988,6 +1005,7 @@ internal static class RunCommand
                     output,
                     maxConcurrency: parallelDegree,
                     seedBaseDirectory: suiteBaseDirectory,
+                    seedBaseDirectories: scenarioBaseDirectories,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,
@@ -1002,6 +1020,7 @@ internal static class RunCommand
                     appHostAssemblyName,
                     output,
                     seedBaseDirectory: suiteBaseDirectory,
+                    scenarioBaseDirectories: scenarioBaseDirectories,
                     htmlReportPath: htmlReportPath,
                     junitReportPath: junitReportPath,
                     eventsReportPath: runnerEventsPath,

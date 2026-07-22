@@ -156,6 +156,40 @@ public sealed class RunSuiteAsyncTests
                 output: sw));
     }
 
+    /// <summary>
+    /// <see cref="ScenarioRunner.RunSuiteAsync"/> throws <see cref="ArgumentException"/>
+    /// when the optional <c>scenarioBaseDirectories</c> list (issue #268) is supplied but its
+    /// length does not match <c>scenarios</c>. This guard fires immediately after the
+    /// empty-list short-circuit and BEFORE the provider registry is built (let alone any
+    /// topology) — see <c>RunSuiteAsync</c>'s arg-validation block — so it is reachable from a
+    /// plain unit test with no Docker involved.
+    /// </summary>
+    [Fact]
+    public async Task RunSuiteAsync_MismatchedScenarioBaseDirectoriesLength_ThrowsArgumentException()
+    {
+        var doc = Vouchfx.Engine.Authoring.YamlDocumentParser.Parse("steps:\n  - id: s1\n    type: http.rest\n    target: x\n    method: GET\n    path: /\n    expect:\n      status: 200\n");
+        var registry = Vouchfx.Sdk.StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var ast = Vouchfx.Engine.Authoring.AstBuilder.Build(doc, registry);
+
+        var sw = new StringWriter();
+
+        // Local arrays avoid CA1861 (constant-element array arguments in repeated call-sites).
+        var oneScenario = new[] { ast };
+        var oneName = new[] { "s0" };
+        var oneYaml = new[] { "yaml" };
+        var twoBaseDirectories = new string?[] { "dir-a", "dir-b" }; // mismatch: 2 dirs for 1 scenario
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            ScenarioRunner.RunSuiteAsync(
+                scenarios: oneScenario,
+                scenarioNames: oneName,
+                yamlTexts: oneYaml,
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                scenarioBaseDirectories: twoBaseDirectories));
+    }
+
     // ── RunAsync regression — schema-invalid input ────────────────────────────
 
     /// <summary>

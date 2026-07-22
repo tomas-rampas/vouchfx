@@ -174,26 +174,26 @@ internal static class ValidateCommand
         // file: Access to the path '...' is denied.").
         var parsed = discovered.Where(s => !s.Failed).ToList();
 
-        // ONE suite-wide base directory — the FIRST discovery-clean scenario's own
-        // directory — applied to EVERY scenario's compile, deliberately matching
-        // RunCommand.ExecuteAsync's suiteBaseDirectory exactly
-        // (Path.GetDirectoryName(parsed[0].AbsolutePath), threaded into
-        // ScenarioRunner.RunSuiteAsync as seedBaseDirectory). This base directory is a
-        // COMPILE-TIME input: script.csharp resolves a `file:` reference (and existence-
-        // checks it) against it at emit time, and environment.seed fixtures resolve the
-        // same way — so validate MUST resolve it identically to run, or a scenario
-        // several directories away from the first one could validate against a DIFFERENT
-        // base than run will actually use, letting validate pass what run would reject
-        // (or vice versa). A per-scenario base directory (each scenario's own folder)
-        // would defeat validate's entire purpose of predicting run. Null when there is
-        // nothing discovery-clean to validate (parsed.Count == 0) — unused in that case,
-        // since `sources` below is then empty too.
-        string? suiteBaseDirectory = parsed.Count > 0
-            ? Path.GetDirectoryName(parsed[0].AbsolutePath)
-            : null;
-
+        // Each scenario's OWN directory (issue #268) — applied to THAT scenario's compile
+        // only, deliberately matching RunCommand.ExecuteAsync's per-scenario
+        // scenarioBaseDirectories exactly (Path.GetDirectoryName(p.AbsolutePath), threaded
+        // into ScenarioRunner.RunSuiteAsync / ParallelSuiteRunner.RunParallelAsync as the
+        // scenario's own base directory). This base directory is a COMPILE-TIME input:
+        // script.csharp resolves a `file:` reference (and existence-checks it) against it at
+        // emit time — so validate MUST resolve each scenario's own directory identically to
+        // run's per-scenario compile, or a scenario several directories away from another
+        // could validate against a DIFFERENT base than run will actually use, letting
+        // validate pass what run would reject (or vice versa). A suite-wide base directory
+        // (every scenario resolved against the FIRST scenario's folder) would reproduce the
+        // #268 bug this fix removes: a non-first scenario's relative `file:` would resolve
+        // against the wrong folder. (The ONE nuance run itself preserves: in an unfiltered
+        // sequential run the shared topology's `environment.seed` is still seeded ONCE, from
+        // the FIRST scenario — but that is `run`'s single-topology seed concern, not a
+        // compile-time `file:` resolution concern, so it has no bearing on this per-scenario
+        // validator, which never starts a topology at all.)
         var sources = parsed
-            .Select(s => new ScenarioSource(s.AbsolutePath, s.YamlText, suiteBaseDirectory))
+            .Select(s => new ScenarioSource(
+                s.AbsolutePath, s.YamlText, Path.GetDirectoryName(s.AbsolutePath)))
             .ToList();
 
         var validated = ScenarioValidator.Validate(sources, registry).Scenarios;

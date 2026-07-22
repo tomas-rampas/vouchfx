@@ -131,8 +131,23 @@ public static class ParallelSuiteRunner
     /// (<see cref="DefaultMaxConcurrency"/>) is used.  Must be ≥ 1 when supplied.
     /// </param>
     /// <param name="seedBaseDirectory">
-    /// Base directory for relative <c>environment.seed</c> fixture paths.  Defaults to the current
-    /// working directory when <see langword="null"/>.
+    /// Base directory for relative <c>environment.seed</c> / <c>script.csharp</c> <c>file:</c>
+    /// paths, broadcast to every scenario.  Defaults to the current working directory when
+    /// <see langword="null"/>.  Superseded per-scenario by <paramref name="seedBaseDirectories"/>
+    /// when supplied; retained as the fallback for a caller that has not moved to the
+    /// per-scenario list (issue #268).
+    /// </param>
+    /// <param name="seedBaseDirectories">
+    /// Per-scenario base directories (issue #268), in the same order as
+    /// <paramref name="scenarios"/>: each scenario's OWN directory.  Unlike
+    /// <see cref="ScenarioRunner.RunSuiteAsync"/>'s equivalent parameter — where the shared
+    /// topology's single seed stays rooted at the FIRST scenario regardless — HERE every
+    /// scenario owns its OWN topology, so its OWN directory roots <em>everything</em> for that
+    /// scenario: both its <c>environment.seed</c> AND its <c>script.csharp</c> <c>file:</c>
+    /// reference. <see langword="null"/> (the default), or a <see langword="null"/> element,
+    /// falls back to the broadcast <paramref name="seedBaseDirectory"/> for that scenario,
+    /// preserving pre-#268 behaviour for callers that do not supply this list. When supplied,
+    /// must have the same length as <paramref name="scenarios"/>.
     /// </param>
     /// <param name="htmlReportPath">
     /// Optional destination for a self-contained HTML report (S09-D-01, T3).  When
@@ -190,6 +205,7 @@ public static class ParallelSuiteRunner
         TextWriter output,
         int? maxConcurrency = null,
         string? seedBaseDirectory = null,
+        IReadOnlyList<string?>? seedBaseDirectories = null,
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
@@ -225,7 +241,8 @@ public static class ParallelSuiteRunner
             eventsReportPath,
             eventsStreamPath,
             decorate,
-            cancellationToken).ConfigureAwait(false);
+            seedBaseDirectories: seedBaseDirectories,
+            ct: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -242,7 +259,10 @@ public static class ParallelSuiteRunner
     /// <param name="diffLookup">The render-time provider-diff lookup closure.</param>
     /// <param name="maxConcurrency">Concurrency ceiling; <see langword="null"/> → default; ≥ 1.</param>
     /// <param name="runScenario">The scenario-core seam (default = the real topology-owning core).</param>
-    /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="seedBaseDirectory">
+    /// Base directory for relative seed fixture paths, broadcast to every scenario. Superseded
+    /// per-scenario by <paramref name="seedBaseDirectories"/> when supplied (issue #268).
+    /// </param>
     /// <param name="htmlReportPath">Optional HTML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="junitReportPath">Optional JUnit XML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="eventsReportPath">Optional raw JSON Lines events destination (S10); null ⇒ none.</param>
@@ -256,6 +276,17 @@ public static class ParallelSuiteRunner
     /// Accessibility decoration flag (S10-G-03a): decorate the single render with ANSI colour + a
     /// per-verdict shape glyph when <see langword="true"/>; plain text when <see langword="false"/>
     /// (the default).  The verdict TEXT tokens are unconditional regardless.
+    /// </param>
+    /// <param name="seedBaseDirectories">
+    /// Per-scenario base directories (issue #268), in the same order as
+    /// <paramref name="scenarios"/>: each scenario's OWN directory, used for EVERYTHING that
+    /// scenario's core call resolves relative paths against — both its
+    /// <c>environment.seed</c> and its <c>script.csharp</c> <c>file:</c> reference — because
+    /// each scenario here owns its OWN topology (unlike the shared-topology sequential runner,
+    /// there is no single suite-wide seed root to preserve). <see langword="null"/> (the
+    /// default), or a <see langword="null"/> element, falls back to the broadcast
+    /// <paramref name="seedBaseDirectory"/> for that scenario. When supplied, must have the
+    /// same length as <paramref name="scenarios"/>.
     /// </param>
     /// <param name="ct">The external cancellation token, honoured throughout.</param>
     /// <returns>The <see cref="SuiteResult"/>.</returns>
@@ -275,6 +306,7 @@ public static class ParallelSuiteRunner
         string? eventsReportPath = null,
         string? eventsStreamPath = null,
         bool decorate = false,
+        IReadOnlyList<string?>? seedBaseDirectories = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -291,10 +323,13 @@ public static class ParallelSuiteRunner
             return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>());
         }
 
-        if (scenarioNames.Count != scenarios.Count || yamlTexts.Count != scenarios.Count)
+        if (scenarioNames.Count != scenarios.Count
+            || yamlTexts.Count != scenarios.Count
+            || (seedBaseDirectories is not null && seedBaseDirectories.Count != scenarios.Count))
         {
             throw new ArgumentException(
-                "scenarios, scenarioNames, and yamlTexts must all have the same length.",
+                "scenarios, scenarioNames, yamlTexts, and (when supplied) seedBaseDirectories "
+                + "must all have the same length.",
                 nameof(scenarios));
         }
 
@@ -342,13 +377,20 @@ public static class ParallelSuiteRunner
                 var yaml = yamlTexts[index];
                 slotRawWriters[index] = new StringWriter();
 
+                // Issue #268: each scenario owns its OWN topology here, so its OWN directory
+                // (when supplied) roots EVERYTHING for that scenario's core call — both its
+                // environment.seed and its script.csharp file: reference. Falls back to the
+                // broadcast seedBaseDirectory for a caller that has not moved to the
+                // per-scenario list.
+                var scenarioBaseDirectory = seedBaseDirectories?[index] ?? seedBaseDirectory;
+
                 tasks[index] = RunOneSlotAsync(
                     registry,
                     name,
                     yaml,
                     appHostAssemblyName,
                     slotRawWriters[index],
-                    seedBaseDirectory,
+                    scenarioBaseDirectory,
                     runScenario,
                     gate,
                     index,

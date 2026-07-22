@@ -152,24 +152,25 @@ public sealed record ValidationReport(IReadOnlyList<ScenarioValidationResult> Sc
 /// <param name="YamlText">The scenario's raw <c>.e2e.yaml</c> text.</param>
 /// <param name="SeedBaseDirectory">
 /// The base directory this scenario's relative file-path fields (e.g.
-/// <c>script.csharp</c>'s <c>file</c>, <c>environment.seed</c> fixtures) resolve against.
+/// <c>script.csharp</c>'s <c>file</c>) resolve against.
 /// Pass <see langword="null"/> to fall back to the process's current directory (mirrors
 /// <see cref="ProviderPipeline.Compile"/>'s own <c>suiteDirectory</c> default).
 /// <para>
-/// <strong>Deliberately per-<see cref="ScenarioSource"/>, not suite-wide, at the API
-/// level</strong> — this record makes no assumption that the scenarios passed to
+/// <strong>Per-<see cref="ScenarioSource"/>, not suite-wide (issue #268)</strong> — this
+/// record makes no assumption that the scenarios passed to
 /// <see cref="ScenarioValidator.Validate"/> share one directory or one
-/// <c>environment</c> block. But this is a COMPILE-TIME input (existence-checked at
-/// emit time, not merely a string), so a CALLER that means to predict what
-/// <c>run</c> would do (e.g. <c>vouchfx validate</c> over a directory tree) MUST
-/// resolve it EXACTLY the way <c>run</c> does — one value, computed once from the
-/// first discovery-clean scenario's own directory, applied to every
-/// <see cref="ScenarioSource"/> in that invocation (mirroring
-/// <c>RunCommand.ExecuteAsync</c>'s <c>suiteBaseDirectory</c> /
-/// <c>ScenarioRunner.RunSuiteAsync</c>'s <c>seedBaseDirectory</c>) — never a
-/// per-scenario directory computed independently per file. Getting this wrong lets
-/// <c>validate</c> disagree with <c>run</c> on whether a scenario several
-/// directories away from the first one even compiles.
+/// <c>environment</c> block, and a CALLER that means to predict what <c>run</c> would do
+/// (e.g. <c>vouchfx validate</c> over a directory tree) MUST resolve it EXACTLY the way
+/// <c>run</c> does: THIS scenario's OWN directory, computed independently per file
+/// (mirroring <c>RunCommand.ExecuteAsync</c>'s per-scenario <c>scenarioBaseDirectories</c> /
+/// <c>ScenarioRunner.RunSuiteAsync</c>'s per-scenario compile base directory) — never one
+/// suite-wide value shared by every scenario. This is a COMPILE-TIME input
+/// (existence-checked at emit time, not merely a string): each scenario compiles
+/// independently, so a non-first scenario's relative <c>file:</c> reference resolving
+/// against a DIFFERENT scenario's folder is exactly the bug issue #268 fixed. Getting this
+/// wrong (e.g. broadcasting the first scenario's directory to every source) lets
+/// <c>validate</c> disagree with <c>run</c> on whether a scenario several directories away
+/// even compiles.
 /// </para>
 /// </param>
 public sealed record ScenarioSource(string Path, string YamlText, string? SeedBaseDirectory = null);
@@ -296,9 +297,9 @@ public static class ScenarioValidator
     /// <param name="scenarios">
     /// The scenarios to validate, each carrying its own path, YAML text, and (optional)
     /// seed base directory. The base directory field is per-<see cref="ScenarioSource"/>
-    /// at the API level, but a caller predicting <c>run</c>'s behaviour over a directory
-    /// scan MUST supply the SAME value for every entry — see <see cref="ScenarioSource"/>'s
-    /// <c>SeedBaseDirectory</c> remarks for why.
+    /// at the API level, and a caller predicting <c>run</c>'s behaviour over a directory
+    /// scan MUST supply EACH scenario's OWN directory (issue #268) — see
+    /// <see cref="ScenarioSource"/>'s <c>SeedBaseDirectory</c> remarks for why.
     /// </param>
     /// <param name="registry">The frozen provider registry to validate against.</param>
     /// <returns>
