@@ -360,7 +360,7 @@ The runner exits with a code that reflects the verdict taxonomy:
 |---|---|---|---|
 | **0** | Success | Pass, or EnvironmentError/Inconclusive (off by default) | – |
 | **1** | Fail | One or more scenarios failed (a genuine defect) | – |
-| **2** | UsageError | Bad arguments, missing path, `--watch`+`--parallel` | – |
+| **2** | UsageError | Usage error — unrecognised option, bad arguments, missing path, or `--watch`+`--parallel` | – |
 | **3** | EnvironmentError | Infrastructure breakage (unhealthy container, image-pull/seed failure) | `--fail-on-env-error` |
 | **4** | Inconclusive | Engine could not decide (timeout, partition outlasted grace, upstream capture unmet) | `--fail-on-inconclusive` |
 
@@ -411,7 +411,7 @@ Exit codes:
 | Exit code | Meaning |
 |---|---|
 | **0** | All scenarios are valid. |
-| **2** | Usage error — the path is missing or is not a readable .e2e.yaml file or directory. |
+| **2** | Usage error — an unrecognised option or flag, the path is missing, or the path is not a readable .e2e.yaml file or directory. |
 | **4** | One or more scenarios are invalid (schema, parse, pipeline, or Roslyn errors). |
 
 `validate` models an unfiltered pre-flight: it resolves relative `file:` and seed paths against the first discovered scenario's directory exactly as an unfiltered `vouchfx run` does, so a passing `validate` predicts path resolution success in an unfiltered run.
@@ -435,6 +435,7 @@ Exit codes:
 | Exit code | Meaning |
 |---|---|
 | **0** | Success. |
+| **2** | Usage error — an unrecognised option or flag. |
 
 The `--json` output includes the engine version and a sorted array of step types, for consumption by editor plugins and downstream tooling.
 

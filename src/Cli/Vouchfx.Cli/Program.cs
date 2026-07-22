@@ -3,12 +3,22 @@
 //
 // Entry point for the `vouchfx` executable. Builds the root command (with the `run`
 // subcommand) and dispatches via System.CommandLine 2.0.x GA:
-//   rootCommand.Parse(args).InvokeAsync(config, ct).
+//   var parseResult = rootCommand.Parse(args);
+//   var invokeResult = await parseResult.InvokeAsync(config, ct);
+//   return InvocationScope.ResolveExitCode(parseResult.Errors.Count, invokeResult);
 //
-// System.CommandLine resolves --help / --version and parse errors itself (its default:
-// exit code 1 on a parse error such as an unrecognised option). A subcommand action returns
-// the app's taxonomy-aware exit code — see ExitCodes (e.g. 2 for the app's own usage errors
-// such as a bad or missing path, which are detected in the action, not by the parser).
+// System.CommandLine resolves --help / --version itself (its own action, exit code 0 — no
+// parse errors, never remapped). A subcommand action returns the app's taxonomy-aware exit
+// code — see ExitCodes (e.g. 2 for the app's own usage errors such as a bad or missing path,
+// which are detected in the action, not by the parser; 1 for a genuine Verdict.Fail).
+//
+// A genuine PARSE error (an unrecognised option or extra token on any subcommand) is
+// different again: System.CommandLine still prints its own errors to stderr and help to
+// stdout, but its own InvokeAsync default exit code for one is 1 — colliding with
+// ExitCodes.TestFailure, so `vouchfx validate <suite> --bogus` was indistinguishable from a
+// real Fail to a CI pipeline keying on the exit code. InvocationScope.ResolveExitCode (#269)
+// is the single seam that remaps a parse error to ExitCodes.UsageError (2), which ExitCodes'
+// own doc comment already reserved for exactly this case.
 //
 // This assembly is the Aspire host (Aspire.AppHost.Sdk + IsAspireHost in the csproj); its
 // name "vouchfx" is what RunCommand passes to ScenarioRunner.RunSuiteAsync as
@@ -81,4 +91,11 @@ if (InvocationScope.IsRunInvocation(args))
 // leaves ProcessTerminationTimeout untouched — System.CommandLine's own ~2s default applies,
 // exactly as it did before this feature existed.
 
-return await rootCommand.Parse(args).InvokeAsync(invocationConfiguration);
+// Parse once, up front, so ParseResult.Errors is available BEFORE InvokeAsync runs (it does
+// not change once parsing has happened). InvokeAsync still runs unconditionally — on a parse
+// error it prints System.CommandLine's own errors + help to stderr exactly as before; on a
+// clean parse it invokes the matched subcommand's action — only the RETURNED exit code is
+// remapped afterwards, via the directly unit-tested InvocationScope.ResolveExitCode (#269).
+var parseResult = rootCommand.Parse(args);
+var invokeResult = await parseResult.InvokeAsync(invocationConfiguration);
+return InvocationScope.ResolveExitCode(parseResult.Errors.Count, invokeResult);

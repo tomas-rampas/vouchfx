@@ -95,10 +95,11 @@ public sealed class ListArgParsingTests
     // Peer-review QUESTION-1: mirrors ValidateArgParsingTests' pair — an unrecognised
     // flag on `list` must also be a genuine System.CommandLine parse error. Unlike
     // `validate`, `list` has no positional argument to swallow a bare unrecognised token,
-    // so a single bad flag is enough here. See ValidateArgParsingTests' remarks for why
-    // the exit code is 1 (System.CommandLine's own documented parse-error default), NOT
-    // ExitCodes.UsageError (2) as Program.cs's header comment currently (incorrectly)
-    // claims — a pre-existing discrepancy flagged there, out of scope here.
+    // so a single bad flag is enough here. See ValidateArgParsingTests' remarks for why a
+    // DIRECT InvokeAsync call still returns 1 (System.CommandLine's own documented
+    // parse-error default) even though Program.cs itself, since #269, no longer returns
+    // that raw value to the OS — it remaps to ExitCodes.UsageError (2) via
+    // InvocationScope.ResolveExitCode (see ParseErrorExitCodeTests).
     private static RootCommand BuildRootWithList()
     {
         var root = new RootCommand("test root");
@@ -123,7 +124,8 @@ public sealed class ListArgParsingTests
 
         var exitCode = await parseResult.InvokeAsync(new InvocationConfiguration());
 
-        // 1, NOT ExitCodes.UsageError (2) — see ValidateArgParsingTests' remarks.
+        // 1 — see ValidateArgParsingTests' remarks (Program.cs itself remaps this to
+        // ExitCodes.UsageError (2) since #269; this direct InvokeAsync call bypasses that).
         Assert.Equal(1, exitCode);
     }
 }
