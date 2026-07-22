@@ -11,9 +11,9 @@
 // InvocationScope's header comment — so the remap decision is factored into the small, pure
 // InvocationScope.ResolveExitCode(parseErrorCount, invokeResult), the seam this file pins:
 //   • parseErrorCount > 0  → ExitCodes.UsageError (2), REGARDLESS of invokeResult. System.
-//     CommandLine still runs its own InvokeAsync to completion first (it prints its errors +
-//     help to stderr exactly as before) — only the PROCESS EXIT CODE Program.cs returns
-//     changes.
+//     CommandLine still runs its own InvokeAsync to completion first (it prints its errors
+//     to stderr and help to stdout exactly as before) — only the PROCESS EXIT CODE Program.cs
+//     returns changes.
 //   • parseErrorCount == 0 → invokeResult is passed through UNCHANGED (0 / 1 / 2 / 3 / 4,
 //     whatever the subcommand action itself decided). A genuine Verdict.Fail (1) is NEVER
 //     remapped — only a parse error is.
