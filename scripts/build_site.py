@@ -35,6 +35,7 @@ OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "_site"
 DOCS: list[tuple[str, str, str]] = [
     ("docs/01_Technical_Architecture_and_Engineering_Blueprint.md", "Design docs", "01 · Architecture Blueprint"),
     ("docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md", "Design docs", "02 · YAML DSL Specification"),
+    ("docs/04_AI_Companion_Feasibility_and_Design.md", "Design docs", "04 · AI Companion (vouchfxai)"),
     ("docs/getting-started.md", "User guides", "Getting started (60-minute path)"),
     ("docs/recipes.md", "User guides", "Recipes"),
     ("docs/common-patterns.md", "User guides", "Common patterns"),

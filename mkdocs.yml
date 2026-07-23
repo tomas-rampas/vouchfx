@@ -123,13 +123,13 @@ plugins:
   - git-revision-date-localized:
       enable_creation_date: true
 
-# Mirrors scripts/build_site.py's DOCS list (lines 33-51): same groups,
-# same order, same labels. Keep the two in step until build_site.py is
-# retired.
+# Mirrors scripts/build_site.py's DOCS list: same groups, same order,
+# same labels. Keep the two in step until build_site.py is retired.
 nav:
   - Design docs:
       - 01 · Architecture Blueprint: 01_Technical_Architecture_and_Engineering_Blueprint.md
       - 02 · YAML DSL Specification: 02_YAML_DSL_Specification_and_VSCode_Extension_Design.md
+      - 04 · AI Companion (vouchfxai): 04_AI_Companion_Feasibility_and_Design.md
   - User guides:
       - Getting started (60-minute path): getting-started.md
       - Recipes: recipes.md
