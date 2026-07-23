@@ -8,6 +8,7 @@
 using System.Linq;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
+using Vouchfx.Steps.DbAssert.Postgres;
 using Vouchfx.Steps.HttpRest;
 using Xunit;
 
@@ -23,6 +24,17 @@ public sealed class DocumentValidatorTests
     // repeating the build call in every test body).
     private static readonly StepKindRegistry _registry =
         StepKindRegistry.BuildAndFreeze(new[] { typeof(HttpRestProvider).Assembly });
+
+    // A second, small multi-provider registry used by the #265 unknown-step-type
+    // tests below, so "a known type" can be exercised across more than one
+    // registered provider without pulling in the full 25-Core-provider catalogue
+    // (that scale is already covered by SchemaFreezeTests/SchemaErrorCollectionAtScaleTests).
+    private static readonly StepKindRegistry _multiProviderRegistry =
+        StepKindRegistry.BuildAndFreeze(new[]
+        {
+            typeof(HttpRestProvider).Assembly,
+            typeof(DbAssertPostgresProvider).Assembly,
+        });
 
     // ── Valid document ─────────────────────────────────────────────────────────
 
@@ -245,6 +257,220 @@ public sealed class DocumentValidatorTests
         Assert.True(errorLine > 2,
             $"Expected the second-step error line to be > 2 (after the first step), " +
             $"but got line {errorLine} in message: '{secondStepError.Message}'");
+    }
+
+    // ── Issue #265: unknown step type is not caught by the composed schema ────
+
+    /// <summary>
+    /// A step whose ONLY defect is a <c>type</c> that matches no registered
+    /// provider must be rejected. Before the fix, the composed schema's
+    /// <c>$defs.step.allOf</c> if/then clauses have no <c>else</c> and no closed
+    /// enumeration of known types, so a non-matching <c>type</c> satisfies every
+    /// clause VACUOUSLY and the document passes schema validation with zero
+    /// errors. The rejection message must name the offending type and carry the
+    /// same <c>(line N)</c> prefix as every other schema error.
+    /// </summary>
+    [Fact]
+    public void Validate_UnknownStepType_OnlyDefect_IsRejected_WithLineAndMessage()
+    {
+        const string yaml = """
+            steps:
+              - id: call-unknown
+                type: no-such.provider
+                target: orders-api
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid,
+            "A step whose type matches no registered provider must be rejected (#265).");
+        Assert.NotEmpty(result.Errors);
+
+        var unknownTypeError = result.Errors.FirstOrDefault(e =>
+            e.Message.Contains("no-such.provider", System.StringComparison.Ordinal));
+
+        Assert.NotNull(unknownTypeError);
+        Assert.Contains("unknown step type", unknownTypeError!.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("(line ", unknownTypeError.Message, System.StringComparison.Ordinal);
+
+        var lineNumber = ExtractLineNumber(unknownTypeError.Message);
+        Assert.True(lineNumber > 0,
+            $"Expected a positive resolved line number in message: '{unknownTypeError.Message}'");
+    }
+
+    /// <summary>
+    /// A document whose steps all use KNOWN, registered types and are otherwise
+    /// valid must remain valid — the unknown-step-type cross-check must never
+    /// produce a false positive against a real provider. Exercised across two
+    /// distinct registered kinds (<c>http.rest</c> and <c>db-assert.postgres</c>)
+    /// so the check is proven to key off the registry, not a single hardcoded name.
+    /// </summary>
+    [Fact]
+    public void Validate_KnownStepTypes_AcrossMultipleProviders_IsValid()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+              - id: check-row
+                type: db-assert.postgres
+                target: orders-db
+                query: SELECT 1
+                expect:
+                  rowCount: 1
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _multiProviderRegistry);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {FormatErrors(result)}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A document containing BOTH an unknown step type and an unrelated, genuine
+    /// schema violation must report both — the unknown-type cross-check must not
+    /// mask or replace a real schema error, and vice versa.
+    /// </summary>
+    [Fact]
+    public void Validate_UnknownStepTypeAndOtherViolation_BothReported()
+    {
+        const string yaml = """
+            steps:
+              - id: bad-type-step
+                type: no-such.provider
+              - id: bad-method-step
+                type: http.rest
+                target: orders-api
+                method: TELEPORT
+                path: /warp
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+
+        var unknownTypeError = result.Errors.FirstOrDefault(e =>
+            e.Message.Contains("no-such.provider", System.StringComparison.Ordinal));
+        Assert.NotNull(unknownTypeError);
+        Assert.Contains("(line ", unknownTypeError!.Message, System.StringComparison.Ordinal);
+
+        var badMethodError = result.Errors.FirstOrDefault(e =>
+            e.InstanceLocation.StartsWith("/steps/1", System.StringComparison.Ordinal));
+        Assert.NotNull(badMethodError);
+        Assert.Contains("(line ", badMethodError!.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// In a three-step document where only the MIDDLE step has an unknown type,
+    /// exactly one error must be reported, and it must resolve to the middle
+    /// step's line — proving the unknown-type walk correctly addresses the step
+    /// at its own index rather than flagging every step or the wrong one.
+    /// </summary>
+    [Fact]
+    public void Validate_MultiStep_OnlyUnknownTypeFlagged_WithCorrectLine()
+    {
+        // Line 1:  steps:
+        // Line 2:    - id: first-step
+        // Line 3:      type: http.rest
+        // Line 4:      target: orders-api
+        // Line 5:      method: GET
+        // Line 6:      path: /health
+        // Line 7:    - id: second-step
+        // Line 8:      type: no-such.provider      ← unknown type (invalid)
+        // Line 9:    - id: third-step
+        // Line 10:     type: http.rest
+        // Line 11:     target: orders-api
+        // Line 12:     method: GET
+        // Line 13:     path: /health
+        const string yaml = """
+            steps:
+              - id: first-step
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+              - id: second-step
+                type: no-such.provider
+              - id: third-step
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+        var onlyError = Assert.Single(result.Errors);
+
+        Assert.Equal("/steps/1/type", onlyError.InstanceLocation);
+        Assert.Contains("no-such.provider", onlyError.Message, System.StringComparison.Ordinal);
+
+        var lineNumber = ExtractLineNumber(onlyError.Message);
+        Assert.Equal(8, lineNumber);
+    }
+
+    /// <summary>
+    /// A step whose <c>type</c> is a BARE family name (e.g. <c>http</c>, with no
+    /// dotted provider) violates the root schema's own
+    /// <c>^[a-z0-9-]+\.[a-z0-9-]+$</c> pattern — a realistic authoring mistake,
+    /// since bare family aliases were retired pre-v1.0 and migrating authors may
+    /// still write them. The schema pass already reports a <c>[pattern]</c> error
+    /// at <c>/steps/0/type</c>; the unknown-step-type cross-check must defer to
+    /// it rather than emitting a SECOND error at the same instance location.
+    /// </summary>
+    [Fact]
+    public void Validate_BareFamilyTypeName_IsRejectedOnce_ByPatternOnly_NotDoubleReported()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api
+                type: http
+                target: orders-api
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+
+        // Exactly one error in the whole document — the schema's own
+        // [pattern] violation — never a second, duplicate unknown-step-type
+        // finding at the same /steps/0/type pointer.
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/type", onlyError.InstanceLocation);
+        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unknown step type", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A step whose <c>type</c> is wrongly cased (e.g. <c>HTTP.REST</c>) violates
+    /// the same root-schema pattern (lowercase alphanumerics and hyphens only) —
+    /// must be reported exactly once, by the schema, never duplicated by the
+    /// unknown-step-type cross-check.
+    /// </summary>
+    [Fact]
+    public void Validate_WronglyCasedType_IsRejectedOnce_ByPatternOnly_NotDoubleReported()
+    {
+        const string yaml = """
+            steps:
+              - id: call-api
+                type: HTTP.REST
+                target: orders-api
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/type", onlyError.InstanceLocation);
+        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unknown step type", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

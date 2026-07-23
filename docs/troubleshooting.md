@@ -15,6 +15,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Steps run but assertions fail](#steps-run-but-assertions-fail)
 - [Capture fails or placeholder is empty](#capture-fails-or-placeholder-is-empty)
 - [Kafka messages not consumed (ordering or timing)](#kafka-messages-not-consumed-ordering-or-timing)
+- [Validation errors at authoring time](#validation-errors-at-authoring-time)
 
 ---
 
@@ -1153,6 +1154,52 @@ The engine attempted to clear a dependency's state between scenarios (the reset 
 5. **For Elasticsearch**, ensure the cluster is healthy and has sufficient resources; check the cluster health status:
    ```bash
    curl http://localhost:9200/_cluster/health
+   ```
+
+---
+
+## Validation errors at authoring time
+
+**Unknown step type (vouchfx validate or pre-compilation)**
+
+**Symptom:**
+```
+FAIL  my-test.e2e.yaml
+    [Schema] (line 45) unknown step type 'db-assert.oracle' — not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres').
+```
+
+**What it means:**
+A step's `type` field is well-formed (matches the `<family>.<provider>` pattern) but does not match any registered provider. This is caught early by `vouchfx validate` (compile-level validation without Docker) with a precise line number and stage, so you can fix the provider name before attempting to run the suite. Note: malformed types like a bare `postgres` or `db_assert.postgres` (with underscore) are rejected by the schema's pattern check instead, reported as separate [Schema] errors — the "unknown step type" message specifically catches well-formed-but-unregistered types.
+
+**Fix:**
+
+1. **Check the step type against the registered providers.** Consult the [Language Reference](language-reference.md) or run `vouchfx list` to see all available step types:
+   ```bash
+   vouchfx list
+   ```
+
+2. **Correct the `type` field to a registered provider.** Ensure it follows the `<family>.<provider>` naming convention and matches one of the Core providers:
+   ```yaml
+   # Schema error: malformed (missing family)
+   - id: my-step
+     type: postgres
+   
+   # Schema error: malformed (wrong separator)
+   - id: my-step
+     type: db_assert.postgres
+   
+   # Unknown-type error (well-formed but not a Core provider)
+   - id: my-step
+     type: db-assert.oracle
+   
+   # Correct (matches a registered Core provider)
+   - id: my-step
+     type: db-assert.postgres
+   ```
+
+3. **Use `vouchfx validate` before running.** It catches both malformed types (schema pattern errors) and well-formed-but-unregistered types (unknown-step-type errors), plus missing required fields, without needing Docker:
+   ```bash
+   vouchfx validate ./tests/e2e
    ```
 
 ---
