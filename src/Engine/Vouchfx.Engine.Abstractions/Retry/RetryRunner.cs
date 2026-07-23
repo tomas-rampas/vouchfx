@@ -135,7 +135,12 @@ public static class RetryRunner
         long? pollIntervalMs,
         Func<CancellationToken, Task<StepOutcome>> attempt,
         CancellationToken ct = default)
-        => PollAsync(vars, outcomeKey, attemptsKey, timeoutMs, pollIntervalMs, attempt, sink: null, stepId: string.Empty, ct);
+        // All trailing arguments named (not just sink/stepId) — a code-review comment
+        // (mistakenly) read this as a positional argument following named ones being a
+        // compile error. It is not: `sink`/`stepId` occupy their own declared positions and
+        // `ct` would too even left positional, so this always compiled — but naming it as
+        // well removes any appearance of ambiguity for the next reader.
+        => PollAsync(vars, outcomeKey, attemptsKey, timeoutMs, pollIntervalMs, attempt, sink: null, stepId: string.Empty, ct: ct);
 
     /// <summary>
     /// Polls <paramref name="attempt"/> with bounded exponential backoff until it

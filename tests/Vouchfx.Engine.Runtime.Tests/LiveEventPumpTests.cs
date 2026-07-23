@@ -64,6 +64,49 @@ public sealed class LiveEventPumpTests
         }
     }
 
+    // ── Null-tolerance: Post/PostRange are documented never-throw, including on null input ──
+
+    [Fact]
+    public async Task Post_NullLine_IsANoOp_NeverThrows()
+    {
+        var collected = new List<string>();
+        await using var pump = new LiveEventPump(batch => collected.AddRange(batch), capacity: 8);
+
+        pump.Post(null);
+        pump.Post("{\"a\":1}");
+        await pump.DisposeAsync();
+
+        Assert.Single(collected);
+        Assert.Equal("{\"a\":1}", collected[0]);
+    }
+
+    [Fact]
+    public async Task PostRange_NullLines_IsANoOp_NeverThrows()
+    {
+        var collected = new List<string>();
+        await using var pump = new LiveEventPump(batch => collected.AddRange(batch), capacity: 8);
+
+        pump.PostRange(null);
+        await pump.DisposeAsync();
+
+        Assert.Empty(collected);
+    }
+
+    private static readonly string?[] s_linesWithNullElement = { "{\"a\":1}", null, "{\"a\":2}" };
+    private static readonly string[] s_expectedAfterSkippingNulls = { "{\"a\":1}", "{\"a\":2}" };
+
+    [Fact]
+    public async Task PostRange_ContainingNullElements_SkipsOnlyTheNullOnes()
+    {
+        var collected = new List<string>();
+        await using var pump = new LiveEventPump(batch => collected.AddRange(batch), capacity: 8);
+
+        pump.PostRange(s_linesWithNullElement);
+        await pump.DisposeAsync();
+
+        Assert.Equal(s_expectedAfterSkippingNulls, collected);
+    }
+
     [Fact]
     public async Task DisposeAsync_IsIdempotent_NeverThrows()
     {

@@ -180,11 +180,25 @@ public sealed class PerStepLivenessTests
 
         await runTask;
 
-        // Both steps' final outcomes landed in Vars, as expected.
+        // Both steps' final outcomes landed in Vars, as expected. `vars` is mutated
+        // SYNCHRONOUSLY by the compiled script itself (Vars[key] = ...), so it is
+        // guaranteed correct the instant RunIsolatedAsync returns — no race here.
         Assert.True(vars.TryGetValue(VarKeys.Outcome("gate_check"), out var raw1));
         Assert.Equal(Verdict.Pass, Assert.IsType<StepOutcome>(raw1).Verdict);
         Assert.True(vars.TryGetValue(VarKeys.Outcome("blocked"), out var raw2));
         Assert.Equal(Verdict.Pass, Assert.IsType<StepOutcome>(raw2).Verdict);
+
+        // Deterministically flush the pump BEFORE inspecting `collected`: LiveEventPump.Post
+        // only writes to the bounded channel synchronously — the background drain task (which
+        // is what actually appends into `collected` here) runs on its own schedule, so
+        // asserting on `collected` immediately after the script finishes races that drain task
+        // on slower/loaded hardware (observed flaking on a Linux CI runner: the "blocked" line
+        // hadn't been drained yet by the time this assertion ran). DisposeAsync completes the
+        // channel writer and AWAITS the drain task to actually finish, so once it returns every
+        // line the script posted is GUARANTEED to be in `collected` — a deterministic wait, not
+        // a timeout/poll. Safe to call here even though `pump` is also `await using`d: DisposeAsync
+        // is idempotent (a second call at the end of this method is a no-op).
+        await pump.DisposeAsync();
 
         // Both steps' step-completed lines are present in the live stream by the time the
         // whole run has finished (the archive-parity concern is covered separately).
@@ -274,6 +288,13 @@ public sealed class PerStepLivenessTests
             maxAttemptLinesSeenMidRun >= 2,
             $"Expected to observe at least 2 step-attempt lines WHILE the retry poll was still " +
             $"in progress; observed at most {maxAttemptLinesSeenMidRun} before completion.");
+
+        // Deterministically flush before checking the FINAL total — see the sibling liveness
+        // test's comment: Post only writes to the bounded channel synchronously, so the LAST
+        // attempt's line (posted just before PollAsync/RunIsolatedAsync returns) may not yet
+        // have been drained into `collected` by the background drain task. DisposeAsync awaits
+        // that drain to completion, making the count below deterministic rather than a race.
+        await pump.DisposeAsync();
 
         lock (collectedLock)
         {

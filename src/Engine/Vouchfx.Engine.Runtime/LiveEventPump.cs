@@ -132,14 +132,22 @@ public sealed class LiveEventPump : IAsyncDisposable
     }
 
     /// <summary>
-    /// Posts a single line. Never blocks, never awaits, never throws: if the channel is full
-    /// (the drain task cannot keep up), the line is silently dropped and the drop counter is
-    /// incremented — a step thread must never wait on disk I/O or a slow tailing reader.
+    /// Posts a single line. Never blocks, never awaits, and never throws — including when
+    /// <paramref name="line"/> is <see langword="null"/>, which is treated as a silent no-op
+    /// (issue #262 review): a step thread must never risk an exception from what is a
+    /// best-effort, fire-and-forget diagnostic call. If the channel is full (the drain task
+    /// cannot keep up), the line is silently dropped and the drop counter is incremented — a
+    /// step thread must never wait on disk I/O or a slow tailing reader either.
     /// </summary>
-    /// <param name="line">The already-serialised JSON Lines record.</param>
-    public void Post(string line)
+    /// <param name="line">
+    /// The already-serialised JSON Lines record, or <see langword="null"/> (a no-op).
+    /// </param>
+    public void Post(string? line)
     {
-        ArgumentNullException.ThrowIfNull(line);
+        if (line is null)
+        {
+            return;
+        }
 
         if (!_channel.Writer.TryWrite(line))
         {
@@ -149,11 +157,19 @@ public sealed class LiveEventPump : IAsyncDisposable
 
     /// <summary>
     /// Posts every line in <paramref name="lines"/>, in order, via repeated <see cref="Post"/>
-    /// calls. Never blocks, never awaits, never throws.
+    /// calls. Never blocks, never awaits, and never throws — including when
+    /// <paramref name="lines"/> itself is <see langword="null"/> (a no-op) or contains
+    /// <see langword="null"/> elements (each individually skipped, per <see cref="Post"/>).
     /// </summary>
-    public void PostRange(IReadOnlyList<string> lines)
+    /// <param name="lines">
+    /// The lines to post, in order, or <see langword="null"/> (a no-op).
+    /// </param>
+    public void PostRange(IReadOnlyList<string?>? lines)
     {
-        ArgumentNullException.ThrowIfNull(lines);
+        if (lines is null)
+        {
+            return;
+        }
 
         foreach (var line in lines)
         {

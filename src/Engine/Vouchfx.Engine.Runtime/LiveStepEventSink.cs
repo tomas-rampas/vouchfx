@@ -83,6 +83,16 @@ internal sealed class LiveStepEventSink : IStepEventSink
     /// <inheritdoc />
     public void OnStepStarted(string stepId)
     {
+        // Defensive: these hooks are documented never-throw, and a script.csharp body (the
+        // documented no-sandbox escape hatch) could call StepEvents.OnStepStarted directly with
+        // a null or empty stepId — Dictionary<TKey,TValue>.TryGetValue/ContainsKey throw
+        // ArgumentNullException on a null key, so the null-or-empty check must come FIRST,
+        // before the step id ever reaches _stepsById.
+        if (string.IsNullOrEmpty(stepId))
+        {
+            return;
+        }
+
         if (!_stepsById.TryGetValue(stepId, out var node))
         {
             // Defensive: an unknown step id should not occur (the emitted CSX only ever
@@ -97,6 +107,13 @@ internal sealed class LiveStepEventSink : IStepEventSink
     /// <inheritdoc />
     public void OnStepAttempt(string stepId, AttemptRecord attempt)
     {
+        // Defensive: same null-or-empty guard as OnStepStarted/OnStepCompleted — must run
+        // BEFORE the _stepsById lookup, since Dictionary.ContainsKey throws on a null key.
+        if (string.IsNullOrEmpty(stepId))
+        {
+            return;
+        }
+
         // Security hardening: mirror the OnStepStarted / OnStepCompleted guard. Without it, a
         // script.csharp body (the documented no-sandbox escape hatch) could call
         // StepEvents.OnStepAttempt directly with an arbitrary stepId and forge step-attempt
@@ -116,6 +133,13 @@ internal sealed class LiveStepEventSink : IStepEventSink
     /// <inheritdoc />
     public void OnStepCompleted(string stepId, StepOutcome? outcome, string? captureStatus)
     {
+        // Defensive: same null-or-empty guard as OnStepStarted/OnStepAttempt — must run BEFORE
+        // the _stepsById lookup, since Dictionary.TryGetValue throws on a null key.
+        if (string.IsNullOrEmpty(stepId))
+        {
+            return;
+        }
+
         if (!_stepsById.TryGetValue(stepId, out var node))
         {
             return;

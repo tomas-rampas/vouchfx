@@ -73,7 +73,7 @@ public sealed class LiveStepEventSinkTests
     }
 
     [Fact]
-    public async Task OnStepStarted_UnknownStep_PostsExactlyOneLine_MatchingStepEventBuilder()
+    public async Task OnStepStarted_KnownStep_PostsExactlyOneLine_MatchingStepEventBuilder()
     {
         var ast = BuildAst();
         var (sink, pump, collected) = MakeSink(ast);
@@ -99,6 +99,27 @@ public sealed class LiveStepEventSinkTests
         var (sink, pump, collected) = MakeSink(ast);
 
         sink.OnStepStarted("does-not-exist");
+        await pump.DisposeAsync();
+
+        Assert.Empty(collected);
+    }
+
+    /// <summary>
+    /// Copilot review (issue #262): these hooks are documented never-throw, and a
+    /// <c>script.csharp</c> body could call <see cref="LiveStepEventSink.OnStepStarted"/> with a
+    /// <see langword="null"/> or empty stepId — <c>Dictionary&lt;TKey,TValue&gt;.TryGetValue</c>
+    /// throws <see cref="ArgumentNullException"/> on a null key, so the guard must run BEFORE
+    /// the step-id lookup, never after.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task OnStepStarted_NullOrEmptyStepId_IsANoOp_NeverThrows(string? stepId)
+    {
+        var ast = BuildAst();
+        var (sink, pump, collected) = MakeSink(ast);
+
+        sink.OnStepStarted(stepId!);
         await pump.DisposeAsync();
 
         Assert.Empty(collected);
@@ -142,6 +163,21 @@ public sealed class LiveStepEventSinkTests
         Assert.Empty(collected);
     }
 
+    /// <summary>Copilot review (issue #262): see <see cref="OnStepStarted_NullOrEmptyStepId_IsANoOp_NeverThrows"/>.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task OnStepAttempt_NullOrEmptyStepId_IsANoOp_NeverThrows(string? stepId)
+    {
+        var ast = BuildAst();
+        var (sink, pump, collected) = MakeSink(ast);
+
+        sink.OnStepAttempt(stepId!, new AttemptRecord(1, 5L, Verdict.Pass, null));
+        await pump.DisposeAsync();
+
+        Assert.Empty(collected);
+    }
+
     [Fact]
     public async Task OnStepCompleted_WithCaptureAndOutcome_MatchesStepEventBuilder()
     {
@@ -178,6 +214,21 @@ public sealed class LiveStepEventSinkTests
         Assert.Single(collected);
         Assert.Contains("\"verdict\":\"INCONCLUSIVE\"", collected[0]);
         Assert.Contains("\"durationMs\":0", collected[0]);
+    }
+
+    /// <summary>Copilot review (issue #262): see <see cref="OnStepStarted_NullOrEmptyStepId_IsANoOp_NeverThrows"/>.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task OnStepCompleted_NullOrEmptyStepId_IsANoOp_NeverThrows(string? stepId)
+    {
+        var ast = BuildAst();
+        var (sink, pump, collected) = MakeSink(ast);
+
+        sink.OnStepCompleted(stepId!, new StepOutcome(Verdict.Pass, 1L, null), captureStatus: null);
+        await pump.DisposeAsync();
+
+        Assert.Empty(collected);
     }
 
     [Fact]
