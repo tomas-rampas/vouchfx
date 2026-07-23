@@ -166,7 +166,7 @@ The `v1-alpha` tag is a pre-release convenience tag: it moves to track the lates
 | `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag, or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
 | `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
 | `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
-| `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. Exception: a `run` where every discovered scenario fails to parse exits 4 unconditionally, independent of this flag. |
 | `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Syntax: one image per line (e.g., `traefik/whoami:latest`). |
 | `runs-on` | string | `ubuntu-latest` | The GitHub Actions runner label to use. Must provide Docker; `ubuntu-latest` does. |
 
@@ -260,7 +260,7 @@ vouchfx-run:
 | `VOUCHFX_REF` | string | `$CI_COMMIT_SHA` | Git ref (commit SHA, tag, or branch) of `VOUCHFX_REPO_URL` to build. Recommended: a full commit SHA for supply-chain repeatability. |
 | `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:8.0` | .NET 8 SDK container image the job runs in. vouchfx targets .NET 8 LTS. |
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | string | `"false"` | When truthy, an environment-error verdict (unhealthy container, image-pull/seed failure) fails the job with exit code 3. Off by default — only `Fail` breaks CI. |
-| `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. |
+| `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict (timeout, unmet captures) fails the job with exit code 4. Off by default — only `Fail` breaks CI. Exception: a `run` where every discovered scenario fails to parse exits 4 unconditionally, independent of this flag. |
 | `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to `docker pull` before the run, to warm the Docker cache and mitigate Aspire/DCP's ~20 second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. Pin each entry to an immutable image digest. |
 
 **Docker-in-Docker and the privileged-runner requirement.** vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern with a `docker:dind` service. **Important caveat:** dind requires a **privileged runner**. The `docker:dind` service only starts on a GitLab Runner configured with `privileged = true` (Docker executor) or an equivalently-privileged Kubernetes executor; gitlab.com's shared SaaS Linux runners provide this. A self-managed runner must be explicitly configured for it.
@@ -362,9 +362,9 @@ The runner exits with a code that reflects the verdict taxonomy:
 | **1** | Fail | One or more scenarios failed (a genuine defect) | – |
 | **2** | UsageError | Usage error — unrecognised option, bad arguments, missing path, or `--watch`+`--parallel` | – |
 | **3** | EnvironmentError | Infrastructure breakage (unhealthy container, image-pull/seed failure) | `--fail-on-env-error` |
-| **4** | Inconclusive | Engine could not decide (timeout, partition outlasted grace, upstream capture unmet) | `--fail-on-inconclusive` |
+| **4** | Inconclusive | Engine could not decide (timeout, partition outlasted grace, upstream capture unmet); or every discovered scenario failed to parse | `--fail-on-inconclusive` |
 
-By default, **only Fail (1) breaks CI** — environment errors and inconclusive results exit 0 unless you opt in via the flags above. This distinction lets you tell infrastructure breakage apart from a product defect.
+By default, **only Fail (1) breaks CI** — environment errors and inconclusive results exit 0 unless you opt in via the flags above. This distinction lets you tell infrastructure breakage apart from a product defect. Note: when every discovered scenario fails to parse (malformed YAML, unknown step types across the board — whether a single file or a directory), the run is classified as Inconclusive and exits 4 unconditionally, matching the behaviour of `vouchfx validate`.
 
 ```bash
 # Fail breaks CI; environment errors and inconclusive results exit 0

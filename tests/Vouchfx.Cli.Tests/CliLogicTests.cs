@@ -156,6 +156,119 @@ public sealed class AggregateVerdictTests
     }
 }
 
+public sealed class ComputeExitCodeTests
+{
+    // Issue #278: `vouchfx run <dir>` where EVERY discovered/selected scenario failed to
+    // parse must exit ExitCodes.Inconclusive (4) — the SAME code `validate` unconditionally
+    // returns for an all-invalid set — never Success (0). RunCommand.ExecuteAsync calls
+    // ScenarioRunner.RunSuiteAsync (which starts a real Aspire topology and needs Docker)
+    // whenever parsedCount > 0, so the mixed-set / no-parse-failure branches below are
+    // exercised directly against the extracted, Docker-free ComputeExitCode seam instead of
+    // the full ExecuteAsync path — mirroring this file's own AggregateVerdictTests /
+    // ExitCodesTests pattern of testing the pure decision in isolation. The all-parse-failure
+    // branch IS additionally covered end-to-end (no Docker touched, since parsedCount is
+    // necessarily 0 there) by RunPathRootExecuteTests / RunAllParseFailureExitCodeTests.
+
+    [Theory]
+    // Unconditional: regardless of BOTH opt-in flags, and regardless of what suiteVerdict
+    // happens to be (it is always Verdict.Pass in the real flow when parsedCount == 0 — the
+    // runner never ran — but the branch must dominate even if that ever changed).
+    [InlineData(Verdict.Pass, false, false)]
+    [InlineData(Verdict.Pass, true, false)]
+    [InlineData(Verdict.Pass, false, true)]
+    [InlineData(Verdict.Pass, true, true)]
+    public void EntirelyParseFailures_AlwaysReturnsInconclusive_RegardlessOfFlags(
+        Verdict suiteVerdict, bool failOnEnvironmentError, bool failOnInconclusive)
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 0,
+                parseFailureCount: 2,
+                suiteVerdict,
+                failOnEnvironmentError,
+                failOnInconclusive));
+    }
+
+    [Fact]
+    public void EntirelyParseFailures_SingleFailure_StillReturnsInconclusive()
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 0,
+                parseFailureCount: 1,
+                Verdict.Pass,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    // ── Mixed set (at least one scenario parsed and ran): TODAY'S behaviour, captured and
+    // pinned unchanged — the new #278 branch above must NOT engage once parsedCount > 0. ──
+
+    [Fact]
+    public void MixedSet_PassingParsedScenario_DefaultFlags_ReturnsSuccess_UnchangedFromToday()
+    {
+        // Captures today's (arguably surprising, but explicitly out of scope for #278)
+        // behaviour: a mixed set whose parsed scenario(s) all Pass still folds the parse
+        // failure in as Inconclusive (AggregateVerdict), which then maps to Success by
+        // default (ExitCodes.FromVerdict) because --fail-on-inconclusive was not passed.
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.Pass,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void MixedSet_PassingParsedScenario_FailOnInconclusiveSet_ReturnsInconclusive()
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.Pass,
+                failOnEnvironmentError: false,
+                failOnInconclusive: true));
+    }
+
+    [Fact]
+    public void MixedSet_FailingParsedScenario_AlwaysReturnsTestFailure_ParseFailureNeverMasksIt()
+    {
+        // Fail outranks Inconclusive in the precedence ladder (AggregateVerdictTests pins the
+        // same invariant at the verdict level) — a parse-failure elsewhere in the set must
+        // never downgrade a genuine product Fail into an opt-in-gated Inconclusive.
+        Assert.Equal(
+            ExitCodes.TestFailure,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.Fail,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Theory]
+    [InlineData(Verdict.Pass, ExitCodes.Success)]
+    [InlineData(Verdict.Fail, ExitCodes.TestFailure)]
+    public void NoParseFailures_MatchesFromVerdictDirectly_UnchangedFromToday(
+        Verdict suiteVerdict, int expected)
+    {
+        Assert.Equal(
+            expected,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                suiteVerdict,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+}
+
 public sealed class PathArgumentTests
 {
     private static string ParsePath(params string[] args)

@@ -304,7 +304,7 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy)
 | **Pass** | All assertions passed. | A test runs end-to-end and all steps succeed. | 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | `expect: { status: 200 }` but the API returned 500. | 1 (always breaks CI) |
 | **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 if `--fail-on-env-error` |
-| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive` |
+| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; unconditionally 4 if every scenario fails to parse |
 
 **Why the distinction?**
 

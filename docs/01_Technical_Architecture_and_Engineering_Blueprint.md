@@ -1177,12 +1177,12 @@ The runner's exit codes carry the verdict taxonomy all the way to the CI system,
 | 1 | Fail | One or more scenarios failed — a genuine defect in the system under test. Breaks CI by default. | – |
 | 2 | UsageError | Bad arguments, missing path, invalid `--parallel` value, `--watch` combined with `--parallel`, or unrecognised option/flag. The suite never ran. | – |
 | 3 | EnvironmentError | The aggregate verdict was EnvironmentError (infrastructure breakage: unhealthy container, image-pull failure, seed failure, tunnel collapse). Off by default; breaks CI only when `--fail-on-env-error` is set. | `--fail-on-env-error` |
-| 4 | Inconclusive | The aggregate verdict was Inconclusive (timeout, network partition outlasted grace, upstream capture unmet — the engine could not determine correctness). Off by default; breaks CI only when `--fail-on-inconclusive` is set. | `--fail-on-inconclusive` |
+| 4 | Inconclusive | The aggregate verdict was Inconclusive (timeout, network partition outlasted grace, upstream capture unmet — the engine could not determine correctness). Off by default; breaks CI only when `--fail-on-inconclusive` is set. Exception: a `run` where every discovered scenario fails to parse exits 4 unconditionally, independent of the flag. | `--fail-on-inconclusive` |
 
 The two opt-in flags are:
 
 - **`--fail-on-env-error`** — When set, an EnvironmentError verdict exits with code 3 instead of 0. Use this to gate on infrastructure failure in environments where infrastructure reliability is the team's responsibility.
-- **`--fail-on-inconclusive`** — When set, an Inconclusive verdict exits with code 4 instead of 0. Use this to gate on results the engine could not decide (timeout, partition, unmet upstream captures), in scenarios where deterministic decisions are required.
+- **`--fail-on-inconclusive`** — When set, an Inconclusive verdict exits with code 4 instead of 0. Use this to gate on results the engine could not decide (timeout, partition, unmet upstream captures), in scenarios where deterministic decisions are required. Note: a `run` where every discovered scenario fails to parse already exits 4 regardless of this flag.
 
 The distinct codes 3 and 4 sit deliberately above the UsageError code (2) so there is no collision: 0 = success, 1 = a product defect, 2 = a usage error, 3 = infrastructure broke, 4 = the engine could not decide. This separation lets a CI system act on each outcome independently: fail the build on Fail (1), notify on-call about EnvironmentError (3), or escalate Inconclusive (4) to a reliability engineering team. The principle is that a team should be able to see infrastructure problems for what they are, not buried under a wall of failing tests.
 

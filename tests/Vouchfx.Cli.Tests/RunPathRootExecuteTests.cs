@@ -3,9 +3,11 @@
 // Exercises RunCommand.ExecuteAsync's Docker-free early paths for the <path> positional:
 // a missing root and a wrong-extension file root map to a usage error (exit 2) with the
 // discovery message written verbatim; a valid single-file root flows through selection
-// ("of 1 discovered") and the parse-failure fold (Inconclusive → exit 0 by default,
-// exit 4 under --fail-on-inconclusive).  Every case returns before the runner block, so
-// no topology is started.
+// ("of 1 discovered") and the parse-failure fold.  A single-file root that fails to parse
+// is, by construction, an ENTIRELY-parse-failure set (parsedCount == 0) — issue #278 makes
+// that unconditionally Inconclusive (exit 4), regardless of --fail-on-inconclusive; see
+// RunCommand.ComputeExitCode.  Every case returns before the runner block, so no topology
+// is ever started (this file needs no Docker).
 
 using Vouchfx.Cli;
 using Vouchfx.Cli.Selection;
@@ -119,29 +121,26 @@ public sealed class RunPathRootExecuteTests : IDisposable
         Assert.Contains("of 1 discovered", sw.ToString(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task ExecuteAsync_FileRoot_ParseFailure_ReportsInconclusive_DefaultExitZero()
+    // Issue #278: a single-file root that fails to parse is — by construction — an ENTIRELY
+    // parse-failure set (nothing parsed, nothing ran), so it must exit Inconclusive (4)
+    // UNCONDITIONALLY, regardless of --fail-on-inconclusive. This replaces the prior
+    // "exit 0 by default, exit 4 only when --fail-on-inconclusive" pair of tests: that
+    // default-exit-0 behaviour was exactly the bug (a CI pipeline keying on `run`'s exit code
+    // treated a fully-unparseable suite as passing).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_FileRoot_AllParseFailure_ReturnsInconclusive_RegardlessOfFailOnInconclusiveFlag(
+        bool failOnInconclusive)
     {
         var sw = new StringWriter();
         var bad = Path.Combine(_root, "broken.e2e.yaml");
         File.WriteAllText(bad, "steps:\n  - id: x\n    type: not-a-real-provider\n");
 
-        var exitCode = await ExecuteAsync(bad, criteria: null, sw);
-
-        Assert.Equal(ExitCodes.Success, exitCode);
-        Assert.Contains("(Inconclusive)", sw.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_FileRoot_ParseFailure_WithFailOnInconclusive_ReturnsExit4()
-    {
-        var sw = new StringWriter();
-        var bad = Path.Combine(_root, "broken.e2e.yaml");
-        File.WriteAllText(bad, "steps:\n  - id: x\n    type: not-a-real-provider\n");
-
-        var exitCode = await ExecuteAsync(bad, criteria: null, sw, failOnInconclusive: true);
+        var exitCode = await ExecuteAsync(bad, criteria: null, sw, failOnInconclusive: failOnInconclusive);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("(Inconclusive)", sw.ToString(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -170,7 +169,9 @@ public sealed class RunPathRootExecuteTests : IDisposable
 
         var exitCode = await ExecuteAsync(bad, criteria: null, sw);
 
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // Issue #278: this is ALSO an entirely-parse-failure single-file set, so it is now
+        // unconditionally Inconclusive (4), not Success (0).
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
 
         var rendered = sw.ToString();
         Assert.Contains("(Inconclusive)", rendered, StringComparison.Ordinal);
