@@ -132,6 +132,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 scripts/site-tools/build/
+.pytest_cache/
 
 # Maintainer-local delivery/planning material — deliberately not published
 # (internal: sprint plans, commercial planning, human-only checklists, review
