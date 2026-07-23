@@ -449,6 +449,42 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # ── Site tools (Python) — BLOCKING ────────────────────────────────────────────
+  # Regression-tests scripts/site-tools' `vouchfx_site_tools` package — the
+  # shared static-site generator three satellite repositories (vouchfx-
+  # providers, vouchfx-samples, vouchfx-telemetry-backend) pip-install at a
+  # pinned SHA. In particular, it pins SiteConfig.site_url's additive/
+  # byte-identical contract (vouchfx issue #254): unset, `build()` must be a
+  # byte-for-byte no-op; set, it must emit robots.txt/sitemap.xml correctly
+  # and pass a `canonical` kwarg that a template without the placeholder
+  # tolerates. Independent of the .NET solution (no `needs`) and of the
+  # MkDocs Pages build (`.github/workflows/pages.yml`) — this only exercises
+  # the shared package's own public API (SiteConfig + build()) against a
+  # throw-away repo skeleton, so it needs neither `dotnet build` nor `mkdocs
+  # build` to have run first. Deterministic and network-free (the suite
+  # overrides every default fact fetcher), so — unlike the greenfield
+  # `vscode-extension` job — this is a required, blocking gate, not advisory.
+  site-tools-tests:
+    name: Site tools (Python) — site_url contract tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+
+      # Editable install of the package under test, plus its `test` extra
+      # (pytest) declared in scripts/site-tools/pyproject.toml.
+      - name: Install vouchfx-site-tools (test extra)
+        run: python -m pip install -e "scripts/site-tools[test]"
+
+      - name: Run pytest (site_url contract suite)
+        run: python -m pytest scripts/site-tools/tests -q
+
   # ── Coverage badge — self-hosted, cosmetic, NON-BLOCKING ─────────────────────
   # Turns the Cobertura XML produced by the `build` job into a shields.io
   # endpoint JSON + SVG via ReportGenerator and force-pushes them to the orphan

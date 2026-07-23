@@ -93,3 +93,26 @@ A satellite repo's wrapper resolves the package in this order:
    relative to the satellite repo is tried (the maintainer's usual local
    layout: all four repos checked out side by side).
 4. Otherwise the wrapper exits with the exact `pip install` command to run.
+
+## Testing
+
+A pytest suite at `scripts/site-tools/tests/test_site_url_contract.py` (nine test
+functions, fifteen parametrised cases) locks the additive `SiteConfig.site_url`
+contract against byte-identical mutation,
+guarding the pinned-SHA dependency that each of the three satellite repositories
+relies on (issue [#254](https://github.com/tomas-rampas/vouchfx/issues/254)).
+The suite asserts both behavioural branches: when `site_url` is unset, no SEO
+files are emitted and the module's output is byte-identical to omitting the
+field; when set, `robots.txt` (allow-all with a sitemap reference), `sitemap.xml`
+(with root entry as bare origin, not `.../index.html`), and per-page `canonical`
+placeholders are generated and passed to templates.
+
+To run locally, install the package with the test extra and invoke pytest:
+
+```
+pip install -e "scripts/site-tools[test]"
+python -m pytest scripts/site-tools/tests -q
+```
+
+CI runs the suite automatically via the `site-tools-tests` job in
+`.github/workflows/build.yml` on every push and pull request.
