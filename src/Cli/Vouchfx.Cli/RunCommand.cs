@@ -1050,9 +1050,73 @@ internal static class RunCommand
                 .ConfigureAwait(false);
         }
 
-        // Fold the parse-failures (Inconclusive) into the suite verdict so the exit code
-        // reflects the whole discovery, not just the scenarios that compiled.
-        var aggregate = AggregateVerdict(suiteVerdict, failures.Count);
+        // Fold the parse-failures into the suite verdict and map the result to a process exit
+        // code — see ComputeExitCode for the issue #278 special case (an entirely-unparseable
+        // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
+        return ComputeExitCode(parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive);
+    }
+
+    /// <summary>
+    /// Maps the suite's outcome to a process exit code (§12.1), applying the issue #278
+    /// special case: when NOTHING could be parsed — the discovered/selected set is entirely
+    /// parse-failures — the run is unconditionally <see cref="Verdict.Inconclusive"/>
+    /// (<see cref="ExitCodes.Inconclusive"/>, 4), the SAME exit code <c>validate</c>
+    /// unconditionally returns for an all-invalid set (<see cref="ValidateCommand.Execute"/>).
+    /// </summary>
+    /// <param name="parsedCount">
+    /// The number of scenarios that parsed and were handed to the runner. Zero means
+    /// <paramref name="suiteVerdict"/> is still its untouched initial value (the runner never
+    /// ran — see <see cref="ExecuteAsync"/>'s <c>if (parsed.Count &gt; 0)</c> guard).
+    /// </param>
+    /// <param name="parseFailureCount">The number of scenarios that failed to parse.</param>
+    /// <param name="suiteVerdict">
+    /// The aggregate verdict from the parsed scenarios that DID run (still
+    /// <see cref="Verdict.Pass"/> when <paramref name="parsedCount"/> is zero — nothing ran,
+    /// nothing failed).
+    /// </param>
+    /// <param name="failOnEnvironmentError">
+    /// Passed through to <see cref="ExitCodes.FromVerdict"/> for a mixed or fully-parsed set.
+    /// </param>
+    /// <param name="failOnInconclusive">
+    /// Passed through to <see cref="ExitCodes.FromVerdict"/> for a mixed or fully-parsed set.
+    /// </param>
+    /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Entirely parse-failures</strong> (<paramref name="parsedCount"/> is 0 AND
+    /// <paramref name="parseFailureCount"/> is greater than 0): nothing could be parsed or run
+    /// at all — this is unconditionally <see cref="ExitCodes.Inconclusive"/> (4), REGARDLESS of
+    /// <paramref name="failOnInconclusive"/>. A CI pipeline keying on <c>run</c>'s exit code
+    /// must never see a fully-unparseable suite reported as a clean <see cref="ExitCodes.Success"/>
+    /// — the same reasoning <c>validate</c> already applies unconditionally to an all-invalid
+    /// set. This is deliberately DIFFERENT from a genuine execution-time
+    /// <see cref="Verdict.Inconclusive"/> produced by a scenario that DID run (timeout /
+    /// partition outlasted grace / upstream capture unmet) — THAT case stays opt-in-gated
+    /// below, unchanged.
+    /// </para>
+    /// <para>
+    /// <strong>Mixed or fully-parsed set</strong> (<paramref name="parsedCount"/> greater than
+    /// 0): today's existing behaviour, unchanged — fold the parse-failures into
+    /// <paramref name="suiteVerdict"/> via <see cref="AggregateVerdict"/>, then map through
+    /// <see cref="ExitCodes.FromVerdict"/> (opt-in gated for EnvironmentError / Inconclusive).
+    /// <paramref name="parseFailureCount"/> being 0 falls through this SAME branch —
+    /// <see cref="AggregateVerdict"/> is then a no-op — so the no-parse-failure case is also
+    /// unaffected.
+    /// </para>
+    /// </remarks>
+    internal static int ComputeExitCode(
+        int parsedCount,
+        int parseFailureCount,
+        Verdict suiteVerdict,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive)
+    {
+        if (parsedCount == 0 && parseFailureCount > 0)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
         return ExitCodes.FromVerdict(aggregate, failOnEnvironmentError, failOnInconclusive);
     }
 

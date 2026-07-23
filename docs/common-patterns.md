@@ -465,7 +465,7 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1):
 | **Pass** | All assertions passed. | Exit 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | Exit 1 (always breaks CI) |
 | **EnvironmentError** | Infrastructure problem (unhealthy container, image-pull failure, seed failure). | Exit 0 by default; Exit 3 if `--fail-on-env-error` |
-| **Inconclusive** | Engine could not decide (timeout on a RETRY step, unmet capture, partition). | Exit 0 by default; Exit 4 if `--fail-on-inconclusive` |
+| **Inconclusive** | Engine could not decide (timeout on a RETRY step, unmet capture, partition); or every scenario failed to parse. | Exit 0 by default; Exit 4 if `--fail-on-inconclusive` (unconditional for all-parse-failure) |
 
 By default, **only Fail breaks CI** — environment errors and inconclusive results exit 0. This distinction lets your CI system handle each outcome independently: fail the build on a product defect, page on-call for infrastructure breakage, and escalate inconclusive results to reliability engineering.
 
