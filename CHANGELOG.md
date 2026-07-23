@@ -18,6 +18,7 @@ to published pre-releases on 2026-07-14.
 ### Changed
 
 - **Scenario file resolution roots per scenario** (#268) — relative `script.csharp file:` references now resolve against each scenario's own directory in both `run` and `validate`, rather than the first discovered scenario's directory. A scenario in a subdirectory now correctly finds helper scripts beside it. Sequential unfiltered `run` topology seeding remains rooted at the first scenario's directory; parallel runs seed from each scenario's own directory.
+- **`--events-stream` now emits step and step-attempt events in real time** (#262) — previously, events were flushed at scenario completion (scenario-level granularity). Step and step-attempt events now appear in the stream immediately as they complete during a run, enabling live per-step progress tracking. For RETRY steps, each polling attempt is observable as it happens. In parallel runs, step lines from concurrently-running scenarios interleave by arrival order but remain disambiguated by `(runId, stepId)` pairs; the authoritative, declaration-ordered `--events` archive is unchanged.
 
 ### Fixed
 

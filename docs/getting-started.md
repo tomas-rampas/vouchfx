@@ -285,11 +285,12 @@ The `--events-stream` flag writes the same schema-versioned JSON Lines event rec
 
 **Important caveats:**
 
-- **Scenario-level granularity, not per-step.** Each scenario's events are flushed when that scenario completes. For a single-suite run, all of a suite's step lines therefore appear together at the scenario's completion — genuine per-step/attempt live progress is a planned future enhancement.
-- **Parallel mode writes in completion order.** When you run with `--parallel <n>`, scenarios complete in whatever order the orchestrator finishes them, so the `--events-stream` file reflects completion order, not declaration order. The `--events` archive (if written) still respects declaration order.
+- **Per-step real-time liveness.** Step and step-attempt events are emitted as each step/attempt completes during the run, not batched at scenario end. For a RETRY step, each polling attempt is observable live as it happens, so you can watch the polling timeline unfold in real time without waiting for the scenario to finish.
+- **Parallel mode writes in arrival order.** When you run with `--parallel <n>`, step lines from concurrently-running scenarios interleave by their completion order in the stream, not by declaration order. Each event still carries `runId` and `stepId`, which consumers use to disambiguate steps across an aggregated multi-scenario stream. The `--events` archive (if written) still respects declaration order.
 - **Tailing requires shared access.** The engine holds the write handle and grants shared read access; a concurrent reader must open the file with shared read/write access (on Windows, `FileShare.ReadWrite`; on Unix, the file is readable immediately).
 - **`--events` and `--events-stream` are independent.** You can use both together; they write to separate files and have no interaction. The `--events` archive remains a buffered, declaration-ordered snapshot written once at the end of the run.
 - **Best-effort file path.** If the path is unwritable or incorrect, the engine prints a short diagnostic and continues — a bad stream path does not change the run's verdict or exit code.
+- **Cancellation and fault handling.** On a cancelled or faulted run, the live stream may contain partial per-step lines (up to and including the step that was executing) that the authoritative `--events` archive does not — the stream shows progress, the archive is the source of truth.
 
 ### All three reports together
 

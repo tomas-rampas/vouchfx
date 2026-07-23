@@ -94,9 +94,84 @@ public sealed class ScriptGlobalVariables
     public ITraceCaptureAccessor Traces { get; }
 
     /// <summary>
+    /// The host-side per-step live event sink (§14, issue #262). An emitted CSX step block
+    /// reports its lifecycle (started / per-attempt / completed) through this member so a
+    /// <c>--events-stream</c> tail can observe genuine per-step liveness DURING the isolated
+    /// run, not only after it returns.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike <see cref="Secrets"/>, <see cref="Webhooks"/>, and <see cref="Traces"/>, this
+    /// member's default is <see langword="null"/> — deliberately <strong>not</strong> a
+    /// Null-object. The emitted CSX guards every call with <c>?.</c>
+    /// (<c>StepEvents?.OnStepStarted(...)</c>), so a <see langword="null"/> sink is a pure
+    /// no-op and the post-return reconstruction in the runner is behaviourally UNCHANGED —
+    /// this is the common path (no <c>--events-stream</c> flag) and must allocate nothing.
+    /// </para>
+    /// <para>
+    /// This is an <em>instance</em> property by design, exactly like <see cref="Secrets"/>,
+    /// <see cref="Webhooks"/>, and <see cref="Traces"/>: the concrete sink is a Default-ALC
+    /// object (built and owned by the runner) passed in by reference. Only Default-ALC data
+    /// types (<see langword="string"/>, <see cref="StepOutcome"/>,
+    /// <see cref="Retry.AttemptRecord"/>) ever cross this member's methods, so holding it
+    /// never roots the collectible
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> the emitted script's submission
+    /// assembly lives in (§5).
+    /// </para>
+    /// </remarks>
+    public IStepEventSink? StepEvents { get; }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
+    /// webhook-capture accessor, OTLP trace-capture accessor, and host-side step-event sink
+    /// (the full host↔script boundary, issue #262).
+    /// </summary>
+    /// <param name="vars">
+    /// Mutable state map; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="services">
+    /// Read-only typed-client surface; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="secrets">
+    /// The execution-time secret accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="webhooks">
+    /// The execution-time webhook-capture accessor; must not be <see langword="null"/>.
+    /// Pass <see cref="NullWebhookCaptureAccessor.Instance"/> when the run declares no
+    /// webhook listener.
+    /// </param>
+    /// <param name="traces">
+    /// The execution-time OTLP trace-capture accessor; must not be <see langword="null"/>.
+    /// Pass <see cref="NullTraceCaptureAccessor.Instance"/> when the run declares no
+    /// <c>trace-expect.otlp</c> step.
+    /// </param>
+    /// <param name="stepEvents">
+    /// The host-side per-step live event sink, or <see langword="null"/> when no live
+    /// <c>--events-stream</c> conduit is configured for this run (the common case — every
+    /// call the emitted CSX makes is guarded with <c>?.</c>, so a <see langword="null"/> sink
+    /// costs nothing and changes no behaviour).
+    /// </param>
+    public ScriptGlobalVariables(
+        IDictionary<string, object?> vars,
+        IReadOnlyDictionary<string, object> services,
+        ISecretAccessor secrets,
+        IWebhookCaptureAccessor webhooks,
+        ITraceCaptureAccessor traces,
+        IStepEventSink? stepEvents)
+    {
+        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
+        Traces = traces ?? throw new ArgumentNullException(nameof(traces));
+        StepEvents = stepEvents;
+    }
+
+    /// <summary>
     /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
     /// webhook-capture accessor, and OTLP trace-capture accessor (the full host↔script
-    /// boundary, Phase C).
+    /// boundary, Phase C), and no host-side step-event sink. <see cref="StepEvents"/> is
+    /// <see langword="null"/>.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
@@ -123,12 +198,8 @@ public sealed class ScriptGlobalVariables
         ISecretAccessor secrets,
         IWebhookCaptureAccessor webhooks,
         ITraceCaptureAccessor traces)
+        : this(vars, services, secrets, webhooks, traces, stepEvents: null)
     {
-        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
-        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
-        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
-        Traces = traces ?? throw new ArgumentNullException(nameof(traces));
     }
 
     /// <summary>

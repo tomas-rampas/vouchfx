@@ -256,6 +256,7 @@ public static class ScenarioRunner
             appHostAssemblyName,
             output,
             seedBaseDirectory,
+            livePump: null,
             cancellationToken).ConfigureAwait(false);
 
         TerminalRenderer.Render(buffer, output, diffLookup);
@@ -325,6 +326,7 @@ public static class ScenarioRunner
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
+        LiveEventPump? livePump,
         CancellationToken cancellationToken)
     {
         var runId = Guid.NewGuid().ToString("n");
@@ -361,6 +363,10 @@ public static class ScenarioRunner
                     .ConfigureAwait(false);
             }
 
+            // Issue #262: this early-exit buffer is never reached by RunScenarioCoreAsync's
+            // live streaming (no topology, no compiled script, no steps), so the caller must
+            // still post it explicitly for a live tail to observe it.
+            livePump?.PostRange(buffer);
             return (Verdict.Inconclusive, buffer);
         }
 
@@ -396,6 +402,7 @@ public static class ScenarioRunner
                 DisplaySanitiser.SanitiseForDisplay($"Parse / AST error: {ex.Message}"))
                 .ConfigureAwait(false);
 
+            livePump?.PostRange(buffer);
             return (Verdict.Inconclusive, buffer);
         }
 
@@ -422,6 +429,7 @@ public static class ScenarioRunner
             await output.WriteLineAsync(
                 DisplaySanitiser.SanitiseForDisplay(pipelineResult.Failure.Message))
                 .ConfigureAwait(false);
+            livePump?.PostRange(buffer);
             return (Verdict.Inconclusive, buffer);
         }
 
@@ -451,6 +459,7 @@ public static class ScenarioRunner
             // untrusted YAML — sanitise before writing.
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(secretError))
                 .ConfigureAwait(false);
+            livePump?.PostRange(buffer);
             return (Verdict.Inconclusive, buffer);
         }
 
@@ -510,6 +519,7 @@ public static class ScenarioRunner
             await output.WriteLineAsync(
                 DisplaySanitiser.SanitiseForDisplay($"Environment configuration error: {aex.Message}"))
                 .ConfigureAwait(false);
+            livePump?.PostRange(buffer);
             return (Verdict.Inconclusive, buffer);
         }
         catch (OrchestrationException oex)
@@ -530,6 +540,7 @@ public static class ScenarioRunner
                 Verdict = Verdict.EnvironmentError,
                 Counts = new VerdictCounts { EnvError = 1 },
             }));
+            livePump?.PostRange(buffer);
             return (Verdict.EnvironmentError, buffer);
         }
 
@@ -549,7 +560,8 @@ public static class ScenarioRunner
                 isolation,
                 output,
                 seedBaseDirectory,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                livePump: livePump).ConfigureAwait(false);
 
             return (verdict, buffer);
         }
@@ -627,15 +639,17 @@ public static class ScenarioRunner
     /// events artifact.
     /// </param>
     /// <param name="eventsStreamPath">
-    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258).
-    /// When non-<see langword="null"/>, an <see cref="Reporting.EventStreamAppender"/> is opened
-    /// ONCE before the scenario loop and each scenario's event lines are appended — and flushed —
-    /// to it as soon as that scenario's own buffer is folded into <c>allBuffers</c>, so a
-    /// concurrent reader tailing the file observes scenario-granular liveness instead of waiting
-    /// for the whole suite to finish.  This is a SEPARATE file from
-    /// <paramref name="eventsReportPath"/> — the <c>--events</c> / <c>--json</c> archive is still
-    /// written ONCE, at the end, from the complete <c>allBuffers</c>, byte-for-byte unchanged.
-    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258;
+    /// per-step/per-attempt liveness issue #262). When non-<see langword="null"/>, a
+    /// <see cref="LiveEventPump"/> (wrapping an <see cref="Reporting.EventStreamAppender"/>) is
+    /// opened ONCE before the scenario loop. Each scenario's <c>step-started</c> /
+    /// <c>step-attempt</c> / <c>step-completed</c> lines are posted to it in REAL TIME, from
+    /// inside the isolated run, via a per-scenario <see cref="LiveStepEventSink"/>; the
+    /// scenario-framing lines are posted alongside the archive write. An early-exit scenario
+    /// (never reaching the core) still posts its own buffer explicitly. This is a SEPARATE file
+    /// from <paramref name="eventsReportPath"/> — the <c>--events</c> / <c>--json</c> archive is
+    /// still written ONCE, at the end, from the complete <c>allBuffers</c>, byte-for-byte
+    /// unchanged. <see langword="null"/> ⇒ no incremental stream (the default).
     /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single suite-level
@@ -857,15 +871,22 @@ public static class ScenarioRunner
             var suiteAggregate = Verdict.Pass;
             var allBuffers = new List<string>();
 
-            // ── Incremental events stream (issue #258) ────────────────────────────
+            // ── Incremental events stream (issue #258; per-step liveness issue #262) ──────
             // Opened ONCE, guarded on a non-null path, and disposed automatically when this
             // `await using` block's own scope is left (return or exception) — BEFORE `suite`
             // (the enclosing `await using (suite.ConfigureAwait(false))` resource) tears down.
             // Completely separate from `eventsReportPath`: the --events / --json archive is
             // still written once, at the end, from the finished `allBuffers` (see
             // FileReportWriter.WriteFileReports below) — byte-for-byte unchanged.
-            await using var eventsStreamAppender = eventsStreamPath is not null
-                ? new EventStreamAppender(eventsStreamPath, output)
+            //
+            // Issue #262: EventStreamAppender is now wrapped by LiveEventPump, a bounded,
+            // non-blocking conduit — RunScenarioAgainstTopologyAsync (via RunScenarioCoreAsync)
+            // threads this SAME pump down to a per-scenario LiveStepEventSink so per-step /
+            // per-attempt lines stream the moment they happen, not only after the scenario
+            // returns. Early-exit scenarios below (which never reach the core) still post
+            // their own buffer explicitly.
+            await using var livePump = eventsStreamPath is not null
+                ? new LiveEventPump(eventsStreamPath, output)
                 : null;
 
             try
@@ -907,7 +928,7 @@ public static class ScenarioRunner
                         results.Add((name, earlyVerdict.Value));
                         suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
                         allBuffers.AddRange(buffer);
-                        eventsStreamAppender?.AppendLines(buffer);
+                        livePump?.PostRange(buffer);
                         continue;
                     }
 
@@ -937,7 +958,7 @@ public static class ScenarioRunner
                         results.Add((name, Verdict.EnvironmentError));
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         allBuffers.AddRange(buffer);
-                        eventsStreamAppender?.AppendLines(buffer);
+                        livePump?.PostRange(buffer);
 
                         // Isolation failure → abort the suite (subsequent scenarios
                         // would run against an unknown DB state).
@@ -970,12 +991,18 @@ public static class ScenarioRunner
                         output,
                         seedBaseDirectory,
                         cancellationToken,
-                        scriptBaseDirectory: scenarioBaseDirectory).ConfigureAwait(false);
+                        scriptBaseDirectory: scenarioBaseDirectory,
+                        livePump: livePump).ConfigureAwait(false);
 
                     results.Add((name, scenarioVerdict));
                     suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
                     allBuffers.AddRange(buffer);
-                    eventsStreamAppender?.AppendLines(buffer);
+                    // Issue #262: NO livePump?.PostRange(buffer) here — RunScenarioAgainstTopologyAsync
+                    // (via RunScenarioCoreAsync) already streamed this scenario's lines live, as they
+                    // happened, through the per-scenario LiveStepEventSink + explicit framing posts.
+                    // Re-posting the reconstructed buffer here would DUPLICATE every line in the live
+                    // file. `allBuffers` above still receives the complete, unaffected reconstruction
+                    // for the end-of-run `--events` archive.
 
                     // ── EndScenario (isolation / reset) ────────────────────────────
                     try
@@ -992,7 +1019,7 @@ public static class ScenarioRunner
                             oex.Info, runId, DateTimeOffset.UtcNow);
                         allBuffers.Add(isolationFailureLine);
                         var isolationFailureLines = new[] { isolationFailureLine };
-                        eventsStreamAppender?.AppendLines(isolationFailureLines);
+                        livePump?.PostRange(isolationFailureLines);
 
                         // Issue #266, Item 4: 'name' is author-controlled and oex.Message may
                         // echo untrusted content — sanitise before writing.
@@ -1362,7 +1389,8 @@ public static class ScenarioRunner
         TextWriter output,
         string? seedBaseDirectory,
         CancellationToken cancellationToken,
-        string? scriptBaseDirectory = null)
+        string? scriptBaseDirectory = null,
+        LiveEventPump? livePump = null)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
         _ = isolation;
@@ -1508,7 +1536,8 @@ public static class ScenarioRunner
                 output,
                 seedBaseDirectory,
                 cancellationToken,
-                scriptBaseDirectory: scriptBaseDirectory).ConfigureAwait(false);
+                scriptBaseDirectory: scriptBaseDirectory,
+                livePump: livePump).ConfigureAwait(false);
         }
         finally
         {
@@ -1604,8 +1633,19 @@ public static class ScenarioRunner
         TextWriter output,
         string? seedBaseDirectory,
         CancellationToken cancellationToken,
-        string? scriptBaseDirectory = null)
+        string? scriptBaseDirectory = null,
+        LiveEventPump? livePump = null)
     {
+        // ── Issue #262: live scenario-started signal ──────────────────────────
+        // Posted immediately, before anything else, using its OWN real-time timestamp —
+        // entirely separate from the batch `now9`-stamped copy the success path below still
+        // adds to `buffer` for the end-of-run archive (unaffected, byte-identical to
+        // pre-#262 whether or not a live pump is attached).  A null livePump makes this a
+        // no-op; every early-exit path below reports its own scenario-completed line to the
+        // SAME pump (see the two catch blocks), so a live tail never sees an orphaned
+        // scenario-started with no matching completion.
+        livePump?.Post(StepEventBuilder.ScenarioStartedLine(runId, DateTimeOffset.UtcNow, scenarioName));
+
         // ── Stage the `variables` block constants (DSL §3) ────────────────────
         // Pre-loaded into the shared context under their bare names (no prefix) so
         // {placeholder} substitution and capture reads resolve them uniformly.
@@ -1632,16 +1672,30 @@ public static class ScenarioRunner
         var secretAccessor = new SecretAccessor(secretCatalog);
         try
         {
+            // Built once, up front (moved ahead of its former use inside the step loop below)
+            // because the live sink needs it at construction time, issue #262: the map of
+            // captured varName → declaring stepId is a pure compile-time derivation over
+            // ast.Steps, so hoisting it here changes nothing about what it computes.
+            var captureOriginMap = BuildCaptureOriginMap(ast.Steps);
 
-            // ── §5 boundary construction (S07-F-01a; traceAccessor added Phase C) ─────────
-            // The secret accessor, the webhook-capture accessor, and the OTLP trace-capture
-            // accessor are all instances built in the Default ALC and passed by-reference into
-            // the sole host↔script boundary.  The webhook listener / OTLP receiver + buffers
-            // they project live in the Default ALC (owned by this runner); the emitted script
-            // reaches captures ONLY via globals.Webhooks / globals.Traces — no static handle
-            // bridges the collectible boundary, preserving the memory model.
+            // ── §5 boundary construction (S07-F-01a; traceAccessor added Phase C; StepEvents
+            // sink added issue #262) ───────────────────────────────────────────────────────
+            // The secret accessor, the webhook-capture accessor, the OTLP trace-capture
+            // accessor, and (when a live pump is attached) the step-event sink are all
+            // instances built in the Default ALC and passed by-reference into the sole
+            // host↔script boundary.  The webhook listener / OTLP receiver + buffers they
+            // project live in the Default ALC (owned by this runner); the emitted script
+            // reaches captures ONLY via globals.Webhooks / globals.Traces / globals.StepEvents
+            // — no static handle bridges the collectible boundary, preserving the memory model.
+            // A null livePump (no --events-stream conduit) yields a null StepEvents, which
+            // every emitted `?.` call short-circuits — the run is behaviourally IDENTICAL to
+            // pre-#262 in that case.
+            IStepEventSink? liveSink = livePump is null
+                ? null
+                : new LiveStepEventSink(livePump, runId, ast.Steps, captureOriginMap, secretAccessor);
+
             var globals = new ScriptGlobalVariables(
-                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor, traceAccessor);
+                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor, traceAccessor, liveSink);
 
             // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
             var tpaPaths = BclReferencePaths()
@@ -1711,20 +1765,13 @@ public static class ScenarioRunner
                 // field value could embed — so it is sanitised the same as every other
                 // author-controlled text reaching this human output stream.
                 var nowSE = DateTimeOffset.UtcNow;
-                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowSE,
-                    ScenarioId = scenarioName,
-                }));
-                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowSE,
-                    ScenarioId = scenarioName,
-                    Verdict = Verdict.EnvironmentError,
-                    Counts = new VerdictCounts { EnvError = 1 },
-                }));
+                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowSE, scenarioName));
+                var seCompletedLine = StepEventBuilder.ScenarioCompletedLine(
+                    runId, nowSE, scenarioName, Verdict.EnvironmentError, new VerdictCounts { EnvError = 1 });
+                buffer.Add(seCompletedLine);
+                // Issue #262: the matching scenario-started was already posted live at the top
+                // of this method; post the completion now so a live tail never sees an orphan.
+                livePump?.Post(seCompletedLine);
 
                 await output.WriteLineAsync(
                     DisplaySanitiser.SanitiseForDisplay(
@@ -1737,20 +1784,11 @@ public static class ScenarioRunner
             catch (Exception ex)
             {
                 var nowCE = DateTimeOffset.UtcNow;
-                buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowCE,
-                    ScenarioId = scenarioName,
-                }));
-                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowCE,
-                    ScenarioId = scenarioName,
-                    Verdict = Verdict.Inconclusive,
-                    Counts = new VerdictCounts { Inconclusive = 1 },
-                }));
+                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowCE, scenarioName));
+                var ceCompletedLine = StepEventBuilder.ScenarioCompletedLine(
+                    runId, nowCE, scenarioName, Verdict.Inconclusive, new VerdictCounts { Inconclusive = 1 });
+                buffer.Add(ceCompletedLine);
+                livePump?.Post(ceCompletedLine);
 
                 var diagnosis = ex is ScriptCompilationException sce
                     ? $"CSX compilation failed: {sce.Message}"
@@ -1779,86 +1817,38 @@ public static class ScenarioRunner
 
             // ── Emit events from outcomes + aggregate verdict ─────────────────────
             var now9 = DateTimeOffset.UtcNow;
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-            {
-                RunId = runId,
-                Timestamp = now9,
-                ScenarioId = scenarioName,
-            }));
+            buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, now9, scenarioName));
 
             var aggregate = Verdict.Pass;
             var counts = new int[4];
 
-            // Build a map of varName → stepId for all captures defined in this scenario,
-            // so that substitution provenance (G-01) can trace each placeholder's origin.
-            // Only steps that appear BEFORE the current step contribute (captures are
-            // forward-threading: a step can only read what a prior step captured).
-            // We build the full map once and use it as a lookup in the loop below.
-            var captureOriginMap = BuildCaptureOriginMap(ast.Steps);
+            // NOTE: captureOriginMap (varName → declaring stepId, G-01 provenance) was already
+            // built ABOVE, before globals construction, so the live sink and this
+            // reconstruction loop share the identical map (issue #262).
 
             foreach (var node in ast.Steps)
             {
                 var safeId = CsxFragment.SanitiseId(node.Id);
 
-                buffer.Add(EventStreamJson.ToLine(new StepStartedEvent
-                {
-                    RunId = runId,
-                    Timestamp = now9,
-                    StepId = node.Id,
-                    Kind = node.CanonicalType,
-                    VerifyMode = node.VerifyMode.ToString().ToUpperInvariant(),
-                    TimeoutMs = node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
-                }));
+                // Issue #262: StepEventBuilder.StepStartedLine is the SAME method
+                // LiveStepEventSink.OnStepStarted calls in real time — this reconstruction
+                // call is unchanged in effect from the pre-#262 inline construction.
+                buffer.Add(StepEventBuilder.StepStartedLine(runId, now9, node));
 
                 var outcomeKey = VarKeys.Outcome(safeId);
                 var outcome = vars.TryGetValue(outcomeKey, out var raw)
                     ? raw as StepOutcome
                     : null;
 
-                var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
-                var durationMs = outcome?.DurationMs ?? 0L;
-
-                // ── G-01: build Captured provenance ──────────────────────────────
-                IReadOnlyList<CapturedVar>? capturedList = null;
-                if (node.Capture.Count > 0)
+                // Read the matched-flag string written by the emitted block ("1,0,1" — one
+                // flag per capture in declaration order); StepEventBuilder.StepCompletedLine
+                // ignores this when node.Capture is empty, matching the pre-#262 behaviour.
+                string? captureStatusRaw = null;
+                if (vars.TryGetValue(VarKeys.CaptureStatus(safeId), out var csRaw)
+                    && csRaw is string csStr)
                 {
-                    // Read the matched-flag string written by the emitted block:
-                    // format is "1,0,1" — one flag per capture in declaration order.
-                    string? captureStatusRaw = null;
-                    if (vars.TryGetValue(VarKeys.CaptureStatus(safeId), out var csRaw)
-                        && csRaw is string csStr)
-                    {
-                        captureStatusRaw = csStr;
-                    }
-
-                    var flagTokens = captureStatusRaw?.Split(',') ?? Array.Empty<string>();
-                    var capturedVars = new List<CapturedVar>(node.Capture.Count);
-                    var captureKeys = node.Capture.Keys.ToArray();
-
-                    // S07-B-01a: node.Capture values are now typed CaptureExpr records.
-                    // The CapturedVar.Path provenance field carries the raw expression
-                    // string (format-agnostic), so read .Expression — the event payload
-                    // is unchanged for a JSONPath capture (byte-for-byte back-compatible).
-                    var captureVals = node.Capture.Values
-                        .Select(e => e.Expression)
-                        .ToArray();
-
-                    for (int ci = 0; ci < captureKeys.Length; ci++)
-                    {
-                        var matched = ci < flagTokens.Length && flagTokens[ci] == "1";
-                        capturedVars.Add(new CapturedVar(
-                            Name: captureKeys[ci],
-                            Path: captureVals[ci],
-                            Matched: matched));
-                    }
-                    capturedList = capturedVars;
+                    captureStatusRaw = csStr;
                 }
-
-                // ── G-01 + S05-G-01: build Substitutions provenance (compile-time) ─
-                // Scan every substitutable field in the step's raw YAML for {name}
-                // placeholder tokens AND ${secret:source/path} references.  This is
-                // compile-time derivation — no runtime value is ever read.
-                var substitutionsList = DeriveSubstitutionProvenance(node, captureOriginMap);
 
                 // ── RETRY (Sprint 6): one step-attempt event per recorded poll ────
                 // The engine-owned RETRY runner writes a List<AttemptRecord> to
@@ -1867,27 +1857,15 @@ public static class ScenarioRunner
                 // IMMEDIATE step writes no attempts list, so this is a no-op for it.
                 buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars, secretAccessor));
 
-                buffer.Add(EventStreamJson.ToLine(new StepCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = now9,
-                    StepId = node.Id,
-                    Verdict = stepVerdict,
-                    DurationMs = durationMs,
-                    Captured = capturedList,
-                    Substitutions = substitutionsList,
-                    // S07-G-01: carry the structured observation onto the step-completed
-                    // event so a renderer can compute an expected-vs-observed diff at render
-                    // time (the stream stays pure structured data — no rendered text here).
-                    // An unparseable observation degrades to omission rather than crashing.
-                    // S11-B-01 (§17): the observation is free-form provider text (the
-                    // script.csharp `__ex.Message` path most acutely) — the one event-stream
-                    // surface the engine cannot type-check — so it is scrubbed through the
-                    // accessor's resolved-secret ledger as a defence-in-depth net BEFORE it is
-                    // parsed into the stream.  Type-based SecretString redaction stays primary.
-                    Observation = BuildStepObservation(secretAccessor, outcome?.Observation),
-                }));
+                // Issue #262: StepEventBuilder.StepCompletedLine is the SAME method
+                // LiveStepEventSink.OnStepCompleted calls in real time — this call reproduces,
+                // byte-for-byte, the pre-#262 inline Captured/Substitutions/Observation
+                // construction.
+                var stepCompletedLine = StepEventBuilder.StepCompletedLine(
+                    runId, now9, node, outcome, captureStatusRaw, captureOriginMap, secretAccessor);
+                buffer.Add(stepCompletedLine);
 
+                var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
                 counts[(int)stepVerdict]++;
                 aggregate = Elevate(aggregate, stepVerdict);
             }
@@ -1910,24 +1888,22 @@ public static class ScenarioRunner
             // script.csharp file: digest (issue #268) — falls back to seedBaseDirectory when
             // null (every single-scenario caller).
             var envelope = BuildReproducibilityEnvelope(ast, seedBaseDirectory, scriptBaseDirectory);
-            buffer.Add(EventStreamJson.ToLine(new ReproducibilityEnvelopeEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-                EnvSchemaVersion = envelope.SchemaVersion,
-                SecretReferences = envelope.SecretReferences,
-                Fixtures = envelope.Fixtures,
-            }));
+            var reproLine = StepEventBuilder.ReproducibilityLine(
+                runId, DateTimeOffset.UtcNow, scenarioName, envelope);
+            buffer.Add(reproLine);
 
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-                Verdict = aggregate,
-                Counts = finalCounts,
-            }));
+            var scenarioCompletedLine = StepEventBuilder.ScenarioCompletedLine(
+                runId, DateTimeOffset.UtcNow, scenarioName, aggregate, finalCounts);
+            buffer.Add(scenarioCompletedLine);
+
+            // Issue #262: stream the scenario-completed + reproducibility-envelope framing
+            // live too, for a coherent tail (INCLUDED per the #262 design decision) — posted
+            // using the EXACT SAME line strings just added to `buffer`, so there is no
+            // possibility of live/archive drift for these two framing lines. Every per-step
+            // line above was ALREADY streamed live (if a sink was attached) as the run
+            // progressed, via LiveStepEventSink; this is only the end-of-scenario framing.
+            livePump?.Post(reproLine);
+            livePump?.Post(scenarioCompletedLine);
 
             return aggregate;
         }
@@ -2136,25 +2112,14 @@ public static class ScenarioRunner
             return Array.Empty<string>();
         }
 
+        // Issue #262: delegate line construction to the shared StepEventBuilder — the SAME
+        // method LiveStepEventSink.OnStepAttempt calls in real time, per attempt, from inside
+        // the isolated run.  This is the parity guarantee: both paths produce byte-identical
+        // lines (modulo `ts`) because both call this one builder.
         var lines = new List<string>(attempts.Count);
         foreach (var a in attempts)
         {
-            lines.Add(EventStreamJson.ToLine(new StepAttemptEvent
-            {
-                RunId = runId,
-                Timestamp = timestamp,
-                StepId = stepId,
-                Attempt = a.Attempt,
-                TMs = a.TMs,
-                Outcome = a.Verdict,
-                // S11-B-01 (§17): each attempt's observation is free-form provider text, so it
-                // is scrubbed through the same resolved-secret ledger as the step-completed
-                // observation before it enters the stream — defence in depth, type-based
-                // redaction still primary.  A null accessor (the no-docker RETRY-event tests)
-                // skips the scrub, which is safe because those tests never resolve a secret.
-                Observation = BuildStepObservation(
-                    secretAccessor ?? NullSecretAccessor.Instance, a.Observation),
-            }));
+            lines.Add(StepEventBuilder.StepAttemptLine(runId, timestamp, stepId, a, secretAccessor));
         }
 
         return lines;

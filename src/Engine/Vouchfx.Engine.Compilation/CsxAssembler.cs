@@ -383,6 +383,13 @@ public static class CsxAssembler
     {
         var safe = CsxFragment.SanitiseId(stepId);
 
+        // Issue #262: the raw step id + the two Vars keys the live-sink OnStepCompleted call
+        // reads back are computed ONCE, up front, so both branches below (no-timeout /
+        // timeout) share identical literals.
+        var rawIdLit = JsonSerializer.Serialize(stepId);
+        var outcomeLit = JsonSerializer.Serialize(VarKeys.Outcome(safe));
+        var captureStatusLit = JsonSerializer.Serialize(VarKeys.CaptureStatus(safe));
+
         // Normalise: null or non-positive → no enforcement (mirrors RetryRunner's
         // treatment of its window parameter).  Clamp the upper end to what
         // CancellationTokenSource accepts (an absurd ~24.8-day budget must not
@@ -405,12 +412,13 @@ public static class CsxAssembler
             sb.Append("    _ = __stepCt_").Append(safe).Append(";\n");
             sb.Append("    bool __stepBudgetGoverned_").Append(safe).Append(" = false;\n");
             sb.Append("    _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
+            AppendStepStartedCall(sb, rawIdLit);
             sb.Append(statementBlock).Append('\n');
+            AppendStepCompletedCall(sb, safe, rawIdLit, outcomeLit, captureStatusLit);
             sb.Append('}');
             return sb.ToString();
         }
 
-        var outcomeLit = JsonSerializer.Serialize(VarKeys.Outcome(safe));
         var budgetLit = b.ToString(CultureInfo.InvariantCulture) + "L";
 
         // The observation JSON is assembled from compile-time literals only, so it is
@@ -436,6 +444,7 @@ public static class CsxAssembler
         // step token, so a budget LONGER than a convention is honoured (#232).
         sb.Append("    bool __stepBudgetGoverned_").Append(safe).Append(" = true;\n");
         sb.Append("    _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
+        AppendStepStartedCall(sb, rawIdLit);
         sb.Append("    var __stepTimedOut_").Append(safe).Append(" = false;\n");
         sb.Append("    try\n");
         sb.Append("    {\n");
@@ -481,6 +490,10 @@ public static class CsxAssembler
           .Append(" + ").Append(supersededSuffixLit).Append(");\n");
         sb.Append("    }\n");
 
+        // Issue #262: read the FINAL outcome — after the late-timeout supersession above has
+        // already run — matching exactly what the post-run reconstruction reads from Vars.
+        AppendStepCompletedCall(sb, safe, rawIdLit, outcomeLit, captureStatusLit);
+
         sb.Append('}');
         return sb.ToString();
     }
@@ -523,6 +536,11 @@ public static class CsxAssembler
         var outcomeLit = JsonSerializer.Serialize(outcomeKey);
         var attemptsLit = JsonSerializer.Serialize(attemptsKey);
 
+        // Issue #262: the raw step id + the capture-status Vars key the live-sink
+        // OnStepCompleted call reads back, alongside outcomeLit above.
+        var rawIdLit = JsonSerializer.Serialize(stepId);
+        var captureStatusLit = JsonSerializer.Serialize(VarKeys.CaptureStatus(safe));
+
         // Emit the long? parameters as C# numeric literals or 'null'.
         var timeoutLit = timeoutMs is { } t
             ? t.ToString(CultureInfo.InvariantCulture) + "L"
@@ -533,6 +551,7 @@ public static class CsxAssembler
 
         var sb = new StringBuilder();
         sb.Append('{').Append('\n');
+        AppendStepStartedCall(sb, rawIdLit);
 
         // Per-step attempt local function.  Fully-qualified types — no new usings.
         sb.Append("    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_")
@@ -574,14 +593,54 @@ public static class CsxAssembler
 
         // The engine-owned poll: writes the final StepOutcome + List<AttemptRecord> back
         // into Vars under outcomeKey / attemptsKey.  Method group → Func<CT, Task<…>>.
+        // Issue #262: the two trailing arguments route into the sink-aware PollAsync
+        // overload, so RetryRunner reports each attempt to StepEvents in real time as it
+        // resolves — the caller-side ct parameter is left at its default.
         sb.Append("    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(\n");
         sb.Append("        Vars, ").Append(outcomeLit).Append(", ").Append(attemptsLit)
           .Append(", ").Append(timeoutLit).Append(", ").Append(pollLit)
-          .Append(", __attempt_").Append(safe).Append(");\n");
+          .Append(", __attempt_").Append(safe)
+          .Append(", StepEvents, ").Append(rawIdLit).Append(");\n");
+
+        // Issue #262: read the FINAL outcome — the value PollAsync just wrote back to
+        // Vars[outcomeKey] — matching exactly what the post-run reconstruction reads.
+        AppendStepCompletedCall(sb, safe, rawIdLit, outcomeLit, captureStatusLit);
 
         sb.Append('}');
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Emits <c>StepEvents?.OnStepStarted("&lt;rawId&gt;");</c> — the top-of-block live
+    /// signal shared by <see cref="WrapForImmediate"/> (both branches) and
+    /// <see cref="WrapForRetry"/> (issue #262). A <see langword="null"/>
+    /// <c>ScriptGlobalVariables.StepEvents</c> (no <c>--events-stream</c> conduit) makes this
+    /// a pure no-op, so the emitted CSX behaves identically whether or not a live sink is
+    /// configured.
+    /// </summary>
+    private static void AppendStepStartedCall(StringBuilder sb, string rawIdLit)
+    {
+        sb.Append("    StepEvents?.OnStepStarted(").Append(rawIdLit).Append(");\n");
+    }
+
+    /// <summary>
+    /// Emits the end-of-block <c>StepEvents?.OnStepCompleted(...)</c> live signal shared by
+    /// <see cref="WrapForImmediate"/> (both branches) and <see cref="WrapForRetry"/> (issue
+    /// #262). Reads the FINAL <c>Vars[outcomeKey]</c> / <c>Vars[captureStatusKey]</c> values —
+    /// by the time this is reached, any RETRY poll or IMMEDIATE step-timeout supersession has
+    /// already written its last word — so the reported <see cref="StepOutcome"/> matches
+    /// exactly what the post-run reconstruction reads back from the same keys.
+    /// </summary>
+    private static void AppendStepCompletedCall(
+        StringBuilder sb, string safe, string rawIdLit, string outcomeLit, string captureStatusLit)
+    {
+        sb.Append("    StepEvents?.OnStepCompleted(\n");
+        sb.Append("        ").Append(rawIdLit).Append(",\n");
+        sb.Append("        Vars.TryGetValue(").Append(outcomeLit).Append(", out var __sco_").Append(safe)
+          .Append(") ? __sco_").Append(safe).Append(" as Vouchfx.Engine.Abstractions.StepOutcome : null,\n");
+        sb.Append("        Vars.TryGetValue(").Append(captureStatusLit).Append(", out var __scs_").Append(safe)
+          .Append(") ? __scs_").Append(safe).Append(" as string : null);\n");
     }
 
     /// <summary>

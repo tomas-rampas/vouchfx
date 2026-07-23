@@ -208,6 +208,29 @@ public static class MemoryProbe
     private static readonly ProbeTraceAccessor ClosureTraceAccessor = new();
 
     /// <summary>
+    /// The shared stub step-event sink used by the closure probe (issue #262, §5).
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <see cref="ClosureWebhookAccessor"/> / <see cref="ClosureTraceAccessor"/> exactly:
+    /// created once and reused across every closure iteration, a by-reference Default-ALC
+    /// instance holding only bounded counters. The closure CSX calls
+    /// <c>StepEvents?.OnStepStarted/OnStepAttempt/OnStepCompleted(...)</c> through it to prove
+    /// that read path does not pin the collectible context. The trivial probe leaves
+    /// <see cref="ScriptGlobalVariables.StepEvents"/> <see langword="null"/> (it passes
+    /// <see langword="null"/> here).
+    /// </remarks>
+    private static readonly ProbeStepEventSink ClosureStepEventSink = new();
+
+    /// <summary>
+    /// The number of <see cref="IStepEventSink.OnStepCompleted"/> calls the shared
+    /// <see cref="ClosureStepEventSink"/> has observed so far, across every closure run in this
+    /// process (issue #262). Exposed so <c>ClosureMemoryProbeTests</c> can assert the sink was
+    /// genuinely exercised by the just-completed <see cref="RunClosureAsync"/> call, proving the
+    /// leak gate's coverage of the <c>StepEvents</c> read path is real, not merely wired but dead.
+    /// </summary>
+    public static long ClosureStepEventCompletedCount => ClosureStepEventSink.CompletedCount;
+
+    /// <summary>
     /// Runs the trivial memory measurement protocol and returns a structured
     /// <see cref="HeapMeasurement"/> result.
     /// </summary>
@@ -454,7 +477,8 @@ public static class MemoryProbe
         {
             await RunIsolatedNoInlineAsync(
                     compiled, null, $"warmup-{i}", ct,
-                    webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor)
+                    webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor,
+                    stepEvents: ClosureStepEventSink)
                 .ConfigureAwait(false);
         }
 
@@ -477,11 +501,12 @@ public static class MemoryProbe
             // Pass the iteration index so the closure probe can gate the native
             // librdkafka producer/consumer handle build to HandleBuildEveryN cadence
             // (the cheap Avro / Polly touches still run every iteration), and pass the
-            // stub webhook + trace accessors so the CSX exercises the Webhooks (S07-E1) and
-            // Traces (Phase C) read paths.
+            // stub webhook + trace + step-event accessors so the CSX exercises the
+            // Webhooks (S07-E1), Traces (Phase C), and StepEvents (issue #262) read paths.
             await RunIsolatedNoInlineAsync(
                     compiled, null, $"iter-{i}", ct,
-                    iterIndex: i, webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor)
+                    iterIndex: i, webhooks: ClosureWebhookAccessor, traces: ClosureTraceAccessor,
+                    stepEvents: ClosureStepEventSink)
                 .ConfigureAwait(false);
         }
 
@@ -542,10 +567,18 @@ public static class MemoryProbe
     /// </param>
     /// <param name="traces">
     /// Optional stub OTLP trace-capture accessor (Phase C).  When non-<see langword="null"/>
-    /// (the closure path), the globals are built with the full 5-arg constructor so the CSX
+    /// (the closure path), the globals are built with the full constructor so the CSX
     /// can exercise the <c>Traces.GetCaptured</c> read path across the collectible ALC; when
     /// <see langword="null"/> (the trivial path), <c>Traces</c> stays a
     /// <see cref="NullTraceCaptureAccessor"/>.
+    /// </param>
+    /// <param name="stepEvents">
+    /// Optional stub step-event sink (issue #262).  When non-<see langword="null"/> (the
+    /// closure path), the globals are built with <see cref="ScriptGlobalVariables.StepEvents"/>
+    /// wired to it, so the CSX exercises the <c>StepEvents?.OnStepStarted/OnStepAttempt/
+    /// OnStepCompleted</c> call sites across the collectible ALC; when <see langword="null"/>
+    /// (the trivial path), <c>StepEvents</c> stays <see langword="null"/> (the default — no
+    /// Null-object, matching production).
     /// </param>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task RunIsolatedNoInlineAsync(
@@ -555,7 +588,8 @@ public static class MemoryProbe
         CancellationToken ct,
         int iterIndex = 0,
         IWebhookCaptureAccessor? webhooks = null,
-        ITraceCaptureAccessor? traces = null)
+        ITraceCaptureAccessor? traces = null,
+        IStepEventSink? stepEvents = null)
     {
         var vars = new Dictionary<string, object?>();
 
@@ -567,11 +601,11 @@ public static class MemoryProbe
         vars["__iter"] = (long)iterIndex;
 
         // Trivial path: the 1-arg ctor (Webhooks → NullWebhookCaptureAccessor, Traces →
-        // NullTraceCaptureAccessor). Closure path: the FULL 5-arg ctor with an empty services
-        // map, the throwing NullSecretAccessor (the probe never resolves a secret), and the
-        // stub webhook + trace accessors — so the CSX reads ScriptGlobalVariables.Webhooks /
-        // .Traces across the collectible ALC and a pin through either read path would surface
-        // (S07-E1 / Phase C, §5).
+        // NullTraceCaptureAccessor, StepEvents → null). Closure path: the FULL 6-arg ctor with
+        // an empty services map, the throwing NullSecretAccessor (the probe never resolves a
+        // secret), and the stub webhook / trace / step-event accessors — so the CSX reads
+        // ScriptGlobalVariables.Webhooks / .Traces / .StepEvents across the collectible ALC and
+        // a pin through any read path would surface (S07-E1 / Phase C / issue #262, §5).
         var globals = webhooks is null
             ? new ScriptGlobalVariables(vars)
             : new ScriptGlobalVariables(
@@ -579,7 +613,8 @@ public static class MemoryProbe
                 new Dictionary<string, object>(StringComparer.Ordinal),
                 NullSecretAccessor.Instance,
                 webhooks,
-                traces ?? NullTraceCaptureAccessor.Instance);
+                traces ?? NullTraceCaptureAccessor.Instance,
+                stepEvents);
         await RoslynScriptCompiler.RunIsolatedAsync(
                 compiled,
                 globals,

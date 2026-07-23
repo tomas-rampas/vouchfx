@@ -98,7 +98,7 @@ public static class ConcurrentAlcChurnProbe
         var weakRefs = new System.Collections.Concurrent.ConcurrentBag<WeakReference>();
 
         ParallelSuiteRunner.ScenarioCoreFunc fakeCore =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, token) =>
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, token) =>
                 ChurnOneAlcAsync(weakRefs, scenarioName, token);
 
         var sw = new StringWriter();
