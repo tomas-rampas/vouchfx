@@ -1164,35 +1164,40 @@ The engine attempted to clear a dependency's state between scenarios (the reset 
 
 **Symptom:**
 ```
-Validation failed at line 45
-unknown step type 'no-such.provider' — not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres')
+FAIL  my-test.e2e.yaml
+    [Schema] (line 45) unknown step type 'db-assert.oracle' — not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres').
 ```
 
 **What it means:**
-A step's `type` field does not match any registered provider. This is caught early by `vouchfx validate` (compile-level validation without Docker) with a precise line number, so you can fix the typo or provider name before attempting to run the suite.
+A step's `type` field is well-formed (matches the `<family>.<provider>` pattern) but does not match any registered provider. This is caught early by `vouchfx validate` (compile-level validation without Docker) with a precise line number and stage, so you can fix the provider name before attempting to run the suite. Note: malformed types like a bare `postgres` or `db_assert.postgres` (with underscore) are rejected by the schema's pattern check instead, reported as separate [Schema] errors — the "unknown step type" message specifically catches well-formed-but-unregistered types.
 
 **Fix:**
 
-1. **Check the step type spelling.** Consult the [Language Reference](language-reference.md) or run `vouchfx list` to see all available step types:
+1. **Check the step type against the registered providers.** Consult the [Language Reference](language-reference.md) or run `vouchfx list` to see all available step types:
    ```bash
    vouchfx list
    ```
 
-2. **Correct the `type` field.** Ensure it follows the `<family>.<provider>` naming convention:
+2. **Correct the `type` field to a registered provider.** Ensure it follows the `<family>.<provider>` naming convention and matches one of the Core providers:
    ```yaml
-   # Wrong
+   # Schema error: malformed (missing family)
    - id: my-step
-     type: postgres  # Missing family
+     type: postgres
    
+   # Schema error: malformed (wrong separator)
    - id: my-step
-     type: db_assert.postgres  # Wrong separator (underscore)
+     type: db_assert.postgres
    
-   # Correct
+   # Unknown-type error (well-formed but not a Core provider)
+   - id: my-step
+     type: db-assert.oracle
+   
+   # Correct (matches a registered Core provider)
    - id: my-step
      type: db-assert.postgres
    ```
 
-3. **Use `vouchfx validate` before running.** It catches unknown types, missing required fields, and schema violations without needing Docker:
+3. **Use `vouchfx validate` before running.** It catches both malformed types (schema pattern errors) and well-formed-but-unregistered types (unknown-step-type errors), plus missing required fields, without needing Docker:
    ```bash
    vouchfx validate ./tests/e2e
    ```
