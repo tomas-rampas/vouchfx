@@ -34,9 +34,12 @@ public sealed class RunAllParseFailureExitCodeTests : IDisposable
         {
             Directory.Delete(_root, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Best-effort temp cleanup; a locked file must not fail the test.
+            // Best-effort temp cleanup; a locked or read-only file must not fail the test.
+            // UnauthorizedAccessException (not just IOException) is possible here too — e.g.
+            // a read-only file on some platforms — so both are swallowed (Copilot review
+            // finding, PR #284).
         }
     }
 
