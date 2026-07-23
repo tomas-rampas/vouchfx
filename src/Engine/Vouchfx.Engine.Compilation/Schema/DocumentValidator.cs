@@ -43,6 +43,28 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// <see cref="SchemaValidationError.InstanceLocation"/> is never modified;
 /// only <see cref="SchemaValidationError.Message"/> gains the prefix.
 /// </para>
+/// <para>
+/// <b>Unknown step types (#265).</b> <c>SchemaComposer</c>'s composed schema
+/// injects one unconditional <c>if</c>/<c>then</c> clause per registered
+/// provider into <c>$defs/step/allOf</c> — there is no <c>else</c> and no
+/// closed enumeration of known <c>type</c> values. A step whose <c>type</c>
+/// matches none of the registered clauses therefore satisfies every clause
+/// VACUOUSLY (per JSON Schema 2020-12 <c>if</c>/<c>then</c> semantics) and
+/// passes raw schema evaluation with zero errors, even though it can never
+/// bind to a provider. This class closes that gap with a POST-SCHEMA
+/// cross-check against the <see cref="StepKindRegistry"/> supplied to
+/// <see cref="Validate"/> — deliberately kept out of the composed schema
+/// itself (which is a frozen, golden-snapshotted v1 artifact; see
+/// <c>SchemaFreezeTests</c>) — mirroring how the vouchfx-mcp
+/// server's <c>SuiteValidator</c>/<c>StepTypeCatalogue</c> solved the
+/// identical gap against its own (vendored, read-only) copy of the schema.
+/// The cross-check defers entirely to the schema for a <c>type</c> that is
+/// already malformed (fails the root schema's own
+/// <c>^[a-z0-9-]+\.[a-z0-9-]+$</c> pattern, e.g. a bare family name like
+/// <c>http</c> or a wrongly-cased <c>HTTP.REST</c>): it never emits a second
+/// error at an instance location the schema pass already flagged, so a
+/// pattern-invalid value is reported exactly once, by the schema, not twice.
+/// </para>
 /// </remarks>
 public static class DocumentValidator
 {
@@ -68,22 +90,46 @@ public static class DocumentValidator
     public static SchemaValidationResult Validate(string yamlText, StepKindRegistry registry)
     {
         // Delegate to the composed-schema path; this is the authoritative
-        // validation (root schema + provider fragments).
+        // schema validation (root schema + provider fragments).
         var raw = SchemaComposer.Validate(registry, yamlText);
 
-        if (raw.IsValid || raw.Errors.Count == 0)
-            return raw;
-
-        // Parse the YAML once into the RepresentationModel so we can resolve
-        // JSON-Pointer segments back to concrete line numbers.  If parsing
-        // fails (the document was already rejected as malformed) we skip
-        // enrichment and return the raw result unchanged.
+        // Parse the YAML once into the RepresentationModel.  This single parse
+        // serves two purposes: resolving JSON-Pointer segments back to concrete
+        // line numbers (below), and walking the `steps` sequence for the
+        // unknown-step-type cross-check (#265, see the class remarks).  If
+        // parsing fails (the document was already rejected as malformed) both
+        // concerns degrade gracefully: no line prefixes, no unknown-type
+        // detection — there is no YAML tree left to walk.
         YamlMappingNode? rootMapping = TryParseYamlRoot(yamlText);
 
-        var enriched = new SchemaValidationError[raw.Errors.Count];
+        // Run the unknown-step-type cross-check UNCONDITIONALLY — not only when
+        // the schema pass already failed — because a document whose ONLY defect
+        // is an unregistered step type is exactly the case the composed schema
+        // cannot detect on its own (it is vacuously schema-valid).
+        var unknownTypeErrors = rootMapping is not null
+            ? CollectUnknownStepTypeErrors(rootMapping, registry, raw.Errors)
+            : Array.Empty<SchemaValidationError>();
+
+        if ((raw.IsValid || raw.Errors.Count == 0) && unknownTypeErrors.Count == 0)
+            return raw;
+
+        // Aggregate every raw schema error AND every unknown-step-type error
+        // into one result: the cross-check must never mask or replace a genuine
+        // schema violation (on the same step or a different one), and a real
+        // schema violation must never suppress an unknown-type finding either.
+        // Schema errors are listed first, unknown-type errors appended after,
+        // so existing consumers that pick the FIRST matching error for a given
+        // instance location keep seeing the schema violation there.
+        var combined = new SchemaValidationError[raw.Errors.Count + unknownTypeErrors.Count];
         for (var i = 0; i < raw.Errors.Count; i++)
+            combined[i] = raw.Errors[i];
+        for (var i = 0; i < unknownTypeErrors.Count; i++)
+            combined[raw.Errors.Count + i] = unknownTypeErrors[i];
+
+        var enriched = new SchemaValidationError[combined.Length];
+        for (var i = 0; i < combined.Length; i++)
         {
-            var error = raw.Errors[i];
+            var error = combined[i];
             var line = rootMapping is not null
                 ? ResolveLineFromPointer(rootMapping, error.InstanceLocation)
                 : null;
@@ -99,6 +145,116 @@ public static class DocumentValidator
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Walks the document's <c>steps</c> sequence and flags any step whose
+    /// <c>type</c> is a well-formed YAML scalar that does not match a
+    /// registered provider key in <paramref name="registry"/> — UNLESS the
+    /// schema pass already reported an error at that same
+    /// <c>/steps/&lt;i&gt;/type</c> instance location, in which case this
+    /// method defers to it and reports nothing there (#265).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A step missing <c>type</c> entirely, or whose <c>type</c> is not a
+    /// scalar (a mapping or sequence), is already caught by the root schema's
+    /// own <c>required</c>/<c>type</c> constraints on <c>$defs/step</c> — this
+    /// method only inspects steps with a genuinely well-formed scalar
+    /// <c>type</c> value, so it never double-reports those cases.
+    /// </para>
+    /// <para>
+    /// A well-formed scalar <c>type</c> can still violate the root schema's
+    /// own <c>^[a-z0-9-]+\.[a-z0-9-]+$</c> pattern — e.g. a bare family name
+    /// like <c>http</c> (a realistic authoring mistake: bare family aliases
+    /// were retired pre-v1.0 and migrating authors still write them), or a
+    /// wrongly-cased <c>HTTP.REST</c>. The schema pass already reports a
+    /// <c>[pattern]</c> error for that value at this exact instance location.
+    /// Rather than re-deriving that same regex here, this method checks
+    /// <paramref name="schemaErrors"/> for an entry at the pointer it is about
+    /// to use and, if one exists, skips emitting an unknown-type error there —
+    /// the two checks partition cleanly instead of double-reporting the same
+    /// defect.
+    /// </para>
+    /// <para>
+    /// When the document has no <c>steps</c> key, <c>steps</c> is not a
+    /// sequence, or a given step is not a mapping, this method silently skips
+    /// it: those shapes are themselves root-schema violations, not this
+    /// cross-check's concern.
+    /// </para>
+    /// </remarks>
+    /// <param name="root">The root mapping node of the YAML document.</param>
+    /// <param name="registry">
+    /// The frozen provider registry to check each step's <c>type</c> against.
+    /// </param>
+    /// <param name="schemaErrors">
+    /// The raw (pre-enrichment) schema-validation errors already produced for
+    /// this document by <see cref="SchemaComposer.Validate"/>. Consulted only
+    /// to suppress an unknown-type finding at an instance location the schema
+    /// pass already flagged (see remarks); never otherwise inspected.
+    /// </param>
+    /// <returns>
+    /// One <see cref="SchemaValidationError"/> per step with an unrecognised
+    /// <c>type</c> that the schema pass did NOT already flag at the same
+    /// pointer, in document order, pointing at <c>/steps/&lt;i&gt;/type</c>;
+    /// empty when every step's <c>type</c> is either registered, not a
+    /// well-formed scalar, or already reported by the schema.
+    /// </returns>
+    private static IReadOnlyList<SchemaValidationError> CollectUnknownStepTypeErrors(
+        YamlMappingNode root,
+        StepKindRegistry registry,
+        IReadOnlyList<SchemaValidationError> schemaErrors)
+    {
+        var stepsKey = new YamlScalarNode("steps");
+        if (!root.Children.TryGetValue(stepsKey, out var stepsNode) ||
+            stepsNode is not YamlSequenceNode stepsSequence)
+        {
+            return Array.Empty<SchemaValidationError>();
+        }
+
+        // Instance locations the schema pass already flagged, so this
+        // cross-check never emits a second error at a pointer the schema
+        // itself covers (see remarks — e.g. a pattern-invalid `type`).
+        var schemaErrorLocations = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var schemaError in schemaErrors)
+            schemaErrorLocations.Add(schemaError.InstanceLocation);
+
+        List<SchemaValidationError>? errors = null;
+        var typeKey = new YamlScalarNode("type");
+
+        for (var i = 0; i < stepsSequence.Children.Count; i++)
+        {
+            if (stepsSequence.Children[i] is not YamlMappingNode stepMapping)
+                continue;
+
+            if (!stepMapping.Children.TryGetValue(typeKey, out var typeNode) ||
+                typeNode is not YamlScalarNode typeScalar)
+            {
+                // Missing or non-scalar `type` is already a root-schema
+                // violation (required/type constraints) — do not double-report.
+                continue;
+            }
+
+            var typeValue = typeScalar.Value;
+            if (string.IsNullOrEmpty(typeValue) || registry.TryGet(typeValue, out _))
+                continue;
+
+            var pointer = $"/steps/{i}/type";
+
+            // Defer to the schema: a `type` that violates the root schema's
+            // own pattern already has a [pattern] error at this exact
+            // pointer — do not duplicate it with an unknown-type finding.
+            if (schemaErrorLocations.Contains(pointer))
+                continue;
+
+            errors ??= new List<SchemaValidationError>();
+            errors.Add(new SchemaValidationError(
+                pointer,
+                $"unknown step type '{typeValue}' — not a registered provider " +
+                "(expected <family>.<provider>, e.g. 'db-assert.postgres')."));
+        }
+
+        return errors is null ? Array.Empty<SchemaValidationError>() : errors;
+    }
 
     /// <summary>
     /// Attempts to parse <paramref name="yamlText"/> into a

@@ -15,6 +15,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Steps run but assertions fail](#steps-run-but-assertions-fail)
 - [Capture fails or placeholder is empty](#capture-fails-or-placeholder-is-empty)
 - [Kafka messages not consumed (ordering or timing)](#kafka-messages-not-consumed-ordering-or-timing)
+- [Validation errors at authoring time](#validation-errors-at-authoring-time)
 
 ---
 
@@ -1153,6 +1154,47 @@ The engine attempted to clear a dependency's state between scenarios (the reset 
 5. **For Elasticsearch**, ensure the cluster is healthy and has sufficient resources; check the cluster health status:
    ```bash
    curl http://localhost:9200/_cluster/health
+   ```
+
+---
+
+## Validation errors at authoring time
+
+**Unknown step type (vouchfx validate or pre-compilation)**
+
+**Symptom:**
+```
+Validation failed at line 45
+unknown step type 'no-such.provider' — not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres')
+```
+
+**What it means:**
+A step's `type` field does not match any registered provider. This is caught early by `vouchfx validate` (compile-level validation without Docker) with a precise line number, so you can fix the typo or provider name before attempting to run the suite.
+
+**Fix:**
+
+1. **Check the step type spelling.** Consult the [Language Reference](language-reference.md) or run `vouchfx list` to see all available step types:
+   ```bash
+   vouchfx list
+   ```
+
+2. **Correct the `type` field.** Ensure it follows the `<family>.<provider>` naming convention:
+   ```yaml
+   # Wrong
+   - id: my-step
+     type: postgres  # Missing family
+   
+   - id: my-step
+     type: db_assert.postgres  # Wrong separator (underscore)
+   
+   # Correct
+   - id: my-step
+     type: db-assert.postgres
+   ```
+
+3. **Use `vouchfx validate` before running.** It catches unknown types, missing required fields, and schema violations without needing Docker:
+   ```bash
+   vouchfx validate ./tests/e2e
    ```
 
 ---
