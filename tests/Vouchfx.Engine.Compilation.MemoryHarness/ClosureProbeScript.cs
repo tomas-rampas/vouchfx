@@ -504,5 +504,25 @@ public static class ClosureProbeScript
             }
         }
         Vars["trace_touch_len"] = __trlen;
+
+        // ── Issue #262: ScriptGlobalVariables.StepEvents live-sink calls (cheap — every iter) ─
+        // Drive all three IStepEventSink members through the NEW StepEvents accessor
+        // (paralleling Webhooks/Traces/Secrets) — the exact call shape CsxAssembler's
+        // WrapForImmediate/WrapForRetry wrappers emit around a real provider step. This forces
+        // the CSX (collectible ALC) to (a) call the IStepEventSink instance handed in via
+        // ScriptGlobalVariables.StepEvents and (b) construct + pass a StepOutcome and an
+        // AttemptRecord across the boundary. If any of this pinned the collectible context, the
+        // per-cycle heap delta would grow. In the closure run the harness stub
+        // (ProbeStepEventSink) just increments bounded counters; under the trivial probe
+        // StepEvents is null and every `?.` call is a no-op. Result via Vars only (a length,
+        // not the sink itself); fully-qualified types; no 'using var'.
+        StepEvents?.OnStepStarted("probe-step");
+        var __probeAttempt = new Vouchfx.Engine.Abstractions.Retry.AttemptRecord(
+            1, 1L, Vouchfx.Engine.Abstractions.Verdict.Pass, "{\"matched\":true}");
+        StepEvents?.OnStepAttempt("probe-step", __probeAttempt);
+        var __probeOutcome = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Pass, 1L, "{\"ok\":true}");
+        StepEvents?.OnStepCompleted("probe-step", __probeOutcome, "1");
+        Vars["step_events_touch_len"] = (long)"probe-step".Length;
         """;
 }

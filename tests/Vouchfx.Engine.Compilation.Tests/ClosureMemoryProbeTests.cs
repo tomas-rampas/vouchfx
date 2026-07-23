@@ -52,6 +52,8 @@ public sealed class ClosureMemoryProbeTests
         const int iterations = 200;
         const long threshold = 2_000_000; // 2 MB
 
+        var completedCountBefore = MemoryProbe.ClosureStepEventCompletedCount;
+
         var result = await MemoryProbe.RunClosureAsync(iterations: iterations, thresholdBytes: threshold);
 
         _output.WriteLine(
@@ -90,5 +92,16 @@ public sealed class ClosureMemoryProbeTests
 
         // Singletons must have been documented (non-empty list).
         Assert.NotEmpty(result.SingletonsReset);
+
+        // Issue #262: the memory-leak gate's coverage of the NEW StepEvents read path is real,
+        // not merely wired but dead — the shared ProbeStepEventSink must have observed at least
+        // one OnStepCompleted call per iteration this run just drove (plus warm-up), proving the
+        // sink path was genuinely exercised inside the just-passed closure workload.
+        var completedCountAfter = MemoryProbe.ClosureStepEventCompletedCount;
+        Assert.True(
+            completedCountAfter - completedCountBefore >= iterations,
+            $"Expected at least {iterations} StepEvents.OnStepCompleted calls from this run " +
+            $"(before={completedCountBefore}, after={completedCountAfter}); the closure probe's " +
+            "StepEvents touch may not be wired into the workload.");
     }
 }

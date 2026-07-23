@@ -125,6 +125,7 @@ public sealed class ScenarioRunnerTests
             appHostAssemblyName: AppHostAssemblyName,
             output: sw,
             seedBaseDirectory: null,
+            livePump: null,
             cancellationToken: default);
 
         // Assert — the core returns the verdict + the complete event buffer.

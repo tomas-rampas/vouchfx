@@ -14,6 +14,25 @@ using Xunit;
 namespace Vouchfx.Engine.Abstractions.Tests.Retry;
 
 /// <summary>
+/// A tiny recording <see cref="IStepEventSink"/> used only by the sink-aware
+/// <see cref="RetryRunner"/>.<c>PollAsync</c> overload tests (issue #262). Records every call's
+/// arguments, in order, with no other behaviour.
+/// </summary>
+internal sealed class RecordingStepEventSink : IStepEventSink
+{
+    public List<string> StartedStepIds { get; } = new();
+    public List<(string StepId, AttemptRecord Attempt)> Attempts { get; } = new();
+    public List<(string StepId, StepOutcome? Outcome, string? CaptureStatus)> Completed { get; } = new();
+
+    public void OnStepStarted(string stepId) => StartedStepIds.Add(stepId);
+
+    public void OnStepAttempt(string stepId, AttemptRecord attempt) => Attempts.Add((stepId, attempt));
+
+    public void OnStepCompleted(string stepId, StepOutcome? outcome, string? captureStatus) =>
+        Completed.Add((stepId, outcome, captureStatus));
+}
+
+/// <summary>
 /// Verifies the behaviour contract of <see cref="RetryRunner.PollAsync"/>: the
 /// per-attempt record, the terminal verdicts (Pass, EnvironmentError, throw), the
 /// timeout-to-Inconclusive resolution (never Fail), and the two written Vars keys.
@@ -233,5 +252,135 @@ public sealed class RetryRunnerTests
         // Assert — the runner forged no normal result on the cancellation path: the
         // outcome key was never written.
         Assert.False(vars.ContainsKey(OutcomeKey));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #262 — the sink-aware PollAsync overload
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The sink-aware overload invokes <see cref="IStepEventSink.OnStepAttempt"/> once per
+    /// recorded attempt, in order, with the SAME step id and the SAME <see cref="AttemptRecord"/>
+    /// values that land in <c>Vars[attemptsKey]</c>.
+    /// </summary>
+    [Fact]
+    public async Task PollAsync_WithSink_InvokesOnStepAttemptOncePerAttempt_InOrder()
+    {
+        var vars = new Dictionary<string, object?>();
+        var sink = new RecordingStepEventSink();
+        var calls = 0;
+
+        Task<StepOutcome> Attempt(CancellationToken _)
+        {
+            calls++;
+            var verdict = calls < 3 ? Verdict.Fail : Verdict.Pass;
+            return Task.FromResult(new StepOutcome(verdict, 1L, null));
+        }
+
+        await RetryRunner.PollAsync(
+            vars,
+            OutcomeKey,
+            AttemptsKey,
+            timeoutMs: 5_000,
+            pollIntervalMs: 10,
+            Attempt,
+            sink,
+            stepId: "poll-step");
+
+        var attempts = Assert.IsType<List<AttemptRecord>>(vars[AttemptsKey]);
+        Assert.Equal(3, attempts.Count);
+
+        // One OnStepAttempt call per recorded attempt, same step id, same values, in order.
+        Assert.Equal(3, sink.Attempts.Count);
+        for (var i = 0; i < attempts.Count; i++)
+        {
+            Assert.Equal("poll-step", sink.Attempts[i].StepId);
+            Assert.Equal(attempts[i].Attempt, sink.Attempts[i].Attempt.Attempt);
+            Assert.Equal(attempts[i].Verdict, sink.Attempts[i].Attempt.Verdict);
+            Assert.Equal(attempts[i].Observation, sink.Attempts[i].Attempt.Observation);
+        }
+    }
+
+    /// <summary>
+    /// A thrown attempt is ALSO reported to the sink (the thrown-attempt branch records an
+    /// <see cref="AttemptRecord"/> just like the success branch, so the sink call must fire
+    /// there too).
+    /// </summary>
+    [Fact]
+    public async Task PollAsync_WithSink_ThrownAttempt_StillInvokesOnStepAttempt()
+    {
+        var vars = new Dictionary<string, object?>();
+        var sink = new RecordingStepEventSink();
+
+        Task<StepOutcome> Attempt(CancellationToken _)
+            => throw new InvalidOperationException("connection refused");
+
+        await RetryRunner.PollAsync(
+            vars,
+            OutcomeKey,
+            AttemptsKey,
+            timeoutMs: 5_000,
+            pollIntervalMs: 10,
+            Attempt,
+            sink,
+            stepId: "poll-step");
+
+        Assert.Single(sink.Attempts);
+        Assert.Equal("poll-step", sink.Attempts[0].StepId);
+        Assert.Equal(Verdict.EnvironmentError, sink.Attempts[0].Attempt.Verdict);
+    }
+
+    /// <summary>
+    /// A <see langword="null"/> sink is a pure no-op: the sink-aware overload with
+    /// <c>sink: null</c> behaves identically (same Vars writes) to the classic overload — the
+    /// back-compat delegation contract.
+    /// </summary>
+    [Fact]
+    public async Task PollAsync_WithNullSink_BehavesIdenticallyToClassicOverload()
+    {
+        var vars = new Dictionary<string, object?>();
+
+        Task<StepOutcome> Attempt(CancellationToken _)
+            => Task.FromResult(new StepOutcome(Verdict.Pass, 1L, null));
+
+        await RetryRunner.PollAsync(
+            vars,
+            OutcomeKey,
+            AttemptsKey,
+            timeoutMs: 5_000,
+            pollIntervalMs: 10,
+            Attempt,
+            sink: null,
+            stepId: "poll-step");
+
+        var outcome = Assert.IsType<StepOutcome>(vars[OutcomeKey]);
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
+
+        var attempts = Assert.IsType<List<AttemptRecord>>(vars[AttemptsKey]);
+        Assert.Single(attempts);
+    }
+
+    /// <summary>
+    /// The classic 6-argument overload (issue #262's back-compat shim) is unchanged: it still
+    /// writes both Vars keys with no sink involved.
+    /// </summary>
+    [Fact]
+    public async Task PollAsync_ClassicOverload_StillWritesBothVarsKeys()
+    {
+        var vars = new Dictionary<string, object?>();
+
+        Task<StepOutcome> Attempt(CancellationToken _)
+            => Task.FromResult(new StepOutcome(Verdict.Pass, 1L, null));
+
+        await RetryRunner.PollAsync(
+            vars,
+            OutcomeKey,
+            AttemptsKey,
+            timeoutMs: 5_000,
+            pollIntervalMs: 10,
+            Attempt);
+
+        Assert.True(vars.ContainsKey(OutcomeKey));
+        Assert.True(vars.ContainsKey(AttemptsKey));
     }
 }

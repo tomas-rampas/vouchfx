@@ -151,7 +151,7 @@ public sealed class RunParallelAsyncTests
             var sw = new StringWriter();
 
             ParallelSuiteRunner.ScenarioCoreFunc fake =
-                async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+                async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
                 {
                     // Index by declaration order via the scenario name suffix.
                     var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
@@ -202,7 +202,7 @@ public sealed class RunParallelAsyncTests
         var gate = new object();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 lock (gate)
                 {
@@ -261,7 +261,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
                 var verdict = perScenario[idx];
@@ -306,7 +306,7 @@ public sealed class RunParallelAsyncTests
         var ran = new ConcurrentDictionary<int, bool>();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
 
@@ -367,7 +367,7 @@ public sealed class RunParallelAsyncTests
         var gate = new object();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 lock (gate)
                 {
@@ -435,7 +435,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
                 if (idx == 2)
@@ -491,7 +491,7 @@ public sealed class RunParallelAsyncTests
         var names = new[] { "scenario-0", hostileName };
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 if (string.Equals(scenarioName, hostileName, StringComparison.Ordinal))
                 {
@@ -601,7 +601,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(1);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, ct) =>
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
                 throw new InvalidOperationException(
                     "The scenario core must never be invoked: the length-mismatch guard should "
                     + "fire before any scenario slot is launched.");

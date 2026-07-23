@@ -37,7 +37,7 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 - **Reporting off one event stream** — terminal (WCAG-conscious), self-contained HTML, JUnit XML and a raw
   JSON Lines `--events` feed, all rendered from the same schema-versioned stream.
 - **Live event streaming** — `vouchfx run --events-stream <path>` writes an incremental, tailable JSON Lines
-  stream to a file as scenarios complete (scenario-level granularity), useful for real-time tailing, CI progress
+  stream to a file in real time as each step and attempt completes, useful for real-time tailing, CI progress
   streaming, and downstream consumers.
 - **Compile-level suite tooling** — `validate` and `list` subcommands perform Docker-free YAML validation
   and step-type discovery (machine-readable `--json` output), executed once at suite load time.

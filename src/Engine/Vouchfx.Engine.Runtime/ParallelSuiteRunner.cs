@@ -94,6 +94,15 @@ public static class ParallelSuiteRunner
     /// <param name="appHostAssemblyName">The Aspire host assembly name (R-1; nullable).</param>
     /// <param name="output">The writer that receives the core's raw early-exit diagnostics.</param>
     /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="livePump">
+    /// The optional live events-stream conduit (issue #262). When non-<see langword="null"/>,
+    /// the real core (<see cref="ScenarioRunner.RunScenarioOwningTopologyAsync"/>) threads this
+    /// down to a per-scenario <see cref="LiveStepEventSink"/> so per-step / per-attempt lines
+    /// stream in real time; a fake core injected by a test is free to ignore it. When the core
+    /// itself streams every line for a completed slot (the real core's success path does),
+    /// <see cref="RunOneSlotAsync"/> does NOT additionally post that slot's returned buffer —
+    /// see its remarks.
+    /// </param>
     /// <param name="ct">Propagated to all async operations in the core.</param>
     /// <returns>The scenario's verdict and complete event buffer.</returns>
     public delegate Task<(Verdict Verdict, List<string> Buffer)> ScenarioCoreFunc(
@@ -103,6 +112,7 @@ public static class ParallelSuiteRunner
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
+        LiveEventPump? livePump,
         CancellationToken ct);
 
     /// <summary>
@@ -168,14 +178,20 @@ public static class ParallelSuiteRunner
     /// artifact.
     /// </param>
     /// <param name="eventsStreamPath">
-    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258).
-    /// When non-<see langword="null"/>, an <see cref="Reporting.EventStreamAppender"/> is opened
-    /// ONCE and each scenario slot's event buffer is appended — and flushed — to it as soon as
-    /// that slot COMPLETES (success, cancellation, or an escaped exception), i.e. in COMPLETION
-    /// order, not declaration order — acceptable for a live tail, and unrelated to the
-    /// deterministic, declaration-order <paramref name="eventsReportPath"/> archive, which is
-    /// still written ONCE, at the end, from the declaration-order concatenation.
-    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258
+    /// scenario-granular liveness; per-step/per-attempt liveness issue #262). When
+    /// non-<see langword="null"/>, a <see cref="LiveEventPump"/> (wrapping an
+    /// <see cref="Reporting.EventStreamAppender"/>) is opened ONCE and shared across every
+    /// concurrently-running slot. A REAL slot's <c>step-started</c> / <c>step-attempt</c> /
+    /// <c>step-completed</c> lines stream in real time, from inside that scenario's isolated
+    /// run, via a per-scenario <see cref="LiveStepEventSink"/> — interleaved by arrival across
+    /// concurrently-running scenarios, disambiguated by each scenario's distinct <c>runId</c>
+    /// (mirroring #258's documented "completion order, not declaration order" contract). A slot
+    /// that never reaches the core (cancelled before start, or an exception escaping the core)
+    /// posts its own synthesised buffer explicitly. Unrelated to the deterministic,
+    /// declaration-order <paramref name="eventsReportPath"/> archive, which is still written
+    /// ONCE, at the end, from the declaration-order concatenation. <see langword="null"/> ⇒ no
+    /// incremental stream (the default).
     /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): when <see langword="true"/>, the single render over
@@ -267,10 +283,10 @@ public static class ParallelSuiteRunner
     /// <param name="junitReportPath">Optional JUnit XML report destination (S09-T3); null ⇒ none.</param>
     /// <param name="eventsReportPath">Optional raw JSON Lines events destination (S10); null ⇒ none.</param>
     /// <param name="eventsStreamPath">
-    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258); an
-    /// <see cref="Reporting.EventStreamAppender"/> is opened once (guarded on non-null) and each
-    /// slot's buffer is appended to it as that slot completes — in COMPLETION order.
-    /// <see langword="null"/> ⇒ no incremental stream (the default).
+    /// Optional destination for the INCREMENTAL, tailable JSON Lines event stream (issue #258;
+    /// per-step liveness issue #262); a <see cref="LiveEventPump"/> is opened once (guarded on
+    /// non-null), passed into every slot's <paramref name="runScenario"/> call, and shared for
+    /// the whole gather. <see langword="null"/> ⇒ no incremental stream (the default).
     /// </param>
     /// <param name="decorate">
     /// Accessibility decoration flag (S10-G-03a): decorate the single render with ANSI colour + a
@@ -353,15 +369,22 @@ public static class ParallelSuiteRunner
         // SemaphoreSlim gate caps concurrency at the configured degree.  Disposed after WhenAll.
         var gate = new SemaphoreSlim(degree, degree);
 
-        // ── Incremental events stream (issue #258) ────────────────────────────────
+        // ── Incremental events stream (issue #258; per-step liveness issue #262) ──────
         // Opened ONCE, guarded on a non-null path, and disposed (via `await using`) once this
         // method returns — after every slot has completed and RenderAndAggregate has run.
-        // Each completing slot appends its OWN buffer below (COMPLETION order, not declaration
-        // order — see the parameter doc). Entirely separate from `eventsReportPath`: the
-        // --events / --json archive is still written once, at the end, by RenderAndAggregate's
-        // FileReportWriter.WriteFileReports call, from the declaration-order concatenation.
-        await using var eventsStreamAppender = eventsStreamPath is not null
-            ? new EventStreamAppender(eventsStreamPath, output)
+        // Entirely separate from `eventsReportPath`: the --events / --json archive is still
+        // written once, at the end, by RenderAndAggregate's FileReportWriter.WriteFileReports
+        // call, from the declaration-order concatenation.
+        //
+        // Issue #262: LiveEventPump wraps the same EventStreamAppender, now behind a bounded,
+        // non-blocking conduit. It is passed into EVERY slot's `runScenario` call — the real
+        // core (ScenarioRunner.RunScenarioOwningTopologyAsync) threads it down to a
+        // per-scenario LiveStepEventSink so per-step / per-attempt lines from EVERY
+        // concurrently-running scenario stream to the SAME file as they happen (interleaved by
+        // arrival — each scenario's distinct runId disambiguates, exactly as #258 already
+        // documents for scenario-granular completion order).
+        await using var livePump = eventsStreamPath is not null
+            ? new LiveEventPump(eventsStreamPath, output)
             : null;
 
         // Launch every scenario as a task; the gate (not the launch loop) bounds concurrency.
@@ -396,7 +419,7 @@ public static class ParallelSuiteRunner
                     index,
                     slotVerdicts,
                     slotBuffers,
-                    eventsStreamAppender,
+                    livePump,
                     ct);
             }
 
@@ -426,13 +449,15 @@ public static class ParallelSuiteRunner
     /// <see cref="Task.WhenAll(System.Collections.Generic.IEnumerable{Task})"/> always completes and
     /// every topology disposes (complete-all, no fail-fast).
     /// </summary>
-    /// <param name="eventsStreamAppender">
-    /// The optional incremental events-stream sink (issue #258). When non-<see langword="null"/>,
-    /// this slot's buffer is appended — and flushed — to it the moment the slot reaches a terminal
-    /// state (success, cancellation, or an escaped exception), so a concurrent tail sees this
-    /// scenario's lines as soon as IT finishes, in completion order (not declaration order). The
-    /// appender is shared across every concurrently-running slot and internally synchronises its
-    /// writes, so concurrent calls here can never interleave mid-record.
+    /// <param name="livePump">
+    /// The optional live events-stream conduit (issue #258 scenario-granular liveness; #262
+    /// per-step liveness). Passed into <paramref name="runScenario"/> — the real core threads it
+    /// down to a per-scenario <see cref="LiveStepEventSink"/>, so a completing REAL slot's lines
+    /// were already streamed live, as they happened, and are NOT re-posted here (see the success
+    /// branch below). The two buffers this method synthesises ITSELF — the cancelled-before-start
+    /// and the exception-escaped slot buffers — are never seen by any core, so THOSE are posted
+    /// explicitly. The pump is shared across every concurrently-running slot and is internally
+    /// non-blocking + thread-safe, so concurrent calls here can never interleave mid-record.
     /// </param>
     private static async Task RunOneSlotAsync(
         StepKindRegistry registry,
@@ -446,7 +471,7 @@ public static class ParallelSuiteRunner
         int index,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
-        EventStreamAppender? eventsStreamAppender,
+        LiveEventPump? livePump,
         CancellationToken ct)
     {
         // Yield so the launch loop completes promptly and all slots are pending before any runs —
@@ -463,7 +488,9 @@ public static class ParallelSuiteRunner
         {
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
-            eventsStreamAppender?.AppendLines(slotBuffers[index]);
+            // This buffer is synthesised HERE (the core never ran), so it must be posted
+            // explicitly — nothing else will ever stream it.
+            livePump?.PostRange(slotBuffers[index]);
             return;
         }
 
@@ -476,11 +503,20 @@ public static class ParallelSuiteRunner
                 appHostAssemblyName,
                 rawWriter,
                 seedBaseDirectory,
+                livePump,
                 ct).ConfigureAwait(false);
 
             slotVerdicts[index] = verdict;
             slotBuffers[index] = buffer;
-            eventsStreamAppender?.AppendLines(buffer);
+            // Issue #262: NO livePump?.PostRange(buffer) here. The real core
+            // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
+            // slot's lines live — as they happened — via the per-scenario LiveStepEventSink plus
+            // its own explicit early-exit/framing posts, all threaded through the SAME livePump
+            // just passed in above. Re-posting the reconstructed buffer here would duplicate
+            // every line in the live file. A test's FAKE core that ignores `livePump` simply
+            // streams nothing for that slot — acceptable, since no test combines a fake core
+            // with a real live pump. `slotBuffers[index]` above still carries the complete,
+            // unaffected reconstruction for the end-of-run `--events` archive.
         }
         catch (OperationCanceledException)
         {
@@ -488,7 +524,7 @@ public static class ParallelSuiteRunner
             // Inconclusive, NEVER Fail (§12.1) — the engine could not determine correctness.
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
-            eventsStreamAppender?.AppendLines(slotBuffers[index]);
+            livePump?.PostRange(slotBuffers[index]);
         }
         catch (Exception ex)
         {
@@ -509,7 +545,7 @@ public static class ParallelSuiteRunner
                     $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}"));
             slotVerdicts[index] = Verdict.EnvironmentError;
             slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
-            eventsStreamAppender?.AppendLines(slotBuffers[index]);
+            livePump?.PostRange(slotBuffers[index]);
         }
         finally
         {

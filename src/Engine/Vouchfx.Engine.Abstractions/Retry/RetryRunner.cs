@@ -122,6 +122,84 @@ public static class RetryRunner
     /// <paramref name="attemptsKey"/>, or <paramref name="attempt"/> is
     /// <see langword="null"/>.
     /// </exception>
+    /// <remarks>
+    /// Back-compat overload (issue #262): delegates to the sink-aware overload with
+    /// <c>sink: null</c>, so every existing call site keeps compiling and behaving
+    /// identically — no live <c>step-attempt</c> signal is emitted on this path.
+    /// </remarks>
+    public static Task PollAsync(
+        IDictionary<string, object?> vars,
+        string outcomeKey,
+        string attemptsKey,
+        long? timeoutMs,
+        long? pollIntervalMs,
+        Func<CancellationToken, Task<StepOutcome>> attempt,
+        CancellationToken ct = default)
+        // All trailing arguments named (not just sink/stepId) — a code-review comment
+        // (mistakenly) read this as a positional argument following named ones being a
+        // compile error. It is not: `sink`/`stepId` occupy their own declared positions and
+        // `ct` would too even left positional, so this always compiled — but naming it as
+        // well removes any appearance of ambiguity for the next reader.
+        => PollAsync(vars, outcomeKey, attemptsKey, timeoutMs, pollIntervalMs, attempt, sink: null, stepId: string.Empty, ct: ct);
+
+    /// <summary>
+    /// Polls <paramref name="attempt"/> with bounded exponential backoff until it
+    /// passes, terminates, or the overall window elapses, then writes the final
+    /// <see cref="StepOutcome"/> and the <see cref="List{T}"/> of
+    /// <see cref="AttemptRecord"/> into <paramref name="vars"/> — additionally
+    /// reporting each recorded attempt to <paramref name="sink"/> in real time as it
+    /// resolves (issue #262), so a live <c>--events-stream</c> tail can observe a
+    /// RETRY step's polling timeline WHILE it is still in progress, not only after
+    /// this method returns.
+    /// </summary>
+    /// <param name="vars">
+    /// The shared <c>ScriptGlobalVariables.Vars</c> dictionary.  On return,
+    /// <paramref name="outcomeKey"/> holds the final <see cref="StepOutcome"/> and
+    /// <paramref name="attemptsKey"/> holds a <see cref="List{T}"/> of
+    /// <see cref="AttemptRecord"/>.
+    /// </param>
+    /// <param name="outcomeKey">
+    /// The <c>Vars</c> key under which the final <see cref="StepOutcome"/> is written
+    /// (typically <c>VarKeys.Outcome(sanitisedStepId)</c>).
+    /// </param>
+    /// <param name="attemptsKey">
+    /// The <c>Vars</c> key under which the per-attempt timeline is written
+    /// (typically <c>VarKeys.Attempts(sanitisedStepId)</c>).
+    /// </param>
+    /// <param name="timeoutMs">
+    /// The overall polling window in milliseconds, or <see langword="null"/> to use
+    /// <see cref="DefaultTimeout"/>.  A <see langword="null"/> or non-positive value
+    /// uses the engine default.
+    /// </param>
+    /// <param name="pollIntervalMs">
+    /// The base delay between attempts in milliseconds, or <see langword="null"/> to
+    /// use <see cref="DefaultBaseDelay"/>.  A <see langword="null"/> or non-positive
+    /// value uses the engine default.
+    /// </param>
+    /// <param name="attempt">
+    /// The step delegate to poll.  Each invocation must return a
+    /// <see cref="StepOutcome"/>; a thrown (non-cancellation) exception is treated as
+    /// a terminal <see cref="Verdict.EnvironmentError"/>.
+    /// </param>
+    /// <param name="sink">
+    /// The host-side per-step live event sink (§14, issue #262), or
+    /// <see langword="null"/> when no live conduit is configured — in which case this
+    /// overload behaves identically to the classic 6-argument overload (a pure no-op
+    /// signal path).
+    /// </param>
+    /// <param name="stepId">
+    /// The raw (un-sanitised) step identifier reported to <paramref name="sink"/>.
+    /// Ignored (never read) when <paramref name="sink"/> is <see langword="null"/>.
+    /// </param>
+    /// <param name="ct">
+    /// A caller cancellation token, linked with the internal window timer.
+    /// </param>
+    /// <returns>A task that completes once <paramref name="vars"/> has been written.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="vars"/>, <paramref name="outcomeKey"/>,
+    /// <paramref name="attemptsKey"/>, or <paramref name="attempt"/> is
+    /// <see langword="null"/>.
+    /// </exception>
     public static async Task PollAsync(
         IDictionary<string, object?> vars,
         string outcomeKey,
@@ -129,6 +207,8 @@ public static class RetryRunner
         long? timeoutMs,
         long? pollIntervalMs,
         Func<CancellationToken, Task<StepOutcome>> attempt,
+        IStepEventSink? sink,
+        string stepId,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(vars);
@@ -183,13 +263,20 @@ public static class RetryRunner
                                 new Dictionary<string, string> { ["error"] = ex.GetType().Name });
                             outcome = new StepOutcome(
                                 Verdict.EnvironmentError, perAttempt.ElapsedMilliseconds, observation);
-                            attempts.Add(new AttemptRecord(
-                                index, perAttempt.ElapsedMilliseconds, outcome.Verdict, outcome.Observation));
+                            var thrownRecord = new AttemptRecord(
+                                index, perAttempt.ElapsedMilliseconds, outcome.Verdict, outcome.Observation);
+                            attempts.Add(thrownRecord);
+                            // Issue #262: report the attempt to the live sink the moment it
+                            // resolves — the only place with genuine per-attempt real-time
+                            // timing. A null sink (no --events-stream conduit) is a no-op.
+                            sink?.OnStepAttempt(stepId, thrownRecord);
                             return outcome;
                         }
 
-                        attempts.Add(new AttemptRecord(
-                            index, perAttempt.ElapsedMilliseconds, outcome.Verdict, outcome.Observation));
+                        var record = new AttemptRecord(
+                            index, perAttempt.ElapsedMilliseconds, outcome.Verdict, outcome.Observation);
+                        attempts.Add(record);
+                        sink?.OnStepAttempt(stepId, record);
                         return outcome;
                     },
                     linked.Token)
