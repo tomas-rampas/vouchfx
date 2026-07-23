@@ -250,6 +250,61 @@ public sealed class JunitXmlRendererTests
     }
 
     // -------------------------------------------------------------------------
+    // Test 3b (issue #279 — HTML/script-injection hole, JUnit side): hostile markup
+    //          in BOTH the "name" attribute (ScenarioId) AND the "classname"
+    //          attribute (the author-supplied .e2e.yaml file path) is XML-encoded
+    //          — including an attribute-breakout attempt (a leading `"><evil>`
+    //          sequence) — and the same value threaded into the <failure> message
+    //          attribute AND element body round-trips correctly.  Test 3 above only
+    //          covers the scenario id in element/attribute text; this covers the
+    //          file-derived classname attribute the earlier test does not exercise.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_HostileMarkupInScenarioIdAndFile_IsXmlEncodedInAttributesAndText()
+    {
+        const string evilScenarioId = "<script>alert(1)</script>&\"'";
+        const string evilFile = "suite\"><evil>&'.e2e.yaml";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-279", ScenarioId = evilScenarioId, File = evilFile }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-279",
+                ScenarioId = evilScenarioId,
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The document is still valid, well-formed XML — the raw markup did not
+        // break out of the attribute or the element text.
+        var doc = XDocument.Parse(output);
+
+        // Raw hostile fragments never appear unescaped.
+        Assert.DoesNotContain("<script>alert(1)</script>", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("suite\"><evil>", output, StringComparison.Ordinal);
+
+        // Round-tripped through the parser, both the "classname" (File) attribute and
+        // the "name" (ScenarioId) attribute restore byte-for-byte — proof the
+        // encoding is lossless entity-escaping, not lossy stripping.
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal(evilScenarioId, (string?)testcase.Attribute("name"));
+        Assert.Equal(evilFile, (string?)testcase.Attribute("classname"));
+
+        // The <failure> message attribute AND element body (both built from the
+        // scenario id) also round-trip correctly.
+        var failure = doc.Descendants("failure").Single();
+        Assert.Contains(evilScenarioId, (string?)failure.Attribute("message"), StringComparison.Ordinal);
+        Assert.Contains(evilScenarioId, failure.Value, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
     // Test 4 (MANDATORY acceptance gate): no resolved secret VALUE can appear.
     // -------------------------------------------------------------------------
 

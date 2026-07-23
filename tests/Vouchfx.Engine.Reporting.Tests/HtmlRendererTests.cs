@@ -290,6 +290,113 @@ public sealed class HtmlRendererTests
     }
 
     // -------------------------------------------------------------------------
+    // Test 4b (issue #279 — HTML/script-injection hole): every author/suite-controlled
+    //          interpolation site is HTML-encoded, not only the step id covered by
+    //          Test 4 above.  This exercises the FULL enumerated set: a step id
+    //          carrying a <script> tag, a capture PATH attempting an attribute
+    //          breakout (a leading `x">` sequence), a provider diff carrying mixed
+    //          markup + both quote characters, and environment-error fields
+    //          (resourceName / registryHost / detail).  A plain, non-hostile step
+    //          sits alongside the hostile one to prove ordinary content still
+    //          renders untouched (no double-encoding, no over-eager stripping) and
+    //          the document stays a single well-formed whole.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_HostileMarkupAcrossCapturePathDiffAndEnvironmentFields_IsHtmlEncodedNotRaw()
+    {
+        const string evilStepId = "<script>alert(1)</script>";
+        const string evilCapturePath = "x\"><img src=x onerror=alert(1)>";
+        const string evilDiff = "<b>&\"'";
+        const string evilResourceName = "<script>alert('env')</script>";
+        const string evilRegistryHost = "reg<script>x</script>.example.com";
+        const string evilDetail = "<b>bad&\"'</b>";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-279", ScenarioId = "hostile-flow" }),
+
+            // A LEGITIMATE, plain step alongside the hostile one.
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-279",
+                StepId = "clean-step",
+                Verdict = Verdict.Pass,
+                DurationMs = 5,
+            }),
+
+            // The step-started carries the "kind" the diffLookup keys off.
+            Line(new StepStartedEvent
+            {
+                RunId = "run-279",
+                StepId = evilStepId,
+                Kind = "db-assert.postgres",
+                VerifyMode = "IMMEDIATE",
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-279",
+                StepId = evilStepId,
+                Verdict = Verdict.Fail,
+                DurationMs = 12,
+                Observation = Parse("""{"column":"status"}"""),
+                Captured = new[]
+                {
+                    new CapturedVar("orderId", evilCapturePath, Matched: false),
+                },
+            }),
+
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-279",
+                ScenarioId = "hostile-flow",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Pass = 1, Fail = 1 },
+            }),
+
+            // An environment-error line carrying hostile resourceName/registryHost/detail
+            // — hand-built because there is no typed record for this event in this test
+            // project (mirrors the pattern TerminalRendererTests already uses).
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"environment-error\",\"ts\":\"2026-01-01T00:00:00Z\","
+                + "\"runId\":\"run-279\",\"verdict\":\"ENV_ERROR\",\"errorKind\":\"ImagePull\","
+                + "\"resourceName\":" + JsonSerializer.Serialize(evilResourceName) + ","
+                + "\"registryHost\":" + JsonSerializer.Serialize(evilRegistryHost) + ","
+                + "\"detail\":" + JsonSerializer.Serialize(evilDetail) + "}",
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(
+            lines,
+            writer,
+            diffLookup: (_, _) => evilDiff);
+        var output = writer.ToString();
+
+        // Legitimate content renders untouched.
+        Assert.Contains("clean-step", output, StringComparison.Ordinal);
+
+        // The document remains a single, well-formed whole.
+        Assert.Contains("<!DOCTYPE html>", output, StringComparison.Ordinal);
+        Assert.Contains("</html>", output, StringComparison.Ordinal);
+
+        // THE LOAD-BEARING ASSERTIONS: none of the raw hostile fragments survive
+        // anywhere in the document.
+        Assert.DoesNotContain(evilStepId, output, StringComparison.Ordinal);
+        Assert.DoesNotContain("<img src=x onerror=alert(1)>", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(evilDiff, output, StringComparison.Ordinal);
+        Assert.DoesNotContain(evilResourceName, output, StringComparison.Ordinal);
+        Assert.DoesNotContain("<script>x</script>", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(evilDetail, output, StringComparison.Ordinal);
+
+        // The encoded form is present instead, at each site.
+        Assert.Contains("&lt;script&gt;alert(1)&lt;/script&gt;", output, StringComparison.Ordinal);
+        Assert.Contains("x&quot;&gt;&lt;img src=x onerror=alert(1)&gt;", output, StringComparison.Ordinal);
+        Assert.Contains("&lt;b&gt;&amp;&quot;&#39;", output, StringComparison.Ordinal);
+        Assert.Contains("&lt;script&gt;alert(&#39;env&#39;)&lt;/script&gt;", output, StringComparison.Ordinal);
+        Assert.Contains("reg&lt;script&gt;x&lt;/script&gt;.example.com", output, StringComparison.Ordinal);
+        Assert.Contains("&lt;b&gt;bad&amp;&quot;&#39;&lt;/b&gt;", output, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
     // Test 5: a partial buffer (a step with step-started + step-attempt but NO
     //         step-completed) has an UNKNOWN verdict.  The renderer must not throw,
     //         must still emit a well-formed single document, and must mark the step
