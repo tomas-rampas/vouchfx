@@ -340,7 +340,7 @@ internal static class RunCommand
 
     /// <summary>
     /// The <c>--events-stream</c> option (issue #258): incrementally APPEND the JSON Lines event
-    /// stream to the given path as each scenario completes, so a concurrent reader can tail it.
+    /// stream to the given path in real time as each step and attempt completes, so a concurrent reader can tail it.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -368,9 +368,9 @@ internal static class RunCommand
     internal static Option<string?> BuildEventsStreamOption() => new("--events-stream")
     {
         Description =
-            "Incrementally append the JSON Lines event stream to <path> as each scenario "
-            + "completes (scenario-granular liveness), so a concurrent reader (e.g. `tail -f`) "
-            + "sees lines as they land rather than only after the whole run finishes. Separate "
+            "Incrementally append the JSON Lines event stream to <path> in real time as each step "
+            + "and attempt completes (per-step liveness), so a concurrent reader (e.g. `tail -f`) "
+            + "sees lines as they land rather than only after the run finishes. Separate "
             + "from --events / --json, which still writes once, at the end, byte-for-byte "
             + "unchanged; the two may be used together or independently. Not wired into --watch. "
             + "Omit for no incremental events stream (the default).",
@@ -652,8 +652,8 @@ internal static class RunCommand
     /// <param name="eventsStreamPath">
     /// The <c>--events-stream</c> path (issue #258): when non-<see langword="null"/>, the runner
     /// opens an <see cref="Vouchfx.Engine.Reporting.EventStreamAppender"/> over this path and
-    /// appends — and flushes — each scenario's event lines to it as that scenario completes, so a
-    /// concurrent reader can tail scenario-granular liveness rather than waiting for the whole run
+    /// appends — and flushes — each step and step-attempt event to it as it completes, so a
+    /// concurrent reader can tail per-step liveness in real time rather than waiting for the run
     /// to finish. Entirely SEPARATE from <paramref name="eventsReportPath"/>, which is still
     /// written once, at the end, byte-for-byte unchanged. <see langword="null"/> ⇒ no incremental
     /// stream. Like <c>--html</c> / <c>--junit</c> / <c>--events</c> it is NOT wired into watch
