@@ -1119,9 +1119,9 @@ def check_no_legacy_domain(site_dir: Path) -> int:
             lines.append(f"  {h}")
         lines.append(
             "Every surface migrated to a custom domain (vouchfx.io and its four "
-            "subdomains) — fix the source (docs "
-            "markdown, site/ templates, scripts/build_site.py's PORTAL/footer, or a "
-            "stale fact) so the built output never mentions the old host."
+            "subdomains) — fix the source (docs markdown, site/ templates, "
+            "scripts/build_site.py's PORTAL/footer, or a stale fact) so the built "
+            "output never mentions the old host."
         )
         raise CheckFailed("\n".join(lines))
 
