@@ -15,6 +15,13 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] — 2026-07-24
+
+A release-candidate consolidating developer-tooling, run-lifecycle, and validation improvements. The language
+schema, provider SDK surface and event-wire contract are unchanged (all frozen-contract-safe: per-step
+event-stream liveness and scenario-rooted file resolution are runtime enhancements with no wire-format impact;
+validation improvements and exit-code corrections align the verdict taxonomy).
+
 ### Changed
 
 - **Scenario file resolution roots per scenario** (#268) — relative `script.csharp file:` references now resolve against each scenario's own directory in both `run` and `validate`, rather than the first discovered scenario's directory. A scenario in a subdirectory now correctly finds helper scripts beside it. Sequential unfiltered `run` topology seeding remains rooted at the first scenario's directory; parallel runs seed from each scenario's own directory.
