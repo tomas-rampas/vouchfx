@@ -40,7 +40,7 @@ The other two touch a real run. `run_suite` executes a suite through the package
 
 ## Three decisions I would defend
 
-**`run_suite` refuses on a version mismatch.** The server pins an engine release in an `ENGINE_PIN` file, currently v1.0.0-rc.1, and if the installed CLI is not that version, `run_suite` will not spawn it and tells you why. Only that tool checks, because the other five do not need the CLI at all. A mismatched CLI does not fail loudly. It just quietly disagrees with the vendored schema about what a step type is, and then you lose an afternoon to it. I would rather refuse.
+**`run_suite` refuses on a version mismatch.** The server pins an engine release in an `ENGINE_PIN` file, currently v1.0.0-rc.1, and if the installed CLI is not that version, `run_suite` does not spawn it and tells you why. Only that tool checks, because the other five do not need the CLI at all. A mismatched CLI does not fail loudly. It just quietly disagrees with the vendored schema about what a step type is, and then you lose an afternoon to it. I would rather refuse.
 
 **The suite runs out of process.** The CLI is spawned as a child process. A suite that hangs, or spins, or is simply hostile, cannot take the server down with it. The engine has caps on script bodies and document sizes, but those are guard rails for honest mistakes, not a defence. Real isolation needs a separate process, so that is what this does.
 
