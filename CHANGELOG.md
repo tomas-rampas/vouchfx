@@ -13,8 +13,6 @@ pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alph
 left in draft status at the time of publication (packages shipped to NuGet.org regardless) and were promoted
 to published pre-releases on 2026-07-14.
 
-## [Unreleased]
-
 ## [1.0.0-rc.1] — 2026-07-24
 
 A release-candidate consolidating developer-tooling, run-lifecycle, and validation improvements. The language
