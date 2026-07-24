@@ -125,7 +125,8 @@ jobs:
   # repos to rebuild their sites so their build-time facts refresh. One-hop
   # guard: dispatch-, cron- and manually-triggered runs never re-notify, so a
   # cycle is impossible. Requires the ECOSYSTEM_DISPATCH_TOKEN secret (a
-  # fine-grained PAT with Contents read/write on the five vouchfx repos);
+  # fine-grained PAT with Contents read/write on the four sibling repos in
+  # the loop below — providers, samples, telemetry-backend and mcp);
   # loud-skips when absent — the weekly cron then covers freshness.
   notify:
     needs: deploy
