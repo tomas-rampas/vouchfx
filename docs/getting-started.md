@@ -357,7 +357,7 @@ Exit codes for `vouchfx list`:
 | **0** | Success. |
 | **2** | Usage error — an unrecognised option or flag. |
 
-The `--json` output is a versioned document carrying the engine version and a sorted array of step types (each with family and provider fields), intended for integration with tooling such as vouchfx-mcp.
+The `--json` output is a versioned document carrying the engine version and a sorted array of step types (each with family and provider fields), intended for integration with tooling such as [vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/).
 
 ## Next steps
 

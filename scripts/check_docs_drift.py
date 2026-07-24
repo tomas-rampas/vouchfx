@@ -47,6 +47,7 @@ SITES: dict[str, str] = {
     "vouchfx-providers": "https://providers.vouchfx.io/",
     "vouchfx-samples": "https://samples.vouchfx.io/",
     "vouchfx-telemetry-backend": "https://telemetry.vouchfx.io/",
+    "vouchfx-mcp": "https://vouchfx-mcp.vouchfx.io/",
 }
 
 # Internal-planning terminology that must never reach a published page.
