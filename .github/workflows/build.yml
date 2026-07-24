@@ -451,9 +451,9 @@ jobs:
 
   # ── Site tools (Python) — BLOCKING ────────────────────────────────────────────
   # Regression-tests scripts/site-tools' `vouchfx_site_tools` package — the
-  # shared static-site generator three satellite repositories (vouchfx-
-  # providers, vouchfx-samples, vouchfx-telemetry-backend) pip-install at a
-  # pinned SHA. In particular, it pins SiteConfig.site_url's additive/
+  # shared static-site generator four satellite repositories (vouchfx-
+  # providers, vouchfx-samples, vouchfx-telemetry-backend, vouchfx-mcp)
+  # pip-install at a pinned SHA. In particular, it pins SiteConfig.site_url's additive/
   # byte-identical contract (vouchfx issue #254): unset, `build()` must be a
   # byte-for-byte no-op; set, it must emit robots.txt/sitemap.xml correctly
   # and pass a `canonical` kwarg that a template without the placeholder

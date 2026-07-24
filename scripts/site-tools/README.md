@@ -63,7 +63,7 @@ Two operational rules for the pin:
 - Validate before merging: satellite `pages.yml` has no `pull_request`
   trigger, so run its `workflow_dispatch` on the PR branch and confirm a
   green build before merging any pin bump.
-- If engine history is ever rewritten, re-pin all three satellites to
+- If engine history is ever rewritten, re-pin all four satellites to
   surviving commits immediately — a GC'd pinned commit fails every
   satellite's next `git+` install at once (fail-loud; the previously
   deployed sites stay live meanwhile).
@@ -74,8 +74,8 @@ As of the Material for MkDocs migration, the engine's own
 site is built via `mkdocs build` with hooks that import `fetch_facts` and
 `apply_facts` directly from this package. `scripts/build_site.py` remains
 in-tree as the authoritative DOCS-list source for the legacy-redirect table
-but no longer runs in the engine's CI. The three satellite repositories
-(vouchfx-providers, vouchfx-samples, vouchfx-telemetry-backend) continue
+but no longer runs in the engine's CI. The four satellite repositories
+(vouchfx-providers, vouchfx-samples, vouchfx-telemetry-backend, vouchfx-mcp) continue
 using their thin `scripts/build_site.py` wrappers unchanged — their SHA pins
 and wrapper logic are unaffected by the engine's MkDocs cutover.
 
@@ -91,7 +91,7 @@ A satellite repo's wrapper resolves the package in this order:
    this directory's `src/`).
 3. If that also fails, the sibling checkout `../vouchfx/scripts/site-tools/src`
    relative to the satellite repo is tried (the maintainer's usual local
-   layout: all four repos checked out side by side).
+   layout: all five repos checked out side by side).
 4. Otherwise the wrapper exits with the exact `pip install` command to run.
 
 ## Testing
@@ -99,7 +99,7 @@ A satellite repo's wrapper resolves the package in this order:
 A pytest suite at `scripts/site-tools/tests/test_site_url_contract.py` (nine test
 functions, fifteen parametrised cases) locks the additive `SiteConfig.site_url`
 contract against byte-identical mutation,
-guarding the pinned-SHA dependency that each of the three satellite repositories
+guarding the pinned-SHA dependency that each of the four satellite repositories
 relies on (issue [#254](https://github.com/tomas-rampas/vouchfx/issues/254)).
 The suite asserts both behavioural branches: when `site_url` is unset, no SEO
 files are emitted and the module's output is byte-identical to omitting the

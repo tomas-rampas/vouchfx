@@ -125,7 +125,7 @@ jobs:
   # repos to rebuild their sites so their build-time facts refresh. One-hop
   # guard: dispatch-, cron- and manually-triggered runs never re-notify, so a
   # cycle is impossible. Requires the ECOSYSTEM_DISPATCH_TOKEN secret (a
-  # fine-grained PAT with Contents read/write on the four vouchfx repos);
+  # fine-grained PAT with Contents read/write on the five vouchfx repos);
   # loud-skips when absent — the weekly cron then covers freshness.
   notify:
     needs: deploy
@@ -141,7 +141,7 @@ jobs:
             echo "ECOSYSTEM_DISPATCH_TOKEN missing; fan-out skipped." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          for repo in vouchfx-providers vouchfx-samples vouchfx-telemetry-backend; do
+          for repo in vouchfx-providers vouchfx-samples vouchfx-telemetry-backend vouchfx-mcp; do
             if curl -sfS -X POST \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github+json" \
