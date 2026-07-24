@@ -351,12 +351,12 @@ internal static class RunCommand
     /// <c>--events</c>; the two never share a file and never affect one another.
     /// </para>
     /// <para>
-    /// Scope (approved): SCENARIO-granular liveness only. A scenario's step / step-attempt
-    /// records are reconstructed from <c>Vars</c> after the compiled delegate returns, so a
-    /// flush lands a whole scenario's lines at once — a single suite's step lines still appear
-    /// together, at that scenario's completion, not one-by-one as each step executes. Genuine
-    /// per-step streaming is a separate, larger change (tracked as a follow-up) and is
-    /// deliberately out of scope here.
+    /// Liveness (issue #262): step and step-attempt records are emitted in real time as each
+    /// step / attempt completes — via a host-side sink, not reconstructed after the compiled
+    /// delegate returns — so a suite's lines land one-by-one as they happen rather than all at
+    /// once at scenario end. In parallel mode, lines from concurrently-running scenarios
+    /// interleave by arrival and are disambiguated by their <c>runId</c> + <c>stepId</c>; the
+    /// authoritative <c>--events</c> archive is unaffected.
     /// </para>
     /// <para>
     /// Absent ⇒ no incremental stream (today's behaviour unchanged). Not wired into
@@ -650,8 +650,9 @@ internal static class RunCommand
     /// note as those flags below).
     /// </param>
     /// <param name="eventsStreamPath">
-    /// The <c>--events-stream</c> path (issue #258): when non-<see langword="null"/>, the runner
-    /// opens an <see cref="Vouchfx.Engine.Reporting.EventStreamAppender"/> over this path and
+    /// The <c>--events-stream</c> path (issue #258; per-step liveness #262): when
+    /// non-<see langword="null"/>, the runner opens an
+    /// <see cref="Vouchfx.Engine.Reporting.EventStreamAppender"/> over this path and
     /// appends — and flushes — each step and step-attempt event to it as it completes, so a
     /// concurrent reader can tail per-step liveness in real time rather than waiting for the run
     /// to finish. Entirely SEPARATE from <paramref name="eventsReportPath"/>, which is still
