@@ -379,6 +379,12 @@ The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships
 
 ### Changed
 
+- **The MCP companion's documentation site is live** — `vouchfx-mcp` now serves from `vouchfx-mcp.vouchfx.io`, the fifth
+  fleet site, covering installation and registration, the six-tool and two-resource reference, an overview and
+  troubleshooting. The engine surfaces that described it as having no documentation site (README, `docs/ecosystem.md`)
+  are corrected, and `docs/getting-started.md` and the landing footer now link it too; the drift sentinel crawls it
+  alongside the other four, and the docs-deploy fan-out notifies it. The `Vouchfx.Mcp` dotnet tool itself remains
+  unpublished on NuGet.org.
 - **The .NET identifier space is rebranded pre-GA**: package IDs, assembly names, and namespaces move from the generic
   `Platform.*` (engine and Core providers) to `Vouchfx.*`; the hub's community providers adopt `Vouchfx.Community.*` (hub repository change).
   The `.e2e.yaml` language and JSON wire contracts remain unchanged (frozen at v1); schema goldens and provider/event contracts

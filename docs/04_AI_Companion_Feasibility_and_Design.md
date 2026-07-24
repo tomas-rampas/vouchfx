@@ -1,6 +1,7 @@
 # vouchfxai — AI Companion Feasibility and Design
 
-**Status:** Design document for phase-one delivery — MCP server development in progress.
+**Status:** Design document for phase-one delivery. The MCP server itself is built and documented at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/); the wider vouchfxai programme (Generator, Healer, Planner) remains in design.
+
 **Date:** 2026-07-20
 
 *This document assesses the feasibility of, and fixes the initial architecture for, **vouchfxai**: a companion product that lets an AI assistant author, run, diagnose and eventually plan vouchfx test suites on a customer's behalf. It concludes that the companion is not only feasible but already half-promised by the existing architecture, and that the correct first delivery vehicle is a Model Context Protocol (MCP) server exposing deterministic, engine-backed tools — with a hosted service wrapping the same tool surface as a later phase.*

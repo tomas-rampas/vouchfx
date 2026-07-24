@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """The vouchfx ecosystem drift sentinel.
 
-Crawls the four live project sites (engine, provider hub, samples,
-telemetry backend) and checks for the failure modes that a purely
+Crawls the five live project sites (engine, provider hub, samples,
+telemetry backend, MCP server) and checks for the failure modes that a purely
 build-time check (build_site.py) cannot catch, because they only manifest
 once pages are actually deployed and cross-linked:
 
-  (a) every internal link and every cross-site link among the four sites
+  (a) every internal link and every cross-site link among the fleet sites
       resolves with HTTP 200;
   (b) no page leaks internal-planning terminology (sprint/task IDs, the
       untracked internal docs, etc.) that must never reach a published page;
@@ -47,6 +47,7 @@ SITES: dict[str, str] = {
     "vouchfx-providers": "https://providers.vouchfx.io/",
     "vouchfx-samples": "https://samples.vouchfx.io/",
     "vouchfx-telemetry-backend": "https://telemetry.vouchfx.io/",
+    "vouchfx-mcp": "https://vouchfx-mcp.vouchfx.io/",
 }
 
 # Internal-planning terminology that must never reach a published page.
@@ -107,7 +108,7 @@ def fetch(url: str) -> tuple[int | None, str | None]:
 
 
 def is_tracked_site(url: str) -> str | None:
-    """Return the site name if url falls under one of the four base URLs."""
+    """Return the site name if url falls under one of the tracked base URLs."""
     for name, base in SITES.items():
         if url.startswith(base):
             return name
@@ -126,7 +127,7 @@ def extract_hrefs(body: str) -> list[str]:
 def crawl(name: str, base_url: str) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """BFS-crawl one site up to MAX_DEPTH/MAX_PAGES_PER_SITE. Returns
     (fetched html pages by url, list of (referrer, target) links pointing at
-    one of the four tracked sites — same-site or cross-site)."""
+    one of the tracked sites — same-site or cross-site)."""
     pages: dict[str, str] = {}
     links: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -196,7 +197,7 @@ def fetch_live_facts() -> dict[str, str]:
 def main() -> int:
     findings = 0
 
-    print("== crawling the four sites ==")
+    print(f"== crawling the {len(SITES)} sites ==")
     all_pages: dict[str, dict[str, str]] = {}
     all_links: list[tuple[str, str]] = []
     for name, base in SITES.items():

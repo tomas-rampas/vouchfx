@@ -1,7 +1,7 @@
 # .github/workflows/docs-drift.yml — the ecosystem drift sentinel
 #
-# Runs scripts/check_docs_drift.py across the four live project sites
-# (engine, provider hub, samples, telemetry backend): broken internal/
+# Runs scripts/check_docs_drift.py across the live project sites
+# (engine, provider hub, samples, telemetry backend, MCP server): broken internal/
 # cross-site links, leaked internal-planning terminology, and facts that
 # have drifted out of sync with their live source. On a finding, the
 # sentinel's report is filed to a single tracking issue labelled

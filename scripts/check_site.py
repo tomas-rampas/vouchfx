@@ -1077,8 +1077,8 @@ def check_no_legacy_domain(site_dir: Path) -> int:
     """No built text-like output may reference the retired
     tomas-rampas.github.io Pages host (REQ-007a).
 
-    The four vouchfx sites migrated to custom domains (vouchfx.io and its
-    three subdomains) — every self-referential link, canonical tag, JSON-LD
+    The five vouchfx sites migrated to custom domains (vouchfx.io and its
+    four subdomains) — every self-referential link, canonical tag, JSON-LD
     URL, fact-injected ecosystem link and legacy-redirect stub must point at
     a custom domain from here on. A leftover github.io reference (a stale
     doc-card href, an unmigrated canonical, a fact that resolved before the
@@ -1118,10 +1118,10 @@ def check_no_legacy_domain(site_dir: Path) -> int:
         for h in sorted(hits):
             lines.append(f"  {h}")
         lines.append(
-            "Every surface migrated to a custom domain (vouchfx.io and its three "
-            "subdomains, see specs/seo-custom-domains.md) — fix the source (docs "
-            "markdown, site/ templates, scripts/build_site.py's PORTAL/footer, or a "
-            "stale fact) so the built output never mentions the old host."
+            "Every surface migrated to a custom domain (vouchfx.io and its four "
+            "subdomains) — fix the source (docs markdown, site/ templates, "
+            "scripts/build_site.py's PORTAL/footer, or a stale fact) so the built "
+            "output never mentions the old host."
         )
         raise CheckFailed("\n".join(lines))
 

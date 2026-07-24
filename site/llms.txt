@@ -29,7 +29,7 @@
 
 ## Project
 
-- [The ecosystem](https://vouchfx.io/ecosystem/): the four vouchfx repositories, what each is for, and where its site lives.
+- [The ecosystem](https://vouchfx.io/ecosystem/): the five vouchfx repositories, what each is for, and where its site lives.
 - [Roadmap](https://vouchfx.io/roadmap/): what has shipped, what is next, and what stays free permanently.
 - [Changelog](https://vouchfx.io/changelog/): the delivered-capability record.
 - [Governance](https://vouchfx.io/governance/): how providers earn the Vouched badge and how disputes are resolved.
