@@ -22,7 +22,7 @@ I use AI coding agents for real work, and at some point I noticed the same thing
 
 Sometimes it was right. Often it was not, because what actually happened was that a container did not come up.
 
-This distinction is not a detail for vouchfx. The engine has four outcomes, not two: a test can **pass**, it can **fail**, it can end in an **environment error**, or it can be **inconclusive**. A fail means the system under test is wrong and somebody should look at the code. An environment error means the test infrastructure is wrong, which is a completely different conversation and, importantly, does not break CI by default. Inconclusive means we ran out of time or the evidence never arrived, so we honestly do not know.
+This distinction is not a detail for vouchfx. The engine has four outcomes, not two: a test can **pass**, it can **fail**, it can end in an **environment error**, or it can be **inconclusive**. A fail means the system under test is wrong and somebody should look at the code. An environment error means the test infrastructure is wrong, which is a completely different conversation and, importantly, does not break CI by default. Inconclusive means the run ran out of time, or the evidence never arrived, so nobody can honestly say.
 
 Keeping those apart is one of the things I care most about in this project. And then the agent reads the console output, flattens all four into "it failed", and starts editing my test to fix a bug that does not exist. That is worse than no help at all.
 
@@ -40,11 +40,11 @@ The other two touch a real run. `run_suite` executes a suite through the package
 
 ## Three decisions I would defend
 
-**It refuses to run on a version mismatch.** The server pins an engine release in an `ENGINE_PIN` file, currently v1.0.0-rc.1, and if the installed CLI is not that version it stops and says so. A mismatched CLI does not fail loudly. It just quietly disagrees with the vendored schema about what a step type is, and then you lose an afternoon to it. I would rather refuse.
+**`run_suite` refuses on a version mismatch.** The server pins an engine release in an `ENGINE_PIN` file, currently v1.0.0-rc.1, and if the installed CLI is not that version, `run_suite` will not spawn it and tells you why. Only that tool checks, because the other five do not need the CLI at all. A mismatched CLI does not fail loudly. It just quietly disagrees with the vendored schema about what a step type is, and then you lose an afternoon to it. I would rather refuse.
 
 **The suite runs out of process.** The CLI is spawned as a child process. A suite that hangs, or spins, or is simply hostile, cannot take the server down with it. The engine has caps on script bodies and document sizes, but those are guard rails for honest mistakes, not a defence. Real isolation needs a separate process, so that is what this does.
 
-**It never touches secrets.** The server does not resolve `${secret:...}` references and does not read environment variables looking for them. The engine already redacts, and the server passes the redacted stream through unchanged. There was a temptation to be clever here, and I am glad I did not take it.
+**It never resolves secrets.** The server does not resolve `${secret:...}` references, and it never reads its own environment looking for values to put in a result. The engine already redacts, and the redacted stream passes through unchanged. There was a temptation to be clever here. I am glad I resisted it.
 
 ## Where it stands, honestly
 

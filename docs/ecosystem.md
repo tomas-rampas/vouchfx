@@ -72,18 +72,19 @@ For configuration details and backend availability, see [Telemetry & privacy](te
 
 ## The MCP companion
 
-**AI-assisted test authoring — feature-complete and documented, not yet on NuGet.**
+**AI-assisted test authoring — feature-complete for its current scope, documented, not yet on NuGet.**
 
 A local, stdio Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code). It exposes the engine's capabilities programmatically through six tools and two vendored resources, designed specifically so AI agents can reason about `.e2e.yaml` suites without brittle console-output parsing.
 
-The server provides four offline-capable tools: validate a suite against the frozen v1 JSON Schema and collect every structural error; list all registered step types (family.provider notation); fetch the full contract for a single step type with all required and optional fields; and free-text search the two vendored engine documents (the generated language reference and the recipes library). Two further tools run suites and collect results, and diagnose run event streams with per-step observations. The offline tools mean agents can work entirely without the engine CLI when schema validation or documentation browsing is enough.
+The server provides four offline-capable tools: validate a suite against the frozen v1 JSON Schema and collect every structural error; list all registered step types (`family.provider` notation); fetch the full contract for a single step type with all required and optional fields; and free-text search the two vendored engine documents (the generated language reference and the recipes library). Two further tools run suites and collect results, and diagnose run event streams with per-step observations. The offline tools mean agents can work entirely without the engine CLI when schema validation or documentation browsing is enough.
 
-A design choice worth noting: the server refuses to run if the packaged CLI does not match the pinned engine release (ENGINE_PIN file), preventing silent version drift. The server also runs suites out-of-process, so a hostile or runaway test cannot hang the server itself. Finally, it passes through vouchfx's already-redacted event streams — it never resolves secrets or reads environment variables directly.
+A design choice worth noting: `run_suite` refuses to invoke the CLI if the installed version does not match the pinned engine release (`ENGINE_PIN` file), preventing silent version drift. Only that tool checks, since the other five never touch the CLI. The server also runs suites out-of-process, so a hostile or runaway test cannot hang the server itself. Finally, it passes through vouchfx's already-redacted event streams — it never resolves `${secret:...}` references itself, and never reads or echoes its own process environment into a tool result, progress notification, or resource.
 
-The server is distributed as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) wrapping the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet**.
+The server is packaged as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) wrapping the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet**.
 
 **Start here:**
 - **[MCP Server documentation](https://vouchfx-mcp.vouchfx.io/)** — Installation, tools and resources, troubleshooting
+- **[Overview](https://vouchfx-mcp.vouchfx.io/docs/overview.html)** — What the server wraps, how it is pinned, and its current status
 - **[Install & register](https://vouchfx-mcp.vouchfx.io/docs/install.html)** — Set up the server for use with Claude Code or other MCP clients
 - **[Tools & resources](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html)** — Reference for all six tools and two resources
 - **[Troubleshooting](https://vouchfx-mcp.vouchfx.io/docs/troubleshooting.html)** — Debugging common issues
