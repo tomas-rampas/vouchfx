@@ -42,6 +42,17 @@ user hits them in production:
       is on the configured custom-domain origin — see
       `check_sitemap_and_robots`.
 
+Four further checks close the REQ-007 gate extensions from
+specs/seo-fleet-audit.md (the fleet-wide SEO audit):
+
+  (j) 404.html exists at the build root — see `check_404_page`;
+  (k) llms.txt exists at the build root — see `check_llms_txt`;
+  (l) the landing page's og:image references an asset that actually exists
+      in the build, and the URL is domain-absolute — see
+      `check_og_image_asset`;
+  (m) sitemap.xml lists neither 404.html nor any legacy-redirect stub page
+      — see `check_sitemap_excludes_404_and_stubs`.
+
 Exit 0: the build is safe to publish. Exit 1: a check failed; the printed
 message says which one and why it matters, so a CI failure is actionable
 without re-deriving the reasoning here.
@@ -719,14 +730,18 @@ def check_legacy_redirects(site_dir: Path) -> None:
     scripts/site_hooks/_redirect_table.py — the exact same table
     scripts/site_hooks/redirects.py writes stubs from, so this check can
     never silently drift from what that hook actually produces. For each
-    (legacy_path, new_slug) pair: the stub file must exist, its content
-    must reference the expected root-relative target, and that target must
-    resolve to a real page that actually exists in this same build (not
-    just a stub pointing at a stub, or at a slug that got renamed/removed).
+    (legacy_path, new_slug) pair: the stub file must exist, its meta-refresh
+    must reference the expected root-relative target, its canonical must be
+    the expected DOMAIN-ABSOLUTE target (specs/seo-fleet-audit.md, D-04 —
+    unlike the meta-refresh/fallback anchor, the canonical is deliberately
+    not root-relative), and that target must resolve to a real page that
+    actually exists in this same build (not just a stub pointing at a stub,
+    or at a slug that got renamed/removed).
     """
     missing: list[str] = []
     bad_content: list[str] = []
     dangling: list[str] = []
+    site_url_prefix, _ = _read_site_url_prefix()
 
     for legacy_path, new_slug in build_redirect_table():
         stub = site_dir / legacy_path
@@ -735,11 +750,15 @@ def check_legacy_redirects(site_dir: Path) -> None:
             continue
 
         expected_target = relative_target(legacy_path, new_slug)
+        expected_canonical = f"{site_url_prefix}{new_slug}/"
         text = stub.read_text(encoding="utf-8", errors="replace")
         has_refresh = f'url={expected_target}"' in text
-        has_canonical = f'href="{expected_target}"' in text and "canonical" in text
+        has_canonical = f'href="{expected_canonical}"' in text and "canonical" in text
         if not (has_refresh and has_canonical):
-            bad_content.append(f"{legacy_path} does not reference the expected target {expected_target!r}")
+            bad_content.append(
+                f"{legacy_path} does not reference the expected refresh target "
+                f"{expected_target!r} and/or the expected absolute canonical {expected_canonical!r}"
+            )
             continue
 
         new_page = site_dir / new_slug / "index.html"
@@ -1205,6 +1224,109 @@ def check_sitemap_and_robots(site_dir: Path) -> None:
         )
 
 
+# --- REQ-007 gate extensions (specs/seo-fleet-audit.md) --------------------
+#
+# Four additional publication checks the fleet-wide SEO audit's fix work
+# order requires of the engine's own gate: a missing branded 404.html or
+# llms.txt, a landing-page og:image that doesn't actually exist in the
+# build, and a sitemap that leaks a non-indexable page (404.html or a
+# legacy-redirect stub). Each is deliberately narrow — it fails loudly on
+# exactly the regression it targets and otherwise defers to the checks
+# already covering the surface in more depth (check_landing_page,
+# check_sitemap_and_robots, check_legacy_redirects).
+
+OG_IMAGE_RE = re.compile(r'<meta\s+property="og:image"\s+content="([^"]+)"')
+
+
+def check_404_page(site_dir: Path) -> None:
+    """_site/404.html must exist (REQ-007a). GitHub Pages serves exactly
+    this path automatically for any unmatched URL (EDGE-006); see
+    overrides/404.html for the branded, noindexed template this check
+    backstops."""
+    page = site_dir / "404.html"
+    if not page.is_file():
+        raise CheckFailed(
+            f"{page} does not exist. GitHub Pages relies on this exact path to serve "
+            "a branded 404 for any unmatched URL (specs/seo-fleet-audit.md, REQ-006). "
+            "Check that mkdocs.yml's theme.custom_dir is set to 'overrides' and that "
+            "overrides/404.html exists and extends Material's base.html."
+        )
+
+
+def check_llms_txt(site_dir: Path) -> None:
+    """_site/llms.txt must exist (REQ-007b) — the llms.txt convention this
+    site's site/llms.txt companion satisfies (specs/seo-fleet-audit.md,
+    REQ-005 parity)."""
+    page = site_dir / "llms.txt"
+    if not page.is_file():
+        raise CheckFailed(
+            f"{page} does not exist. Check that site/llms.txt is present in the "
+            "repository and that scripts/site_hooks/landing.py's site/ copytree ran."
+        )
+
+
+def check_og_image_asset(site_dir: Path) -> None:
+    """The landing page's og:image MUST reference an asset that actually
+    exists in the built output (REQ-007c) — a dangling og:image URL is
+    silently useless to every social-share scraper. Also asserts the URL is
+    domain-absolute (EDGE-004): a relative og:image is not reliably
+    resolved by scrapers."""
+    index = site_dir / "index.html"
+    if not index.is_file():
+        return  # check_landing_page already fails loudly for this case
+    text = index.read_text(encoding="utf-8", errors="replace")
+    match = OG_IMAGE_RE.search(text)
+    if not match:
+        raise CheckFailed(
+            f'{index} has no <meta property="og:image" content="..."> tag '
+            "(specs/seo-fleet-audit.md, REQ-004) — the landing page must reference a "
+            "branded social-share image."
+        )
+    og_image_url = match.group(1)
+    site_url_prefix, _ = _read_site_url_prefix()
+    if not og_image_url.startswith(site_url_prefix):
+        raise CheckFailed(
+            f"{index}'s og:image {og_image_url!r} is not absolute on {site_url_prefix!r} "
+            "(EDGE-004) — social scrapers do not reliably resolve a relative og:image URL."
+        )
+    relative = og_image_url[len(site_url_prefix) :]
+    asset = site_dir / relative
+    if not asset.is_file():
+        raise CheckFailed(
+            f"{index} references og:image {og_image_url!r}, but {asset} does not exist "
+            "in the built output. Check that the asset is committed under site/ and that "
+            "the URL in site/index.html matches its actual filename."
+        )
+
+
+def check_sitemap_excludes_404_and_stubs(site_dir: Path) -> None:
+    """sitemap.xml MUST NOT list 404.html or any legacy-redirect stub page
+    (REQ-007d) — neither is an indexable page (EDGE-003 for 404.html;
+    stubs exist purely to 301-equivalent legacy URLs onward, per D-04's own
+    canonical-vs-target distinction, and were never meant to be crawled as
+    destinations in their own right)."""
+    sitemap = site_dir / "sitemap.xml"
+    if not sitemap.is_file():
+        return  # check_sitemap_and_robots already fails loudly for this case
+    text = sitemap.read_text(encoding="utf-8", errors="replace")
+    locs = set(re.findall(r"<loc>(.*?)</loc>", text))
+    site_url_prefix, _ = _read_site_url_prefix()
+
+    disallowed = {f"{site_url_prefix}404.html"}
+    disallowed.update(f"{site_url_prefix}{legacy_path}" for legacy_path, _new_slug in build_redirect_table())
+
+    present = sorted(locs & disallowed)
+    if present:
+        raise CheckFailed(
+            f"{sitemap} lists {len(present)} non-indexable page(s) that must never "
+            "appear in a sitemap (specs/seo-fleet-audit.md, REQ-007d):\n"
+            + "\n".join(f"  {p}" for p in present)
+            + "\n404.html and every legacy-URL redirect stub are excluded from indexing "
+            "by design — check scripts/site_hooks/sitemap.py and MkDocs' own sitemap "
+            "generation for a regression."
+        )
+
+
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
@@ -1217,6 +1339,10 @@ CHECKS = (
     check_key_pages,
     check_no_legacy_domain,
     check_sitemap_and_robots,
+    check_404_page,
+    check_llms_txt,
+    check_og_image_asset,
+    check_sitemap_excludes_404_and_stubs,
 )
 
 
