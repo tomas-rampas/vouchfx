@@ -281,7 +281,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
     newUserId: "$.id"        # JSONPath into the response body
 ```
 
-### `http.soap` — step fields
+#### `http.soap` — step fields
 
 `http.soap` calls a SOAP 1.1 service. It is the RAW-ENVELOPE provider (a deliberate v1 design choice): the author supplies the complete SOAP envelope XML themselves — there is no auto-wrapping of a bare payload into a `<soap:Envelope>` skeleton. This keeps the provider's contract small and unambiguous (no guessing at namespace prefixes, SOAP version, or header placement) at the cost of a little authoring verbosity.
 
@@ -567,7 +567,7 @@ The example below uses `db-assert.postgres`. It takes a SQL string with a parame
       billing_account_id: "{billingAccountId}"
 ```
 
-### `db-assert.dynamodb` — step fields
+#### `db-assert.dynamodb` — step fields
 
 Asserts against a DynamoDB item via a single `GetItem` call. The engine provisions a real `dynamodb-local` container for the declared dependency (type `dynamodb`); the connection is a plain container with no HTTP health path of its own — see §3.2's `dynamodb` row and the engine's own EnvironmentMapper documentation for the health-gating choice. `key` is a deliberately simplified flat JSON template, not the low-level DynamoDB wire form: each top-level value becomes an `S`/`N`/`BOOL` attribute at execution time (a JSON string, number, or boolean respectively — nested objects/arrays are rejected, since a primary key cannot contain them).
 
@@ -753,7 +753,7 @@ Unlike `mq-publish`/`mq-expect`/`cache-assert`, this family adds **no new infras
 
 **`verifyMode: RETRY` is this family's canonical mode.** A metric update frequently lags the HTTP response that triggered it (the same post-stimulus convergence gap `mq-expect` and `db-assert` steps already accommodate), so most `metrics-assert` steps are written with `verifyMode: RETRY` and a `timeout`.
 
-### `metrics-assert.prometheus` — step fields
+#### `metrics-assert.prometheus` — step fields
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -816,7 +816,7 @@ Unlike `metrics-assert` (which adds no new infrastructure kind), `storage-assert
 
 **Capture support.** The Pass observation exposes `etag`, `versionId`, `size`, and `exists` to `capture:` via JSONPath (`$.etag`, `$.versionId`, `$.size`, `$.exists`) — mirrors `metrics-assert.prometheus`'s synthesised-observation capture mechanism exactly.
 
-### `storage-assert.s3` — step fields
+#### `storage-assert.s3` — step fields
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -872,7 +872,7 @@ A `trace-expect` step scans the spans exported over OTLP/HTTP by the system unde
 
 **The honest caveat.** `trace-expect.otlp` proves that a trace with the expected shape was *emitted* — it is telemetry, not a state assertion. It cannot, on its own, prove the transaction's business effect (that a row was written, a message was published, a counter moved). Pair it with a `db-assert`, `mq-expect`, `metrics-assert`, or `storage-assert` step for that proof; use `trace-expect.otlp` for the causal-chain proof those families cannot give.
 
-### `trace-expect.otlp` — step fields
+#### `trace-expect.otlp` — step fields
 
 | Field | Required | Meaning |
 |---|---|---|
