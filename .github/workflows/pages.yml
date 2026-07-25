@@ -39,6 +39,11 @@ on:
       - 'scripts/site_hooks/**'
       - 'scripts/check_site.py'
       - 'scripts/site-tools/**'
+      # mkdocs.yml's theme.custom_dir (specs/seo-fleet-audit.md, A3) — the
+      # branded 404.html override is a build input like any other template;
+      # a push touching only overrides/ would otherwise silently NOT
+      # trigger a rebuild/redeploy.
+      - 'overrides/**'
       - '.github/workflows/pages.yml'
   # Ecosystem fan-out: a sibling repo's docs merge triggers a rebuild here so
   # build-time facts ({{fact:...}} tokens) re-resolve against the live APIs.
