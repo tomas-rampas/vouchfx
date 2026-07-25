@@ -752,12 +752,15 @@ def check_legacy_redirects(site_dir: Path) -> None:
     scripts/site_hooks/redirects.py writes stubs from, so this check can
     never silently drift from what that hook actually produces. For each
     (legacy_path, new_slug) pair: the stub file must exist, its meta-refresh
-    must reference the expected root-relative target, its canonical must be
+    must reference the expected DOCUMENT-relative target (a "../" chain
+    from the stub's own depth back to the site root, then forward to the
+    target — see scripts/site_hooks/redirects.py's own docstring for why
+    this is document-relative, not root-relative), its canonical must be
     the expected DOMAIN-ABSOLUTE target (specs/seo-fleet-audit.md, D-04 —
     unlike the meta-refresh/fallback anchor, the canonical is deliberately
-    not root-relative), and that target must resolve to a real page that
-    actually exists in this same build (not just a stub pointing at a stub,
-    or at a slug that got renamed/removed).
+    not document-relative), and that target must resolve to a real page
+    that actually exists in this same build (not just a stub pointing at a
+    stub, or at a slug that got renamed/removed).
     """
     missing: list[str] = []
     bad_content: list[str] = []

@@ -315,11 +315,26 @@ def _doc_entry(entry: tuple[str, ...]) -> tuple[str, str, str, str | None]:
     description). The pre-existing 3-tuple shape (rel, group, label)
     normalises to a `None` description; the OPTIONAL 4th element, when
     present, is that page's one-line description (`write_llms_txt` is
-    today's only consumer of it). Every site of `config.docs` iteration
-    goes through this helper so a mixed list of 3- and 4-tuples works
-    everywhere, not just in the one call site a given feature needed it
-    for."""
-    if len(entry) >= 4:
+    today's only consumer of it). Every call site that iterates
+    `config.docs` goes through this helper so a mixed list of 3- and
+    4-tuples works everywhere, not just in the one call site a given
+    feature needed it for.
+
+    Validates arity explicitly: exactly 3 or 4 elements. Without this, an
+    entry with 5+ elements would previously be silently truncated (`entry[0]`,
+    `entry[1]`, `entry[2]`, `entry[3]` simply ignore anything past index 3) —
+    a typo'd extra element (e.g. a stray trailing comma turning one entry
+    into a nested tuple) would silently drop data rather than fail loudly.
+    Also rejects a too-short entry (0, 1 or 2 elements) with the same
+    named-entry error, rather than letting the 3-tuple unpack below raise a
+    generic, entry-less ValueError.
+    """
+    if len(entry) not in (3, 4):
+        raise ValueError(
+            f"SiteConfig.docs entry must have exactly 3 (rel, group, label) or "
+            f"4 (rel, group, label, description) elements, got {len(entry)}: {entry!r}"
+        )
+    if len(entry) == 4:
         return entry[0], entry[1], entry[2], entry[3]
     rel, group, label = entry
     return rel, group, label, None

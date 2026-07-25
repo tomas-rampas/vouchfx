@@ -75,6 +75,7 @@ from pathlib import Path
 import pytest
 
 from vouchfx_site_tools import SiteConfig, build
+from vouchfx_site_tools import _doc_entry  # private helper, tested directly — see below
 
 # scripts/site-tools/tests/this_file.py -> tests -> site-tools -> scripts -> repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -460,3 +461,20 @@ def test_llms_txt_uses_optional_fourth_tuple_element_as_description(tmp_path: Pa
     llms = (out / "llms.txt").read_text(encoding="utf-8")
     assert "A hand-written, real description." in llms
     assert "vouchfx example site — Recipes" in llms  # unaffected 3-tuple fallback
+
+
+def test_doc_entry_accepts_3_and_4_tuples_and_rejects_5() -> None:
+    """`_doc_entry` validates arity explicitly (review re-review, item 2):
+    a 3-tuple (rel, group, label) and a 4-tuple (+ description) both
+    normalise correctly; anything else — a 5-tuple here — raises
+    ValueError naming the offending entry, rather than silently truncating
+    it (entry[0]/[1]/[2]/[3] would otherwise just ignore a 5th+ element)."""
+    assert _doc_entry(("docs/x.md", "Group", "Label")) == ("docs/x.md", "Group", "Label", None)
+    assert _doc_entry(("docs/x.md", "Group", "Label", "Desc")) == ("docs/x.md", "Group", "Label", "Desc")
+
+    bad_entry = ("docs/x.md", "Group", "Label", "Desc", "one too many")
+    with pytest.raises(ValueError) as exc_info:
+        _doc_entry(bad_entry)
+    message = str(exc_info.value)
+    assert repr(bad_entry) in message
+    assert "3" in message and "4" in message
