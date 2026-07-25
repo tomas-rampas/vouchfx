@@ -10,9 +10,9 @@ site/index.html for the root URL.
 Instead, on_post_build copies site/ verbatim over the already-built MkDocs
 output so that site/index.html becomes <site_dir>/index.html, dragging its
 companions (.nojekyll, styles.css, docs.css, favicon.svg, robots.txt,
-llms.txt, facts-fallback.json) along with it. This hook runs after every other
-plugin/page has been written, so nothing the docs build produces can shadow
-the landing page.
+llms.txt, og-image.png, facts-fallback.json) along with it. This hook runs
+after every other plugin/page has been written, so nothing the docs build
+produces can shadow the landing page.
 
 Two safety rules, enforced loudly (a failed build beats a silently wrong
 one):
