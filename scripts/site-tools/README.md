@@ -74,6 +74,9 @@ satellite, pairing the pin bump with that repo's own CSS rename in one PR.
 `llms_summary` (default `None`) is the one-paragraph summary that goes
 into `llms.txt` — see below.
 
+`llms_curated` (default `False`) selects between two `llms.txt` output
+shapes — see "llms.txt generation" below for the full contract.
+
 ## llms.txt generation
 
 Set BOTH `site_url` and `llms_summary` to have `build()` additionally
@@ -112,6 +115,59 @@ is not enough, since every link in the file must be site_url-absolute.
 companion verbatim first; when `write_llms_txt` then runs (both fields
 set), its generated `llms.txt` unconditionally overwrites that companion.
 
+### `llms_curated` — issue #299 refinements
+
+Set `llms_curated=True` (on top of `site_url` + `llms_summary`) to opt
+into three follow-up fixes from the July 2026 SEO fleet wave's reviews,
+all additive — `False`, the default, reproduces the shape above
+byte-for-byte:
+
+1. **Grammatical portal bullet.** The bare
+   `"{meta_description_prefix} documentation portal"` concatenation
+   becomes a real sentence: `"The documentation portal for {project
+   name} — every guide and reference on this site."`
+2. **`## Overview` heading.** Both intro bullets (the site's own index
+   page, and the portal) move under a new `## Overview` heading, so every
+   file list in the document sits under an H2 — matching
+   [llms.txt.org](https://llmstxt.org/)'s own grammar, rather than
+   floating above the first real section.
+3. **Curated order.** `## {group}` sections appear in `docs`' own
+   first-appearance order, and the pages within each group appear in
+   `docs`' own declaration order — instead of both being alphabetised.
+   This lets a repo's `docs` list put a deliberate entry point (e.g. a
+   "Start" group) first in the file, rather than wherever it happens to
+   sort.
+
+For example, the same `docs` set as above, curated:
+
+```
+# {project name}
+
+> {llms_summary}
+
+## Overview
+- [{project name}]({bare site_url}): {meta_description_prefix}
+- [Documentation]({site_url}docs.html): The documentation portal for
+  {project name} — every guide and reference on this site.
+
+## {first group in docs' declaration order}
+- [{label}]({absolute page URL}): {description}
+...
+```
+
+These three changes are one flag, not three switches, because they were
+filed and reviewed together as a single llms.txt readability fix. Like
+`site_url`, this is a strict opt-in: leaving it unset (or omitting
+`site_url`/`llms_summary` entirely) never changes existing output.
+
+**Reserved group name:** with `llms_curated=True`, a `docs` entry whose
+group is literally `"Overview"` collides with the intro section's own new
+`## Overview` heading above — `write_llms_txt` raises `ValueError`
+("group name 'Overview' collides with the llms_curated intro section —
+rename the group") rather than silently emitting two `## Overview`
+sections. A group named `"Overview"` is harmless when `llms_curated` is
+left at its `False` default.
+
 ## How the satellite repos consume this package
 
 In CI, a satellite repo's `pages.yml` installs it straight from the engine
@@ -135,6 +191,11 @@ Two operational rules for the pin:
   surviving commits immediately — a GC'd pinned commit fails every
   satellite's next `git+` install at once (fail-loud; the previously
   deployed sites stay live meanwhile).
+
+Opting a satellite into `llms_curated=True` is a plain pin bump plus one
+`SiteConfig` kwarg in that repo's own `scripts/build_site.py` wrapper —
+unlike `semantic_headings`, it needs no paired `site/docs.css` change,
+since it only touches `llms.txt` content.
 
 ## Local development
 
@@ -184,7 +245,21 @@ tree to omitting them entirely (no `llms.txt`, sidebar group labels still
 page and zero `<h4>` sidebar group labels; `llms.txt` follows the
 llms.txt.org shape (H1, `>` blockquote summary, `## {group}` sections, the
 `docs.html` portal link, and the optional per-page description) and is
-absent unless both `site_url` and `llms_summary` are set.
+absent unless both `site_url` and `llms_summary` are set. The same file
+also locks the additive `SiteConfig.llms_curated` contract (issue #299):
+`llms_curated` unset reproduces the pre-#299 `llms.txt` text byte-for-byte
+against a hard-coded expected string (a deliberately-unsorted, three-group
+fixture including a root-level doc, so alphabetisation and the root/`docs/`
+path split can't pass by coincidence); `llms_curated=True` is checked the
+same way, plus targeted assertions for the grammatical portal bullet, the
+`## Overview` heading, and the curated (declaration) group/page order; a
+`config.docs` group literally named `"Overview"` raises `ValueError` only
+when `llms_curated` is True; the flag is proven to have no effect on any
+other build output, and no effect at all when `site_url`/`llms_summary` is
+unset; and the cross-version `origin/main` comparison below is exercised
+with `llms_summary` set and both a default and a curated-shaped `docs`
+list, so it actually compares generated `llms.txt` content, not just
+robots.txt/sitemap.xml/rendered pages.
 
 The byte-identical claim above is backed by TWO tests, deliberately, not
 one: `test_new_fields_unset_is_deterministic_and_defaults_are_pinned`
@@ -196,8 +271,14 @@ PRE-EXISTING module's default output unchanged. That is what
 it extracts this module exactly as it existed at `origin/main` via
 `git show` into an isolated import, builds the same fixture with both the
 current and the baseline module, and asserts the trees are byte-for-byte
-identical (parametrised over `site_url` set and unset). It `pytest.skip`s
-rather than fails when `origin/main` cannot be resolved (e.g. a shallow CI
+identical (parametrised over `site_url` set/unset, crossed with a default
+and a curated-shaped `docs` list — four cases total; `llms_summary` is set
+in every case so `write_llms_txt` actually runs whenever `site_url` is
+also set). `llms_curated` itself is never passed on either side — the
+baseline module predates the field, so passing it would raise `TypeError`
+on that side; leaving it unset on the current side exercises exactly the
+`False` default this EDGE-002 claim is about. It `pytest.skip`s rather
+than fails when `origin/main` cannot be resolved (e.g. a shallow CI
 checkout).
 
 **Pre-merge vs. post-merge, stated plainly (do not oversell this once
