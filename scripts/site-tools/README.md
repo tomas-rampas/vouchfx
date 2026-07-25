@@ -23,7 +23,9 @@ from vouchfx_site_tools import SiteConfig, build
 config = SiteConfig(
     root=...,               # the repo root
     default_repo=...,       # "owner/repo" fallback for GitHub links
-    docs=[...],              # (source path, nav group, label) tuples
+    docs=[...],              # (source path, nav group, label) tuples, each with
+                              # an OPTIONAL 4th "description" element — see
+                              # "llms.txt generation" below
     page_template=...,       # the per-page HTML template
     portal_html=...,         # the docs.html portal template
     meta_description_prefix=...,
@@ -76,13 +78,39 @@ into `llms.txt` — see below.
 
 Set BOTH `site_url` and `llms_summary` to have `build()` additionally
 write `<out>/llms.txt`, following the [llms.txt](https://llmstxt.org/)
-convention: an H1 project name (derived from `default_repo`'s
-`owner/repo-name` — the repo-name segment), the `llms_summary` paragraph,
-then a linked list of `docs` (the site's curated, labelled nav — not every
-auto-discovered stray markdown file `build()` also renders), every link
-absolute on `site_url`. Leaving either field unset emits no `llms.txt`
+convention:
+
+```
+# {project name — derived from default_repo's owner/repo-name segment}
+
+> {llms_summary}
+
+- [{project name}]({bare site_url}): {meta_description_prefix}
+- [Documentation]({site_url}docs.html): {meta_description_prefix} documentation portal
+
+## {group}
+- [{label}]({absolute page URL}): {description}
+...
+```
+
+One `## {group}` heading per group in `docs` (sorted by group, then by
+label within a group), listing that group's pages — `docs` is the site's
+curated, labelled nav, not every auto-discovered stray markdown file
+`build()` also renders. Every link is absolute on `site_url`, including
+the `docs.html` portal page. Each page's description is that entry's
+OPTIONAL 4th tuple element when present (see "Public API" above); when
+absent, it falls back to the pre-existing generic
+`"{meta_description_prefix} — {label}"` text — 3-tuple `docs` entries need
+no changes to keep working.
+
+Leaving either `site_url` or `llms_summary` unset emits no `llms.txt`
 (byte-identical to today) — `llms_summary` alone, with `site_url` unset,
 is not enough, since every link in the file must be site_url-absolute.
+
+**Precedence, same as `robots.txt`/`sitemap.xml`:** `build()`'s initial
+`shutil.copytree(site, out)` always copies a hand-authored `site/llms.txt`
+companion verbatim first; when `write_llms_txt` then runs (both fields
+set), its generated `llms.txt` unconditionally overwrites that companion.
 
 ## How the satellite repos consume this package
 
@@ -150,12 +178,26 @@ placeholders are generated and passed to templates.
 A companion suite at
 `scripts/site-tools/tests/test_semantic_headings_and_llms_txt.py` locks the
 additive `SiteConfig.semantic_headings` and `SiteConfig.llms_summary` contracts
-the same way (specs/seo-fleet-audit.md): both new fields unset produces a
-byte-identical tree to omitting them entirely (no `llms.txt`, sidebar group
-labels still `<h4>`); `semantic_headings=True` yields exactly one `<h1>` per
-rendered page and zero `<h4>` sidebar group labels; `llms.txt` is emitted with
-an H1 and site_url-absolute links only when both `site_url` and
-`llms_summary` are set, and is absent if either is missing.
+(specs/seo-fleet-audit.md): both new fields unset produces a byte-identical
+tree to omitting them entirely (no `llms.txt`, sidebar group labels still
+`<h4>`); `semantic_headings=True` yields exactly one `<h1>` per rendered
+page and zero `<h4>` sidebar group labels; `llms.txt` follows the
+llms.txt.org shape (H1, `>` blockquote summary, `## {group}` sections, the
+`docs.html` portal link, and the optional per-page description) and is
+absent unless both `site_url` and `llms_summary` are set.
+
+The byte-identical claim above is backed by TWO tests, deliberately, not
+one: `test_new_fields_unset_is_deterministic_and_defaults_are_pinned`
+proves `build()` is deterministic and the dataclass defaults are what they
+claim to be, but — because both sides of that comparison call the SAME,
+already-changed module — it cannot by itself prove the new code left the
+PRE-EXISTING module's default output unchanged. That is what
+`test_new_fields_unset_matches_pre_change_module_byte_for_byte` proves: it
+extracts this module exactly as it existed at `origin/main` via `git show`
+into an isolated import, builds the same fixture with both the current and
+the baseline module, and asserts the trees are byte-for-byte identical
+(parametrised over `site_url` set and unset). It `pytest.skip`s rather than
+fails when `origin/main` cannot be resolved (e.g. a shallow CI checkout).
 
 To run locally, install the package with the test extra and invoke pytest:
 
