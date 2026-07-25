@@ -53,6 +53,7 @@ hooks:
 
 theme:
   name: material
+  custom_dir: overrides
   font: false
   favicon: assets/favicon.svg
   logo: assets/favicon.svg

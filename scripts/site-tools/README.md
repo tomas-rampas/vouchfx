@@ -23,7 +23,9 @@ from vouchfx_site_tools import SiteConfig, build
 config = SiteConfig(
     root=...,               # the repo root
     default_repo=...,       # "owner/repo" fallback for GitHub links
-    docs=[...],              # (source path, nav group, label) tuples
+    docs=[...],              # (source path, nav group, label) tuples, each with
+                              # an OPTIONAL 4th "description" element — see
+                              # "llms.txt generation" below
     page_template=...,       # the per-page HTML template
     portal_html=...,         # the docs.html portal template
     meta_description_prefix=...,
@@ -43,6 +45,72 @@ SEO files — though any hand-authored companions under `site/` (including a
 `site/robots.txt`) still pass through to the output unchanged, as they
 always have. When both exist, the generated files win (they are written
 after the companion copy).
+
+Two further optional parameters were added for the fleet-wide SEO audit
+(specs/seo-fleet-audit.md); both are additive — a consuming repo that
+leaves them unset gets byte-identical output to today.
+
+`semantic_headings` (default `False`) controls two independent things
+about a rendered page's DOM, both aimed at fixing a page having no `<h1>`
+and a sidebar navigation label wrongly appearing as a document heading:
+
+- `False` (default, byte-identical to the pre-existing behaviour): a
+  source Markdown page's own `# Title` renders `<h2>` (`TocExtension`'s
+  `baselevel=2`), and each sidebar nav-group label renders `<h4>{group}</h4>`.
+- `True`: a page's own `# Title` renders a real `<h1>` (`baselevel=1`), and
+  each sidebar nav-group label renders the non-heading
+  `<p class="doc-side__group">{group}</p>` instead — it is chrome (sidebar
+  navigation), not page content, so it has no business in the heading
+  outline.
+
+Unlike `site_url`, flipping `semantic_headings` to `True` is a genuine
+default-behaviour change the first time a consuming repo sets it: every
+existing heading in a rendered page's DOM shifts down one level, and any
+CSS in that repo's own `site/docs.css` targeting the sidebar group label
+(e.g. `.doc-side h4`) must be renamed to match (`.doc-side__group`) in the
+same change, or the visual result regresses. Roll it out satellite-by-
+satellite, pairing the pin bump with that repo's own CSS rename in one PR.
+
+`llms_summary` (default `None`) is the one-paragraph summary that goes
+into `llms.txt` — see below.
+
+## llms.txt generation
+
+Set BOTH `site_url` and `llms_summary` to have `build()` additionally
+write `<out>/llms.txt`, following the [llms.txt](https://llmstxt.org/)
+convention:
+
+```
+# {project name — derived from default_repo's owner/repo-name segment}
+
+> {llms_summary}
+
+- [{project name}]({bare site_url}): {meta_description_prefix}
+- [Documentation]({site_url}docs.html): {meta_description_prefix} documentation portal
+
+## {group}
+- [{label}]({absolute page URL}): {description}
+...
+```
+
+One `## {group}` heading per group in `docs` (sorted by group, then by
+label within a group), listing that group's pages — `docs` is the site's
+curated, labelled nav, not every auto-discovered stray markdown file
+`build()` also renders. Every link is absolute on `site_url`, including
+the `docs.html` portal page. Each page's description is that entry's
+OPTIONAL 4th tuple element when present (see "Public API" above); when
+absent, it falls back to the pre-existing generic
+`"{meta_description_prefix} — {label}"` text — 3-tuple `docs` entries need
+no changes to keep working.
+
+Leaving either `site_url` or `llms_summary` unset emits no `llms.txt`
+(byte-identical to today) — `llms_summary` alone, with `site_url` unset,
+is not enough, since every link in the file must be site_url-absolute.
+
+**Precedence, same as `robots.txt`/`sitemap.xml`:** `build()`'s initial
+`shutil.copytree(site, out)` always copies a hand-authored `site/llms.txt`
+companion verbatim first; when `write_llms_txt` then runs (both fields
+set), its generated `llms.txt` unconditionally overwrites that companion.
 
 ## How the satellite repos consume this package
 
@@ -106,6 +174,44 @@ files are emitted and the module's output is byte-identical to omitting the
 field; when set, `robots.txt` (allow-all with a sitemap reference), `sitemap.xml`
 (with root entry as bare origin, not `.../index.html`), and per-page `canonical`
 placeholders are generated and passed to templates.
+
+A companion suite at
+`scripts/site-tools/tests/test_semantic_headings_and_llms_txt.py` locks the
+additive `SiteConfig.semantic_headings` and `SiteConfig.llms_summary` contracts
+(specs/seo-fleet-audit.md): both new fields unset produces a byte-identical
+tree to omitting them entirely (no `llms.txt`, sidebar group labels still
+`<h4>`); `semantic_headings=True` yields exactly one `<h1>` per rendered
+page and zero `<h4>` sidebar group labels; `llms.txt` follows the
+llms.txt.org shape (H1, `>` blockquote summary, `## {group}` sections, the
+`docs.html` portal link, and the optional per-page description) and is
+absent unless both `site_url` and `llms_summary` are set.
+
+The byte-identical claim above is backed by TWO tests, deliberately, not
+one: `test_new_fields_unset_is_deterministic_and_defaults_are_pinned`
+proves `build()` is deterministic and the dataclass defaults are what they
+claim to be, but — because both sides of that comparison call the SAME,
+already-changed module — it cannot by itself prove the new code left the
+PRE-EXISTING module's default output unchanged. That is what
+`test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte` proves:
+it extracts this module exactly as it existed at `origin/main` via
+`git show` into an isolated import, builds the same fixture with both the
+current and the baseline module, and asserts the trees are byte-for-byte
+identical (parametrised over `site_url` set and unset). It `pytest.skip`s
+rather than fails when `origin/main` cannot be resolved (e.g. a shallow CI
+checkout).
+
+**Pre-merge vs. post-merge, stated plainly (do not oversell this once
+merged):** that last test is only meaningful while `origin/main` still
+points at the commit this branch actually diverged from. The moment this
+branch merges, `origin/main` becomes (or fast-forwards to) this same
+commit, so the "baseline" it extracts is thereafter byte-identical to the
+current module by construction — the comparison passes trivially from then
+on, proving nothing, until this module changes again. This is deliberate
+(no CI workflow change, no separately pinned/maintained baseline SHA or
+tag to keep in sync) — its continued passing after merge is NOT an
+enforced backward-compatibility guarantee for future changes to this
+module; it only ever verified one PR's changes against that PR's own
+starting point.
 
 To run locally, install the package with the test extra and invoke pytest:
 

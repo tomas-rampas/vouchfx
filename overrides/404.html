@@ -1,0 +1,51 @@
+{#-
+  Branded, noindexed 404 page (specs/seo-fleet-audit.md, REQ-006 / D-05).
+
+  Extends Material's "main.html" — the documented project-override seam
+  for template customisation — not its built-in "404.html" (which extends
+  "main.html" itself and only overrides `content` with the stock "404 -
+  Not found" heading) and not "base.html" directly (the lower-level
+  skeleton "main.html" itself extends; Material's own customisation guide
+  treats "main.html" as the intended extension point for a project
+  override, even where, as in this pinned version, "main.html" currently
+  adds nothing beyond delegating straight to "base.html").
+
+  {{ super() }} first in extrahead keeps every one of Material's own
+  <head> tags (charset, viewport, description, OG/Twitter meta, the
+  stylesheet links) — this override only ADDS the noindex directive, never
+  replaces the theme's own head content. Material's own header/nav
+  (rendered by base.html, unaffected by this override) already links to
+  the site home and every top-level nav page, from any URL depth — so the
+  explicit links below are a deliberate belt-and-braces addition, not a
+  substitute for that nav.
+
+  No canonical link is emitted here, deliberately: this page is served for
+  every unmatched path, not one specific URL, so it has no single URL a
+  canonical could honestly claim to represent — a self-referencing
+  canonical (pointing at "/404.html") would assert something false for
+  every other path that actually served this same content. `noindex`
+  alone is what keeps it out of the index; that is sufficient and is the
+  standard, documented approach for a 404 page.
+-#}
+{% extends "main.html" %}
+
+{% block htmltitle %}
+  <title>Page not found — vouchfx</title>
+{% endblock %}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta name="robots" content="noindex">
+{% endblock %}
+
+{% block content %}
+  <h1>404 — Page not found</h1>
+  <p>
+    The page you were looking for doesn't exist here. It may have moved, or
+    the link may be out of date.
+  </p>
+  <p>
+    Try the <a href="{{ config.site_url }}">vouchfx home page</a>, or browse the
+    <a href="{{ config.site_url }}getting-started/">getting started guide</a>.
+  </p>
+{% endblock %}

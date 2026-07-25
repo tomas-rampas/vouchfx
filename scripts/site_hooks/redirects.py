@@ -14,11 +14,37 @@ path, each pointing at the page's new MkDocs URL: a meta-refresh (works
 with JS disabled), a <link rel="canonical"> (correct SEO signal — search
 engines re-index at the new URL instead of penalising this as duplicate
 content), and a plain fallback anchor (works with a refresh timeout
-disabled/blocked). All three targets are root-relative (see
-_redirect_table.relative_target) rather than domain-absolute, so the same
-stub content works unmodified whether the site is served under GitHub
-Pages' /vouchfx/ prefix, a future custom domain, or a local `mkdocs serve`
-preview.
+disabled/blocked). The meta-refresh and fallback anchor targets are
+document-relative — a "../" chain computed from the stub's OWN depth back
+to the site root, then forward to the target (see
+_redirect_table.relative_target) — NOT root-relative (that would mean a
+leading "/", resolved from the site root regardless of the current
+document's location; this hook uses neither that nor a domain-absolute
+form for these two). That document-relative form is what lets this
+content work unmodified whether the site is served under GitHub Pages'
+/vouchfx/ prefix, a future custom domain, or a local `mkdocs serve`
+preview — hard-coding site_url into those two would reintroduce exactly
+the base-path problem this design avoids. The canonical link is the one
+deliberate exception: canonical MUST be domain-absolute per the SEO audit
+(specs/seo-fleet-audit.md, D-04) — search engines do not reliably resolve
+a document-relative canonical the way a browser resolves a
+document-relative meta-refresh — so it is built by joining
+config["site_url"] with the redirect table's new_slug (see
+`_absolute_canonical` below), independently of the document-relative
+`target` used everywhere else in the stub.
+
+Local-preview caveat: config["site_url"] is mkdocs.yml's fixed, configured
+value (the production origin, https://vouchfx.io/) — it is NOT derived
+from wherever the site is actually being served. Under a local `mkdocs
+serve` preview (typically http://127.0.0.1:8000), a stub's canonical
+therefore still points at the production URL, not the local one. This is
+the CORRECT behaviour for a canonical tag — it should always name the URL
+you want a search engine to index, never wherever a preview happens to be
+running — but it does mean the canonical cannot be used to same-origin-
+verify a local preview the way the document-relative meta-refresh and
+fallback anchor can (both of those resolve correctly against whatever
+origin is actually serving the preview, precisely because they carry no
+origin of their own).
 
 The (legacy path -> new slug) table itself is NOT duplicated here — see
 scripts/site_hooks/_redirect_table.py, the single source of truth this
@@ -52,12 +78,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _redirect_table import build_redirect_table, relative_target  # noqa: E402
 
+
+def _absolute_canonical(site_url: str, new_slug: str) -> str:
+    """The domain-absolute canonical URL for a stub's target page (D-04):
+    `site_url` joined with `new_slug` + trailing slash — e.g.
+    "https://vouchfx.io/" + "getting-started" -> "https://vouchfx.io/getting-started/".
+    Tolerates a site_url with or without a trailing slash, matching
+    vouchfx_site_tools.site_url_join's convention elsewhere in this build."""
+    base = site_url if site_url.endswith("/") else site_url + "/"
+    return f"{base}{new_slug}/"
+
 STUB_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="0; url={target}">
-<link rel="canonical" href="{target}">
+<link rel="canonical" href="{canonical}">
 <title>Redirecting…</title>
 </head>
 <body>
@@ -71,11 +107,18 @@ def on_post_build(config: dict[str, Any], **kwargs: Any) -> None:
     """Write a legacy-URL redirect stub for every entry in the redirect table."""
     site_dir = Path(config["site_dir"])
     site_dir_resolved = site_dir.resolve()
+    site_url = config.get("site_url")
+    if not site_url:
+        raise RuntimeError(
+            "redirects hook: mkdocs.yml's site_url is unset — the redirect stub's "
+            "<link rel=\"canonical\"> must be domain-absolute (specs/seo-fleet-audit.md, "
+            "D-04) and cannot be derived without it."
+        )
     table = build_redirect_table()
 
     # Plan every write first, validating each one, and refuse outright (no
     # partial write) if ANY problem is found.
-    planned: list[tuple[Path, str]] = []
+    planned: list[tuple[Path, str, str]] = []
     collisions: list[str] = []
     escapes: list[str] = []
     for legacy_path, new_slug in table:
@@ -100,7 +143,9 @@ def on_post_build(config: dict[str, Any], **kwargs: Any) -> None:
 
         if destination.exists():
             collisions.append(legacy_path)
-        planned.append((destination, relative_target(legacy_path, new_slug)))
+        planned.append(
+            (destination, relative_target(legacy_path, new_slug), _absolute_canonical(site_url, new_slug))
+        )
 
     if escapes:
         listing = "\n".join(f"  {e}" for e in escapes)
@@ -124,6 +169,6 @@ def on_post_build(config: dict[str, Any], **kwargs: Any) -> None:
             f"content instead of failing loudly:\n{listing}"
         )
 
-    for destination, target in planned:
+    for destination, target, canonical in planned:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(STUB_TEMPLATE.format(target=target), encoding="utf-8")
+        destination.write_text(STUB_TEMPLATE.format(target=target, canonical=canonical), encoding="utf-8")

@@ -44,8 +44,15 @@ class SiteConfig:
     default_repo: the ``owner/repo`` used to build GitHub blob/tree links when
         the ``GITHUB_REPOSITORY`` environment variable is unset (it always
         wins when present, matching GitHub Actions' own convention).
-    docs: markdown files to render, in sidebar order — (source path relative
-        to root, nav group, label).
+    docs: markdown files to render, in sidebar order — 3-tuples of (source
+        path relative to root, nav group, label). An OPTIONAL 4th element
+        (a one-line description) may be appended to any entry — 3-tuples
+        remain fully valid everywhere (backwards compatible); the
+        description, when present, is used only by `write_llms_txt` in
+        place of its generic `"{meta_description_prefix} — {label}"` text
+        (see `llms_summary`). Every consumer that iterates `docs`
+        normalises through `_doc_entry`, so a mixed list of 3- and 4-tuples
+        is fine.
     page_template: the full per-page HTML template (``PAGE`` in the old
         per-repo scripts), formatted with title/desc/root/sidebar/crumb/body/
         toc/mermaid_script.
@@ -92,11 +99,48 @@ class SiteConfig:
         already rendered every page — i.e. strictly after that initial
         copytree — so its `robots.txt`/`sitemap.xml` unconditionally
         overwrite same-named `site/` companions, and are what wins.
+    semantic_headings: OPTIONAL and additive (specs/seo-fleet-audit.md,
+        B1/B2). False (the default) is the pre-existing behaviour,
+        byte-for-byte: `render_markdown()`'s `TocExtension` keeps
+        `baselevel=2` (a source Markdown `# Title` renders `<h2>`), and
+        `sidebar()` renders each nav group label as `<h4>{group}</h4>`.
+        True switches both: `TocExtension(baselevel=1)` so a page's own
+        `# Title` renders as a real `<h1>` (previously every rendered page
+        had NO `<h1>` at all — the audit's D-09 finding), and `sidebar()`
+        renders each group label as `<p class="doc-side__group">{group}</p>`
+        instead — taking it out of the document heading outline entirely,
+        since it was never semantically a heading in the first place (it is
+        chrome: sidebar navigation, not page content). Unlike `site_url`,
+        this is a genuine DEFAULT BEHAVIOUR CHANGE the first time a
+        consumer sets it `True` (every existing heading in the rendered
+        page's DOM shifts down one level) — every heading class in a
+        consuming repo's own `site/docs.css` that targets the sidebar
+        group label (e.g. `.doc-side h4`) must be renamed to match
+        (`.doc-side__group`) in lockstep, or the visual result regresses.
+        See this package's README for the full satellite roll-out sequence.
+    llms_summary: OPTIONAL and additive (specs/seo-fleet-audit.md, B3). None
+        (the default) is the pre-existing behaviour, byte-for-byte: `build()`
+        never writes `llms.txt`. Set together with `site_url` (BOTH must be
+        truthy — `llms_summary` alone, with `site_url` unset, still emits no
+        file, since every link in the file must be site_url-absolute),
+        `build()` additionally writes `<out>/llms.txt` per the llms.txt.org
+        convention: an H1 project name (derived from `default_repo`), this
+        text as a `>` blockquote summary, the portal (`docs.html`) page,
+        then one `## {group}` section per `docs` group (the site's "key
+        pages" — not every auto-discovered stray markdown file) with a
+        linked list of that group's pages, every link absolute on
+        `site_url`. See `write_llms_txt`.
+
+        PRECEDENCE, same as `robots.txt`/`sitemap.xml` above: `build()`'s
+        initial `shutil.copytree(site, out)` always copies a hand-authored
+        `site/llms.txt` companion verbatim first; when `write_llms_txt`
+        then runs (site_url AND llms_summary both set), its generated
+        `llms.txt` unconditionally overwrites that companion.
     """
 
     root: Path
     default_repo: str
-    docs: list[tuple[str, str, str]]
+    docs: list[tuple[str, ...]]  # each entry: (rel, group, label) or (rel, group, label, description)
     page_template: str
     portal_html: str
     meta_description_prefix: str
@@ -106,6 +150,8 @@ class SiteConfig:
     fact_overrides: dict[str, Callable[[], str]] = field(default_factory=dict)
     delete_facts_fallback: bool = True
     site_url: str | None = None
+    semantic_headings: bool = False
+    llms_summary: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -264,13 +310,43 @@ def derive_label(src: Path) -> str:
     return src.stem
 
 
+def _doc_entry(entry: tuple[str, ...]) -> tuple[str, str, str, str | None]:
+    """Normalise one `SiteConfig.docs` entry to (rel, group, label,
+    description). The pre-existing 3-tuple shape (rel, group, label)
+    normalises to a `None` description; the OPTIONAL 4th element, when
+    present, is that page's one-line description (`write_llms_txt` is
+    today's only consumer of it). Every call site that iterates
+    `config.docs` goes through this helper so a mixed list of 3- and
+    4-tuples works everywhere, not just in the one call site a given
+    feature needed it for.
+
+    Validates arity explicitly: exactly 3 or 4 elements. Without this, an
+    entry with 5+ elements would previously be silently truncated (`entry[0]`,
+    `entry[1]`, `entry[2]`, `entry[3]` simply ignore anything past index 3) —
+    a typo'd extra element (e.g. a stray trailing comma turning one entry
+    into a nested tuple) would silently drop data rather than fail loudly.
+    Also rejects a too-short entry (0, 1 or 2 elements) with the same
+    named-entry error, rather than letting the 3-tuple unpack below raise a
+    generic, entry-less ValueError.
+    """
+    if len(entry) not in (3, 4):
+        raise ValueError(
+            f"SiteConfig.docs entry must have exactly 3 (rel, group, label) or "
+            f"4 (rel, group, label, description) elements, got {len(entry)}: {entry!r}"
+        )
+    if len(entry) == 4:
+        return entry[0], entry[1], entry[2], entry[3]
+    rel, group, label = entry
+    return rel, group, label, None
+
+
 # ---------------------------------------------------------------------------
 # Publication scoping and link rewriting
 # ---------------------------------------------------------------------------
 
 
 def compute_published(config: SiteConfig) -> set[str]:
-    rels = {rel for rel, _group, _label in config.docs} | set(config.extra)
+    rels = {_doc_entry(entry)[0] for entry in config.docs} | set(config.extra)
     # The auto-render glob is deliberately hard-coded to docs/**/*.md — this
     # scoping, together with skip/skip_prefixes, is the publication boundary
     # that keeps maintainer-local material (plan/, HUMAN_TODO.md, docs/reviews
@@ -303,15 +379,28 @@ def rewrite_links(body: str, src_rel: str, *, root: Path, github_url: str, publi
     return re.sub(r'href="([^"]+)"', repl, body)
 
 
-def sidebar(active_rel: str, root: str, docs: list[tuple[str, str, str]]) -> str:
+def sidebar(active_rel: str, root: str, docs: list[tuple[str, ...]], *, semantic_headings: bool = False) -> str:
+    """Render the doc-page sidebar nav.
+
+    `semantic_headings` (SiteConfig.semantic_headings, default False, see
+    its docstring) controls only the group-label element: `<h4>{group}</h4>`
+    (pre-existing, byte-identical default) when False; the non-heading
+    `<p class="doc-side__group">{group}</p>` when True — the sidebar label
+    is chrome, not document content, so it has no business appearing in the
+    page's heading outline (specs/seo-fleet-audit.md, D-09/B2).
+    """
     groups: dict[str, list[str]] = {}
-    for rel, group, label in docs:
+    for entry in docs:
+        rel, group, label, _desc = _doc_entry(entry)
         href = root + rel[:-3] + ".html"
         cls = ' class="active"' if rel == active_rel else ""
         groups.setdefault(group, []).append(f'<a href="{href}"{cls}>{html.escape(label)}</a>')
     parts = [f'<a href="{root}docs.html">← All documentation</a>']
     for group, links in groups.items():
-        parts.append(f"<h4>{html.escape(group)}</h4>")
+        if semantic_headings:
+            parts.append(f'<p class="doc-side__group">{html.escape(group)}</p>')
+        else:
+            parts.append(f"<h4>{html.escape(group)}</h4>")
         parts.extend(links)
     return "\n".join(parts)
 
@@ -340,7 +429,12 @@ def render_markdown(
             "extra",
             "sane_lists",
             "admonition",
-            TocExtension(permalink=True, permalink_class="headerlink", permalink_title="", baselevel=2),
+            TocExtension(
+                permalink=True,
+                permalink_class="headerlink",
+                permalink_title="",
+                baselevel=1 if config.semantic_headings else 2,
+            ),
             CodeHiliteExtension(css_class="codehilite", guess_lang=False),
         ]
     )
@@ -369,7 +463,7 @@ def render_markdown(
         title=html.escape(label),
         desc=html.escape(desc),
         root=root_str,
-        sidebar=sidebar(rel, root_str, config.docs),
+        sidebar=sidebar(rel, root_str, config.docs, semantic_headings=config.semantic_headings),
         crumb=html.escape(label),
         body=body,
         toc=toc,
@@ -443,6 +537,92 @@ def write_robots_and_sitemap(config: SiteConfig, out: Path, rendered: set[str]) 
 
 
 # ---------------------------------------------------------------------------
+# llms.txt — additive, only when BOTH SiteConfig.site_url AND
+# SiteConfig.llms_summary are set (specs/seo-fleet-audit.md, REQ-005/B3).
+# `build()` only calls this function from inside an
+# `if config.site_url and config.llms_summary:` guard, so its very
+# existence has no effect on the (site_url-set, llms_summary-unset) or
+# (site_url-unset) output paths — both remain byte-identical to today.
+# ---------------------------------------------------------------------------
+
+
+def _project_name(config: SiteConfig) -> str:
+    """Best-effort project/site name for the llms.txt H1: the repo-name
+    segment of `SiteConfig.default_repo` (e.g. "tomas-rampas/vouchfx-samples"
+    -> "vouchfx-samples") — every vouchfx-ecosystem repository is already
+    named directly after the site it publishes, so this needs no additional
+    SiteConfig field of its own.
+
+    Deliberately `config.default_repo`, NOT `os.environ.get("GITHUB_REPOSITORY",
+    config.default_repo)` the way `build()`'s own `github_url` is derived a
+    few lines below: `GITHUB_REPOSITORY` names whichever checkout is
+    actually running the build (a fork included, e.g. "someone/vouchfx-
+    samples-fork" in a fork's own CI run) — fine for a GitHub blob/tree URL,
+    which should point at the repository that produced it, but wrong for
+    published, PUBLIC page content like llms.txt, which must stay the same
+    regardless of which fork or checkout happens to be building it.
+    `default_repo` is this package's one fork-stable identity for a site.
+    """
+    return config.default_repo.rsplit("/", 1)[-1]
+
+
+def write_llms_txt(config: SiteConfig, out: Path, rendered: set[str]) -> None:
+    """Emit llms.txt following the llms.txt.org convention: an H1 project
+    name, `config.llms_summary` as a `>` blockquote, a short intro list
+    (the site's own index page and the `docs.html` portal), then one
+    `## {group}` section per `config.docs` group with a linked list of that
+    group's pages — `config.docs` is the site's curated, labelled nav, not
+    every auto-discovered stray markdown file `build()` also renders.
+    Every link is absolute on `config.site_url`.
+
+    Per-page description: the OPTIONAL 4th element of a `config.docs` entry
+    (see `_doc_entry`/`SiteConfig.docs`), when present; otherwise the
+    pre-existing generic `"{meta_description_prefix} — {label}"` text.
+
+    Modelled on `write_robots_and_sitemap()` above: same "index.html is the
+    bare origin" convention via `_sitemap_loc`, same site_url-join via
+    `site_url_join`, same `assert`-both-truthy contract (only ever called
+    from build()'s own `if config.site_url and config.llms_summary:` guard).
+    """
+    assert config.site_url and config.llms_summary  # only ever called when both are truthy — see build()
+
+    name = _project_name(config)
+    lines = [f"# {name}", "", f"> {config.llms_summary}", ""]
+    lines.append(f"- [{name}]({_sitemap_loc(config, 'index.html')}): {config.meta_description_prefix}")
+    lines.append(
+        f"- [Documentation]({site_url_join(config.site_url, 'docs.html')}): "
+        f"{config.meta_description_prefix} documentation portal"
+    )
+    lines.append("")
+
+    # Grouped by config.docs' own `group` field (each group rendered as its
+    # own `## {group}` section, per the llms.txt.org convention), sorted by
+    # group name and then by label within a group for a deterministic,
+    # human-browsable listing independent of config.docs' declaration order
+    # or build()'s render order. Auto-discovered pages (not in config.docs)
+    # are deliberately excluded: they carry no curated label/group.
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for entry in config.docs:
+        rel, group, label, description = _doc_entry(entry)
+        if rel not in rendered:
+            continue
+        url = site_url_join(config.site_url, out_path(rel, out).relative_to(out).as_posix())
+        text = description if description is not None else f"{config.meta_description_prefix} — {label}"
+        groups.setdefault(group, []).append((label, f"- [{label}]({url}): {text}"))
+
+    doc_count = 0
+    for group in sorted(groups):
+        lines.append(f"## {group}")
+        for _label, line in sorted(groups[group]):
+            lines.append(line)
+            doc_count += 1
+        lines.append("")
+
+    (out / "llms.txt").write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+    print(f"  wrote llms.txt ({doc_count} doc page(s) across {len(groups)} group(s)) for {config.site_url}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -495,7 +675,8 @@ def build(config: SiteConfig, out: Path) -> None:
     published = compute_published(config)
 
     rendered: set[str] = set()
-    for rel, _group, label in config.docs:
+    for entry in config.docs:
+        rel, _group, label, _desc = _doc_entry(entry)
         render_markdown(rel, label, config=config, out=out, github_url=github_url, published=published, facts=facts)
         rendered.add(rel)
     for rel in config.extra:
@@ -529,5 +710,7 @@ def build(config: SiteConfig, out: Path) -> None:
 
     if config.site_url:
         write_robots_and_sitemap(config, out, rendered)
+    if config.site_url and config.llms_summary:
+        write_llms_txt(config, out, rendered)
 
     print(f"done -> {out}")

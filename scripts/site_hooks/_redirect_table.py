@@ -43,7 +43,7 @@ _EXTRA_LEGACY_REDIRECTS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _load_docs_table() -> list[tuple[str, str, str]]:
+def _load_docs_table() -> list[tuple[str, ...]]:
     """Extract build_site.py's DOCS list via static AST parsing.
 
     This never executes build_site.py — so it has no dependency on
@@ -52,6 +52,16 @@ def _load_docs_table() -> list[tuple[str, str, str]]:
     triggering any future side effect a naive `import`/`exec` might pick
     up. build_site.py is read-only input to this repo's docs scaffold;
     this function only ever reads it as text.
+
+    Return type is deliberately `list[tuple[str, ...]]`, not
+    `list[tuple[str, str, str]]`: build_site.py's own `DOCS` entries are
+    (rel, group, label) 3-tuples today, but vouchfx_site_tools.SiteConfig's
+    `docs` field (the shape build_site.py's DOCS mirrors) supports an
+    OPTIONAL 4th "description" element (specs/seo-fleet-audit.md, B4/critic
+    M-3) — a fixed 3-tuple annotation here would silently lie about what
+    `ast.literal_eval` can actually return the moment DOCS gains one such
+    entry. `build_redirect_table` below unpacks defensively (`rel,
+    *_rest`), not by fixed arity, for the same reason.
     """
     source = BUILD_SITE_PY.read_text(encoding="utf-8", errors="replace")
     tree = ast.parse(source, filename=str(BUILD_SITE_PY))
@@ -118,7 +128,14 @@ def build_redirect_table() -> list[tuple[str, str]]:
     `_validate_entry`) before being included.
     """
     table: list[tuple[str, str]] = []
-    for rel, _group, _label in _load_docs_table():
+    for rel, *_rest in _load_docs_table():
+        # *_rest tolerates a 3- OR 4-element DOCS entry (see
+        # _load_docs_table's docstring) — only `rel` (the first element)
+        # is ever used to derive a redirect-table row; a fixed 3-name
+        # unpack here would raise ValueError the moment a DOCS entry
+        # gained the optional 4th "description" element, taking down this
+        # module's on_post_build hook and check_site.py's
+        # check_legacy_redirects with it.
         legacy = rel[: -len(".md")] + ".html"
         new_slug = _new_slug_for(rel)
         _validate_entry(legacy, new_slug)

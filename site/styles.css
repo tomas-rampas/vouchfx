@@ -186,7 +186,7 @@ code { font-family: var(--mono); font-size: .9em; }
   background: var(--grad); border-radius: 2px; opacity: .8;
 }
 .flow__k { font-family: var(--mono); font-size: .8rem; color: var(--cyan); font-weight: 600; }
-.flow__node h4 { margin: 8px 0 8px; font-size: 1rem; }
+.flow__node h3 { margin: 8px 0 8px; font-size: 1rem; }
 .flow__node p { margin: 0; color: var(--muted); font-size: .88rem; }
 
 /* ===================== LAYERS ===================== */
@@ -204,7 +204,7 @@ code { font-family: var(--mono); font-size: .9em; }
   background: rgba(99,102,241,.14); color: var(--violet);
   border: 1px solid rgba(129,140,248,.3);
 }
-.layer__body h4 { margin: 0 0 2px; font-size: 1.05rem; }
+.layer__body h3 { margin: 0 0 2px; font-size: 1.05rem; }
 .layer__body p { margin: 0; color: var(--muted); font-size: .94rem; }
 .layers__contract {
   margin-top: 6px; text-align: center; color: var(--muted);
@@ -315,7 +315,7 @@ code { font-family: var(--mono); font-size: .9em; }
   border: 1px solid var(--border-2); padding: 3px 10px; border-radius: 100px;
 }
 .timeline__item--done .timeline__badge { color: var(--green); border-color: rgba(52,211,153,.4); }
-.timeline__item h4 { margin: 12px 0 5px; font-size: 1.1rem; }
+.timeline__item h3 { margin: 12px 0 5px; font-size: 1.1rem; }
 .timeline__item p { margin: 0; color: var(--muted); font-size: .95rem; max-width: 640px; }
 
 /* ===================== CTA / FOOTER ===================== */
