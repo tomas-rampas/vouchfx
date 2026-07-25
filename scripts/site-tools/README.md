@@ -44,6 +44,46 @@ SEO files — though any hand-authored companions under `site/` (including a
 always have. When both exist, the generated files win (they are written
 after the companion copy).
 
+Two further optional parameters were added for the fleet-wide SEO audit
+(specs/seo-fleet-audit.md); both are additive — a consuming repo that
+leaves them unset gets byte-identical output to today.
+
+`semantic_headings` (default `False`) controls two independent things
+about a rendered page's DOM, both aimed at fixing a page having no `<h1>`
+and a sidebar navigation label wrongly appearing as a document heading:
+
+- `False` (default, byte-identical to the pre-existing behaviour): a
+  source Markdown page's own `# Title` renders `<h2>` (`TocExtension`'s
+  `baselevel=2`), and each sidebar nav-group label renders `<h4>{group}</h4>`.
+- `True`: a page's own `# Title` renders a real `<h1>` (`baselevel=1`), and
+  each sidebar nav-group label renders the non-heading
+  `<p class="doc-side__group">{group}</p>` instead — it is chrome (sidebar
+  navigation), not page content, so it has no business in the heading
+  outline.
+
+Unlike `site_url`, flipping `semantic_headings` to `True` is a genuine
+default-behaviour change the first time a consuming repo sets it: every
+existing heading in a rendered page's DOM shifts down one level, and any
+CSS in that repo's own `site/docs.css` targeting the sidebar group label
+(e.g. `.doc-side h4`) must be renamed to match (`.doc-side__group`) in the
+same change, or the visual result regresses. Roll it out satellite-by-
+satellite, pairing the pin bump with that repo's own CSS rename in one PR.
+
+`llms_summary` (default `None`) is the one-paragraph summary that goes
+into `llms.txt` — see below.
+
+## llms.txt generation
+
+Set BOTH `site_url` and `llms_summary` to have `build()` additionally
+write `<out>/llms.txt`, following the [llms.txt](https://llmstxt.org/)
+convention: an H1 project name (derived from `default_repo`'s
+`owner/repo-name` — the repo-name segment), the `llms_summary` paragraph,
+then a linked list of `docs` (the site's curated, labelled nav — not every
+auto-discovered stray markdown file `build()` also renders), every link
+absolute on `site_url`. Leaving either field unset emits no `llms.txt`
+(byte-identical to today) — `llms_summary` alone, with `site_url` unset,
+is not enough, since every link in the file must be site_url-absolute.
+
 ## How the satellite repos consume this package
 
 In CI, a satellite repo's `pages.yml` installs it straight from the engine
@@ -106,6 +146,16 @@ files are emitted and the module's output is byte-identical to omitting the
 field; when set, `robots.txt` (allow-all with a sitemap reference), `sitemap.xml`
 (with root entry as bare origin, not `.../index.html`), and per-page `canonical`
 placeholders are generated and passed to templates.
+
+A companion suite at
+`scripts/site-tools/tests/test_semantic_headings_and_llms_txt.py` locks the
+additive `SiteConfig.semantic_headings` and `SiteConfig.llms_summary` contracts
+the same way (specs/seo-fleet-audit.md): both new fields unset produces a
+byte-identical tree to omitting them entirely (no `llms.txt`, sidebar group
+labels still `<h4>`); `semantic_headings=True` yields exactly one `<h1>` per
+rendered page and zero `<h4>` sidebar group labels; `llms.txt` is emitted with
+an H1 and site_url-absolute links only when both `site_url` and
+`llms_summary` are set, and is absent if either is missing.
 
 To run locally, install the package with the test extra and invoke pytest:
 

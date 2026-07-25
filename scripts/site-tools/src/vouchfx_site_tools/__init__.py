@@ -92,6 +92,35 @@ class SiteConfig:
         already rendered every page — i.e. strictly after that initial
         copytree — so its `robots.txt`/`sitemap.xml` unconditionally
         overwrite same-named `site/` companions, and are what wins.
+    semantic_headings: OPTIONAL and additive (specs/seo-fleet-audit.md,
+        B1/B2). False (the default) is the pre-existing behaviour,
+        byte-for-byte: `render_markdown()`'s `TocExtension` keeps
+        `baselevel=2` (a source Markdown `# Title` renders `<h2>`), and
+        `sidebar()` renders each nav group label as `<h4>{group}</h4>`.
+        True switches both: `TocExtension(baselevel=1)` so a page's own
+        `# Title` renders as a real `<h1>` (previously every rendered page
+        had NO `<h1>` at all — the audit's D-09 finding), and `sidebar()`
+        renders each group label as `<p class="doc-side__group">{group}</p>`
+        instead — taking it out of the document heading outline entirely,
+        since it was never semantically a heading in the first place (it is
+        chrome: sidebar navigation, not page content). Unlike `site_url`,
+        this is a genuine DEFAULT BEHAVIOUR CHANGE the first time a
+        consumer sets it `True` (every existing heading in the rendered
+        page's DOM shifts down one level) — every heading class in a
+        consuming repo's own `site/docs.css` that targets the sidebar
+        group label (e.g. `.doc-side h4`) must be renamed to match
+        (`.doc-side__group`) in lockstep, or the visual result regresses.
+        See this package's README for the full satellite roll-out sequence.
+    llms_summary: OPTIONAL and additive (specs/seo-fleet-audit.md, B3). None
+        (the default) is the pre-existing behaviour, byte-for-byte: `build()`
+        never writes `llms.txt`. Set together with `site_url` (BOTH must be
+        truthy — `llms_summary` alone, with `site_url` unset, still emits no
+        file, since every link in the file must be site_url-absolute),
+        `build()` additionally writes `<out>/llms.txt` per the llms.txt
+        convention: an H1 project name (derived from `default_repo`), this
+        one-paragraph summary, then a linked list of `docs` (the site's
+        "key pages" — not every auto-discovered stray markdown file), every
+        link absolute on `site_url`. See `write_llms_txt`.
     """
 
     root: Path
@@ -106,6 +135,8 @@ class SiteConfig:
     fact_overrides: dict[str, Callable[[], str]] = field(default_factory=dict)
     delete_facts_fallback: bool = True
     site_url: str | None = None
+    semantic_headings: bool = False
+    llms_summary: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +334,18 @@ def rewrite_links(body: str, src_rel: str, *, root: Path, github_url: str, publi
     return re.sub(r'href="([^"]+)"', repl, body)
 
 
-def sidebar(active_rel: str, root: str, docs: list[tuple[str, str, str]]) -> str:
+def sidebar(
+    active_rel: str, root: str, docs: list[tuple[str, str, str]], *, semantic_headings: bool = False
+) -> str:
+    """Render the doc-page sidebar nav.
+
+    `semantic_headings` (SiteConfig.semantic_headings, default False, see
+    its docstring) controls only the group-label element: `<h4>{group}</h4>`
+    (pre-existing, byte-identical default) when False; the non-heading
+    `<p class="doc-side__group">{group}</p>` when True — the sidebar label
+    is chrome, not document content, so it has no business appearing in the
+    page's heading outline (specs/seo-fleet-audit.md, D-09/B2).
+    """
     groups: dict[str, list[str]] = {}
     for rel, group, label in docs:
         href = root + rel[:-3] + ".html"
@@ -311,7 +353,10 @@ def sidebar(active_rel: str, root: str, docs: list[tuple[str, str, str]]) -> str
         groups.setdefault(group, []).append(f'<a href="{href}"{cls}>{html.escape(label)}</a>')
     parts = [f'<a href="{root}docs.html">← All documentation</a>']
     for group, links in groups.items():
-        parts.append(f"<h4>{html.escape(group)}</h4>")
+        if semantic_headings:
+            parts.append(f'<p class="doc-side__group">{html.escape(group)}</p>')
+        else:
+            parts.append(f"<h4>{html.escape(group)}</h4>")
         parts.extend(links)
     return "\n".join(parts)
 
@@ -340,7 +385,12 @@ def render_markdown(
             "extra",
             "sane_lists",
             "admonition",
-            TocExtension(permalink=True, permalink_class="headerlink", permalink_title="", baselevel=2),
+            TocExtension(
+                permalink=True,
+                permalink_class="headerlink",
+                permalink_title="",
+                baselevel=1 if config.semantic_headings else 2,
+            ),
             CodeHiliteExtension(css_class="codehilite", guess_lang=False),
         ]
     )
@@ -369,7 +419,7 @@ def render_markdown(
         title=html.escape(label),
         desc=html.escape(desc),
         root=root_str,
-        sidebar=sidebar(rel, root_str, config.docs),
+        sidebar=sidebar(rel, root_str, config.docs, semantic_headings=config.semantic_headings),
         crumb=html.escape(label),
         body=body,
         toc=toc,
@@ -440,6 +490,57 @@ def write_robots_and_sitemap(config: SiteConfig, out: Path, rendered: set[str]) 
     )
     (out / "sitemap.xml").write_text(sitemap, encoding="utf-8")
     print(f"  wrote robots.txt + sitemap.xml ({len(entries)} url(s)) for {config.site_url}")
+
+
+# ---------------------------------------------------------------------------
+# llms.txt — additive, only when BOTH SiteConfig.site_url AND
+# SiteConfig.llms_summary are set (specs/seo-fleet-audit.md, REQ-005/B3).
+# `build()` only calls this function from inside an
+# `if config.site_url and config.llms_summary:` guard, so its very
+# existence has no effect on the (site_url-set, llms_summary-unset) or
+# (site_url-unset) output paths — both remain byte-identical to today.
+# ---------------------------------------------------------------------------
+
+
+def _project_name(config: SiteConfig) -> str:
+    """Best-effort project/site name for the llms.txt H1: the repo-name
+    segment of `SiteConfig.default_repo` (e.g. "tomas-rampas/vouchfx-samples"
+    -> "vouchfx-samples") — every vouchfx-ecosystem repository is already
+    named directly after the site it publishes, so this needs no additional
+    SiteConfig field of its own."""
+    return config.default_repo.rsplit("/", 1)[-1]
+
+
+def write_llms_txt(config: SiteConfig, out: Path, rendered: set[str]) -> None:
+    """Emit llms.txt following the llms.txt convention: an H1 project name,
+    one-paragraph summary (`config.llms_summary`), then a linked list of the
+    site's key pages — `config.docs` (the curated, labelled nav — not every
+    auto-discovered stray markdown file `build()` also renders) plus the
+    portal/index page — every link absolute on `config.site_url`.
+
+    Modelled on `write_robots_and_sitemap()` above: same "index.html is the
+    bare origin" convention via `_sitemap_loc`, same site_url-join via
+    `site_url_join`, same `assert`-both-truthy contract (only ever called
+    from build()'s own `if config.site_url and config.llms_summary:` guard).
+    """
+    assert config.site_url and config.llms_summary  # only ever called when both are truthy — see build()
+
+    name = _project_name(config)
+    lines = [f"# {name}", "", config.llms_summary, ""]
+    lines.append(f"- [{name}]({_sitemap_loc(config, 'index.html')}): {config.meta_description_prefix}")
+
+    # Sorted by (group, label) for a deterministic, human-browsable listing —
+    # independent of config.docs' declaration order or build()'s render
+    # order (auto-discovered pages are appended after config.docs/extra, and
+    # are deliberately excluded here: they carry no curated label/group).
+    for rel, group, label in sorted(config.docs, key=lambda item: (item[1], item[2])):
+        if rel not in rendered:
+            continue
+        url = site_url_join(config.site_url, out_path(rel, out).relative_to(out).as_posix())
+        lines.append(f"- [{label}]({url}): {config.meta_description_prefix} — {label}")
+
+    (out / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  wrote llms.txt ({len(lines) - 5} doc page(s)) for {config.site_url}")
 
 
 # ---------------------------------------------------------------------------
@@ -529,5 +630,7 @@ def build(config: SiteConfig, out: Path) -> None:
 
     if config.site_url:
         write_robots_and_sitemap(config, out, rendered)
+    if config.site_url and config.llms_summary:
+        write_llms_txt(config, out, rendered)
 
     print(f"done -> {out}")
