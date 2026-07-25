@@ -34,17 +34,24 @@ regression, since both sides are the thing under test):
   unchanged — both sides here run the identical, already-patched function
   bodies, so a shared bug would pass this test just as easily as no bug at
   all.
-* ``test_new_fields_unset_matches_pre_change_module_byte_for_byte`` is the
-  REAL cross-version proof: it extracts this module exactly as it existed
-  at ``origin/main`` (the base this branch diverged from, via ``git show``,
+* ``test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte`` is
+  the REAL cross-version proof, WHILE this branch has genuinely diverged
+  from ``origin/main``: it extracts this module exactly as it existed at
+  ``origin/main`` (the base this branch diverged from, via ``git show``,
   into an isolated import that never touches ``sys.modules
   ["vouchfx_site_tools"]``) and builds the same fixture with THAT module
   and with the current one, asserting byte-for-byte tree equality. This is
   the only test in this file that can actually catch B1/B2/B3 having
-  altered the pre-existing default output. It ``pytest.skip``s (not fails)
-  when ``origin/main`` cannot be resolved — e.g. a shallow CI checkout with
-  no such ref — since that is an environment limitation, not evidence of a
-  regression.
+  altered the pre-existing default output — but only PRE-MERGE: the moment
+  this branch merges, ``origin/main`` becomes this same commit, so the
+  "baseline" is thereafter identical to the current module and the
+  comparison passes trivially, proving nothing, until this module changes
+  again. This is a deliberate trade-off (no CI workflow change, no
+  separately pinned/maintained baseline) — see the test's own docstring
+  for the full reasoning — not an ongoing backward-compatibility
+  guarantee. It ``pytest.skip``s (not fails) when ``origin/main`` cannot
+  be resolved — e.g. a shallow CI checkout with no such ref — since that
+  is an environment limitation, not evidence of a regression.
 
 Every test drives the module's real public API (``SiteConfig`` + ``build()``)
 end to end against a throw-away repo skeleton under ``tmp_path`` — never a
@@ -212,8 +219,9 @@ def test_new_fields_unset_is_deterministic_and_defaults_are_pinned(tmp_path: Pat
     identical, already-patched function bodies, so a shared bug (or a
     genuine, undocumented default-behaviour change) would pass this test
     just as easily as no bug at all. See
-    test_new_fields_unset_matches_pre_change_module_byte_for_byte for the
-    test that actually catches that.
+    test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte for
+    the test that actually catches that (pre-merge only — see its own
+    docstring).
     """
     root = _make_repo(tmp_path)
     out_omitted = root / "_out_omitted"
@@ -243,23 +251,45 @@ def test_new_fields_unset_is_deterministic_and_defaults_are_pinned(tmp_path: Pat
 
 
 @pytest.mark.parametrize("site_url", [SITE_URL, None], ids=["site_url-set", "site_url-unset"])
-def test_new_fields_unset_matches_pre_change_module_byte_for_byte(tmp_path: Path, site_url: str | None) -> None:
-    """The REAL cross-version EDGE-002 proof (see module docstring): builds
-    the same fixture with the CURRENT module (this test file's normal,
-    top-level `import vouchfx_site_tools`) and with the module exactly as
-    it existed at `origin/main` — the base this branch diverged from,
-    extracted via `git show` into an isolated import that never touches
-    `sys.modules["vouchfx_site_tools"]` — both with `semantic_headings`/
-    `llms_summary` left unset. Parametrized over `site_url` set and unset,
-    per this work order's explicit instruction, since `render_markdown()`'s
-    canonical-kwarg branch and `write_robots_and_sitemap()` are each only
-    exercised on one side of that split.
+def test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte(
+    tmp_path: Path, site_url: str | None
+) -> None:
+    """The REAL cross-version EDGE-002 proof (see module docstring) — WHILE
+    this branch has genuinely diverged from `origin/main`. Builds the same
+    fixture with the CURRENT module (this test file's normal, top-level
+    `import vouchfx_site_tools`) and with the module exactly as it existed
+    at `origin/main`, extracted via `git show` into an isolated import that
+    never touches `sys.modules["vouchfx_site_tools"]`, both with
+    `semantic_headings`/`llms_summary` left unset. Parametrized over
+    `site_url` set and unset, per this work order's explicit instruction,
+    since `render_markdown()`'s canonical-kwarg branch and
+    `write_robots_and_sitemap()` are each only exercised on one side of
+    that split.
 
-    If the two builds are not byte-identical, this branch's B1/B2/B3 change
-    altered the pre-existing module's default output — exactly what
-    EDGE-002 forbids. Skips (does not fail) when `origin/main` cannot be
-    resolved, e.g. a shallow CI checkout with no such ref: that is an
-    environment limitation, not evidence of a regression.
+    PRE-MERGE vs. POST-MERGE, stated plainly — do not oversell what this
+    proves once this branch lands: it is meaningful ONLY while
+    `origin/main` still points at the commit this branch diverged from. If
+    the two builds are not byte-identical at that point, this branch's
+    B1/B2/B3 change altered the pre-existing module's default output —
+    exactly what EDGE-002 forbids, and exactly the class of bug this test
+    exists to catch before merge. The MOMENT this branch merges,
+    `origin/main` becomes (or fast-forwards to) this same commit, so the
+    "baseline" this test extracts is thereafter byte-identical to the
+    current module by construction — the comparison degenerates to
+    comparing the module with itself and passes trivially, proving
+    nothing, for every commit after the merge until this module changes
+    again (at which point `origin/main` again differs from the working
+    tree, and the test becomes meaningful again, comparing against
+    whatever was last merged rather than this specific PR's starting
+    point). This is a DELIBERATE trade-off, not an oversight: no CI
+    workflow change and no separately pinned/maintained baseline
+    SHA/tag — see this file's own git history for the reasoning — so this
+    test's ongoing pass/fail after merge is NOT an enforced backward-
+    compatibility guarantee for future changes to this module; it only
+    ever verified THIS branch's changes against THIS branch's own starting
+    point. Skips (does not fail) when `origin/main` cannot be resolved,
+    e.g. a shallow CI checkout with no such ref: that is an environment
+    limitation, not evidence of a regression.
     """
     if not _git_ref_resolves(BASELINE_REF):
         pytest.skip(f"{BASELINE_REF!r} does not resolve in this checkout (shallow clone?) — skipping")

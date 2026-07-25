@@ -192,12 +192,26 @@ proves `build()` is deterministic and the dataclass defaults are what they
 claim to be, but — because both sides of that comparison call the SAME,
 already-changed module — it cannot by itself prove the new code left the
 PRE-EXISTING module's default output unchanged. That is what
-`test_new_fields_unset_matches_pre_change_module_byte_for_byte` proves: it
-extracts this module exactly as it existed at `origin/main` via `git show`
-into an isolated import, builds the same fixture with both the current and
-the baseline module, and asserts the trees are byte-for-byte identical
-(parametrised over `site_url` set and unset). It `pytest.skip`s rather than
-fails when `origin/main` cannot be resolved (e.g. a shallow CI checkout).
+`test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte` proves:
+it extracts this module exactly as it existed at `origin/main` via
+`git show` into an isolated import, builds the same fixture with both the
+current and the baseline module, and asserts the trees are byte-for-byte
+identical (parametrised over `site_url` set and unset). It `pytest.skip`s
+rather than fails when `origin/main` cannot be resolved (e.g. a shallow CI
+checkout).
+
+**Pre-merge vs. post-merge, stated plainly (do not oversell this once
+merged):** that last test is only meaningful while `origin/main` still
+points at the commit this branch actually diverged from. The moment this
+branch merges, `origin/main` becomes (or fast-forwards to) this same
+commit, so the "baseline" it extracts is thereafter byte-identical to the
+current module by construction — the comparison passes trivially from then
+on, proving nothing, until this module changes again. This is deliberate
+(no CI workflow change, no separately pinned/maintained baseline SHA or
+tag to keep in sync) — its continued passing after merge is NOT an
+enforced backward-compatibility guarantee for future changes to this
+module; it only ever verified one PR's changes against that PR's own
+starting point.
 
 To run locally, install the package with the test extra and invoke pytest:
 

@@ -31,8 +31,15 @@ from vouchfx_site_tools import SiteConfig, build  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "_site"
 
-# Markdown files to render, in sidebar order. (source path relative to ROOT, nav group, label)
-DOCS: list[tuple[str, str, str]] = [
+# Markdown files to render, in sidebar order. (source path relative to ROOT,
+# nav group, label) — each entry may optionally carry a 4th "description"
+# element (vouchfx_site_tools.SiteConfig.docs' shape, specs/seo-fleet-
+# audit.md B4/critic M-3); the annotation is deliberately `tuple[str, ...]`,
+# not a fixed 3-tuple, so it doesn't lie about that. Both consumers of this
+# list — scripts/site_hooks/_redirect_table.py (AST-parses this file
+# read-only) and vouchfx_site_tools.build() — unpack defensively for the
+# same reason.
+DOCS: list[tuple[str, ...]] = [
     ("docs/01_Technical_Architecture_and_Engineering_Blueprint.md", "Design docs", "01 · Architecture Blueprint"),
     ("docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md", "Design docs", "02 · YAML DSL Specification"),
     ("docs/04_AI_Companion_Feasibility_and_Design.md", "Design docs", "04 · AI Companion (vouchfxai)"),

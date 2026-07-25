@@ -1369,13 +1369,27 @@ def _normalise_sitemap_stem(url: str, site_url_prefix: str) -> str | None:
     "https://VOUCHFX.IO/404" all normalise to the same comparable stem
     ("404"/"404.html" respectively), regardless of whether a future
     regression lists the non-indexable page in directory-URL form
-    (MkDocs' own convention for every real page) or literal-.html form
-    (what the redirect stubs and 404.html actually are on disk). Returns
-    None for a URL not on this site's own origin — an off-origin `<loc>`
-    is check_sitemap_and_robots's concern, not this one's."""
-    if not url.startswith(site_url_prefix):
+    (MkDocs' own convention for every real page), literal-.html form (what
+    the redirect stubs and 404.html actually are on disk), or a
+    differently-cased host (DNS is case-insensitive, so a case-varied host
+    still names this same origin). Returns None for a URL not on this
+    site's own origin — an off-origin `<loc>` is check_sitemap_and_robots's
+    concern, not this one's.
+
+    Both `url` and `site_url_prefix` are lower-cased BEFORE the
+    origin-prefix comparison, not after: `str.startswith` is itself
+    case-sensitive, so comparing the raw, mixed-case `url` against a
+    lower-case `site_url_prefix` would silently treat
+    "https://VOUCHFX.IO/404.html" as off-origin (returning None, never
+    reaching the disallowed-stem check below) instead of normalising it —
+    exactly the host-case-insensitivity this function's own docstring
+    claims.
+    """
+    lowered_url = url.lower()
+    lowered_prefix = site_url_prefix.lower()
+    if not lowered_url.startswith(lowered_prefix):
         return None
-    return url[len(site_url_prefix) :].rstrip("/").lower()
+    return lowered_url[len(lowered_prefix) :].rstrip("/")
 
 
 def check_sitemap_excludes_404_and_stubs(site_dir: Path) -> None:
