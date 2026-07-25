@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>vouchfx og:image card</title>
+<style>
+  /*
+    Committed source for the fleet's 1200x630 social-share cards (issue #300
+    item 3). render.py fills the placeholder tokens below and screenshots
+    the result — do not add a build step or external asset fetch here, the
+    card must render from this single file with no network access.
+
+    Placeholders (all substituted by render.py, see its --help). Deliberately
+    described here WITHOUT the literal double-brace token syntax — render.py
+    substitutes every occurrence of that literal text anywhere in this file,
+    including inside comments, and html.escape() does not neutralise "*/":
+    a --site-name of "*/ evil { ... } /*" could otherwise close this CSS
+    comment early and inject live CSS. Keeping the brace syntax out of prose
+    means substitution never touches comment text at all.
+      SITE_NAME - wordmark text next to the logo mark (e.g. "vouchfx",
+                  "vouchfx samples").
+      TAGLINE   - the descriptive line under the wordmark. Reuse the site's
+                  existing og:image:alt / meta-description opening verbatim
+                  (REQ-004 forbids newly written copy).
+      ACCENT    - hex colour for the right half of the swatch and the end
+                  stop of the logo-mark gradient. Defaults to the engine's
+                  --cyan (#22d3ee). Every site currently ships the same
+                  value; the hook exists so a future site can pass its own
+                  token without touching this template.
+      DOMAIN    - small caption bottom-right (e.g. "vouchfx.io",
+                  "samples.vouchfx.io").
+  */
+  :root {
+    /* Values copied literally from site/styles.css :root tokens (the
+       engine palette, which every fleet site currently shares byte for
+       byte). Keep these in sync if the design tokens ever change. */
+    --bg:      #0b0f1a; /* site/styles.css --bg */
+    --text:    #e7eaf3; /* site/styles.css --text */
+    --muted:   #9aa3b8; /* site/styles.css --muted */
+    --muted-2: #6b7488; /* site/styles.css --muted-2 */
+    --violet:  #818cf8; /* site/styles.css --violet — fixed brand half of
+                            the swatch/gradient, shared across all five
+                            fleet sites regardless of --accent */
+    --accent:  {{ACCENT}}; /* site/styles.css --cyan (#22d3ee) by default */
+
+    /* site/styles.css --sans: system fonts only, no network fetch. */
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .card {
+    position: relative;
+    width: 1200px;
+    height: 630px;
+    background: var(--bg);
+  }
+
+  /* Ambient glow, matching .hero__glow's two radial gradients in
+     site/styles.css (indigo top-left, cyan top-right over --bg). */
+  .card__glow {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(620px 380px at 22% 8%, rgba(99, 102, 241, .32), transparent 60%),
+      radial-gradient(560px 360px at 82% 0%, rgba(34, 211, 238, .26), transparent 60%);
+  }
+
+  /* ==========================================================
+     LOAD-BEARING REQ-004 CONFORMANCE PROPERTY — DO NOT REMOVE.
+     specs/seo-fleet-audit.md REQ-004 requires every social card's
+     background/accent colours to be hex values that occur literally in
+     that site's site/styles.css token definitions. This swatch is the
+     one element whose sole purpose is to make that literal: it paints
+     two flat, unblended rectangles filled with --violet and --accent
+     with no gradient, filter, or opacity between them, so a pixel scan
+     of the rendered PNG finds the exact token hex verbatim. PR #298
+     hand-patched a missing swatch into the (then source-less) engine
+     card for exactly this reason. Any future redesign of this card
+     MUST keep an element like this one — a solid, scannable block of
+     each token colour — or REQ-004 regresses silently the way it did
+     before #298.
+     ========================================================== */
+  .card__swatch {
+    position: absolute;
+    left: 80px;
+    top: 80px;
+    width: 100px;
+    height: 8px;
+    display: flex;
+  }
+  .card__swatch-half { flex: 1 1 50%; height: 100%; }
+  .card__swatch-half--brand  { background: var(--violet); }
+  .card__swatch-half--accent { background: var(--accent); }
+
+  .card__brand {
+    position: absolute;
+    left: 60px;
+    top: 191px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  /* Logo mark, matching .brand__mark / .brand__mark::after in
+     site/styles.css: a rounded-square gradient tile with a small
+     cut-out notch top-right. */
+  .card__mark {
+    position: relative;
+    width: 70px;
+    height: 70px;
+    border-radius: 20px;
+    background: linear-gradient(100deg, var(--violet) 0%, var(--accent) 100%);
+    box-shadow: 0 0 18px rgba(99, 102, 241, .55); /* site/styles.css .brand__mark */
+  }
+  .card__mark::after {
+    content: "";
+    position: absolute;
+    top: 13px;
+    right: 13px;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    background: var(--bg);
+  }
+
+  .card__name {
+    font-size: 68px;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .card__tagline {
+    position: absolute;
+    left: 60px;
+    top: 300px;
+    /* Committed card's line-1 ink reaches x=980 (bbox (63,324)-(980,361) on
+       site/og-image.png), i.e. an advance of ~920px from left:60px. Width
+       and font-size are tuned together, not width alone: at font-size 34
+       the engine default tagline's natural (unwrapped) width is only
+       ~825-927px in Chromium's system-ui rendering, so any container
+       >= ~930px let the whole sentence fit on one line — no wrap at all.
+       At font-size 38 the "...authored in" line-1 candidate measures
+       ~923px (Canvas measureText, matches the ~920px target almost
+       exactly) and the full sentence including "YAML." measures ~1036px,
+       so a width in the ~930-1020px band reproduces the committed card's
+       exact wrap point ("...authored in" / "YAML."). This is still not a
+       guarantee for every possible --tagline value or every OS's font
+       substitution — see README.md's "Reproduction fidelity" section. */
+    width: 960px;
+    font-size: 38px;
+    font-weight: 400;
+    line-height: 1.75;
+    color: var(--muted);
+  }
+
+  .card__footer {
+    position: absolute;
+    right: 60px;
+    bottom: 58px;
+    font-size: 16px;
+    color: var(--muted-2);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="card__glow"></div>
+
+    <!-- REQ-004 conformance swatch: see the load-bearing comment above. -->
+    <div class="card__swatch" aria-hidden="true">
+      <div class="card__swatch-half card__swatch-half--brand"></div>
+      <div class="card__swatch-half card__swatch-half--accent"></div>
+    </div>
+
+    <div class="card__brand">
+      <div class="card__mark" aria-hidden="true"></div>
+      <div class="card__name">{{SITE_NAME}}</div>
+    </div>
+
+    <div class="card__tagline">{{TAGLINE}}</div>
+
+    <div class="card__footer">{{DOMAIN}}</div>
+  </div>
+</body>
+</html>

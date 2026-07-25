@@ -48,8 +48,13 @@ specs/seo-fleet-audit.md (the fleet-wide SEO audit):
   (j) 404.html exists at the build root — see `check_404_page`;
   (k) llms.txt exists at the build root — see `check_llms_txt`;
   (l) the landing page's og:image AND twitter:image each reference an
-      asset that actually exists in the build, and both URLs are
-      domain-absolute — see `check_og_image_asset`;
+      asset that actually exists in the build, both URLs are
+      domain-absolute, each referenced asset is a genuine PNG (signature
+      bytes AND a well-formed IHDR as its first chunk) sized exactly
+      1200x630 per its own IHDR chunk and no larger than 300 KB, and the
+      page also emits og:image:width/height (REQUIRED, and must match the
+      asset's real IHDR dimensions), a non-empty og:image:alt, and
+      twitter:card = "summary_large_image" — see `check_og_image_asset`;
   (m) sitemap.xml lists neither 404.html nor any legacy-redirect stub page,
       in either its literal `.html` or directory-slug form — see
       `check_sitemap_excludes_404_and_stubs`.
@@ -125,6 +130,7 @@ import gzip
 import os
 import posixpath
 import re
+import struct
 import sys
 import urllib.parse
 from collections.abc import Iterator
@@ -1316,12 +1322,32 @@ def check_llms_txt(site_dir: Path) -> None:
         )
 
 
+# REQ-004 (specs/seo-fleet-audit.md): the fleet's social-share card is
+# specified as a 1200x630 PNG capped at "300 KB". Interpreted here as a
+# binary cap (300 * 1024 bytes = 307200 bytes) — the same convention build
+# tooling and OS file browsers use for a "KB" file-size limit — not a
+# decimal 300,000-byte cap. Whichever interpretation is right, the
+# committed asset (tens of KB) sits nowhere near either boundary, so this
+# choice cannot itself cause a false pass/fail against the real site.
+OG_IMAGE_MAX_BYTES = 300 * 1024
+
+# REQ-004's fixed canvas size for the social-share card.
+OG_IMAGE_EXPECTED_WIDTH = 1200
+OG_IMAGE_EXPECTED_HEIGHT = 630
+
+# The 8-byte magic sequence every PNG file starts with (PNG spec §5.2).
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
 def _check_one_image_meta(
     site_dir: Path, index: Path, metas: dict[str, str], key: str, site_url_prefix: str
-) -> None:
+) -> Path:
     """Shared validation for one image meta tag (`og:image` or
     `twitter:image`): present, domain-absolute (EDGE-004), and the asset it
-    names actually exists in the built output (REQ-007c)."""
+    names actually exists in the built output (REQ-007c). Returns the
+    resolved on-disk asset path so callers with further per-asset
+    assertions (PNG conformance, REQ-004) don't have to re-derive it from
+    the URL a second time."""
     url = metas.get(key)
     if not url:
         raise CheckFailed(
@@ -1341,6 +1367,145 @@ def _check_one_image_meta(
             "in the built output. Check that the asset is committed under site/ and that "
             "the URL in site/index.html matches its actual filename."
         )
+    return asset
+
+
+def _read_png_ihdr_dimensions(asset: Path, index: Path, key: str) -> tuple[int, int]:
+    """Read `asset`'s PNG signature and IHDR chunk, returning (width,
+    height). Raises CheckFailed if the file isn't a PNG at all, is too
+    short to contain a complete IHDR, or its first chunk isn't actually a
+    well-formed IHDR.
+
+    No PNG-parsing dependency is needed for this: IHDR is REQUIRED to be
+    the very first chunk in a well-formed PNG (PNG spec §11.2.2), so
+    width/height sit at fixed byte offsets — the 8-byte signature, then an
+    8-byte chunk header (4-byte big-endian length + 4-byte ASCII type
+    "IHDR"), then IHDR's own payload opening with two big-endian uint32s:
+    width at bytes [16:20], height at bytes [20:24]. The chunk header is
+    itself verified (type == b"IHDR", declared length == 13, mirroring
+    scripts/og-card/render.py's own `read_png_ihdr`) before trusting those
+    offsets — a PNG-signed file whose first chunk is something else (e.g.
+    an unusual ancillary chunk placed before IHDR, or simply corrupt data)
+    would otherwise be silently misread as some garbage width/height
+    instead of failing with a clear reason."""
+    data = asset.read_bytes()
+    if not data.startswith(PNG_SIGNATURE):
+        raise CheckFailed(
+            f"{index}'s {key} asset {asset} does not start with the PNG file signature "
+            f"({PNG_SIGNATURE!r}) — it is not a PNG. The fleet's social-share card standard "
+            "is PNG (specs/seo-fleet-audit.md, REQ-004); re-export the asset as a PNG."
+        )
+    if len(data) < 24:
+        raise CheckFailed(
+            f"{index}'s {key} asset {asset} is only {len(data)} byte(s) — too short to "
+            "contain a valid IHDR chunk (truncated or corrupt PNG, specs/seo-fleet-audit.md, "
+            "REQ-004). Re-export/re-commit the asset."
+        )
+    length, chunk_type = struct.unpack(">I4s", data[8:16])
+    if chunk_type != b"IHDR" or length != 13:
+        raise CheckFailed(
+            f"{index}'s {key} asset {asset} has a malformed IHDR chunk (expected the first "
+            f"chunk to be b'IHDR' with declared length 13; found {chunk_type!r} length "
+            f"{length}) — corrupt or non-standard PNG (specs/seo-fleet-audit.md, REQ-004). "
+            "Re-export/re-commit the asset."
+        )
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
+def _check_png_image_conformance(asset: Path, index: Path, key: str) -> tuple[int, int]:
+    """Assert `asset` is a PNG sized exactly 1200x630 (REQ-004) and no
+    larger than the 300 KB cap (`OG_IMAGE_MAX_BYTES`). Returns the real
+    (width, height) read from IHDR so the caller can cross-check any
+    og:image:width/height metas against it without re-parsing the file.
+
+    The size cap is checked via `Path.stat()` BEFORE
+    `_read_png_ihdr_dimensions` reads the file's full contents into memory
+    — a pathologically large asset is rejected on its stat() alone, never
+    fully loaded just to be rejected for being too large."""
+    size = asset.stat().st_size
+    if size > OG_IMAGE_MAX_BYTES:
+        raise CheckFailed(
+            f"{index}'s {key} asset {asset} is {size} bytes, exceeding the "
+            f"{OG_IMAGE_MAX_BYTES}-byte (300 KB) cap (specs/seo-fleet-audit.md, REQ-004) "
+            "— re-compress the PNG (e.g. pngcrush/oxipng) before committing it."
+        )
+    width, height = _read_png_ihdr_dimensions(asset, index, key)
+    if (width, height) != (OG_IMAGE_EXPECTED_WIDTH, OG_IMAGE_EXPECTED_HEIGHT):
+        raise CheckFailed(
+            f"{index}'s {key} asset {asset} is {width}x{height}, but expected exactly "
+            f"{OG_IMAGE_EXPECTED_WIDTH}x{OG_IMAGE_EXPECTED_HEIGHT} (specs/seo-fleet-audit.md, "
+            "REQ-004) — re-export the social-share card at the correct canvas size."
+        )
+    return width, height
+
+
+def _check_og_image_meta_dimensions_match(
+    index: Path, metas: dict[str, str], actual_dimensions: tuple[int, int]
+) -> None:
+    """og:image:width AND og:image:height are BOTH REQUIRED (REQ-004) —
+    their absence is itself a failure, not merely a missed opportunity to
+    cross-check — and, when present, must match og:image's real IHDR
+    dimensions: a stale claim (e.g. left over from re-exporting the asset
+    at a different size) is silently wrong the instant it diverges.
+
+    twitter:image has no width/height meta convention of its own (Twitter/X
+    infers dimensions from the fetched asset), so this applies only to
+    og:image."""
+    actual_width, actual_height = actual_dimensions
+    for meta_key, actual_value in (
+        ("og:image:width", actual_width),
+        ("og:image:height", actual_height),
+    ):
+        raw = metas.get(meta_key)
+        if raw is None:
+            raise CheckFailed(
+                f'{index} has no <meta property="{meta_key}" content="..."> tag '
+                "(specs/seo-fleet-audit.md, REQ-004) — the landing page must declare the "
+                "social-share image's real pixel dimensions."
+            )
+        try:
+            declared_value = int(raw)
+        except ValueError:
+            raise CheckFailed(
+                f"{index}'s {meta_key} content {raw!r} is not a plain integer pixel count "
+                "(specs/seo-fleet-audit.md, REQ-004) — fix the meta's content attribute."
+            ) from None
+        if declared_value != actual_value:
+            raise CheckFailed(
+                f"{index}'s {meta_key} claims {declared_value}, but og:image's real IHDR "
+                f"says {actual_value} (specs/seo-fleet-audit.md, REQ-004) — the meta and the "
+                "actual asset have drifted apart; update whichever one is stale."
+            )
+
+
+def _check_og_image_alt_and_twitter_card(index: Path, metas: dict[str, str]) -> None:
+    """og:image:alt (non-empty) and twitter:card == "summary_large_image"
+    are both REQUIRED by REQ-004 alongside the image itself (specs/seo-
+    fleet-audit.md): a missing or blank alt text defeats the social-share
+    card's accessibility purpose, and any other/missing twitter:card value
+    stops Twitter/X rendering the large-image card layout REQ-004
+    specifies at all."""
+    alt = metas.get("og:image:alt")
+    if not alt or not alt.strip():
+        raise CheckFailed(
+            f'{index} has no non-empty <meta property="og:image:alt" content="..."> tag '
+            "(specs/seo-fleet-audit.md, REQ-004) — every social-share image needs "
+            "descriptive alt text."
+        )
+    twitter_card = metas.get("twitter:card")
+    # Compared stripped (a stray leading/trailing space in the authored
+    # meta must not fail this check for whitespace alone), but the RAW,
+    # unstripped value is what the error message shows — otherwise a
+    # trailing-space typo would be invisible in the failure output (the
+    # message would show a clean 'summary_large_image ' with no visual cue
+    # anything is wrong).
+    if twitter_card is None or twitter_card.strip() != "summary_large_image":
+        raise CheckFailed(
+            f"{index}'s twitter:card is {twitter_card!r}, but must be exactly "
+            "'summary_large_image' (specs/seo-fleet-audit.md, REQ-004) — without it "
+            "Twitter/X will not render the large-image card layout."
+        )
 
 
 def check_og_image_asset(site_dir: Path) -> None:
@@ -1349,6 +1514,21 @@ def check_og_image_asset(site_dir: Path) -> None:
     image URL is silently useless to every social-share scraper. Also
     asserts both URLs are domain-absolute (EDGE-004): a relative image URL
     is not reliably resolved by scrapers.
+
+    Beyond mere existence, each referenced asset is further asserted (this
+    is the REQ-004 gap #297/#298 exposed — presence alone let a
+    non-conformant card ship): it must be a genuine PNG (real signature
+    bytes and a well-formed IHDR as its first chunk, not just a `.png`
+    extension), exactly 1200x630 per its own IHDR chunk, and no larger than
+    300 KB (`OG_IMAGE_MAX_BYTES`). og:image:width and og:image:height are
+    themselves REQUIRED metas (REQ-004) and must agree with og:image's real
+    IHDR dimensions; og:image:alt must be non-empty; twitter:card must be
+    exactly "summary_large_image".
+
+    If og:image and twitter:image name the SAME on-disk file (true today),
+    that file's PNG conformance is validated exactly once rather than
+    twice — but each URL's presence/absolute/exists checks above still run
+    independently for both keys, unchanged from before.
 
     Parses the page with `_MetaCollector` rather than a fixed-attribute-
     order regex, so this check isn't blind to `<meta>` tags whose
@@ -1362,8 +1542,19 @@ def check_og_image_asset(site_dir: Path) -> None:
     collector.feed(text)
     site_url_prefix, _ = _read_site_url_prefix()
 
-    _check_one_image_meta(site_dir, index, collector.metas, "og:image", site_url_prefix)
-    _check_one_image_meta(site_dir, index, collector.metas, "twitter:image", site_url_prefix)
+    og_asset = _check_one_image_meta(site_dir, index, collector.metas, "og:image", site_url_prefix)
+    twitter_asset = _check_one_image_meta(
+        site_dir, index, collector.metas, "twitter:image", site_url_prefix
+    )
+
+    conformance: dict[Path, tuple[int, int]] = {}
+    for key, asset in (("og:image", og_asset), ("twitter:image", twitter_asset)):
+        if asset in conformance:
+            continue  # same on-disk file already validated under the other key
+        conformance[asset] = _check_png_image_conformance(asset, index, key)
+
+    _check_og_image_meta_dimensions_match(index, collector.metas, conformance[og_asset])
+    _check_og_image_alt_and_twitter_card(index, collector.metas)
 
 
 def _normalise_sitemap_stem(url: str, site_url_prefix: str) -> str | None:

@@ -482,6 +482,11 @@ jobs:
       - name: Install vouchfx-site-tools (test extra)
         run: python -m pip install -e "scripts/site-tools[test]"
 
+      # Since vouchfx issue #300, this same blocking run also carries
+      # test_check_site.py — unit tests for scripts/check_site.py (the
+      # publication gate one directory up), loaded via importlib rather
+      # than imported as part of this package; see that file's own
+      # docstring for why it deliberately lives here instead of a new job.
       - name: Run pytest (site_url contract suite)
         run: python -m pytest scripts/site-tools/tests -q
 
