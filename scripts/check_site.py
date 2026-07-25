@@ -47,11 +47,15 @@ specs/seo-fleet-audit.md (the fleet-wide SEO audit):
 
   (j) 404.html exists at the build root — see `check_404_page`;
   (k) llms.txt exists at the build root — see `check_llms_txt`;
-  (l) the landing page's og:image references an asset that actually exists
-      in the build, and the URL is domain-absolute — see
-      `check_og_image_asset`;
-  (m) sitemap.xml lists neither 404.html nor any legacy-redirect stub page
-      — see `check_sitemap_excludes_404_and_stubs`.
+  (l) the landing page's og:image AND twitter:image each reference an
+      asset that actually exists in the build, and both URLs are
+      domain-absolute — see `check_og_image_asset`;
+  (m) sitemap.xml lists neither 404.html nor any legacy-redirect stub page,
+      in either its literal `.html` or directory-slug form — see
+      `check_sitemap_excludes_404_and_stubs`.
+
+The landing page's `<title>` is also asserted ≤70 characters, folded into
+`check_landing_page` alongside its pre-existing landing-marker check.
 
 Exit 0: the build is safe to publish. Exit 1: a check failed; the printed
 message says which one and why it matters, so a CI failure is actionable
@@ -143,6 +147,11 @@ from _redirect_table import build_redirect_table, relative_target  # noqa: E402
 from _text_like import TEXT_LIKE_SUFFIXES, iter_text_like_files  # noqa: E402
 
 LANDING_MARKER = "brand__name"
+
+# Google typically truncates a search-result title beyond roughly this many
+# characters (specs/seo-fleet-audit.md, D-06/REQ-001) — enforced on the
+# landing page's <title> by check_landing_page.
+LANDING_TITLE_MAX_LEN = 70
 
 # The retired GitHub Pages host every vouchfx site canonicalised on before
 # the custom-domain migration (specs/seo-custom-domains.md). Matched
@@ -331,6 +340,18 @@ def check_landing_page(site_dir: Path) -> None:
             "the bespoke site/index.html instead of being overwritten by it. Check "
             "that there is still no docs/index.md, and that the on_post_build hook "
             "in scripts/site_hooks/landing.py actually ran."
+        )
+
+    title_match = re.search(r"<title>(.*?)</title>", text, re.DOTALL)
+    if not title_match:
+        raise CheckFailed(f"{index} has no <title> element.")
+    title = title_match.group(1).strip()
+    if len(title) > LANDING_TITLE_MAX_LEN:
+        raise CheckFailed(
+            f"{index}'s <title> is {len(title)} characters (max {LANDING_TITLE_MAX_LEN}): "
+            f"{title!r}. Google typically truncates a search-result title beyond roughly "
+            "this length (specs/seo-fleet-audit.md, D-06) — shorten it in site/index.html, "
+            "keeping the 'end-to-end integration testing framework' anchor phrase."
         )
 
 
@@ -1228,14 +1249,41 @@ def check_sitemap_and_robots(site_dir: Path) -> None:
 #
 # Four additional publication checks the fleet-wide SEO audit's fix work
 # order requires of the engine's own gate: a missing branded 404.html or
-# llms.txt, a landing-page og:image that doesn't actually exist in the
-# build, and a sitemap that leaks a non-indexable page (404.html or a
-# legacy-redirect stub). Each is deliberately narrow — it fails loudly on
-# exactly the regression it targets and otherwise defers to the checks
-# already covering the surface in more depth (check_landing_page,
-# check_sitemap_and_robots, check_legacy_redirects).
+# llms.txt, a landing-page og:image/twitter:image that doesn't actually
+# exist in the build, and a sitemap that leaks a non-indexable page
+# (404.html or a legacy-redirect stub). Each is deliberately narrow — it
+# fails loudly on exactly the regression it targets and otherwise defers
+# to the checks already covering the surface in more depth
+# (check_landing_page, check_sitemap_and_robots, check_legacy_redirects).
 
-OG_IMAGE_RE = re.compile(r'<meta\s+property="og:image"\s+content="([^"]+)"')
+
+class _MetaCollector(HTMLParser):
+    """Collects every `<meta>` tag's `content`, keyed by whichever of its
+    `property`/`name` attributes is present (`og:*` tags use `property`;
+    `twitter:*` tags use `name` — both are collected into one dict here).
+
+    Deliberately a real HTML parse, not a fixed-attribute-order regex: an
+    earlier version of this check (`OG_IMAGE_RE =
+    re.compile(r'<meta\\s+property="og:image"\\s+content="([^"]+)"')`) only
+    matched when `property` appeared before `content` and both used double
+    quotes — silently blind to `<meta content="..." property="og:image">`
+    or single-quoted attributes, both valid HTML the check should still
+    catch. `HTMLParser` handles attribute order and quote style itself, so
+    this can't repeat that mistake.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.metas: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "meta":
+            return
+        attr_map = dict(attrs)
+        key = attr_map.get("property") or attr_map.get("name")
+        content = attr_map.get("content")
+        if key and content is not None:
+            self.metas[key] = content
 
 
 def check_404_page(site_dir: Path) -> None:
@@ -1249,7 +1297,7 @@ def check_404_page(site_dir: Path) -> None:
             f"{page} does not exist. GitHub Pages relies on this exact path to serve "
             "a branded 404 for any unmatched URL (specs/seo-fleet-audit.md, REQ-006). "
             "Check that mkdocs.yml's theme.custom_dir is set to 'overrides' and that "
-            "overrides/404.html exists and extends Material's base.html."
+            "overrides/404.html exists and extends Material's main.html."
         )
 
 
@@ -1265,46 +1313,104 @@ def check_llms_txt(site_dir: Path) -> None:
         )
 
 
-def check_og_image_asset(site_dir: Path) -> None:
-    """The landing page's og:image MUST reference an asset that actually
-    exists in the built output (REQ-007c) — a dangling og:image URL is
-    silently useless to every social-share scraper. Also asserts the URL is
-    domain-absolute (EDGE-004): a relative og:image is not reliably
-    resolved by scrapers."""
-    index = site_dir / "index.html"
-    if not index.is_file():
-        return  # check_landing_page already fails loudly for this case
-    text = index.read_text(encoding="utf-8", errors="replace")
-    match = OG_IMAGE_RE.search(text)
-    if not match:
+def _check_one_image_meta(
+    site_dir: Path, index: Path, metas: dict[str, str], key: str, site_url_prefix: str
+) -> None:
+    """Shared validation for one image meta tag (`og:image` or
+    `twitter:image`): present, domain-absolute (EDGE-004), and the asset it
+    names actually exists in the built output (REQ-007c)."""
+    url = metas.get(key)
+    if not url:
         raise CheckFailed(
-            f'{index} has no <meta property="og:image" content="..."> tag '
-            "(specs/seo-fleet-audit.md, REQ-004) — the landing page must reference a "
-            "branded social-share image."
+            f'{index} has no <meta property="{key}" content="..."> (or '
+            f'<meta name="{key}" content="...">) tag (specs/seo-fleet-audit.md, '
+            f"REQ-004) — the landing page must reference a branded social-share image."
         )
-    og_image_url = match.group(1)
-    site_url_prefix, _ = _read_site_url_prefix()
-    if not og_image_url.startswith(site_url_prefix):
+    if not url.startswith(site_url_prefix):
         raise CheckFailed(
-            f"{index}'s og:image {og_image_url!r} is not absolute on {site_url_prefix!r} "
-            "(EDGE-004) — social scrapers do not reliably resolve a relative og:image URL."
+            f"{index}'s {key} {url!r} is not absolute on {site_url_prefix!r} "
+            f"(EDGE-004) — social scrapers do not reliably resolve a relative {key} URL."
         )
-    relative = og_image_url[len(site_url_prefix) :]
-    asset = site_dir / relative
+    asset = site_dir / url[len(site_url_prefix) :]
     if not asset.is_file():
         raise CheckFailed(
-            f"{index} references og:image {og_image_url!r}, but {asset} does not exist "
+            f"{index} references {key} {url!r}, but {asset} does not exist "
             "in the built output. Check that the asset is committed under site/ and that "
             "the URL in site/index.html matches its actual filename."
         )
 
 
+def check_og_image_asset(site_dir: Path) -> None:
+    """The landing page's og:image AND twitter:image MUST each reference an
+    asset that actually exists in the built output (REQ-007c) — a dangling
+    image URL is silently useless to every social-share scraper. Also
+    asserts both URLs are domain-absolute (EDGE-004): a relative image URL
+    is not reliably resolved by scrapers.
+
+    Parses the page with `_MetaCollector` rather than a fixed-attribute-
+    order regex, so this check isn't blind to `<meta>` tags whose
+    attributes appear in a different order or use single quotes — both
+    valid HTML."""
+    index = site_dir / "index.html"
+    if not index.is_file():
+        return  # check_landing_page already fails loudly for this case
+    text = index.read_text(encoding="utf-8", errors="replace")
+    collector = _MetaCollector()
+    collector.feed(text)
+    site_url_prefix, _ = _read_site_url_prefix()
+
+    _check_one_image_meta(site_dir, index, collector.metas, "og:image", site_url_prefix)
+    _check_one_image_meta(site_dir, index, collector.metas, "twitter:image", site_url_prefix)
+
+
+def _normalise_sitemap_stem(url: str, site_url_prefix: str) -> str | None:
+    """Strip the site origin, strip a single trailing slash, lowercase — so
+    "https://vouchfx.io/404/", "https://vouchfx.io/404.html" and
+    "https://VOUCHFX.IO/404" all normalise to the same comparable stem
+    ("404"/"404.html" respectively), regardless of whether a future
+    regression lists the non-indexable page in directory-URL form
+    (MkDocs' own convention for every real page) or literal-.html form
+    (what the redirect stubs and 404.html actually are on disk). Returns
+    None for a URL not on this site's own origin — an off-origin `<loc>`
+    is check_sitemap_and_robots's concern, not this one's."""
+    if not url.startswith(site_url_prefix):
+        return None
+    return url[len(site_url_prefix) :].rstrip("/").lower()
+
+
 def check_sitemap_excludes_404_and_stubs(site_dir: Path) -> None:
     """sitemap.xml MUST NOT list 404.html or any legacy-redirect stub page
     (REQ-007d) — neither is an indexable page (EDGE-003 for 404.html;
-    stubs exist purely to 301-equivalent legacy URLs onward, per D-04's own
+    stubs exist purely to point a legacy URL onward, per D-04's own
     canonical-vs-target distinction, and were never meant to be crawled as
-    destinations in their own right)."""
+    destinations in their own right).
+
+    Comparison is done on a NORMALISED stem (see `_normalise_sitemap_stem`)
+    rather than exact string equality against the literal on-disk path: a
+    naive exact match would silently never fire against a directory-URL
+    variant of the same non-indexable path (e.g. "/404/" instead of
+    "/404.html", or "/docs/getting-started/" instead of
+    "/docs/getting-started.html" for a stub) — MkDocs' own convention for
+    every real page IS the directory-URL form, so a future regression is
+    at least as likely to introduce that form as the literal one. Each
+    legacy stub is therefore disallowed in BOTH its literal `.html` form
+    and its directory-slug form (the `.html` suffix stripped) — matching
+    what `_normalise_sitemap_stem` would produce for either representation
+    of the same stub path.
+
+    ONE deliberate exception to the directory-slug form: three of the
+    redirect table's root-file entries (CHANGELOG.html -> "changelog",
+    GOVERNANCE.html -> "governance" — see
+    _redirect_table._ROOT_FILE_SLUGS) have a legacy filename whose stem,
+    lower-cased, is IDENTICAL to their own real target's new_slug. Stripped
+    naively, "changelog.html"'s directory-slug form ("changelog") would
+    disallow the very URL the stub redirects TO — a real, legitimately
+    indexable page — not just the stub itself. So the directory-slug form
+    is only added to `disallowed` when it does NOT equal that same entry's
+    own new_slug; the literal `.html` stub path is still always disallowed
+    unconditionally (a stub is never itself an indexable page, regardless
+    of this collision).
+    """
     sitemap = site_dir / "sitemap.xml"
     if not sitemap.is_file():
         return  # check_sitemap_and_robots already fails loudly for this case
@@ -1312,10 +1418,18 @@ def check_sitemap_excludes_404_and_stubs(site_dir: Path) -> None:
     locs = set(re.findall(r"<loc>(.*?)</loc>", text))
     site_url_prefix, _ = _read_site_url_prefix()
 
-    disallowed = {f"{site_url_prefix}404.html"}
-    disallowed.update(f"{site_url_prefix}{legacy_path}" for legacy_path, _new_slug in build_redirect_table())
+    disallowed = {"404", "404.html"}
+    for legacy_path, new_slug in build_redirect_table():
+        lowered = legacy_path.lower()
+        disallowed.add(lowered)
+        if lowered.endswith(".html"):
+            stem = lowered[: -len(".html")]
+            if stem != new_slug.lower():
+                disallowed.add(stem)
 
-    present = sorted(locs & disallowed)
+    present = sorted(
+        loc for loc in locs if (stem := _normalise_sitemap_stem(loc, site_url_prefix)) is not None and stem in disallowed
+    )
     if present:
         raise CheckFailed(
             f"{sitemap} lists {len(present)} non-indexable page(s) that must never "
