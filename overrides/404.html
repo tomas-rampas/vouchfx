@@ -1,0 +1,45 @@
+{#-
+  Branded, noindexed 404 page (specs/seo-fleet-audit.md, REQ-006 / D-05).
+
+  Extends Material's own "base.html" (NOT its built-in "404.html", which
+  extends "main.html" — this is Material's own documented customization
+  pattern for the 404 page: base.html carries the header/nav/footer and the
+  `extrahead`/`content` blocks a 404 override actually needs, and skips
+  main.html's docs-sidebar/TOC layout, which a 404 page has no use for).
+
+  {{ super() }} first in extrahead keeps every one of Material's own
+  <head> tags (charset, viewport, description, canonical, OG/Twitter meta,
+  the stylesheet links) — this override only ADDS the noindex directive,
+  never replaces the theme's own head content. Material's own header/nav
+  (rendered by base.html, unaffected by this override) already links to
+  the site home and every top-level nav page, from any URL depth — so the
+  explicit links below are a deliberate belt-and-braces addition, not a
+  substitute for that nav.
+-#}
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta name="robots" content="noindex">
+  {#- Material's own canonical (base.html) reads page.canonical_url, which
+     is unset for this template (404.html has no real `page` object — it is
+     served for every unmatched path, not one specific URL) — so without
+     this, the page would carry no canonical at all. A self-referencing
+     canonical is the conventional, harmless choice for a 404 page (the
+     noindex above is what actually keeps it out of the index; this just
+     gives the one audited page a single, unambiguous canonical target
+     rather than none). #}
+  <link rel="canonical" href="{{ config.site_url }}404.html">
+{% endblock %}
+
+{% block content %}
+  <h1>404 - Page not found</h1>
+  <p>
+    The page you were looking for doesn't exist here. It may have moved, or
+    the link may be out of date.
+  </p>
+  <p>
+    Try the <a href="/">vouchfx home page</a>, or browse the
+    <a href="/getting-started/">getting started guide</a>.
+  </p>
+{% endblock %}
