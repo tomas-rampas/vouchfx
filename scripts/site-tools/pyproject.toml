@@ -11,8 +11,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Regression suite for the SiteConfig.site_url contract (vouchfx issue
-# #254) — since issue #300, this same tests/ directory also carries
+# Regression suite for the SiteConfig.site_url contract (vouchfx issue #254)
+# — since issue #300, this same tests/ directory also carries
 # scripts/check_site.py's and scripts/og-card/render.py's unit tests
 # (loaded via importlib, not part of this package), which ride this same
 # extra with zero additional dependencies.

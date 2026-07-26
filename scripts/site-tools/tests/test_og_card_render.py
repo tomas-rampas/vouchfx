@@ -247,6 +247,34 @@ def test_read_png_ihdr_truncated_fails(render) -> None:
         render.read_png_ihdr(truncated)
 
 
+def test_read_png_ihdr_24_to_28_byte_boundary_with_correct_header_fails(render) -> None:
+    """Defensive mirror test: scripts/check_site.py's `_read_png_ihdr_
+    dimensions` is documented as a twin of this function, and a Copilot PR
+    review caught check_site.py's copy accepting a 24-28-byte file (a real
+    signature, a CORRECT chunk header, a plausible width/height, but an
+    INCOMPLETE 13-byte IHDR payload) because it read width/height from a
+    narrower `data[16:24]` slice that didn't need the full payload.
+
+    render.py's `read_png_ihdr` does NOT have this gap — verified here,
+    not merely asserted — because it unpacks ALL FIVE IHDR fields (width,
+    height, bit depth, colour type, interlace) in ONE
+    `struct.unpack(">IIBBBBB", data[16:29])` call, which needs the full
+    13-byte payload (through byte 29) and raises `struct.error` (caught
+    and converted to ConformanceError) the instant that slice is short.
+    This test pins that correctness at the EXACT same 28-byte boundary
+    check_site.py's own regression test now covers, so the two parsers
+    cannot silently drift apart on this point in the future."""
+    width, height = _CARD_WIDTH, _CARD_HEIGHT
+    real_payload = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    incomplete_payload = real_payload[:-1]  # 12 of 13 payload bytes
+    header = struct.pack(">I", 13) + b"IHDR"  # a CORRECT chunk header
+    truncated = _PNG_SIGNATURE + header + incomplete_payload
+    assert len(truncated) == 28  # sanity: the exact 24-28-byte gap in question
+
+    with pytest.raises(render.ConformanceError):
+        render.read_png_ihdr(truncated)
+
+
 def test_read_png_ihdr_non_ihdr_first_chunk_fails(render) -> None:
     data = _make_ihdr_only_bytes(_CARD_WIDTH, _CARD_HEIGHT, chunk_type=b"IDAT")
     with pytest.raises(render.ConformanceError, match=r"IHDR"):

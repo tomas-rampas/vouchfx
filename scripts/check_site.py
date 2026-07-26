@@ -1408,7 +1408,17 @@ def _read_png_ihdr_dimensions(asset: Path, index: Path, key: str) -> tuple[int, 
     offsets — a PNG-signed file whose first chunk is something else (e.g.
     an unusual ancillary chunk placed before IHDR, or simply corrupt data)
     would otherwise be silently misread as some garbage width/height
-    instead of failing with a clear reason."""
+    instead of failing with a clear reason.
+
+    The minimum-length guard requires 29 bytes, NOT merely the 24 needed
+    to read width/height — 8-byte signature + 8-byte chunk header + the
+    FULL 13-byte IHDR payload (width, height, bit depth, colour type,
+    compression method, filter method, interlace method). A file of only
+    24-28 bytes would still let `struct.unpack(">II", data[16:24])`
+    below succeed (width/height happen to be the first 8 bytes of that
+    13-byte payload), silently passing a truncated/corrupt PNG whose IHDR
+    chunk is itself incomplete — 29 bytes is the actual minimum a
+    genuinely complete IHDR chunk requires."""
     data = asset.read_bytes()
     if not data.startswith(PNG_SIGNATURE):
         raise CheckFailed(
@@ -1416,11 +1426,12 @@ def _read_png_ihdr_dimensions(asset: Path, index: Path, key: str) -> tuple[int, 
             f"({PNG_SIGNATURE!r}) — it is not a PNG. The fleet's social-share card standard "
             "is PNG (specs/seo-fleet-audit.md, REQ-004); re-export the asset as a PNG."
         )
-    if len(data) < 24:
+    if len(data) < 29:
         raise CheckFailed(
             f"{index}'s {key} asset {asset} is only {len(data)} byte(s) — too short to "
-            "contain a valid IHDR chunk (truncated or corrupt PNG, specs/seo-fleet-audit.md, "
-            "REQ-004). Re-export/re-commit the asset."
+            "contain a complete IHDR chunk (8-byte signature + 8-byte chunk header + "
+            "13-byte IHDR payload = 29 bytes minimum; truncated or corrupt PNG, "
+            "specs/seo-fleet-audit.md, REQ-004). Re-export/re-commit the asset."
         )
     length, chunk_type = struct.unpack(">I4s", data[8:16])
     if chunk_type != b"IHDR" or length != 13:

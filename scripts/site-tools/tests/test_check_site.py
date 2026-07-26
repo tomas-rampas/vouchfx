@@ -340,15 +340,49 @@ def test_non_png_bytes_fails(check_site, site_url_prefix: str, site_dir: Path) -
 
 
 def test_truncated_png_fails(check_site, site_url_prefix: str, site_dir: Path) -> None:
-    """A real PNG signature followed by only a handful of bytes — too
-    short to contain even one complete IHDR chunk (which needs the
-    signature plus 8 more header bytes plus 13 more payload bytes, 24
-    total before even reaching a CRC). Exercises the `len(data) < 24`
-    guard in `_read_png_ihdr_dimensions`, distinct from the "not a PNG at
-    all" and "malformed IHDR" paths covered by the tests either side of
-    this one."""
+    """A real PNG signature followed by only a handful of bytes — far too
+    short to contain even a complete chunk header, let alone a full IHDR
+    payload (signature 8 + chunk header 8 + IHDR payload 13 = 29 bytes
+    minimum for a genuinely complete IHDR chunk). Exercises the
+    `len(data) < 29` guard in `_read_png_ihdr_dimensions`, distinct from
+    the "not a PNG at all" and "malformed IHDR" paths covered by the tests
+    either side of this one, and from the tighter 24-28-byte boundary case
+    covered by the test immediately below."""
     truncated = _PNG_SIGNATURE + b"\x00\x00\x00"
-    assert len(truncated) < 24  # sanity: genuinely too short to hold an IHDR
+    assert len(truncated) < 29  # sanity: genuinely too short to hold a complete IHDR
+    (site_dir / "og-image.png").write_bytes(truncated)
+    _write_index_html(
+        site_dir,
+        og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"too short"):
+        check_site.check_og_image_asset(site_dir)
+
+
+def test_truncated_png_with_correct_header_but_incomplete_ihdr_payload_fails(
+    check_site, site_url_prefix: str, site_dir: Path
+) -> None:
+    """The exact gap a Copilot PR review caught: a 24-28-byte file — a
+    real signature, a CORRECT chunk header (type b"IHDR", declared length
+    13), and a plausible width/height — but whose 13-byte IHDR payload is
+    cut off before its final byte(s) (bit depth/colour type/compression/
+    filter/interlace) and its CRC.
+
+    Because width/height alone only need bytes [16:24] (24 bytes total),
+    a `len(data) < 24` guard would have let this through: `struct.unpack`
+    for width/height succeeds purely by coincidence, so the corrupt,
+    truncated file would have shipped as if it were a genuinely complete,
+    valid IHDR chunk. The 29-byte minimum-length guard must reject this
+    BEFORE ever reaching the chunk-header/dimension checks. Built at
+    exactly 28 bytes — one byte short of the 29-byte minimum — the
+    tightest possible boundary probe of the fix."""
+    real_payload = struct.pack(">IIBBBBB", _EXPECTED_WIDTH, _EXPECTED_HEIGHT, 8, 6, 0, 0, 0)
+    incomplete_payload = real_payload[:-1]  # 12 of 13 payload bytes — missing only "interlace"
+    header = struct.pack(">I", 13) + b"IHDR"  # a CORRECT chunk header, unlike the sibling test
+    truncated = _PNG_SIGNATURE + header + incomplete_payload
+    assert len(truncated) == 28  # sanity: exactly the 24-28-byte gap Copilot identified
     (site_dir / "og-image.png").write_bytes(truncated)
     _write_index_html(
         site_dir,
