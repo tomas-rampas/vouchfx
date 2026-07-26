@@ -3,12 +3,28 @@ gate (vouchfx issue #300, items 1-2).
 
 Before this file, check_site.py had zero unit tests: every one of its
 checks was only ever exercised end to end, by running it against a real
-`mkdocs build` output as part of a manual review or a CI deploy. That is
-how a REQ-004 non-conformance (the social-share card shipped at the wrong
-size) reached production in #297 and needed a hand-fix in #298 — the gate
-only asserted the og:image/twitter:image tag's presence, absolute URL, and
-the referenced file's mere existence, never its actual pixel dimensions or
-byte size. It is also how the sitemap-exclusion check's slug-collision
+`mkdocs build` output as part of a manual review or a CI deploy.
+
+What that gap actually let through, stated accurately (an earlier version
+of this paragraph got the incident wrong): before issue #300,
+`check_og_image_asset` asserted ONLY the og:image/twitter:image tag's
+presence, a domain-absolute URL, and the referenced file's mere
+existence — no pixel-level property whatsoever, not dimensions, not size,
+not content. #297's engine card was NOT the wrong size: it was already a
+conformant 1200x630, 49,818-byte PNG. Its real defect was that it had no
+literal accent-hex pixel anywhere in the rendered image (an anti-aliased
+gradient only) — the specific thing REQ-004's acceptance line requires.
+#298 fixed it with a re-render that added the literal swatch (49,818 ->
+40,744 bytes), not a pixel-by-pixel image-editor hand-edit. The
+dimension/size/IHDR assertions added by this branch close the class of
+defect that was completely ungated before (ANY pixel-level property); the
+specific literal-accent-pixel criterion that actually failed in #297 is
+still not gated here — it remains tracked separately as issue #306 (see
+`check_site.check_og_image_asset`'s own docstring for the same
+correction, and scripts/og-card/render.py's `self_check` for where that
+pixel-scan criterion actually lives today).
+
+It is also how the sitemap-exclusion check's slug-collision
 exemption (see `check_sitemap_excludes_404_and_stubs`'s own docstring, and
 `_normalise_sitemap_stem`'s) came to be verified only by an ad hoc probe
 matrix recorded in a commit body, rather than by anything that runs again
@@ -33,8 +49,9 @@ pattern test_semantic_headings_and_llms_txt.py's own
 `_load_baseline_module` already uses for the same reason (loading a
 standalone .py file that isn't an installed/importable package member).
 
-Two independent surfaces are covered, matching the two check_site.py gaps
-issue #300 calls out:
+Three areas are covered: the two check_site.py gaps issue #300 originally
+called out, plus `_check_one_image_meta`'s branches (added during the
+gatekeeper re-review):
 
 check_og_image_asset (REQ-004, specs/seo-fleet-audit.md)
     Drives the real `check_og_image_asset` function against a synthesised
@@ -58,6 +75,15 @@ check_og_image_asset (REQ-004, specs/seo-fleet-audit.md)
     injectable, the `site_url_prefix` fixture below monkeypatches the
     function itself to return a fixed test origin — the least invasive
     option available without changing the module under test.
+
+_check_one_image_meta (shared by both og:image and twitter:image)
+    Pins the pre-existing failure branches directly (absent meta tag,
+    non-domain-absolute URL, missing on-disk asset) and the function's
+    return contract (the resolved asset Path on success), plus a NEW
+    path-escape guard: a crafted URL suffix (e.g. a ".." traversal) that
+    would otherwise let `site_dir / suffix` resolve outside the built
+    output entirely — and get read as if it were the social-share asset —
+    is now rejected with a clear CheckFailed.
 
 check_sitemap_excludes_404_and_stubs (REQ-007d, specs/seo-fleet-audit.md)
     Drives the real function against a synthesised sitemap.xml. Covers a
@@ -439,17 +465,34 @@ def test_og_image_height_meta_absent_fails(check_site, site_url_prefix: str, sit
         check_site.check_og_image_asset(site_dir)
 
 
-def test_og_image_width_meta_non_integer_fails(check_site, site_url_prefix: str, site_dir: Path) -> None:
-    """og:image:width present but not a plain integer (e.g. a stray "px"
-    unit suffix) — exercises the `int(raw)` ValueError path in
+@pytest.mark.parametrize(
+    "raw_width",
+    [
+        "1200px",  # a stray unit suffix
+        "1_200",  # PEP 515 underscore digit grouping — int("1_200") == 1200 in real Python
+        "١٢٠٠",  # Arabic-Indic digits for "1200" — int() accepts these too
+    ],
+    ids=["unit-suffix", "underscore-grouping", "non-ascii-digits"],
+)
+def test_og_image_width_meta_non_integer_fails(
+    check_site, site_url_prefix: str, site_dir: Path, raw_width: str
+) -> None:
+    """og:image:width present but not a plain ASCII-digit integer.
+    Exercises the ASCII-digit `fullmatch` guard in
     `_check_og_image_meta_dimensions_match`, distinct from both the
-    absent-meta and the wrong-value cases covered elsewhere."""
+    absent-meta and the wrong-value cases covered elsewhere. The latter
+    two parametrized values are deliberately NOT things a bare
+    `int(raw)` would reject: Python's int() constructor accepts both PEP
+    515 underscore grouping and any Unicode decimal-digit script, neither
+    of which is "a plain pixel count" as REQ-004 intends — this is the
+    gap the gatekeeper review's MINOR finding on this parsing called
+    out."""
     (site_dir / "og-image.png").write_bytes(_make_png_bytes(_EXPECTED_WIDTH, _EXPECTED_HEIGHT))
     _write_index_html(
         site_dir,
         og_image_url=site_url_prefix + "og-image.png",
         twitter_image_url=site_url_prefix + "og-image.png",
-        og_width="1200px",
+        og_width=raw_width,
         og_height=str(_EXPECTED_HEIGHT),
     )
 
@@ -598,6 +641,98 @@ def test_distinct_twitter_asset_wrong_dimensions_still_fails(
 
     with pytest.raises(check_site.CheckFailed, match=r"600x315"):
         check_site.check_og_image_asset(site_dir)
+
+
+# ---------------------------------------------------------------------------
+# _check_one_image_meta — pins the pre-existing failure branches (this
+# change altered the function's return contract from None to the resolved
+# Path, so its behaviour is worth pinning directly, not only indirectly via
+# check_og_image_asset above) plus the new path-escape guard.
+# ---------------------------------------------------------------------------
+
+
+def test_check_one_image_meta_absent_tag_fails(
+    check_site, site_url_prefix: str, site_dir: Path
+) -> None:
+    with pytest.raises(check_site.CheckFailed, match=r"og:image"):
+        check_site._check_one_image_meta(
+            site_dir, site_dir / "index.html", {}, "og:image", site_url_prefix
+        )
+
+
+def test_check_one_image_meta_non_absolute_url_fails(
+    check_site, site_url_prefix: str, site_dir: Path
+) -> None:
+    metas = {"og:image": "og-image.png"}  # relative, not domain-absolute
+    with pytest.raises(check_site.CheckFailed, match=r"absolute"):
+        check_site._check_one_image_meta(
+            site_dir, site_dir / "index.html", metas, "og:image", site_url_prefix
+        )
+
+
+def test_check_one_image_meta_missing_asset_fails(
+    check_site, site_url_prefix: str, site_dir: Path
+) -> None:
+    metas = {"og:image": site_url_prefix + "does-not-exist.png"}
+    with pytest.raises(check_site.CheckFailed, match=r"does not exist"):
+        check_site._check_one_image_meta(
+            site_dir, site_dir / "index.html", metas, "og:image", site_url_prefix
+        )
+
+
+def test_check_one_image_meta_success_returns_resolved_asset_path(
+    check_site, site_url_prefix: str, site_dir: Path
+) -> None:
+    """Pins the function's RETURN contract directly: on success it returns
+    the resolved on-disk asset Path (not None, which is what it returned
+    before check_og_image_asset needed to reuse it for PNG conformance
+    checks)."""
+    asset = site_dir / "og-image.png"
+    asset.write_bytes(b"fake-but-present")
+    metas = {"og:image": site_url_prefix + "og-image.png"}
+    result = check_site._check_one_image_meta(
+        site_dir, site_dir / "index.html", metas, "og:image", site_url_prefix
+    )
+    assert result == asset
+
+
+def test_check_one_image_meta_rejects_path_escaping_site_dir(
+    check_site, site_url_prefix: str, tmp_path: Path
+) -> None:
+    """A crafted og:image URL whose suffix (after stripping the
+    site-absolute prefix) escapes `site_dir` — here via a ".." traversal —
+    must be rejected, not silently resolved to (and, by a later caller,
+    read as) a file OUTSIDE the built output. `site_dir / suffix` alone
+    does not guarantee containment: a suffix with ".." segments, or one
+    pathlib treats as already "anchored" (e.g. a platform-specific
+    absolute-looking form), makes `/` climb out of or entirely discard
+    the left operand.
+
+    Deliberately uses a portable ".." traversal into a sibling directory
+    rather than a real OS file (e.g. C:\\Windows\\win.ini, the concrete
+    example that surfaced this gap) — this test also runs on CI's
+    ubuntu-latest, where no such path exists, and a fixture-created
+    "secret" file exercises exactly the same containment failure without
+    depending on anything OS-specific being present.
+    """
+    site_dir = tmp_path / "_site"
+    site_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    secret = outside_dir / "secret.png"
+    secret.write_bytes(b"should never be read by check_og_image_asset")
+
+    escaped_url = site_url_prefix + "../outside/secret.png"
+    metas = {"og:image": escaped_url}
+
+    with pytest.raises(check_site.CheckFailed, match=r"OUTSIDE") as excinfo:
+        check_site._check_one_image_meta(
+            site_dir, site_dir / "index.html", metas, "og:image", site_url_prefix
+        )
+    # The secret file's own path appears in the failure message (proving
+    # the escape was actually detected against THIS file, not some other
+    # coincidental rejection reason such as "does not exist").
+    assert str(secret.resolve()) in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

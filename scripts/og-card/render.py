@@ -26,9 +26,12 @@ What it does:
   1. Fills the {{PLACEHOLDER}} tokens in template.html (see that file's
      header comment for the exact placeholder set).
   2. Opens the filled markup in headless Chromium at exactly 1200x630
-     (device_scale_factor=1) via Playwright and screenshots it to --out.
-     Refuses to overwrite an existing --out file unless --force is passed.
-  3. Self-checks the written PNG and reports conformance with REQ-004:
+     (device_scale_factor=1) via Playwright and screenshots it to a
+     TEMPORARY sibling file next to --out (never --out itself).
+     Refuses to overwrite an existing --out file unless --force is passed
+     — checked up front, before this step.
+  3. Self-checks the temporary screenshot and reports conformance with
+     REQ-004:
        - IHDR dimensions are exactly 1200x630;
        - file size is <= 300 KB;
        - the --accent colour is actually present in the rendered pixels
@@ -37,8 +40,11 @@ What it does:
      content did not overflow the 1200x630 box (template.html's
      `overflow: hidden` would otherwise silently clip long text instead of
      failing loudly).
-     Any failure exits non-zero with a clear message; nothing is left
-     half-written on failure to write the PNG itself.
+     Only once the self-check PASSES is the temporary file promoted to
+     --out (an atomic `os.replace()`). Any failure exits non-zero with a
+     clear message, the temporary file is removed, and --out is left
+     completely untouched — a non-conforming render can never clobber a
+     previously committed, conformant card, `--force` or not.
 
 Reproduction fidelity: this closely approximates the committed cards, not a
 byte-for-byte reproduction. template.html uses the `system-ui` font-stack
@@ -61,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import re
 import struct
 import sys
@@ -185,7 +192,19 @@ def fill_template(site_name: str, tagline: str, accent: str, domain: str) -> str
 # ---------------------------------------------------------------------------
 
 
-def render_png(html_text: str, out_path: Path, *, force: bool) -> None:
+def render_png(html_text: str, out_path: Path, *, force: bool) -> Path:
+    """Screenshot `html_text` and return the path of a TEMPORARY sibling
+    file — never `out_path` itself. `out_path` is not touched by this
+    function at all beyond the exists/--force guard below; the caller
+    (`render_and_self_check`) only promotes the temp file to `out_path`,
+    via `os.replace()`, after `self_check` has passed. This is what stops
+    a conformance failure from leaving a non-conformant PNG at `out_path`:
+    previously the screenshot was written directly to `out_path` and
+    self-checked only afterwards, so by the time a failure (wrong
+    dimensions, oversized, missing accent) was detected, `out_path` —
+    including a previously committed, conformant card, if `--force` was
+    passed — had ALREADY been overwritten.
+    """
     # Checked before importing playwright: a bare run must not silently
     # clobber a committed card, and this should fail fast even if
     # playwright isn't installed at all.
@@ -207,6 +226,13 @@ def render_png(html_text: str, out_path: Path, *, force: bool) -> None:
         ) from exc
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Same directory as out_path (not e.g. the system tempdir): guarantees
+    # os.replace() below is an atomic same-filesystem rename rather than a
+    # cross-filesystem copy, and keeps the temp artifact trivially
+    # findable/cleanable if this process is hard-killed mid-render. The
+    # leading "." plus the PID makes collisions with a concurrent run (or
+    # a real committed asset) effectively impossible.
+    tmp_path = out_path.with_name(f".{out_path.name}.{os.getpid()}.tmp")
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
@@ -257,12 +283,14 @@ def render_png(html_text: str, out_path: Path, *, force: bool) -> None:
                 )
 
             page.screenshot(
-                path=str(out_path),
+                path=str(tmp_path),
                 type="png",
                 clip={"x": 0, "y": 0, "width": CARD_WIDTH, "height": CARD_HEIGHT},
             )
         finally:
             browser.close()
+
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -397,11 +425,21 @@ def scan_for_colour(
     return False
 
 
-def self_check(out_path: Path, accent_hex: str) -> None:
-    """Verify the written PNG against REQ-004 and report the result.
-    Raises ConformanceError (non-zero exit, clear message) on any failure."""
+def self_check(out_path: Path, accent_hex: str, *, report_path: Path | None = None) -> None:
+    """Verify the PNG at `out_path` against REQ-004 and report the result.
+    Raises ConformanceError (non-zero exit, clear message) on any failure.
+
+    `report_path`: the path named in printed/error messages; defaults to
+    `out_path` itself. `render_and_self_check` self-checks a TEMPORARY
+    file before promoting it to a different final destination (see its
+    own docstring) and passes that eventual destination here, so messages
+    describe the path the caller actually asked for rather than an
+    internal temp filename that means nothing to them.
+    """
+    if report_path is None:
+        report_path = out_path
     if not out_path.is_file():
-        raise ConformanceError(f"{out_path} was not written")
+        raise ConformanceError(f"{report_path} was not written")
     data = out_path.read_bytes()
     width, height, bit_depth, colour_type, interlace = read_png_ihdr(data)
 
@@ -437,17 +475,49 @@ def self_check(out_path: Path, accent_hex: str) -> None:
     if failures:
         raise ConformanceError(
             "og-image conformance check FAILED for "
-            + str(out_path)
+            + str(report_path)
             + "\n  - "
             + "\n  - ".join(failures)
         )
 
     print(
-        f"OK: {out_path}\n"
+        f"OK: {report_path}\n"
         f"  dimensions: {width}x{height} (required {CARD_WIDTH}x{CARD_HEIGHT})\n"
         f"  size:       {size:,} bytes (cap {MAX_BYTES:,} bytes / 300 KB)\n"
         f"  accent:     {accent_hex} found in pixel scan"
     )
+
+
+def _self_check_and_promote(tmp_path: Path, out_path: Path, accent_hex: str) -> None:
+    """Self-check `tmp_path` (a freshly-rendered screenshot at a temporary
+    sibling location, see `render_png`), reporting as `out_path`, and only
+    on success atomically replace `out_path` with it.
+
+    On failure, `tmp_path` is removed (best-effort — `missing_ok=True`
+    tolerates it already being gone) before the exception propagates, so a
+    conformance failure leaves NEITHER a stray temp artifact NOR a
+    non-conforming (or clobbered) file at `out_path`: whatever was at
+    `out_path` before this call — including nothing, or a previously
+    committed conformant card — is untouched. This is the fix for the
+    exact bug this function replaces: writing the screenshot directly to
+    `out_path` and self-checking only afterwards, which meant a failure
+    (or a `--force` run) had already overwritten `out_path` by the time
+    the check could reject it.
+    """
+    try:
+        self_check(tmp_path, accent_hex, report_path=out_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    os.replace(tmp_path, out_path)
+
+
+def render_and_self_check(html_text: str, out_path: Path, accent_hex: str, *, force: bool) -> None:
+    """Render `html_text`, self-check the result, and publish to
+    `out_path` only if the self-check passes (see `render_png` and
+    `_self_check_and_promote`)."""
+    tmp_path = render_png(html_text, out_path, force=force)
+    _self_check_and_promote(tmp_path, out_path, accent_hex)
 
 
 # ---------------------------------------------------------------------------
@@ -504,8 +574,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         html_text = fill_template(args.site_name, args.tagline, args.accent, args.domain)
-        render_png(html_text, args.out, force=args.force)
-        self_check(args.out, args.accent)
+        render_and_self_check(html_text, args.out, args.accent, force=args.force)
     except ConformanceError as exc:
         print(exc, file=sys.stderr)
         return 1

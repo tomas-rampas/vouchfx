@@ -7,12 +7,16 @@ Each of the five vouchfx Pages sites — the engine (`vouchfx.io`) and the
 four satellites (`samples.vouchfx.io`, `providers.vouchfx.io`,
 `telemetry.vouchfx.io`, `vouchfx-mcp.vouchfx.io`) — ships a hand-produced
 1200×630 PNG at `site/og-image.png`, referenced by the landing/portal
-page's `og:image` and `twitter:image` meta tags. PR #298 hand-patched the
-engine card to restore a literal accent-token colour swatch, precisely
-because no source existed to regenerate the card from — the fix had to be
-made pixel-by-pixel in an image editor. This directory is that source: a
-parameterised HTML template plus a render script, so every future edit is a
-text diff instead of a binary replace.
+page's `og:image` and `twitter:image` meta tags. The engine card's history
+(corrected here — an earlier version of this paragraph got it wrong):
+#297's card was already REQ-004-conformant on dimensions and size
+(1200×630, 49,818 bytes) — its actual defect was that it had no literal
+accent-hex pixel anywhere in it, only an anti-aliased gradient. PR #298
+fixed this by RE-RENDERING the card with a literal accent swatch added
+(49,818 → 40,744 bytes), not by hand-editing pixels in an image editor —
+there was simply no reusable source to regenerate from at the time. This
+directory is that source: a parameterised HTML template plus a render
+script, so every future edit is a text diff instead of a binary replace.
 
 ## Contents
 
@@ -170,10 +174,14 @@ the card — but does not guarantee a specific wrap point.
   `twitter:card` set to `summary_large_image`.
 
 `render.py` only produces the PNG; it does not touch the meta tags (those
-live in each site's landing/portal HTML). After writing the file it
-self-checks the first three constraints and exits non-zero with a clear
-message on any failure — it does not leave a non-conforming file silently
-in place.
+live in each site's landing/portal HTML). It screenshots to a TEMPORARY
+sibling file next to `--out` first, self-checks the first three
+constraints against that temporary file, and only on success promotes it
+to `--out` (an atomic `os.replace()`). Any failure exits non-zero with a
+clear message, removes the temporary file, and leaves `--out` completely
+untouched — a non-conforming render can never overwrite (or partially
+overwrite) a previously committed, conformant card at `--out`, `--force`
+or not.
 
 ### How the self-check works
 
@@ -224,8 +232,17 @@ responsibility when filling the `{{ACCENT}}` placeholder.
 2. Confirm `render.py` printed `OK` (dimensions, size, and accent all
    passed) — a non-zero exit means the card is not REQ-004 conformant and
    must not be committed.
-3. Rebuild that site (`scripts/build_site.py` in the relevant repo) and run
-   `scripts/check_site.py` — its `check_og_image_asset` check confirms the
-   built landing/portal page still references the asset correctly.
+3. Rebuild the site and re-run its publication gate:
+   - **This repo (the engine):** `py -3.12 -m mkdocs build --strict` then
+     `py -3.12 scripts/check_site.py _site` — NOT `scripts/build_site.py`;
+     `.github/workflows/pages.yml` builds with MkDocs directly, and
+     `build_site.py` no longer runs in CI. `check_og_image_asset` confirms
+     the built landing page still references the asset correctly (REQ-004
+     presence, dimensions, size — see "Conformance constraints" above).
+   - **A satellite repo** (vouchfx-samples/providers/telemetry-backend/mcp):
+     rebuild that repo's own site as it does today. None of the four
+     satellites has a `check_site.py`-equivalent og-image gate yet — that
+     is tracked as issue #304 — so this step is presence-only there until
+     it lands.
 4. Commit the regenerated `site/og-image.png` alongside any template change
    that produced it.
