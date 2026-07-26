@@ -136,6 +136,48 @@ class SiteConfig:
         `site/llms.txt` companion verbatim first; when `write_llms_txt`
         then runs (site_url AND llms_summary both set), its generated
         `llms.txt` unconditionally overwrites that companion.
+    llms_curated: OPTIONAL and additive (vouchfx issue #299 — follow-ups
+        from the July 2026 SEO fleet wave's peer-review-critic + gatekeeper
+        reviews). False (the default) is the pre-existing behaviour,
+        byte-for-byte: the portal bullet still reads
+        "{meta_description_prefix} documentation portal" (the awkward
+        concatenation the issue was filed against), the two intro bullets
+        sit above the first `## {group}` heading with no heading of their
+        own, and `## {group}` sections — and the pages within each — are
+        alphabetised. This flag has NO effect at all unless `write_llms_txt`
+        actually runs, i.e. `site_url` AND `llms_summary` are ALSO both set
+        (build()'s own guard, unchanged); it likewise has no effect on
+        anything else `build()` emits (sidebar, portal, sitemap, robots.txt).
+
+        True changes three things together, all in `write_llms_txt`, per
+        llms.txt.org's own grammar (file lists belong under H2 sections):
+        (1) the portal bullet becomes a grammatical sentence — "The
+        documentation portal for {name} — every guide and reference on this
+        site." — instead of the bare concatenation, where `{name}` is the
+        same `default_repo`-derived project name used for the H1; (2) both
+        intro bullets (the site's own index-page bullet and the portal
+        bullet) move under a new `## Overview` heading, which sits above
+        every `## {group}` section, so every file list in the document sits
+        under an H2; (3) `## {group}` sections appear in `config.docs`' own
+        first-appearance order, and the pages within each group appear in
+        `config.docs`' own declaration order, rather than being sorted —
+        the curated nav order a repo's `docs` list already encodes (e.g. a
+        deliberately-first "Start" group leads the file, not whichever
+        group name happens to sort first alphabetically). These three
+        changes are deliberately a single flag, not three: they were filed
+        and reviewed together as one coherent llms.txt readability fix,
+        and no consumer has asked to opt into only one of them.
+
+        RESERVED GROUP NAME: when True, a `config.docs` group whose name
+        is "Overview" under a case- and whitespace-insensitive comparison
+        (`group.strip().casefold() == "overview"` — so "overview",
+        "OVERVIEW", and " Overview " all match, not just an exact literal
+        "Overview") collides with the intro section's own new `##
+        Overview` heading above — `write_llms_txt` raises `ValueError`
+        naming the offending group and `config.docs` entry, rather than
+        silently emitting two same-named `## Overview` headings. This only
+        constrains the new opt-in path: any such group name is harmless
+        (and unchanged, rendered verbatim) when this flag is False.
     """
 
     root: Path
@@ -152,6 +194,7 @@ class SiteConfig:
     site_url: str | None = None
     semantic_headings: bool = False
     llms_summary: str | None = None
+    llms_curated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -583,37 +626,85 @@ def write_llms_txt(config: SiteConfig, out: Path, rendered: set[str]) -> None:
     bare origin" convention via `_sitemap_loc`, same site_url-join via
     `site_url_join`, same `assert`-both-truthy contract (only ever called
     from build()'s own `if config.site_url and config.llms_summary:` guard).
+
+    `config.llms_curated` (issue #299) selects between two output shapes —
+    see the field's own docstring for the full rationale, summarised here:
+
+    * False (the default): the pre-#299 shape, byte-for-byte — the intro
+      bullets sit above the first `## {group}` heading with no heading of
+      their own, the portal bullet is the bare
+      `"{meta_description_prefix} documentation portal"` concatenation, and
+      `## {group}` sections (and the pages within each) are alphabetised.
+    * True: a grammatical portal bullet naming the site, both intro bullets
+      moved under a new `## Overview` heading (so every file list sits
+      under an H2, per llms.txt.org's own grammar), and `## {group}`
+      sections plus their pages kept in `config.docs`' own declaration
+      order — the curated nav order — instead of being sorted.
+
+    Raises `ValueError` when `llms_curated` is True and any `config.docs`
+    entry's group matches "Overview" under a case- and whitespace-
+    insensitive comparison (`group.strip().casefold() == "overview"`) —
+    it would collide with the intro section's own `## Overview` heading,
+    silently producing two same-named headings. The message names both
+    the offending group and the full `config.docs` entry, mirroring
+    `_doc_entry`'s own `{entry!r}`-bearing `ValueError`. See
+    `SiteConfig.llms_curated`'s own docstring.
     """
     assert config.site_url and config.llms_summary  # only ever called when both are truthy — see build()
 
     name = _project_name(config)
     lines = [f"# {name}", "", f"> {config.llms_summary}", ""]
-    lines.append(f"- [{name}]({_sitemap_loc(config, 'index.html')}): {config.meta_description_prefix}")
-    lines.append(
-        f"- [Documentation]({site_url_join(config.site_url, 'docs.html')}): "
-        f"{config.meta_description_prefix} documentation portal"
-    )
+
+    index_bullet = f"- [{name}]({_sitemap_loc(config, 'index.html')}): {config.meta_description_prefix}"
+    if config.llms_curated:
+        portal_bullet = (
+            f"- [Documentation]({site_url_join(config.site_url, 'docs.html')}): "
+            f"The documentation portal for {name} — every guide and reference on this site."
+        )
+        lines.append("## Overview")
+        lines.append(index_bullet)
+        lines.append(portal_bullet)
+    else:
+        portal_bullet = (
+            f"- [Documentation]({site_url_join(config.site_url, 'docs.html')}): "
+            f"{config.meta_description_prefix} documentation portal"
+        )
+        lines.append(index_bullet)
+        lines.append(portal_bullet)
     lines.append("")
 
     # Grouped by config.docs' own `group` field (each group rendered as its
-    # own `## {group}` section, per the llms.txt.org convention), sorted by
-    # group name and then by label within a group for a deterministic,
-    # human-browsable listing independent of config.docs' declaration order
-    # or build()'s render order. Auto-discovered pages (not in config.docs)
-    # are deliberately excluded: they carry no curated label/group.
+    # own `## {group}` section, per the llms.txt.org convention).
+    # `group_order` records each group's FIRST appearance in `config.docs`
+    # — consulted only when `llms_curated` is True (the curated order);
+    # the default path still sorts, exactly as before. Auto-discovered
+    # pages (not in config.docs) are deliberately excluded: they carry no
+    # curated label/group.
     groups: dict[str, list[tuple[str, str]]] = {}
+    group_order: list[str] = []
     for entry in config.docs:
         rel, group, label, description = _doc_entry(entry)
+        if config.llms_curated and group.strip().casefold() == "overview":
+            raise ValueError(
+                f"SiteConfig.docs group {group!r} collides with the llms_curated intro section "
+                f"'Overview' (case- and whitespace-insensitive match) — rename the group "
+                f"(entry {entry!r})"
+            )
         if rel not in rendered:
-            continue
+            continue  # defensive only — build() pre-renders every config.docs rel
         url = site_url_join(config.site_url, out_path(rel, out).relative_to(out).as_posix())
         text = description if description is not None else f"{config.meta_description_prefix} — {label}"
-        groups.setdefault(group, []).append((label, f"- [{label}]({url}): {text}"))
+        if group not in groups:
+            groups[group] = []
+            group_order.append(group)
+        groups[group].append((label, f"- [{label}]({url}): {text}"))
 
     doc_count = 0
-    for group in sorted(groups):
+    group_names = group_order if config.llms_curated else sorted(groups)
+    for group in group_names:
         lines.append(f"## {group}")
-        for _label, line in sorted(groups[group]):
+        entries = groups[group] if config.llms_curated else sorted(groups[group])
+        for _label, line in entries:
             lines.append(line)
             doc_count += 1
         lines.append("")
