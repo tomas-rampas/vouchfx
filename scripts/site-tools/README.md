@@ -147,8 +147,7 @@ For example, the same `docs` set as above, curated:
 
 ## Overview
 - [{project name}]({bare site_url}): {meta_description_prefix}
-- [Documentation]({site_url}docs.html): The documentation portal for
-  {project name} — every guide and reference on this site.
+- [Documentation]({site_url}docs.html): The documentation portal for {project name} — every guide and reference on this site.
 
 ## {first group in docs' declaration order}
 - [{label}]({absolute page URL}): {description}
@@ -161,12 +160,17 @@ filed and reviewed together as a single llms.txt readability fix. Like
 `site_url`/`llms_summary` entirely) never changes existing output.
 
 **Reserved group name:** with `llms_curated=True`, a `docs` entry whose
-group is literally `"Overview"` collides with the intro section's own new
-`## Overview` heading above — `write_llms_txt` raises `ValueError`
-("group name 'Overview' collides with the llms_curated intro section —
-rename the group") rather than silently emitting two `## Overview`
-sections. A group named `"Overview"` is harmless when `llms_curated` is
-left at its `False` default.
+group matches `"Overview"` under a **case- and whitespace-insensitive**
+comparison (`group.strip().casefold() == "overview"` — so `"overview"`,
+`"OVERVIEW"`, and `" Overview "` all collide, not just an exact literal
+`"Overview"`) collides with the intro section's own new `## Overview`
+heading above — `write_llms_txt` raises `ValueError` naming both the
+offending group and the full `docs` entry (e.g. `"SiteConfig.docs group
+'OVERVIEW' collides with the llms_curated intro section 'Overview'
+(case- and whitespace-insensitive match) — rename the group (entry
+('docs/x.md', 'OVERVIEW', 'Label'))"`) rather than silently emitting two
+`## Overview` sections. Any such group name is harmless when
+`llms_curated` is left at its `False` default.
 
 ## How the satellite repos consume this package
 
@@ -195,7 +199,11 @@ Two operational rules for the pin:
 Opting a satellite into `llms_curated=True` is a plain pin bump plus one
 `SiteConfig` kwarg in that repo's own `scripts/build_site.py` wrapper —
 unlike `semantic_headings`, it needs no paired `site/docs.css` change,
-since it only touches `llms.txt` content.
+since it only touches `llms.txt` content. The kwarg and the pin bump MUST
+land in the SAME satellite PR: setting `llms_curated=True` against an
+older pin (from before this field existed) raises `TypeError:
+SiteConfig.__init__() got an unexpected keyword argument 'llms_curated'`
+at build time, not a graceful no-op.
 
 ## Local development
 

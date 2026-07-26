@@ -168,13 +168,16 @@ class SiteConfig:
         and reviewed together as one coherent llms.txt readability fix,
         and no consumer has asked to opt into only one of them.
 
-        RESERVED GROUP NAME: when True, a literal `config.docs` group
-        named "Overview" collides with the intro section's own new `##
+        RESERVED GROUP NAME: when True, a `config.docs` group whose name
+        is "Overview" under a case- and whitespace-insensitive comparison
+        (`group.strip().casefold() == "overview"` — so "overview",
+        "OVERVIEW", and " Overview " all match, not just an exact literal
+        "Overview") collides with the intro section's own new `##
         Overview` heading above — `write_llms_txt` raises `ValueError`
-        rather than silently emitting two same-named `## Overview`
-        headings. This only constrains the new opt-in path: a group
-        literally named "Overview" is harmless (and unchanged) when this
-        flag is False.
+        naming the offending group and `config.docs` entry, rather than
+        silently emitting two same-named `## Overview` headings. This only
+        constrains the new opt-in path: any such group name is harmless
+        (and unchanged, rendered verbatim) when this flag is False.
     """
 
     root: Path
@@ -639,9 +642,13 @@ def write_llms_txt(config: SiteConfig, out: Path, rendered: set[str]) -> None:
       order — the curated nav order — instead of being sorted.
 
     Raises `ValueError` when `llms_curated` is True and any `config.docs`
-    entry's group is literally named "Overview" — it would collide with
-    the intro section's own `## Overview` heading, silently producing two
-    same-named headings. See `SiteConfig.llms_curated`'s own docstring.
+    entry's group matches "Overview" under a case- and whitespace-
+    insensitive comparison (`group.strip().casefold() == "overview"`) —
+    it would collide with the intro section's own `## Overview` heading,
+    silently producing two same-named headings. The message names both
+    the offending group and the full `config.docs` entry, mirroring
+    `_doc_entry`'s own `{entry!r}`-bearing `ValueError`. See
+    `SiteConfig.llms_curated`'s own docstring.
     """
     assert config.site_url and config.llms_summary  # only ever called when both are truthy — see build()
 
@@ -677,9 +684,11 @@ def write_llms_txt(config: SiteConfig, out: Path, rendered: set[str]) -> None:
     group_order: list[str] = []
     for entry in config.docs:
         rel, group, label, description = _doc_entry(entry)
-        if config.llms_curated and group == "Overview":
+        if config.llms_curated and group.strip().casefold() == "overview":
             raise ValueError(
-                "group name 'Overview' collides with the llms_curated intro section — rename the group"
+                f"SiteConfig.docs group {group!r} collides with the llms_curated intro section "
+                f"'Overview' (case- and whitespace-insensitive match) — rename the group "
+                f"(entry {entry!r})"
             )
         if rel not in rendered:
             continue  # defensive only — build() pre-renders every config.docs rel

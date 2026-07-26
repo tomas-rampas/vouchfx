@@ -64,12 +64,18 @@ regression, since both sides are the thing under test):
   ``origin/main`` becomes this same commit, so the "baseline" is
   thereafter identical to the current module and the comparison passes
   trivially, proving nothing, until this module changes again. This is a
-  deliberate trade-off (no CI workflow change, no separately pinned
-  baseline) — see the test's own docstring for the full reasoning — not an
-  ongoing backward-compatibility guarantee. It ``pytest.skip``s (not
-  fails) when ``origin/main`` cannot be resolved — e.g. a shallow CI
-  checkout with no such ref — since that is an environment limitation, not
-  evidence of a regression.
+  deliberate trade-off (no separately pinned baseline) — see the test's
+  own docstring for the full reasoning — not an ongoing backward-
+  compatibility guarantee. This DOES require a full-history checkout —
+  ``refs/remotes/origin/main`` must resolve — which the ``site-tools-
+  tests`` CI job provides via ``fetch-depth: 0`` on its Checkout step
+  (``.github/workflows/build.yml``) specifically so these cases RUN in CI
+  rather than silently skip; a plain default ``fetch-depth: 1`` checkout
+  (or a detached PR merge-ref checkout without that override) never has
+  the ref. It ``pytest.skip``s (not fails) only for a genuinely
+  incomplete LOCAL checkout — e.g. a shallow clone taken without
+  ``--fetch-depth 0`` — which is an environment limitation, not evidence
+  of a regression.
 
 Every test drives the module's real public API (``SiteConfig`` + ``build()``)
 end to end against a throw-away repo skeleton under ``tmp_path`` — never a
@@ -292,7 +298,17 @@ def _load_baseline_module(ref: str, rel_path: str, tmp_path: Path):
         return None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # Do not leave a half-initialised module registered under
+        # sys.modules — a later, unrelated `uuid.uuid4()` collision is
+        # astronomically unlikely, but a dangling broken entry lingering
+        # for the rest of the test session serves no purpose and could
+        # only ever confuse a future import of the same (impossible)
+        # name; pop it before propagating the original failure.
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 
@@ -304,17 +320,17 @@ def _load_baseline_module(ref: str, rel_path: str, tmp_path: Path):
 
 def test_new_fields_unset_is_deterministic_and_defaults_are_pinned(tmp_path: Path) -> None:
     """Pins two things, mirroring test_site_url_contract.py's own honest
-    framing: (1) the two dataclass defaults are still False/None — a silent
-    default change would flip the sanity assertions below — and (2)
-    build() is deterministic: two independent builds from equivalent
+    framing: (1) the three dataclass defaults are still False/None/False —
+    a silent default change would flip the sanity assertions below — and
+    (2) build() is deterministic: two independent builds from equivalent
     configs (fields omitted vs. passed explicitly as their defaults)
     produce a byte-identical tree.
 
-    This does NOT prove the new B1/B2/B3 code path left the PRE-EXISTING
-    module's default behaviour unchanged — both builds here run the
-    identical, already-patched function bodies, so a shared bug (or a
-    genuine, undocumented default-behaviour change) would pass this test
-    just as easily as no bug at all. See
+    This does NOT prove the new B1/B2/B3/#299 code path left the
+    PRE-EXISTING module's default behaviour unchanged — both builds here
+    run the identical, already-patched function bodies, so a shared bug
+    (or a genuine, undocumented default-behaviour change) would pass this
+    test just as easily as no bug at all. See
     test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte for
     the test that actually catches that (pre-merge only — see its own
     docstring).
@@ -326,10 +342,15 @@ def test_new_fields_unset_is_deterministic_and_defaults_are_pinned(tmp_path: Pat
     config_omitted = SiteConfig(**_base_kwargs(root), site_url=SITE_URL)
     assert config_omitted.semantic_headings is False
     assert config_omitted.llms_summary is None
+    assert config_omitted.llms_curated is False
     build(config_omitted, out_omitted)
 
     config_explicit = SiteConfig(
-        **_base_kwargs(root), site_url=SITE_URL, semantic_headings=False, llms_summary=None
+        **_base_kwargs(root),
+        site_url=SITE_URL,
+        semantic_headings=False,
+        llms_summary=None,
+        llms_curated=False,
     )
     build(config_explicit, out_explicit_default)
 
@@ -396,14 +417,22 @@ def test_new_fields_unset_matches_pre_merge_origin_main_byte_for_byte(
     `origin/main` again differs from the working tree, and the test
     becomes meaningful again, comparing against whatever was last merged
     rather than this specific PR's starting point). This is a DELIBERATE
-    trade-off, not an oversight: no CI workflow change and no separately
-    pinned/maintained baseline SHA/tag — see this file's own git history
-    for the reasoning — so this test's ongoing pass/fail after merge is
-    NOT an enforced backward-compatibility guarantee for future changes to
-    this module; it only ever verified THIS branch's changes against THIS
-    branch's own starting point. Skips (does not fail) when `origin/main`
-    cannot be resolved, e.g. a shallow CI checkout with no such ref: that
-    is an environment limitation, not evidence of a regression.
+    trade-off, not an oversight: no separately pinned/maintained baseline
+    SHA/tag — see this file's own git history for the reasoning — so this
+    test's ongoing pass/fail after merge is NOT an enforced backward-
+    compatibility guarantee for future changes to this module; it only
+    ever verified THIS branch's changes against THIS branch's own starting
+    point.
+
+    REQUIRES a full-history checkout: `refs/remotes/origin/main` must
+    resolve, which needs `fetch-depth: 0` (a plain default `fetch-depth: 1`
+    checkout, or a detached PR merge-ref checkout, never has it). The
+    `site-tools-tests` CI job's Checkout step sets exactly this
+    (`.github/workflows/build.yml`), so these 4 parametrized cases RUN —
+    not skip — in that job. Skips (does not fail) only when `origin/main`
+    genuinely cannot be resolved in the checkout under test, e.g. a local
+    shallow clone: that is an environment limitation, not evidence of a
+    regression.
     """
     if not _git_ref_resolves(BASELINE_REF):
         pytest.skip(f"{BASELINE_REF!r} does not resolve in this checkout (shallow clone?) — skipping")
@@ -744,26 +773,57 @@ def test_llms_curated_true_yields_grammatical_overview_and_curated_order(tmp_pat
     assert zeta_second_index < zeta_page_index
 
 
-def test_llms_curated_true_rejects_overview_group_collision(tmp_path: Path) -> None:
-    """A `config.docs` group literally named "Overview" would silently
-    produce two `## Overview` sections once curated mode adds its own —
-    write_llms_txt raises ValueError instead. Only constrains the new
+@pytest.mark.parametrize(
+    "colliding_group",
+    ["Overview", "overview", "OVERVIEW", " Overview "],
+    ids=["exact-case", "lowercase", "uppercase", "padded-whitespace"],
+)
+def test_llms_curated_true_rejects_overview_group_collision(tmp_path: Path, colliding_group: str) -> None:
+    """A `config.docs` group matching "Overview" would silently produce
+    two `## Overview` sections once curated mode adds its own —
+    write_llms_txt raises ValueError instead, naming both the offending
+    group and the full config.docs entry. The guard normalises via
+    `group.strip().casefold() == "overview"` rather than an exact `==`
+    comparison, so this is parametrized over an exact-case match plus
+    lowercase/uppercase/padded-whitespace variants that a naive exact
+    comparison would have let slip through. Only constrains the new
     opt-in path: the same group name is harmless when llms_curated is
     left at its False default (proven by the second assertion below)."""
     root = _make_curated_repo(tmp_path)
     out = root / "_out"
     kwargs = _curated_kwargs(root)
-    kwargs["docs"] = [*CURATED_DOCS, ("docs/zeta-page.md", "Overview", "Colliding entry")]
+    kwargs["docs"] = [*CURATED_DOCS, ("docs/zeta-page.md", colliding_group, "Colliding entry")]
 
     config_curated = SiteConfig(**kwargs, site_url=SITE_URL, llms_summary=LLMS_SUMMARY, llms_curated=True)
-    with pytest.raises(ValueError, match="Overview"):
+    with pytest.raises(ValueError) as exc_info:
         build(config_curated, out)
+    message = str(exc_info.value)
+    assert repr(colliding_group) in message  # N1: names the offending group verbatim
+    assert "'Overview'" in message  # names the colliding intro-section heading
 
     # Same colliding group name, llms_curated left at its False default:
     # must NOT raise — the constraint is new-opt-in-path-only.
     config_default = SiteConfig(**kwargs, site_url=SITE_URL, llms_summary=LLMS_SUMMARY)
     build(config_default, out)  # must not raise
     assert (out / "llms.txt").exists()
+
+
+def test_llms_curated_true_allows_group_name_distinct_from_overview(tmp_path: Path) -> None:
+    """A group name that merely CONTAINS "overview" as a substring, or
+    otherwise differs from it, must NOT trip the guard — the comparison
+    is a full `strip().casefold()` equality, not a substring/contains
+    check. A legitimately distinct passing case, alongside the colliding
+    variants above."""
+    root = _make_curated_repo(tmp_path)
+    out = root / "_out"
+    kwargs = _curated_kwargs(root)
+    kwargs["docs"] = [*CURATED_DOCS, ("docs/zeta-page.md", "Overview Extras", "Distinct entry")]
+
+    config = SiteConfig(**kwargs, site_url=SITE_URL, llms_summary=LLMS_SUMMARY, llms_curated=True)
+    build(config, out)  # must not raise
+
+    llms = (out / "llms.txt").read_text(encoding="utf-8")
+    assert "## Overview Extras" in llms
 
 
 @pytest.mark.parametrize(
