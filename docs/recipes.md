@@ -1179,7 +1179,7 @@ The workflow always publishes artifacts (even on failure, via `if: always()`):
 | 3 | EnvironmentError (infrastructure breakage) | Only if `fail-on-env-error: true` |
 | 4 | Inconclusive (timeout, unmet captures; or every scenario failed to parse) | Only if `fail-on-inconclusive: true` — but an all-parse-failure run always exits 4 |
 
-For the full reference, see [project README § CI integration with GitHub Actions](project-readme.md#ci-integration-with-github-actions) and [`.github/workflows/vouchfx-run.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run.yml).
+For the full reference, see [CI integration reference § GitHub Actions](ci-integration.md#github-actions) and [`.github/workflows/vouchfx-run.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run.yml).
 
 ---
 
@@ -1227,7 +1227,7 @@ Reports are published to the job's default artifact path (native GitLab test-rep
 
 **Verification status:** The GitLab template is static-validated (schema, behavioural equivalence) but has not been run on a live GitLab instance — a live pipeline run is a follow-up. The primary unknown is whether vouchfx's Aspire/DCP-managed containers are reachable under dind (set `TESTCONTAINERS_HOST_OVERRIDE=docker` in the template).
 
-For the full reference, see [project README § CI integration with GitLab CI](project-readme.md#ci-integration-with-gitlab-ci) and [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml).
+For the full reference, see [CI integration reference § GitLab CI](ci-integration.md#gitlab-ci) and [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml).
 
 ---
 

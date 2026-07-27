@@ -1,0 +1,248 @@
+# CI integration reference
+
+vouchfx ships two first-party CI integrations that run a `.e2e.yaml` suite end-to-end against an
+orchestrated container topology and publish JUnit and HTML artefacts:
+
+- a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`), and
+- an **`include`-able GitLab CI/CD template** (`ci/gitlab/vouchfx-run.gitlab-ci.yml`).
+
+They are behavioural equivalents: the same inputs (as workflow inputs / CI-CD variables), the same
+build-from-source install, the same exit-code gating, and the same artefact-upload behaviour.
+
+For a minimal copy-paste starting point, see the CI recipes in
+[Recipes](recipes.md#ci-integration-with-github-actions). This page is the complete reference.
+
+---
+
+## Shared behaviour
+
+### Exit-code gating (verdict taxonomy §12.1)
+
+Both integrations respect the four-verdict taxonomy so CI can tell infrastructure breakage apart from
+a product defect:
+
+| Exit code | Verdict | Breaks CI? |
+|---|---|---|
+| **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – |
+| **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** |
+| **2** | UsageError — unrecognised option, bad arguments, missing path | Always |
+| **3** | EnvironmentError — unhealthy container, image-pull or seed failure | Only when opted in |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in |
+
+The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
+page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
+
+**One unconditional exception:** a `run` in which *every* discovered scenario fails to parse (malformed
+YAML, unknown step types across the board) is classified Inconclusive and exits 4 regardless of the
+opt-in flag, matching the behaviour of `vouchfx validate`.
+
+### Artefacts
+
+Both integrations **always publish reports** — via `if: always()` on GitHub Actions and `when: always`
+on GitLab — so artefacts are available precisely when a suite does not pass:
+
+- **`results.xml`** — JUnit XML for CI ingestion. The four verdicts map to distinct JUnit primitives
+  (Fail → `<failure>`, EnvironmentError → `<error>`, Inconclusive → `<skipped>`). On GitLab this is
+  surfaced natively in the pipeline and merge-request test-report UI.
+- **`report.html`** — a self-contained HTML report with polling timelines, captured-variable
+  provenance, failed-step diffs and the reproducibility envelope, with no secret values embedded.
+
+### Installation model
+
+The vouchfx CLI is packaged as a `dotnet` global tool (`ToolCommandName: vouchfx`), live on NuGet.org:
+
+```bash
+dotnet tool install --global vouchfx --prerelease
+```
+
+That is the recommended path for local use. **Both CI integrations deliberately build from source** at
+the pinned ref instead, keeping the runner's engine in lock-step with the workflow/template definition
+you pinned — pin a release tag or SHA to track a released engine.
+
+The tool depends on the Aspire orchestration packages being present in the per-user NuGet cache; any
+developer or CI environment that has built an Aspire app or resolved the engine's dependencies has
+them. For machines with only the OS and no .NET SDK, use the self-contained per-OS archives and
+installers attached to each [GitHub release](https://github.com/tomas-rampas/vouchfx/releases).
+
+### The floating convenience tags
+
+Two maintainer-moved tags exist as a convenience tier, maintained by
+[`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml),
+which force-moves them to each published release's commit:
+
+| Tag | Tracks |
+|---|---|
+| `v1-alpha` | **Only** `v1.0.0-alpha.N` and `v1.0.0-beta.N` pre-releases. Release-candidate tags deliberately do **not** move it. |
+| `v1` | Only `v1.y.z` GA releases. Starts moving once v1.0.0 ships. |
+
+Because `v1-alpha` does not track release candidates, it currently points at the last alpha, **not** at
+`v1.0.0-rc.1`. To run the release candidate in CI, pin the tag or its commit SHA explicitly. Neither
+tag is a production-grade pin — see [Supply-chain hygiene](#supply-chain-hygiene).
+
+---
+
+## GitHub Actions
+
+### Quick start
+
+```yaml
+jobs:
+  vouchfx-e2e:
+    # Convenience tier — good for a first try or a low-stakes repo.
+    # See "Supply-chain hygiene" for the SHA-pinned production tier.
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1.0.0-rc.1
+    with:
+      scenario-path: ./tests/e2e
+      fail-on-env-error: false
+```
+
+### Workflow inputs
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search recursively for `.e2e.yaml` scenarios. |
+| `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or to pin a released version. |
+| `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
+| `dotnet-version` | string | `8.0.x` | The .NET SDK version to install. vouchfx targets .NET 8 LTS. |
+| `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict fails the job with exit code 3. |
+| `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict fails the job with exit code 4. |
+| `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, warming the Docker cache and mitigating Aspire/DCP's ~20-second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. |
+| `runs-on` | string | `ubuntu-latest` | The runner label to use. Must provide Docker; `ubuntu-latest` does. |
+
+### Worked example
+
+[`.github/workflows/vouchfx-run-reference.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run-reference.yml)
+calls the reusable workflow against this repository's own minimal reference suite
+(`examples/ci-reference/smoke.e2e.yaml`), proving the workflow runs a real suite green and publishes
+artefacts end-to-end.
+
+---
+
+## GitLab CI
+
+### Quick start
+
+```yaml
+include:
+  - project: tomas-rampas/vouchfx
+    # Convenience tier — see "Supply-chain hygiene" for the SHA-pinned tier.
+    ref: v1.0.0-rc.1
+    file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
+
+vouchfx-run:
+  variables:
+    VOUCHFX_SCENARIO_PATH: ./tests/e2e
+    VOUCHFX_FAIL_ON_ENV_ERROR: "false"
+```
+
+### Configuration variables
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `VOUCHFX_SCENARIO_PATH` | string | `.` | Directory (relative to the project root) to search recursively for `.e2e.yaml` scenarios. |
+| `VOUCHFX_REPO_URL` | string | `$CI_REPOSITORY_URL` | Git URL of the vouchfx repository to build from source. Defaults to the calling project; override to track a fork. |
+| `VOUCHFX_REF` | string | `$CI_COMMIT_SHA` | Git ref (commit SHA, tag or branch) of `VOUCHFX_REPO_URL` to build. |
+| `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:8.0` | .NET 8 SDK container image the job runs in. |
+| `VOUCHFX_FAIL_ON_ENV_ERROR` | string | `"false"` | When truthy, an environment-error verdict fails the job with exit code 3. |
+| `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict fails the job with exit code 4. |
+| `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to pre-warm. Pin each entry to an immutable digest. |
+
+### Docker-in-Docker and the privileged-runner requirement
+
+vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker daemon. The
+template uses the standard GitLab **Docker-in-Docker (dind)** pattern with a `docker:dind` service.
+
+**Caveat:** dind requires a **privileged runner**. The `docker:dind` service only starts on a GitLab
+Runner configured with `privileged = true` (Docker executor) or an equivalently-privileged Kubernetes
+executor. gitlab.com's shared SaaS Linux runners provide this; a self-managed runner must be
+explicitly configured for it.
+
+**Alternative for a non-privileged runner.** Use a **socket-bind runner**: mount the host daemon socket
+into the build (`volumes = ["/var/run/docker.sock:/var/run/docker.sock", …]` in the runner config),
+then drop the `services:` block and the dind/TLS variables, and set
+`DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not needing privileged
+mode — choose per your security posture.
+
+### Verification status (important)
+
+The GitLab template is **static-validated only** — yamllint, the GitLab CI JSON schema, and a
+behavioural-equivalence cross-check against the GitHub workflow. It has **not been run on a live
+GitLab instance**; a live pipeline / `ci/lint` run is an infrastructure-gated follow-up.
+
+The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed
+containers are reachable under sibling Docker-in-Docker**. The template sets
+`TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw
+Testcontainers — that dind-to-DCP networking is the primary unknown.
+
+See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml)
+and [`ci/gitlab/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md)
+for implementation details.
+
+---
+
+## Supply-chain hygiene
+
+For production use, pin everything to something immutable.
+
+**GitHub Actions:**
+
+1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
+   ```yaml
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.1
+   ```
+   A branch or tag ref — including the `v1-alpha`/`v1` convenience tags — lets the workflow definition
+   change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative: it is
+   what lets Dependabot track and bump the pin automatically.
+2. **Pin `vouchfx-ref` to a commit SHA or release tag**, never a branch.
+3. **Pin each `prewarm-images` entry to an immutable image digest**:
+   ```yaml
+   prewarm-images: |
+     traefik/whoami@sha256:abc123...
+     postgres@sha256:def456...
+   ```
+
+**GitLab CI:** the same four rules — pin the `include:` `ref:` to a full commit SHA, pin `VOUCHFX_REF`,
+pin each `VOUCHFX_PREWARM_IMAGES` entry to a digest, and pin `VOUCHFX_DOTNET_IMAGE` to a digest
+(`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`) rather than the floating tag.
+
+### Keeping the pin current
+
+**On GitHub**, add a `github-actions` entry to your own `.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+Dependabot resolves the trailing `# vX.Y.Z` comment on the SHA pin, watches this repository's tags, and
+opens a PR bumping both the SHA and the comment whenever vouchfx cuts a release — nobody runs a lookup
+by hand, and the pin never drifts silently.
+
+**On GitLab**, there is no built-in equivalent for `include: ref:` entries. The closest automation is a
+[Renovate](https://docs.renovatebot.com/) custom regex manager watching this repository's tags and
+opening an MR to bump the pinned SHA and its trailing comment.
+
+**Resolving a SHA by hand** (the first pin, or without Dependabot/Renovate):
+
+```bash
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.1
+```
+
+Depending on how the release tag was created (both kinds are documented in
+[RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md)), this prints either
+*two* lines — `refs/tags/v1.0.0-rc.1` (an annotated tag object's own SHA) and
+`refs/tags/v1.0.0-rc.1^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
+tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the
+single line's SHA is the commit SHA to pin.
+
+---
+
+## See also
+
+- **[Recipes → CI integration](recipes.md#ci-integration-with-github-actions)** — the minimal copy-paste starting point.
+- **[Getting started](getting-started.md)** — your first test in 60 minutes.
+- **[Troubleshooting](troubleshooting.md)** — Docker not running, the Aspire 20-second cold-start gotcha, and other real failure modes.
