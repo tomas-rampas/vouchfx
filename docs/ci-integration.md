@@ -66,18 +66,23 @@ installers attached to each [GitHub release](https://github.com/tomas-rampas/vou
 
 ### The floating convenience tags
 
-Two maintainer-moved tags exist as a convenience tier, maintained by
+Three maintainer-moved tags exist as a convenience tier, maintained by
 [`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml),
 which force-moves them to each published release's commit:
 
-| Tag | Tracks |
-|---|---|
-| `v1-alpha` | **Only** `v1.0.0-alpha.N` and `v1.0.0-beta.N` pre-releases. Release-candidate tags deliberately do **not** move it. |
-| `v1` | Only `v1.y.z` GA releases. Starts moving once v1.0.0 ships. |
+| Tag | Tracks | State |
+|---|---|---|
+| `v1-alpha` | `v1.0.0-alpha.N` and `v1.0.0-beta.N` | Retired at `v1.0.0-alpha.10` — never deleted, simply no longer moved. |
+| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Comes into existence with the first rc published after the tag was introduced, or via a manual run of the workflow; until it exists, pin `v1.0.0-rc.1` directly. |
+| `v1` | `v1.y.z` GA releases only | Starts moving once v1.0.0 ships. |
 
-Because `v1-alpha` does not track release candidates, it currently points at the last alpha, **not** at
-`v1.0.0-rc.1`. To run the release candidate in CI, pin the tag or its commit SHA explicitly. Neither
-tag is a production-grade pin — see [Supply-chain hygiene](#supply-chain-hygiene).
+**Each pre-GA line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha
+line; force-moving them onto a release candidate would change the engine under them without a ref
+change on their side, and leave the tag name describing something it no longer points at. Moving
+between lines is therefore an opt-in edit: switch `v1-alpha` → `v1-rc` when you are ready, and
+`v1-rc` → `v1` at GA.
+
+None of the three is a production-grade pin — see [Supply-chain hygiene](#supply-chain-hygiene).
 
 ---
 
@@ -90,7 +95,7 @@ jobs:
   vouchfx-e2e:
     # Convenience tier — good for a first try or a low-stakes repo.
     # See "Supply-chain hygiene" for the SHA-pinned production tier.
-    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1.0.0-rc.1
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1-rc
     with:
       scenario-path: ./tests/e2e
       fail-on-env-error: false
@@ -126,7 +131,7 @@ artefacts end-to-end.
 include:
   - project: tomas-rampas/vouchfx
     # Convenience tier — see "Supply-chain hygiene" for the SHA-pinned tier.
-    ref: v1.0.0-rc.1
+    ref: v1-rc
     file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
 
 vouchfx-run:
@@ -190,7 +195,7 @@ For production use, pin everything to something immutable.
    ```yaml
    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.1
    ```
-   A branch or tag ref — including the `v1-alpha`/`v1` convenience tags — lets the workflow definition
+   A branch or tag ref — including the `v1-alpha`/`v1-rc`/`v1` convenience tags — lets the workflow definition
    change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative: it is
    what lets Dependabot track and bump the pin automatically.
 2. **Pin `vouchfx-ref` to a commit SHA or release tag**, never a branch.

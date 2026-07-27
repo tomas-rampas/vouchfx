@@ -173,7 +173,7 @@ fails.
 ```yaml
 jobs:
   vouchfx-e2e:
-    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1.0.0-rc.1
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1-rc
     with:
       scenario-path: ./tests/e2e
 ```

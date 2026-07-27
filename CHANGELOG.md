@@ -13,6 +13,28 @@ pre-releases are published previews of it. Note: GitHub Releases for v1.0.0-alph
 left in draft status at the time of publication (packages shipped to NuGet.org regardless) and were promoted
 to published pre-releases on 2026-07-14.
 
+## [Unreleased]
+
+### Added
+
+- **`v1-rc` floating convenience tag** — `.github/workflows/move-floating-tag.yml` now routes `v1.0.0-rc.N`
+  releases to a `v1-rc` tag, alongside the existing `v1-alpha` (alpha/beta) and `v1` (GA) tags. Each pre-GA
+  line keeps its own tag deliberately: a consumer pinned to `v1-alpha` is never force-moved onto a release
+  candidate, so switching lines stays an opt-in ref edit. `v1-alpha` is retired in place at `v1.0.0-alpha.10`
+  — never deleted, simply no longer moved.
+- **Manual dispatch for the floating-tag workflow** — a `workflow_dispatch` trigger taking a release tag,
+  for routing a tag introduced after its release was already published, and as the recovery path for a run
+  GitHub superseded. It refuses any tag whose release is still a draft, preserving the same
+  maintainer-confirmed-publish guarantee the `release: published` trigger provides.
+
+### Changed
+
+- **README restructured as a landing page** (626 → 364 lines) — the status section is a short callout rather
+  than a single ~400-word sentence, a complete runnable `.e2e.yaml` example is shown rather than only
+  described, and providers are presented as a family table. The full GitHub Actions and GitLab CI reference
+  moved to a new `docs/ci-integration.md` page (`recipes.md` and `getting-started.md` previously linked back
+  into README anchors for it, and now point at the new page).
+
 ## [1.0.0-rc.1] — 2026-07-24
 
 A release-candidate consolidating developer-tooling, run-lifecycle, and validation improvements. The language
