@@ -6,7 +6,7 @@ orchestrated container topology and publish JUnit and HTML artefacts:
 - a **reusable GitHub Actions workflow** (`.github/workflows/vouchfx-run.yml`), and
 - an **`include`-able GitLab CI/CD template** (`ci/gitlab/vouchfx-run.gitlab-ci.yml`).
 
-They are behavioural equivalents: the same inputs (as workflow inputs / CI-CD variables), the same
+They are behavioural equivalents: the same inputs (as workflow inputs or CI/CD variables), the same
 build-from-source install, the same exit-code gating, and the same artefact-upload behaviour.
 
 For a minimal copy-paste starting point, see the CI recipes in

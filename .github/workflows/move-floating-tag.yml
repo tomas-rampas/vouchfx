@@ -114,7 +114,9 @@ jobs:
       - name: Checkout at the published tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # Reads the job-level EV_TAG rather than repeating its expression:
+          # one resolution point, so this step cannot drift from the two below.
+          ref: ${{ env.EV_TAG }}
           fetch-depth: 1
 
       # The `release: published` trigger guarantees a maintainer-confirmed,

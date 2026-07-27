@@ -29,9 +29,11 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 dotnet tool install --global vouchfx --prerelease
 ```
 
-Requires the [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) and a running Docker
-daemon. Machines without a .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg
-installers attached to each [release](https://github.com/tomas-rampas/vouchfx/releases).
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0). Running a suite also
+needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
+are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
+.NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers attached to each
+[release](https://github.com/tomas-rampas/vouchfx/releases).
 
 ## A test, in full
 
