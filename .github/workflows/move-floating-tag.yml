@@ -2,34 +2,47 @@
 # "convenience tier" floating tags consumers can reference without ever
 # resolving a commit SHA themselves.
 #
-# BACKGROUND (README.md "CI integration with GitHub Actions" / "with GitLab
-# CI"): the reusable workflow is normally consumed pinned to a full 40-char
-# commit SHA — the correct, immutable choice for production, and unchanged by
-# this file. But requiring EVERY adopter to hand-resolve a SHA before their
-# first CI run is needless friction for a first try or a low-stakes internal
-# repo. This workflow maintains a small set of floating tags that trade
-# immutability for zero-setup convenience, exactly mirroring the pattern this
-# repo already uses for its OWN non-release workflows' action references (see
-# .github/dependabot.yml's header comment: "non-release workflows deliberately
-# stay on floating major tags").
+# BACKGROUND (docs/ci-integration.md, "The floating convenience tags"): the
+# reusable workflow is normally consumed pinned to a full 40-char commit SHA —
+# the correct, immutable choice for production, and unchanged by this file. But
+# requiring EVERY adopter to hand-resolve a SHA before their first CI run is
+# needless friction for a first try or a low-stakes internal repo. This workflow
+# maintains a small set of floating tags that trade immutability for zero-setup
+# convenience, exactly mirroring the pattern this repo already uses for its OWN
+# non-release workflows' action references (see .github/dependabot.yml's header
+# comment: "non-release workflows deliberately stay on floating major tags").
 #
 # TAGS MAINTAINED (v1.x line only — see "Decide the target floating tag"
 # below for what happens outside it):
 #   v1-alpha   moved to every v1.0.0-alpha.N / -beta.N pre-release (the dotted
 #              identifier format this repo's release tags use, e.g.
-#              v1.0.0-alpha.4 — see RELEASING.md). Other v1.0.0 pre-release
-#              kinds (rc, preview, …) do NOT move it. Retired
-#              (simply stops being updated — never deleted) the moment v1.0.0
-#              GA ships; consumers should move to `v1` at that point.
+#              v1.0.0-alpha.4 — see RELEASING.md). Retired (simply stops being
+#              updated — never deleted) once the line moves on to release
+#              candidates; consumers should move to `v1-rc` at that point.
+#   v1-rc      moved to every v1.0.0-rc.N release candidate. Retired the moment
+#              v1.0.0 GA ships; consumers should move to `v1` at that point.
 #   v1         moved to every v1.y.z GA release once GA exists. Does not
 #              exist yet (no v1.0.0 has shipped) — this workflow only starts
 #              writing it once a clean (non-pre-release) v1.y.z tag appears.
+#
+# WHY EACH PRE-GA LINE GETS ITS OWN TAG, rather than one tag absorbing every
+# pre-release: a consumer who pinned `v1-alpha` chose the alpha line. Silently
+# force-moving them onto a release candidate changes the engine under them
+# without a ref change on their side, and leaves the tag name describing
+# something it no longer points at. Separate tags make the move an opt-in edit.
 #
 # WHY `release: published`, NOT `push: tags` (RELEASING.md's own two-step
 # flow: a pushed tag first creates a DRAFT release the maintainer reviews
 # before publishing): gating on `published` guarantees a floating tag only
 # ever moves to a release the maintainer actually confirmed — the same
 # review gate every other artefact in this repo's release pipeline gets.
+#
+# WHY workflow_dispatch EXISTS TOO: a floating tag introduced after a release
+# has already been published has no event left to fire on (the `v1-rc` tag was
+# added while v1.0.0-rc.1 was already out). The manual path closes that gap and
+# doubles as the documented recovery route for a run GitHub superseded (see the
+# `concurrency` note below). It preserves the draft-review guarantee explicitly:
+# the job refuses to move anything at a tag whose release is still a draft.
 #
 # WHY A SEPARATE WORKFLOW, NOT A JOB IN release.yml: keeps this decoupled
 # from the signed/attested/OIDC-publishing pipeline entirely — no `needs:`
@@ -53,16 +66,25 @@ name: Move floating convenience tag
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Release tag to route (e.g. v1.0.0-rc.1). Must already exist and
+          belong to a PUBLISHED (non-draft) release — the job refuses drafts.
+        required: true
+        type: string
 
 # Serialise runs: back-to-back release publications queue instead of racing, so
 # publish order — not run-completion order — decides where the floating tags
 # land (without this, the LAST-FINISHING of two concurrent runs would win and
 # could force-move a tag to the OLDER release). cancel-in-progress stays FALSE
 # deliberately: two adjacent releases can target DIFFERENT tags (a beta moves
-# v1-alpha, a GA moves v1), and cancelling the in-flight older run would skip
-# one tag move entirely. Residual (accepted): with 3+ releases inside one job
-# window GitHub supersedes the middle PENDING run — re-run it manually if that
-# ever happens; the run log is the audit trail.
+# v1-alpha, an rc moves v1-rc, a GA moves v1), and cancelling the in-flight
+# older run would skip one tag move entirely. Residual (accepted): with 3+
+# releases inside one job window GitHub supersedes the middle PENDING run —
+# re-run it, or use the workflow_dispatch path above, if that ever happens; the
+# run log is the audit trail.
 concurrency:
   group: move-floating-tag
   cancel-in-progress: false
@@ -74,7 +96,7 @@ permissions:
 
 jobs:
   move-tag:
-    name: Move v1-alpha / v1 to the published release
+    name: Move v1-alpha / v1-rc / v1 to the published release
     runs-on: ubuntu-latest
     # Canonical-repo guard: a fork's own release event must never move tags
     # here (mirrors release.yml's NuGet Trusted Publishing repository guard).
@@ -82,22 +104,51 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      # Single resolution point for both trigger shapes: the release event
+      # carries its own tag_name; a manual run supplies one. Every step below
+      # reads this, so neither path can drift from the other.
+      EV_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
     steps:
       - name: Checkout at the published tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name }}
+          # Reads the job-level EV_TAG rather than repeating its expression:
+          # one resolution point, so this step cannot drift from the two below.
+          ref: ${{ env.EV_TAG }}
           fetch-depth: 1
+
+      # The `release: published` trigger guarantees a maintainer-confirmed,
+      # non-draft release by construction. A manual dispatch does not, so it is
+      # checked explicitly here rather than trusting the operator's input —
+      # keeping the draft-review gate intact on both paths.
+      - name: Refuse a draft release (manual runs only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if ! release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${EV_TAG}" 2>/dev/null)"; then
+            echo "::error::No release found for tag '${EV_TAG}'. A floating tag only ever moves to a published release."
+            exit 1
+          fi
+
+          if [[ "$(jq -r '.draft' <<<"$release_json")" != "false" ]]; then
+            echo "::error::Release '${EV_TAG}' is still a DRAFT. Publish it first — floating tags only move to releases the maintainer has confirmed."
+            exit 1
+          fi
+
+          echo "Release '${EV_TAG}' is published — proceeding."
 
       - name: Decide the target floating tag and move it
         # SECURITY: the tag name is attacker-influenceable only in the sense
-        # that anyone who can publish a release in THIS repo controls it —
-        # already gated above to the canonical repo. Still passed through a
-        # quoted env var and validated before use, matching release.yml's
-        # "Determine release version" discipline (never interpolate directly
-        # into a run: shell via ${{ }}).
-        env:
-          EV_TAG: ${{ github.event.release.tag_name }}
+        # that anyone who can publish a release (or run a workflow) in THIS
+        # repo controls it — already gated above to the canonical repo. Still
+        # passed through a quoted env var and validated before use, matching
+        # release.yml's "Determine release version" discipline (never
+        # interpolate directly into a run: shell via ${{ }}).
         run: |
           set -euo pipefail
 
@@ -124,15 +175,21 @@ jobs:
             exit 0
           fi
 
-          # v1-alpha tracks ONLY the alpha/beta pre-GA line (dotted identifiers,
-          # the repo's release-tag format: v1.0.0-alpha.4) — an rc/preview/other
-          # pre-release must never move it, per the README's documented contract.
+          # Each pre-GA line gets its own tag, matched on the dotted identifier
+          # format this repo's release tags use (v1.0.0-alpha.4, v1.0.0-rc.1 —
+          # see RELEASING.md). Both are scoped to the 1.0.0 pre-GA line only:
+          # a post-GA pre-release (v1.1.0-rc.1) has no floating tag defined and
+          # falls through to the skip below, exactly as it does today. Any other
+          # pre-release kind (preview, nightly, …) also skips rather than being
+          # routed somewhere approximate.
           if [[ "$base_version" == 1.0.0-alpha.* || "$base_version" == 1.0.0-beta.* ]]; then
             target_tag="v1-alpha"
+          elif [[ "$base_version" == 1.0.0-rc.* ]]; then
+            target_tag="v1-rc"
           elif [[ "$base_version" != *-* ]]; then
             target_tag="v1"
           else
-            echo "Release '$tag' is a pre-release v1-alpha does not track — v1-alpha follows only v1.0.0-alpha.*/-beta.*, and v1 only tracks GA releases. Skipping."
+            echo "Release '$tag' is a pre-release no floating tag tracks — v1-alpha follows v1.0.0-alpha.*/-beta.*, v1-rc follows v1.0.0-rc.*, and v1 only tracks GA releases. Skipping."
             exit 0
           fi
 

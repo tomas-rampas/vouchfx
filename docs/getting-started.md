@@ -387,7 +387,7 @@ For deep understanding of how the platform is built, memory safety, orchestratio
 
 ### CI integration
 
-To run vouchfx tests in GitHub Actions or GitLab CI/CD, see the [project README](project-readme.md#ci-integration-with-github-actions) under "CI integration with GitHub Actions" and "CI integration with GitLab CI". The reusable workflows handle building, running, and publishing reports.
+To run vouchfx tests in GitHub Actions or GitLab CI/CD, see the [CI integration reference](ci-integration.md). The reusable workflow and template handle building, running, and publishing reports.
 
 ### Writing a custom provider
 

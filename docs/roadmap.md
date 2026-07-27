@@ -51,17 +51,18 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 
 ## Pre-releases are live; v1.0 GA targeted Q4 2026
 
-The first public releases shipped on 2026-07-08 and the **`v1.0.0-alpha` series** (currently
-`v1.0.0-alpha.10`) is published as pre-releases with signed artefacts (cosign, SLSA provenance,
-CycloneDX SBOMs), and the `vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing
-(packages for every alpha are on NuGet.org, and every alpha now has a published GitHub release
-page):
+The first public releases shipped on 2026-07-08. The `v1.0.0-alpha` series ran to `v1.0.0-alpha.10`
+and the line has since moved to a release candidate, currently <code>v1.0.0-rc.1</code>. Every
+pre-release is published with signed artefacts (cosign, SLSA provenance, CycloneDX SBOMs), and the
+`vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing (every pre-release has both a
+NuGet.org package and a published GitHub release page):
 
 ```bash
 dotnet tool install --global vouchfx --prerelease
 ```
 
-The alphas exist for real-world validation. What remains for GA is validation and packaging, not construction:
+The pre-releases exist for real-world validation. What remains for GA is validation and packaging, not
+construction:
 
 - Validation of the end-to-end experience in real use — gathered in the open through the published
   [sample applications](https://samples.vouchfx.io/), the

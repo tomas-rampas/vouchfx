@@ -136,6 +136,7 @@ nav:
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
       - Troubleshooting: troubleshooting.md
+      - CI integration reference: ci-integration.md
       - Telemetry & privacy: telemetry.md
       - Language reference (generated): language-reference.md
       - The memory-leak harness: memory-harness.md
