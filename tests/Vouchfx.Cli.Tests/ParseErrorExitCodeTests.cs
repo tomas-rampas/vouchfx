@@ -81,6 +81,7 @@ public sealed class ParseErrorPreconditionTests
         root.Add(ValidateCommand.Build());
         root.Add(ListCommand.Build());
         root.Add(SchemaCommand.Build());
+        root.Add(ScaffoldCommand.Build());
         return root;
     }
 

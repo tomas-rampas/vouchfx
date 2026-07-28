@@ -17,15 +17,17 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
-- **`v1-rc` floating convenience tag** — `.github/workflows/move-floating-tag.yml` now routes `v1.0.0-rc.N`
+- **`v1-rc` floating convenience tag** - `.github/workflows/move-floating-tag.yml` now routes `v1.0.0-rc.N`
   releases to a `v1-rc` tag, alongside the existing `v1-alpha` (alpha/beta) and `v1` (GA) tags. Each pre-GA
   line keeps its own tag deliberately: a consumer pinned to `v1-alpha` is never force-moved onto a release
   candidate, so switching lines stays an opt-in ref edit. `v1-alpha` is retired in place at `v1.0.0-alpha.10`
-  — never deleted, simply no longer moved.
-- **Manual dispatch for the floating-tag workflow** — a `workflow_dispatch` trigger taking a release tag,
+  - never deleted, simply no longer moved.
+- **Manual dispatch for the floating-tag workflow** - a `workflow_dispatch` trigger taking a release tag,
   for routing a tag introduced after its release was already published, and as the recovery path for a run
   GitHub superseded. It refuses any tag whose release is still a draft, preserving the same
   maintainer-confirmed-publish guarantee the `release: published` trigger provides.
+- **`vouchfx scaffold` subcommand** (Spec B / Generator engine half) - emits a machine-drafted, catalogue-grounded, schema-valid `.e2e.yaml` skeleton from a structured JSON intent (`--intent <file|->`, optional `--output <path>`). Steps, services, and dependencies are validated against the live Core registration and known dependency kinds; unknown types, duplicate ids, empty steps, and unknown dependency kinds fail closed (exit 3). Provenance comment header (no timestamps); credential-shaped fields use `${secret:}` references only. Docker-free.
+- **Public library scaffolder** (`Vouchfx.Engine.Compilation.Scaffold.SuiteScaffolder`) - `Generate(StepKindRegistry, ScaffoldIntent, engineVersion?)` is the shared implementation for CLI and future MCP hosts so they cannot drift. `KnownDependencyKinds` mirrors the topology mapper's supported dependency set.
 
 ### Changed
 
@@ -34,6 +36,7 @@ to published pre-releases on 2026-07-14.
   described, and providers are presented as a family table. The full GitHub Actions and GitLab CI reference
   moved to a new `docs/ci-integration.md` page (`recipes.md` and `getting-started.md` previously linked back
   into README anchors for it, and now point at the new page).
+- **Getting-started documentation** - documents the Generator / scaffold workflow (structured intent, free-text host LLM boundary, validate/run path, provenance, secrets-as-refs, catalogue grounding).
 
 ## [1.0.0-rc.2] — 2026-07-28
 

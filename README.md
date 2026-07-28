@@ -205,6 +205,16 @@ is plain text by default; `--no-decorations` or `NO_COLOR=1` forces plain text a
 WCAG 2.1 AA conformance record for both the terminal and HTML renderers is at
 [vouchfx.io/accessibility](https://vouchfx.io/accessibility/).
 
+### Scaffolding a suite skeleton
+
+```bash
+# Structured JSON intent → schema-valid .e2e.yaml skeleton (stdout or --output)
+vouchfx scaffold --intent ./intent.json
+vouchfx scaffold --intent ./intent.json --output ./draft.e2e.yaml
+```
+
+Intent is structured only (step types, ids, optional services/dependencies) — not free text. Free-text goals belong in an MCP host LLM; the engine stays deterministic. See [Getting started — Generator / suite scaffold](docs/getting-started.md#generator--suite-scaffold). Library equivalent: `SuiteScaffolder.Generate` in `Vouchfx.Engine.Compilation`.
+
 ## Telemetry
 
 **Off by default — nothing is collected or sent unless you explicitly opt in** via

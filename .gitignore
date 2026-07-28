@@ -122,6 +122,7 @@ desktop.ini
 .serena/
 .vscode/
 .rider/
+.grok/
 
 # Generated GitHub Pages output (built by scripts/build_site.py)
 _site/
