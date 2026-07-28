@@ -213,7 +213,7 @@ vouchfx scaffold --intent ./intent.json
 vouchfx scaffold --intent ./intent.json --output ./draft.e2e.yaml
 ```
 
-Intent is structured only (step types, ids, optional services/dependencies) — not free text. Free-text goals belong in an MCP host LLM; the engine stays deterministic. See [Getting started — Generator / suite scaffold](docs/getting-started.md#generator--suite-scaffold). Library equivalent: `SuiteScaffolder.Generate` in `Vouchfx.Engine.Compilation`.
+Intent is structured only (step types, ids, optional services/dependencies) — not free text. Free-text goals belong in an MCP host LLM; the engine stays deterministic. See [Getting started — Generator / suite scaffold](https://vouchfx.io/getting-started/#generator--suite-scaffold). Library equivalent: `SuiteScaffolder.Generate` in `Vouchfx.Engine.Compilation`.
 
 ## Telemetry
 
