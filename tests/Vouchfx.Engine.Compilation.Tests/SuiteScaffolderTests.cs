@@ -167,6 +167,27 @@ public sealed class SuiteScaffolderTests
     }
 
     [Fact]
+    public void Generate_LabelWithNewlines_StaysSingleLineComment()
+    {
+        // Labels must not inject multi-line content into the YAML comment header.
+        var yaml = SuiteScaffolder.Generate(
+            BuildHttpAndPostgresRegistry(),
+            new ScaffoldIntent(
+                Steps: new[]
+                {
+                    new ScaffoldStepIntent(
+                        "get-api",
+                        "http.rest",
+                        Label: "safe\nid: injected\ntype: evil"),
+                }));
+
+        Assert.DoesNotContain("\n  id: injected", yaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("\ntype: evil", yaml, StringComparison.Ordinal);
+        Assert.Contains("# label: safe id: injected type: evil", yaml, StringComparison.Ordinal);
+        Assert.Contains("id: get-api", yaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Generate_EmptySteps_Throws()
     {
         // EDGE-002

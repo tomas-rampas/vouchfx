@@ -253,8 +253,11 @@ public static partial class SuiteScaffolder
         {
             if (!string.IsNullOrWhiteSpace(step.Label))
             {
-                // Labels are comments only (not a language field).
-                sb.Append("  # label: ").AppendLine(step.Label.Trim());
+                // Labels are comments only (not a language field). Flatten control
+                // characters so untrusted intent cannot break out of the comment line.
+                var label = SanitiseCommentText(step.Label);
+                if (label.Length > 0)
+                    sb.Append("  # label: ").AppendLine(label);
             }
 
             var entry = byType[step.Type];
@@ -572,6 +575,38 @@ public static partial class SuiteScaffolder
             || n.Contains("api-key", StringComparison.Ordinal)
             || n.Contains("accesskey", StringComparison.Ordinal)
             || n.Contains("secretkey", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Collapses control characters (including newlines) to single spaces so a label
+    /// cannot break out of a single-line YAML comment when written into the skeleton.
+    /// </summary>
+    internal static string SanitiseCommentText(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder(trimmed.Length);
+        var previousWasSpace = false;
+        foreach (var ch in trimmed)
+        {
+            if (ch is '\n' or '\r' or '\t' || char.IsControl(ch))
+            {
+                if (!previousWasSpace)
+                {
+                    sb.Append(' ');
+                    previousWasSpace = true;
+                }
+
+                continue;
+            }
+
+            sb.Append(ch);
+            previousWasSpace = ch == ' ';
+        }
+
+        return sb.ToString().Trim();
     }
 
     private static string EscapeKey(string key)
