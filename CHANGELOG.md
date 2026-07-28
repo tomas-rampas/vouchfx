@@ -21,7 +21,7 @@ to published pre-releases on 2026-07-14.
   releases to a `v1-rc` tag, alongside the existing `v1-alpha` (alpha/beta) and `v1` (GA) tags. Each pre-GA
   line keeps its own tag deliberately: a consumer pinned to `v1-alpha` is never force-moved onto a release
   candidate, so switching lines stays an opt-in ref edit. `v1-alpha` is retired in place at `v1.0.0-alpha.10`
-  - never deleted, simply no longer moved.
+  never deleted, simply no longer moved.
 - **Manual dispatch for the floating-tag workflow** - a `workflow_dispatch` trigger taking a release tag,
   for routing a tag introduced after its release was already published, and as the recovery path for a run
   GitHub superseded. It refuses any tag whose release is still a draft, preserving the same

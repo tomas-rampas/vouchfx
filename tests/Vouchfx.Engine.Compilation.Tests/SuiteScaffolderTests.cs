@@ -148,6 +148,24 @@ public sealed class SuiteScaffolderTests
         Assert.Contains("Duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("bad id")]
+    [InlineData("1starts-digit")]
+    [InlineData("has.dot")]
+    [InlineData("has/slash")]
+    public void Generate_InvalidStepIdFormat_Throws(string badId)
+    {
+        // Schema pattern ^[A-Za-z_][A-Za-z0-9_-]*$ — fail closed before emit.
+        var ex = Assert.Throws<ScaffoldException>(() =>
+            SuiteScaffolder.Generate(
+                BuildHttpAndPostgresRegistry(),
+                new ScaffoldIntent(
+                    Steps: new[] { new ScaffoldStepIntent(badId, "http.rest") })));
+
+        Assert.Contains(badId, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("invalid", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Generate_EmptySteps_Throws()
     {

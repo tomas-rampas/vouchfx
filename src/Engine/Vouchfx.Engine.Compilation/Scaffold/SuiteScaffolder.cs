@@ -6,6 +6,7 @@
 
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
 
@@ -15,8 +16,16 @@ namespace Vouchfx.Engine.Compilation.Scaffold;
 /// Generates a machine-drafted, schema-valid <c>.e2e.yaml</c> document from a structured
 /// <see cref="ScaffoldIntent"/> and a frozen <see cref="StepKindRegistry"/>.
 /// </summary>
-public static class SuiteScaffolder
+public static partial class SuiteScaffolder
 {
+    /// <summary>
+    /// Root language schema step-id pattern (<c>^[A-Za-z_][A-Za-z0-9_-]*$</c>).
+    /// Kept in lock-step with <c>root-language-schema.json</c> so scaffold fails closed
+    /// rather than emitting YAML that DocumentValidator would reject.
+    /// </summary>
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_-]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex StepIdPattern();
+
     /// <summary>Default OCI image for scaffolded services.</summary>
     public const string DefaultServiceImage = "traefik/whoami";
 
@@ -92,6 +101,14 @@ public static class SuiteScaffolder
             {
                 throw new ScaffoldException(
                     $"Step at index {i} has an empty id.");
+            }
+
+            if (!StepIdPattern().IsMatch(step.Id))
+            {
+                throw new ScaffoldException(
+                    $"Step id '{step.Id}' is invalid; ids must match "
+                    + "^[A-Za-z_][A-Za-z0-9_-]*$ (letter or underscore first, then "
+                    + "letters, digits, underscores, or hyphens).");
             }
 
             if (!seenIds.Add(step.Id))

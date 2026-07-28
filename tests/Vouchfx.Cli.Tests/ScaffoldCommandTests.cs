@@ -109,15 +109,10 @@ public sealed class ScaffoldCommandTests
                 validateStdout,
                 validateStderr);
 
-            Assert.Equal(
-                ExitCodes.Success,
-                validateExit);
-            // On failure dump diagnostics for diagnosis.
-            if (validateExit != ExitCodes.Success)
-            {
-                Assert.Fail(
-                    "validate failed: stdout=" + validateStdout + " stderr=" + validateStderr);
-            }
+            Assert.True(
+                validateExit == ExitCodes.Success,
+                "validate failed (exit " + validateExit + "): stdout="
+                + validateStdout + " stderr=" + validateStderr);
         }
         finally
         {
