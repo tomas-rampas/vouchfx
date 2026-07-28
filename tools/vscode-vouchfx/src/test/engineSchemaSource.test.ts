@@ -8,6 +8,7 @@ import {
   BAR_B_FIELDS,
   checkCatalogueBarB,
   checkSchemaVersion,
+  defaultSpawn,
   ENGINE_SCHEMA_FILE_NAME,
   fetchEngineSchema,
   MIN_ENGINE_SCHEMA_HINT,
@@ -370,4 +371,61 @@ test('fetchEngineSchema rejects empty cliPath', async () => {
 test('MIN_ENGINE_SCHEMA_HINT mentions vouchfx schema', () => {
   assert.match(MIN_ENGINE_SCHEMA_HINT, /vouchfx schema/);
   assert.match(MIN_ENGINE_SCHEMA_HINT, /list --json/);
+});
+
+// ---------------------------------------------------------------------------
+// defaultSpawn timeout path (must always settle)
+// ---------------------------------------------------------------------------
+
+test('defaultSpawn settles with timedOut when the child ignores soft kill', async () => {
+  // A long-running Node process that traps common signals and keeps living so
+  // the first kill may not reap it immediately. defaultSpawn must still settle
+  // via the kill-fallback timer (never hang the Promise).
+  const hangScript =
+    process.platform === 'win32'
+      ? // Windows: no reliable signal traps; a plain sleep is enough because
+        // TerminateProcess is async w.r.t. the first kill attempt in edge cases,
+        // and the fallback finish() always settles regardless.
+        `setTimeout(() => {}, 60_000)`
+      : `process.on('SIGTERM', () => {}); process.on('SIGINT', () => {}); setTimeout(() => {}, 60_000)`;
+
+  const started = Date.now();
+  const result = await defaultSpawn(
+    process.execPath,
+    ['-e', hangScript],
+    80,
+  );
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.timedOut, true);
+  assert.equal(result.code, null);
+  // Must settle well under the hang duration (timeout + short kill fallback).
+  assert.ok(
+    elapsed < 5_000,
+    `defaultSpawn hung for ${elapsed} ms after timeout; promise must settle`,
+  );
+});
+
+test('fetchEngineSchema surfaces list timeout without hanging', async () => {
+  const storageDir = makeStorageDir();
+  try {
+    // Real defaultSpawn against a hanging child exercises the timeout settle path
+    // end-to-end through fetchEngineSchema (not only the mocked timedOut flag).
+    const hangScript = `setTimeout(() => {}, 60_000)`;
+    const result = await fetchEngineSchema({
+      cliPath: process.execPath,
+      storageDir,
+      timeoutMs: 80,
+      spawnFn: (cli, _args, timeoutMs) =>
+        // Only the first spawn (list --json) matters; schema is never reached.
+        defaultSpawn(cli, ['-e', hangScript], timeoutMs),
+    });
+
+    assert.equal(result.kind, 'error');
+    if (result.kind === 'error') {
+      assert.match(result.message, /timed out/i);
+    }
+  } finally {
+    fs.rmSync(storageDir, { recursive: true, force: true });
+  }
 });

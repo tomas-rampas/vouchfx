@@ -22,7 +22,10 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// <param name="EngineVersion">
 /// Optional informational engine / host version stamp (e.g. the CLI's assembly
 /// informational version). May be <see langword="null"/> when the host does not
-/// supply one; consumers must tolerate a missing value.
+/// supply one or the version is unknown. Catalogue serialisation uses
+/// <c>JsonIgnoreCondition.Never</c>, so a null value is emitted on the wire as
+/// <c>"engineVersion": null</c> (the property is not omitted). Consumers must
+/// treat a JSON <c>null</c> and a missing property equivalently.
 /// </param>
 /// <param name="StepTypes">
 /// Every registered step type, sorted by dotted <c>type</c> key (ordinal) for

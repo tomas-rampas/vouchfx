@@ -230,6 +230,12 @@ function logFallbackSource(
  *  - Registers programmatically with the YAML language server so those sources
  *    are served for `*.e2e.yaml` files.
  *
+ * Live engine schema refresh is **fire-and-forget**: `activate` must return
+ * quickly and must not block on up to two CLI timeouts. `engineState` is
+ * updated when the refresh settles; until then (or on failure) resolution
+ * falls through to `schemaPath` / bundled. Rejections are logged so they
+ * never surface as unhandled promise rejections.
+ *
  * Activation is a no-op for the schema contributor (it does not throw) when
  * `redhat.vscode-yaml` is absent — the extension simply contributes nothing
  * beyond the declarative binding, which itself requires the YAML server.
@@ -259,8 +265,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const engineState: EngineSchemaState = { fsPath: undefined };
 
-  // Prefer live engine export; never let a CLI failure block activation.
-  await refreshEngineSchema(context, engineState, channel, bundledSchemaFsPath);
+  // Prefer live engine export in the background. Do not await: activate must
+  // not block on CLI spawn/timeouts (up to 2 × DEFAULT_CLI_TIMEOUT_MS).
+  // engineState is mutated when refresh completes; requestSchema reads it
+  // on each validation pass. Catch guarantees no unhandled rejection.
+  void refreshEngineSchema(context, engineState, channel, bundledSchemaFsPath).catch(
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      channel.appendLine(`Live engine schema refresh failed unexpectedly: ${message}`);
+      engineState.fsPath = undefined;
+    },
+  );
 
   const yamlExtension = vscode.extensions.getExtension<YamlExtensionApi>(YAML_EXTENSION_ID);
   if (!yamlExtension) {

@@ -69,10 +69,20 @@ export type SpawnFn = (
 ) => Promise<SpawnResult>;
 
 /**
+ * Grace period after the first timeout kill before a second kill attempt.
+ * Cross-platform: Node maps `child.kill()` / `child.kill('SIGKILL')` to
+ * `TerminateProcess` on Windows, so a second call is a safe fallback when the
+ * first kill fails to reap the child (or the `close` event never fires).
+ */
+const KILL_FALLBACK_MS = 250;
+
+/**
  * Default `child_process.spawn` implementation used in production.
  *
  * Arguments are passed as an array with `shell: false` (no shell quoting /
- * injection). On timeout the child is killed and `timedOut: true` is returned.
+ * injection). On timeout the child is killed (with a short second-kill
+ * fallback) and the promise is **always** settled with `timedOut: true` —
+ * even when kill fails or the process never emits `close`. Never rejects.
  */
 export function defaultSpawn(
   cliPath: string,
@@ -84,6 +94,7 @@ export function defaultSpawn(
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let killFallbackTimer: ReturnType<typeof setTimeout> | undefined;
 
     let child: ReturnType<typeof spawn>;
     try {
@@ -94,21 +105,15 @@ export function defaultSpawn(
       return;
     }
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill();
-      } catch {
-        // Best effort.
-      }
-    }, timeoutMs);
-
     const finish = (code: number | null, errText: string): void => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
+      if (killFallbackTimer !== undefined) {
+        clearTimeout(killFallbackTimer);
+      }
       resolve({
         code,
         stdout,
@@ -116,6 +121,29 @@ export function defaultSpawn(
         timedOut,
       });
     };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill();
+      } catch {
+        // Best effort — still settle below.
+      }
+      // Second kill if the first did not reap the process (Windows-compatible:
+      // Node maps SIGKILL to TerminateProcess). Independent of whether kill
+      // throws, always settle so callers never hang waiting on `close`.
+      killFallbackTimer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Best effort.
+        }
+        finish(null, stderr);
+      }, KILL_FALLBACK_MS);
+    }, timeoutMs);
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       stdout += chunk.toString();
