@@ -48,6 +48,10 @@ rootCommand.Add(ListCommand.Build());
 //   vouchfx schema [--output <path>]
 rootCommand.Add(SchemaCommand.Build());
 
+// Catalogue-driven suite scaffold (Spec B):
+//   vouchfx scaffold --intent <file|-> [--output <path>]
+rootCommand.Add(ScaffoldCommand.Build());
+
 // Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
 // to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
 // — after that it force-kills the process even mid-DisposeAsync.  HeadlessTopology.DisposeAsync
@@ -59,7 +63,7 @@ rootCommand.Add(SchemaCommand.Build());
 // LEAKS containers on EVERY genuine Ctrl-C / SIGTERM during `vouchfx run` — not just watch mode's
 // already-known teardown-leak gotcha.
 //   - ONLY `run` stands up a container topology (via ScenarioRunner/ParallelSuiteRunner/WatchRunner)
-//     — `validate` / `list` / `schema` / `telemetry` (and a bare `--help` / `--version`) never
+//     — `validate` / `list` / `schema` / `scaffold` / `telemetry` (and a bare `--help` / `--version`) never
 //     touch Docker or HeadlessTopology, so NONE of them needs (or should get) a widened budget.
 //     Peer-review finding: an earlier version of this gate widened the budget for EVERY non-watch
 //     invocation (gating only on IsWatchInvocation), so a Ctrl-C on a slow `validate` would ALSO

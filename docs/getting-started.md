@@ -402,6 +402,72 @@ In-process hosts (MCP servers, custom runners) should call the public API in the
 
 Pass the same frozen `StepKindRegistry` the process uses for validation/run so the export always matches live registration. Incomplete metadata throws `CatalogueExportException` naming the offending step type.
 
+## Generator / suite scaffold
+
+Authoring is often the adoption bottleneck. vouchfx provides a **Generator** path that turns a **structured intent** (chosen step types, environment outline, step ids) into a **schema-valid `.e2e.yaml` skeleton** grounded in the **live step catalogue** — then you (or an MCP host LLM) fill in real semantics, **validate**, and **run**.
+
+Important boundaries:
+
+- **Free text lives in the host LLM** (for example via [vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/)), not in the engine. The scaffold tool never accepts a natural-language goal string.
+- **Scaffold args are structured only**: ordered step types (`family.provider`), optional services/dependencies, and per-step ids (plus optional short labels as comments).
+- **No LLM inside the engine** — scaffold, validate, and run are deterministic for a given input and registration.
+- Humans are **not** expected to maintain a parallel JSON-intent product as primary UX; YAML remains the suite language. The JSON intent is a thin tool argument for automation and MCP parity.
+
+### CLI: `vouchfx scaffold`
+
+```bash
+# Intent file → stdout
+vouchfx scaffold --intent ./intent.json
+
+# Write a suite file (parent directory must already exist)
+vouchfx scaffold --intent ./intent.json --output ./suites/draft.e2e.yaml
+
+# Pipe intent on stdin
+cat intent.json | vouchfx scaffold --intent -
+```
+
+Example intent JSON:
+
+```json
+{
+  "steps": [
+    { "id": "get-api", "type": "http.rest", "label": "GET api" },
+    { "id": "check-db", "type": "db-assert.postgres" }
+  ],
+  "services": [ { "name": "api", "image": "traefik/whoami" } ],
+  "dependencies": [ { "name": "db", "type": "postgres" } ]
+}
+```
+
+The emitted YAML:
+
+- Begins with a **provenance comment** marking the suite as machine-drafted by `vouchfx scaffold`, and that a human must **review before trust** (no timestamps — output is stable for identical input).
+- Reflects the provided services/dependencies and step ids in input order.
+- Fills **required** provider fields with deterministic placeholders (paths, `SELECT 1`, minimal `expect` blocks, and so on) so the document is **schema-valid** without an LLM fill.
+- Never plants secret literals; credential-shaped fields use `${secret:env/SCAFFOLD_PLACEHOLDER}` references only.
+
+Typical host workflow (free text stays outside the tool surface):
+
+1. User describes a goal in the MCP host / chat.
+2. The host LLM chooses step types and ids from `vouchfx list --json` (catalogue).
+3. Host calls **scaffold** with structured args → YAML skeleton.
+4. Host LLM (or human) fills real paths, queries, and expectations.
+5. **validate** (`vouchfx validate`) then **run** (`vouchfx run`).
+
+Exit codes for `vouchfx scaffold`:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | Success — YAML written to stdout or `--output`. |
+| **2** | Usage error — missing/unreadable intent, malformed JSON, missing parent directory for `--output`, or an unrecognised option. |
+| **3** | Scaffold validation failure — unknown step type, unknown dependency kind, duplicate step ids, empty steps list, or incomplete catalogue metadata. |
+
+### Library API
+
+In-process hosts should call `Vouchfx.Engine.Compilation.Scaffold.SuiteScaffolder.Generate(StepKindRegistry, ScaffoldIntent, engineVersion?)` rather than shelling out when already in-process. Unknown types and dependency kinds throw `ScaffoldException` with clear diagnostics. The same Core registry used for `validate` / `run` keeps CLI and library from drifting.
+
+Scaffold alone does **not** guarantee a green multi-tech `run` without further fill — it guarantees a legal skeleton ready for validation and authoring.
+
 ## Next steps
 
 Now that you have a passing test, here's where to go:
