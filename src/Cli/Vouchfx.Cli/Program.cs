@@ -40,9 +40,13 @@ rootCommand.Add(TelemetryCommand.Build());
 //   vouchfx validate [<path>] [--json]
 rootCommand.Add(ValidateCommand.Build());
 
-// Catalogue listing (#260):
+// Catalogue listing (#260; enriched Spec A):
 //   vouchfx list [--step-types] [--json]
 rootCommand.Add(ListCommand.Build());
+
+// Composed schema export (Spec A):
+//   vouchfx schema [--output <path>]
+rootCommand.Add(SchemaCommand.Build());
 
 // Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
 // to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
@@ -55,14 +59,14 @@ rootCommand.Add(ListCommand.Build());
 // LEAKS containers on EVERY genuine Ctrl-C / SIGTERM during `vouchfx run` — not just watch mode's
 // already-known teardown-leak gotcha.
 //   - ONLY `run` stands up a container topology (via ScenarioRunner/ParallelSuiteRunner/WatchRunner)
-//     — `validate` / `list` / `telemetry` (and a bare `--help` / `--version`) never touch Docker
-//     or HeadlessTopology, so NONE of them needs (or should get) a widened budget.  Peer-review
-//     finding: an earlier version of this gate widened the budget for EVERY non-watch invocation
-//     (gating only on IsWatchInvocation), so a Ctrl-C on a slow `validate` would ALSO wait up to
-//     the widened budget instead of the ~2s default — an accidental, unjustified widening this
-//     scoping removes.  Only a `run` invocation touches ProcessTerminationTimeout at all; every
-//     other subcommand is left at System.CommandLine's own default, exactly as before this
-//     feature existed.
+//     — `validate` / `list` / `schema` / `telemetry` (and a bare `--help` / `--version`) never
+//     touch Docker or HeadlessTopology, so NONE of them needs (or should get) a widened budget.
+//     Peer-review finding: an earlier version of this gate widened the budget for EVERY non-watch
+//     invocation (gating only on IsWatchInvocation), so a Ctrl-C on a slow `validate` would ALSO
+//     wait up to the widened budget instead of the ~2s default — an accidental, unjustified
+//     widening this scoping removes.  Only a `run` invocation touches ProcessTerminationTimeout
+//     at all; every other subcommand is left at System.CommandLine's own default, exactly as
+//     before this feature existed.
 //   - Within `run`: watch mode keeps an Aspire topology alive across re-runs indefinitely, so it
 //     still DISABLES the timeout entirely (null) — unchanged from before.  A plain `run` (whether
 //     stopped by a human's Ctrl-C or by a host process's SIGTERM — e.g. an MCP server that spawns
@@ -87,9 +91,9 @@ if (InvocationScope.IsRunInvocation(args))
         : nonWatchTeardownBudget;
 }
 
-// Any NON-run invocation (validate / list / telemetry / a bare --help / --version) deliberately
-// leaves ProcessTerminationTimeout untouched — System.CommandLine's own ~2s default applies,
-// exactly as it did before this feature existed.
+// Any NON-run invocation (validate / list / schema / telemetry / a bare --help / --version)
+// deliberately leaves ProcessTerminationTimeout untouched — System.CommandLine's own ~2s
+// default applies, exactly as it did before this feature existed.
 
 // Parse once, up front, so ParseResult.Errors is available BEFORE InvokeAsync runs (it does
 // not change once parsing has happened). InvokeAsync still runs unconditionally — on a parse

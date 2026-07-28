@@ -340,7 +340,7 @@ The `--json` output carries the schema version and a per-scenario diagnostics li
 
 ## Listing step types
 
-The `vouchfx list` command displays the engine's sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types compiled into this build. It reflects what the engine ships, not community or external providers.
+The `vouchfx list` command displays the engine's sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types compiled into this build. It reflects what the engine ships in the default CLI process. When additional providers are registered in-process (custom host or library API), the same catalogue export includes those types as well — there is no silent Core-only filter on the export path.
 
 ```bash
 # List all step types (default)
@@ -356,8 +356,51 @@ Exit codes for `vouchfx list`:
 |---|---|
 | **0** | Success. |
 | **2** | Usage error — an unrecognised option or flag. |
+| **3** | Catalogue export failed because a registered step type lacks required metadata (fail-closed; no partial document). |
 
-The `--json` output is a versioned document carrying the engine version and a sorted array of step types (each with family and provider fields), intended for integration with tooling such as [vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/).
+The `--json` output is a versioned catalogue document carrying the engine version and a sorted array of step types. Each entry includes:
+
+- dotted `type` (`family.provider`), plus separate `family` and `provider` fields
+- `requiredFields` and `optionalFields` (type-specific field names from the provider schema fragment)
+- `captureSupported` (boolean; capture is a common language field and is supported on every fragment-backed type)
+- `familyIntent` (a short one-liner describing the family's purpose)
+
+This shape is the contract for integration with tooling such as [vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/) and the VS Code extension. Incomplete metadata fails the entire export rather than omitting fields silently.
+
+## Exporting the composed JSON Schema
+
+The `vouchfx schema` command emits the **composed** v1 JSON Schema that the engine uses for validation: the root language grammar merged with every registered provider fragment. Default output is stdout (pipe-friendly); use `--output` to write a file.
+
+```bash
+# Print the composed schema to stdout
+vouchfx schema
+
+# Write to a file (parent directory must already exist)
+vouchfx schema --output ./composed-schema.json
+
+# Pipe to a file
+vouchfx schema > composed-schema.json
+```
+
+Exit codes for `vouchfx schema`:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | Success. |
+| **2** | Usage error — missing parent directory for `--output`, or an unrecognised option. |
+| **3** | Composition or incomplete-metadata failure (a registered provider cannot supply a schema fragment). |
+
+The exported document is draft 2020-12 JSON Schema and includes Core types such as `http.rest` and `db-assert.postgres`. Export never resolves or embeds secrets — only structural schema.
+
+### Library API (in-process hosts)
+
+In-process hosts (MCP servers, custom runners) should call the public API in the **`Vouchfx.Engine.Compilation`** package rather than shelling out:
+
+- `Vouchfx.Engine.Compilation.Schema.EngineExport.ComposeSchemaJson(StepKindRegistry)` — composed schema JSON
+- `Vouchfx.Engine.Compilation.Schema.EngineExport.BuildCatalogue(StepKindRegistry, engineVersion?)` — catalogue document model
+- `EngineExport.SerializeCatalogue(...)` — same wire shape as `vouchfx list --json`
+
+Pass the same frozen `StepKindRegistry` the process uses for validation/run so the export always matches live registration. Incomplete metadata throws `CatalogueExportException` naming the offending step type.
 
 ## Next steps
 

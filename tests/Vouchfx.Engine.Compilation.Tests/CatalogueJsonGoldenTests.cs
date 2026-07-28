@@ -1,31 +1,24 @@
-// Vouchfx.Cli.Tests — `list --json` wire-shape freeze (#260 + Spec A bar-B fields).
+// Spec A — catalogue JSON wire-shape freeze (REQ-006).
 //
-// The `list --json` document is a FROZEN contract, exactly like `validate --json` (see
-// ValidateJsonGoldenTests' header for the full rationale). This test serialises a FIXED,
-// hand-built StepCatalogueDocument (never the live registry / a real engineVersion) through the
-// SAME CliJsonContract.Options ListCommand uses, and asserts identity against
-// Golden/list-json-document.v1.json — compared with line endings and any trailing newline
-// normalised, so the check is stable across Windows and Git checkouts.
-//
-// v1 evolution is ADDITIVE ONLY: new optional properties may be added after review; renaming
-// or removing a frozen property name or changing a CLR/JSON type fails this gate.
+// Serialises a FIXED, hand-built StepCatalogueDocument (never the live registry)
+// through EngineExport.CatalogueJsonOptions and asserts identity against
+// Golden/catalogue-document.v1.json. Evolution within v1 is additive only.
 //
 // REGENERATION:
-//   VOUCHFX_REGEN_LIST_JSON=1 dotnet test tests/Vouchfx.Cli.Tests \
-//     --filter "FullyQualifiedName~ListJsonGoldenTests"
-//   Rewrites Golden/list-json-document.v1.json from the freshly-serialised fixture.
+//   VOUCHFX_REGEN_CATALOGUE_JSON=1 dotnet test tests/Vouchfx.Engine.Compilation.Tests \
+//     --filter "FullyQualifiedName~CatalogueJsonGoldenTests"
+//   Rewrites Golden/catalogue-document.v1.json from the freshly-serialised fixture.
 //   Review the diff, then commit.
 
 using System.Text.Json;
-using Vouchfx.Cli;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
-namespace Vouchfx.Cli.Tests;
+namespace Vouchfx.Engine.Compilation.Tests;
 
-public sealed class ListJsonGoldenTests
+public sealed class CatalogueJsonGoldenTests
 {
-    private const string RegenEnvVar = "VOUCHFX_REGEN_LIST_JSON";
+    private const string RegenEnvVar = "VOUCHFX_REGEN_CATALOGUE_JSON";
 
     private static readonly string[] DbAssertRequired = new[] { "query", "target" };
     private static readonly string[] DbAssertOptional = new[] { "expect" };
@@ -66,25 +59,46 @@ public sealed class ListJsonGoldenTests
         });
 
     [Fact]
-    public void ListJsonDocument_MatchesGolden_ByteForByte()
+    public void CatalogueDocument_MatchesGolden_ByteForByte()
     {
-        var actual = JsonSerializer.Serialize(BuildFixture(), CliJsonContract.Options);
+        var actual = EngineExport.SerializeCatalogue(BuildFixture());
 
         if (IsRegenRequested())
         {
             var repoRoot = FindRepoRoot();
             var goldenPath = Path.Combine(
-                repoRoot, "tests", "Vouchfx.Cli.Tests", "Golden", "list-json-document.v1.json");
+                repoRoot, "tests", "Vouchfx.Engine.Compilation.Tests", "Golden",
+                "catalogue-document.v1.json");
             File.WriteAllText(goldenPath, actual);
             return;
         }
 
-        var golden = ReadGolden("list-json-document.v1.json");
-
+        var golden = ReadGolden("catalogue-document.v1.json");
         Assert.Equal(Normalise(golden), Normalise(actual));
     }
 
-    // ── Regen + golden-read helpers (mirror ValidateJsonGoldenTests) ─────────────
+    [Fact]
+    public void CatalogueDocument_FrozenPropertyNamesPresent()
+    {
+        // Additive-only guard: required property names on the fixture serialisation
+        // must remain present. Adding a new optional property does not break this test.
+        using var doc = JsonDocument.Parse(EngineExport.SerializeCatalogue(BuildFixture()));
+        var root = doc.RootElement;
+
+        Assert.True(root.TryGetProperty("schemaVersion", out _));
+        Assert.True(root.TryGetProperty("engineVersion", out _));
+        Assert.True(root.TryGetProperty("stepTypes", out var stepTypes));
+        Assert.Equal(JsonValueKind.Array, stepTypes.ValueKind);
+
+        var first = stepTypes[0];
+        Assert.True(first.TryGetProperty("type", out _));
+        Assert.True(first.TryGetProperty("family", out _));
+        Assert.True(first.TryGetProperty("provider", out _));
+        Assert.True(first.TryGetProperty("requiredFields", out _));
+        Assert.True(first.TryGetProperty("optionalFields", out _));
+        Assert.True(first.TryGetProperty("captureSupported", out _));
+        Assert.True(first.TryGetProperty("familyIntent", out _));
+    }
 
     private static bool IsRegenRequested()
     {
@@ -96,14 +110,10 @@ public sealed class ListJsonGoldenTests
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-
         while (dir is not null)
         {
             if (File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
-            {
                 return dir.FullName;
-            }
-
             dir = dir.Parent;
         }
 
@@ -115,12 +125,10 @@ public sealed class ListJsonGoldenTests
     private static string ReadGolden(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Golden", fileName);
-
         Assert.True(
             File.Exists(path),
             $"Golden file not found at '{path}'. The freeze gate requires "
             + $"Golden/{fileName} to be committed and copied to output.");
-
         return File.ReadAllText(path);
     }
 

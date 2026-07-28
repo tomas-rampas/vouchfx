@@ -24,6 +24,12 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup Label="Spec A — frozen catalogue wire-shape golden artifact">
+    <Content Include="Golden\catalogue-document.v1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

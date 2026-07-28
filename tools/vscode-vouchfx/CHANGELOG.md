@@ -8,6 +8,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **REQ-009 live engine schema** — on activation the extension prefers
+  `vouchfx schema` / bar-B `vouchfx list --json` via `vouchfx.cliPath`, with
+  documented fallbacks to `vouchfx.schemaPath` then the version-checked bundled
+  offline schema. Source choice is logged on the **vouchfx** Output channel.
 - Initial scaffold of the vouchfx VSCode extension.
 - Bundled, offline-safe copy of the frozen **v1** composed JSON Schema, bound to
   `*.e2e.yaml` files via `contributes.yamlValidation` (delegating schema

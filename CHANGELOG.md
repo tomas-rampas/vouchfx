@@ -35,6 +35,21 @@ to published pre-releases on 2026-07-14.
   moved to a new `docs/ci-integration.md` page (`recipes.md` and `getting-started.md` previously linked back
   into README anchors for it, and now point at the new page).
 
+## [1.0.0-rc.2] — 2026-07-28
+
+Schema and catalogue export for AI and tooling consumers (Spec A / `engine-schema-and-catalogue-export`). The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
+
+### Added
+
+- **`vouchfx schema` subcommand** — emits the composed v1 JSON Schema (root language grammar merged with every registered provider fragment) to stdout by default, or to a file via `--output <path>`. Exit codes: 0 success, 2 usage error (e.g. missing parent directory for `--output`), 3 incomplete-metadata / composition failure. Docker-free.
+- **Public library export API** (`Vouchfx.Engine.Compilation.Schema.EngineExport`) — `ComposeSchemaJson` and `BuildCatalogue` expose the same schema and shape-level catalogue the CLI uses, so MCP and other in-process hosts need not shell out. Incomplete provider metadata fails closed with `CatalogueExportException` naming the step type.
+- **Rich step catalogue on `list --json`** (additive) — each step type entry now includes `requiredFields`, `optionalFields`, `captureSupported`, and `familyIntent` in addition to `type` / `family` / `provider`. Wire shape frozen by golden-file CI gates; evolution within v1 is additive only.
+- **VS Code extension live schema source** — prefers `vouchfx list --json` (bar-B gate) and `vouchfx schema` from the configured CLI, with a version-checked bundled fallback.
+
+### Changed
+
+- **Getting-started documentation** — documents `vouchfx schema`, the enriched catalogue, fail-closed export behaviour, and the `EngineExport` library entry points for MCP / VS Code / third-party consumers.
+
 ## [1.0.0-rc.1] — 2026-07-24
 
 A release-candidate consolidating developer-tooling, run-lifecycle, and validation improvements. The language

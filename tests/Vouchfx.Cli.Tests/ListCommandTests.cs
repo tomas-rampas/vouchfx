@@ -1,15 +1,16 @@
-// Vouchfx.Cli.Tests — `list` Execute orchestration tests (#260). No Docker.
+// Vouchfx.Cli.Tests — `list` Execute orchestration tests (#260 + Spec A). No Docker.
 //
 // Exercises ListCommand.Execute directly (bypassing System.CommandLine parsing) against
 // the REAL sealed Core registry — the same 25-provider registry `run` and `validate`
 // freeze via ProviderRegistryFactory.BuildCoreRegistry(). Asserts:
 //   • --json yields exactly the sealed registry's step types: count == 25 and a spot
-//     check of well-known dotted keys, sorted ordinally by type.
+//     check of well-known dotted keys, sorted ordinally by type, with bar-B fields.
 //   • the human table renders a header, every step-type key, and a summary count line.
 // This never starts a topology — StepKindRegistry reflection is entirely Docker-free.
 
 using System.Text.Json;
 using Vouchfx.Cli;
+using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -32,7 +33,8 @@ public sealed class ListCommandTests
         var sw = new StringWriter();
         ListCommand.Execute(json: true, sw);
 
-        var document = JsonSerializer.Deserialize<ListJsonDocument>(sw.ToString(), CliJsonContract.Options);
+        var document = JsonSerializer.Deserialize<StepCatalogueDocument>(
+            sw.ToString(), CliJsonContract.Options);
         Assert.NotNull(document);
 
         // The 25 Core providers across eleven families (CLAUDE.md "Planned repository
@@ -62,12 +64,44 @@ public sealed class ListCommandTests
     }
 
     [Fact]
+    public void Execute_Json_EachEntryHasBarBCatalogueFields()
+    {
+        var sw = new StringWriter();
+        ListCommand.Execute(json: true, sw);
+
+        var document = JsonSerializer.Deserialize<StepCatalogueDocument>(
+            sw.ToString(), CliJsonContract.Options);
+        Assert.NotNull(document);
+
+        Assert.All(document!.StepTypes, st =>
+        {
+            // At least one of required/optional is non-empty for every Core provider
+            // that ships a real model fragment (all Core do).
+            Assert.True(
+                st.RequiredFields.Count > 0 || st.OptionalFields.Count > 0,
+                $"Step type '{st.Type}' has empty required and optional field lists.");
+            Assert.True(st.CaptureSupported);
+            Assert.False(string.IsNullOrWhiteSpace(st.FamilyIntent));
+        });
+
+        var httpRest = Assert.Single(document.StepTypes, st => st.Type == "http.rest");
+        Assert.Contains("target", httpRest.RequiredFields);
+        Assert.Contains("method", httpRest.RequiredFields);
+        Assert.Contains("path", httpRest.RequiredFields);
+
+        var pg = Assert.Single(document.StepTypes, st => st.Type == "db-assert.postgres");
+        Assert.True(pg.RequiredFields.Count > 0 || pg.OptionalFields.Count > 0);
+        Assert.Contains("data store", pg.FamilyIntent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Execute_Json_SchemaVersionAndEngineVersionArePresent()
     {
         var sw = new StringWriter();
         ListCommand.Execute(json: true, sw);
 
-        var document = JsonSerializer.Deserialize<ListJsonDocument>(sw.ToString(), CliJsonContract.Options);
+        var document = JsonSerializer.Deserialize<StepCatalogueDocument>(
+            sw.ToString(), CliJsonContract.Options);
         Assert.NotNull(document);
         Assert.Equal(1, document!.SchemaVersion);
         Assert.False(string.IsNullOrWhiteSpace(document.EngineVersion));
