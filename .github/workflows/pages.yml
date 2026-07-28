@@ -130,11 +130,13 @@ jobs:
   # repos to rebuild their sites so their build-time facts refresh. One-hop
   # guard: dispatch-, cron- and manually-triggered runs never re-notify, so a
   # cycle is impossible. Requires the ECOSYSTEM_DISPATCH_TOKEN secret (a
-  # fine-grained PAT with Contents read/write on all FIVE vouchfx fleet repos:
-  # the four dispatched to below, PLUS `vouchfx` itself — every satellite's own
-  # notify loop dispatches back here, so a token scoped to only the four
-  # siblings silently breaks the inbound half of the mesh);
-  # loud-skips when absent — the weekly cron then covers freshness.
+  # classic PAT with `repo` scope, or a fine-grained PAT with Contents
+  # read/write on all FIVE vouchfx fleet repos: the four dispatched to below,
+  # PLUS `vouchfx` itself — every satellite's own notify loop dispatches back
+  # here, so a token scoped to only the four siblings silently breaks the
+  # inbound half of the mesh). Missing token or any failed dispatch FAILS this
+  # job — fleet docs must stay in sync; weekly cron is backup, not the primary
+  # path.
   notify:
     needs: deploy
     if: github.event_name == 'push'
@@ -144,11 +146,13 @@ jobs:
         env:
           TOKEN: ${{ secrets.ECOSYSTEM_DISPATCH_TOKEN }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::warning::ECOSYSTEM_DISPATCH_TOKEN is not set - sibling sites will refresh on their weekly crons instead."
-            echo "ECOSYSTEM_DISPATCH_TOKEN missing; fan-out skipped." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::ECOSYSTEM_DISPATCH_TOKEN is not set. Fan-out is required so sibling sites (providers, samples, telemetry, mcp) stay in sync with this docs deploy. Add the secret (PAT with repo access to all five fleet repos) under Settings → Secrets → Actions."
+            echo "ECOSYSTEM_DISPATCH_TOKEN missing; fan-out FAILED (required)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          failed=0
           for repo in vouchfx-providers vouchfx-samples vouchfx-telemetry-backend vouchfx-mcp; do
             if curl -sfS -X POST \
               -H "Authorization: Bearer $TOKEN" \
@@ -158,7 +162,13 @@ jobs:
               -d '{"event_type":"ecosystem-docs-updated"}'; then
               echo "notified $repo" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "::warning::failed to notify $repo"
+              echo "::error::failed to notify $repo"
               echo "FAILED to notify $repo" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
             fi
           done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more sibling dispatches failed; see step summary." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Fan-out complete: all four sibling repos notified." >> "$GITHUB_STEP_SUMMARY"
