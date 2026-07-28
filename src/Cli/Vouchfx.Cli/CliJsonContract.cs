@@ -9,9 +9,9 @@
 //
 // Unlike EventStreamJson (JSON LINES — one compact object per line), these are each a
 // SINGLE document written once to stdout, so WriteIndented=true is used for readability.
-// Both documents are pinned byte-for-byte by golden tests (ValidateJsonGoldenTests,
-// ListJsonGoldenTests) — this IS the frozen contract a downstream tool (e.g. the
-// vouchfx-mcp validate worker) can parse without depending on any Cli-internal type.
+// Documents are pinned byte-for-byte by golden tests (ValidateJsonGoldenTests,
+// ListJsonGoldenTests / CatalogueJsonGoldenTests). The list --json body is the public
+// StepCatalogueDocument from Vouchfx.Engine.Compilation.Schema.EngineExport.
 
 using System.Reflection;
 using System.Text.Json;
@@ -23,6 +23,11 @@ namespace Vouchfx.Cli;
 /// Shared serialisation options and metadata for the CLI's <c>--json</c> document
 /// outputs (<c>validate --json</c>, <c>list --json</c>).
 /// </summary>
+/// <remarks>
+/// <c>list --json</c> serialises the public <c>StepCatalogueDocument</c> from
+/// <c>Vouchfx.Engine.Compilation</c>; keep <see cref="Options"/> camelCase / indented
+/// aligned with <c>EngineExport.CatalogueJsonOptions</c>.
+/// </remarks>
 internal static class CliJsonContract
 {
     /// <summary>The wire schema version stamped on every CLI <c>--json</c> document.</summary>

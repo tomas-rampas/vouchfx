@@ -1,6 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+
+import {
+  checkSchemaVersion,
+  fetchEngineSchema,
+  MIN_ENGINE_SCHEMA_HINT,
+} from './engineSchemaSource';
 import { resolveSchemaPath } from './schemaPath';
 import { registerTestController } from './testController';
 
@@ -15,9 +21,11 @@ const E2E_FILE_MATCH = '*.e2e.yaml';
 /** Identifier of the Red Hat YAML language server extension we delegate to. */
 const YAML_EXTENSION_ID = 'redhat.vscode-yaml';
 
-/** Configuration section that exposes the optional schema override. */
+/** Configuration section that exposes CLI path and optional schema override. */
 const CONFIG_SECTION = 'vouchfx';
 const CONFIG_SCHEMA_PATH = 'schemaPath';
+const CONFIG_CLI_PATH = 'cliPath';
+const DEFAULT_CLI_PATH = 'vouchfx';
 
 /**
  * The minimal slice of the `redhat.vscode-yaml` public API we rely on. The
@@ -58,21 +66,37 @@ interface YamlExtensionApi {
 const VOUCHFX_CONTRIBUTOR_ID = 'vouchfx';
 
 /**
+ * Mutable holder for the live engine schema path resolved at activate (and
+ * refreshed when `vouchfx.cliPath` changes). Shared with `resolveSchemaUri`.
+ */
+interface EngineSchemaState {
+  fsPath: string | undefined;
+}
+
+/**
  * Resolves the schema URI to bind for a vouchfx document.
  *
- * Precedence:
- *  1. A non-empty `vouchfx.schemaPath` setting (scoped to the document), taken
- *     as absolute or resolved against the document's workspace folder.
- *  2. The schema bundled with the extension.
+ * Precedence (REQ-009):
+ *  1. Live engine export from `vouchfx schema` when the CLI is available and
+ *     bar-B-capable (resolved once at activate into `engineState`).
+ *  2. A non-empty `vouchfx.schemaPath` setting (scoped to the document).
+ *  3. The small bundled offline schema shipped with the extension
+ *     (version-checked `x-vouchfx-schema-version: v1`).
  *
  * @param documentUri URI of the `*.e2e.yaml` document being opened.
  * @param bundledSchemaUri `file:` URI of the schema shipped in the extension.
- * @returns A `file:` URI string pointing at the schema to apply.
+ * @param engineState Live engine schema path (if fetch succeeded).
+ * @returns A `file:` URI pointing at the schema to apply.
  */
 function resolveSchemaUri(
   documentUri: vscode.Uri,
   bundledSchemaUri: vscode.Uri,
+  engineState: EngineSchemaState,
 ): vscode.Uri {
+  if (engineState.fsPath !== undefined) {
+    return vscode.Uri.file(engineState.fsPath);
+  }
+
   const configured = vscode.workspace
     .getConfiguration(CONFIG_SECTION, documentUri)
     .get<string>(CONFIG_SCHEMA_PATH, '');
@@ -108,17 +132,108 @@ function isE2eDocument(resource: string): boolean {
 }
 
 /**
+ * Resolves the workspace (or default) `vouchfx.cliPath` for schema export.
+ */
+function resolveWorkspaceCliPath(): string {
+  const configured = vscode.workspace
+    .getConfiguration(CONFIG_SECTION)
+    .get<string>(CONFIG_CLI_PATH, DEFAULT_CLI_PATH);
+  const trimmed = (configured ?? DEFAULT_CLI_PATH).trim();
+  return trimmed.length > 0 ? trimmed : DEFAULT_CLI_PATH;
+}
+
+/**
+ * Attempts to load the composed schema from the live engine CLI into
+ * `engineState`, logging the outcome on the vouchfx output channel.
+ */
+async function refreshEngineSchema(
+  context: vscode.ExtensionContext,
+  engineState: EngineSchemaState,
+  channel: vscode.OutputChannel,
+  bundledSchemaFsPath: string,
+): Promise<void> {
+  const cliPath = resolveWorkspaceCliPath();
+  const storageDir = context.globalStorageUri.fsPath;
+
+  channel.appendLine(`Resolving schema via engine CLI "${cliPath}"…`);
+
+  let result: Awaited<ReturnType<typeof fetchEngineSchema>>;
+  try {
+    result = await fetchEngineSchema({ cliPath, storageDir });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = { kind: 'error', message: `unexpected error: ${message}` };
+  }
+
+  if (result.kind === 'ok') {
+    engineState.fsPath = result.fsPath;
+    channel.appendLine(
+      `Schema source: live engine CLI (${cliPath}) → ${result.fsPath} ` +
+        `(${result.stepTypeCount} step types; x-vouchfx-schema-version: v1).`,
+    );
+    return;
+  }
+
+  engineState.fsPath = undefined;
+  channel.appendLine(`Live engine schema unavailable: ${result.message}`);
+  logFallbackSource(channel, bundledSchemaFsPath);
+}
+
+/**
+ * Logs which non-engine source will be used (schemaPath override or bundled).
+ */
+function logFallbackSource(
+  channel: vscode.OutputChannel,
+  bundledSchemaFsPath: string,
+): void {
+  const configured = vscode.workspace
+    .getConfiguration(CONFIG_SECTION)
+    .get<string>(CONFIG_SCHEMA_PATH, '');
+  const resolution = resolveSchemaPath(configured ?? '', process.cwd());
+
+  if (resolution.kind === 'override') {
+    channel.appendLine(
+      `Schema source: vouchfx.schemaPath override → ${resolution.fsPath}`,
+    );
+    channel.appendLine(MIN_ENGINE_SCHEMA_HINT);
+    return;
+  }
+
+  // Bundled offline fallback — version-checked against x-vouchfx-schema-version.
+  let versionNote = 'version check skipped (file unreadable)';
+  try {
+    const text = fs.readFileSync(bundledSchemaFsPath, 'utf8');
+    const check = checkSchemaVersion(text);
+    versionNote = check.ok
+      ? `x-vouchfx-schema-version: ${check.version}`
+      : `version check failed: ${check.reason}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    versionNote = `version check failed: ${message}`;
+  }
+
+  channel.appendLine(
+    `Schema source: bundled offline fallback (${bundledSchemaFsPath}; ${versionNote}).`,
+  );
+  channel.appendLine(MIN_ENGINE_SCHEMA_HINT);
+}
+
+/**
  * Activates the extension.
  *
  * The declarative `contributes.yamlValidation` entry in package.json already
- * binds the bundled schema for the happy path with no code at all. This
- * `activate` adds ONE thing on top: programmatic registration with the YAML
- * language server so a workspace-level `vouchfx.schemaPath` setting can point
- * `*.e2e.yaml` files at an internal/enterprise schema copy instead.
+ * binds the bundled schema for the offline happy path with no code at all.
+ * This `activate` additionally:
+ *  - Prefers a live schema from `vouchfx schema` when the CLI is available
+ *    (REQ-009), after verifying bar-B catalogue metadata via `list --json`.
+ *  - Falls back to `vouchfx.schemaPath`, then the version-checked bundled copy.
+ *  - Registers programmatically with the YAML language server so those sources
+ *    are served for `*.e2e.yaml` files.
  *
- * Activation is a no-op (it does not throw) when `redhat.vscode-yaml` is
- * absent — the extension simply contributes nothing beyond the declarative
- * binding, which itself requires the YAML server to take effect.
+ * Activation is a no-op for the schema contributor (it does not throw) when
+ * `redhat.vscode-yaml` is absent — the extension simply contributes nothing
+ * beyond the declarative binding, which itself requires the YAML server.
+ * Test Explorer is registered independently and is never gated on schema work.
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Test Explorer integration (S10-G-01). Registered FIRST and independently of
@@ -127,6 +242,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // gated on the YAML language server being present. `registerTestController`
   // is itself fail-soft and never throws.
   registerTestController(context);
+
+  const channel = vscode.window.createOutputChannel('vouchfx');
+  context.subscriptions.push(channel);
 
   // file: URI of the schema shipped inside the extension. The packaged VSIX
   // keeps src/schema/composed-schema.v1.json (see .vscodeignore), so this
@@ -137,11 +255,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     'schema',
     'composed-schema.v1.json',
   );
+  const bundledSchemaFsPath = bundledSchemaUri.fsPath;
+
+  const engineState: EngineSchemaState = { fsPath: undefined };
+
+  // Prefer live engine export; never let a CLI failure block activation.
+  await refreshEngineSchema(context, engineState, channel, bundledSchemaFsPath);
 
   const yamlExtension = vscode.extensions.getExtension<YamlExtensionApi>(YAML_EXTENSION_ID);
   if (!yamlExtension) {
     // No YAML server: nothing to register against. The declarative binding is
     // likewise inert without it. Fail soft — do not throw.
+    channel.appendLine(
+      'redhat.vscode-yaml not found; programmatic schema contributor skipped ' +
+        '(declarative yamlValidation still applies when the YAML server is present).',
+    );
     return;
   }
 
@@ -150,16 +278,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     api = yamlExtension.isActive ? yamlExtension.exports : await yamlExtension.activate();
   } catch {
     // The YAML extension failed to activate; degrade gracefully.
+    channel.appendLine('redhat.vscode-yaml failed to activate; schema contributor skipped.');
     return;
   }
 
   if (!api || typeof api.registerContributor !== 'function') {
     // Unexpected/older API surface — do not throw, just skip the override hook.
+    channel.appendLine(
+      'redhat.vscode-yaml API missing registerContributor; schema contributor skipped.',
+    );
     return;
   }
 
-  // We resolve both the bundled-default and the override to a plain `file:`
-  // URI. `resolveSchemaUri` already returns a `vscode.Uri` produced via
+  // We resolve engine / override / bundled to a plain `file:` URI.
+  // `resolveSchemaUri` already returns a `vscode.Uri` produced via
   // `vscode.Uri.file(...)` / `vscode.Uri.joinPath(...)`, so `.toString()`
   // yields a well-formed `file:` URI that the YAML server reads directly off
   // disk — no custom scheme, no drive-letter round-trip. `requestSchemaContent`
@@ -171,7 +303,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!isE2eDocument(resource)) {
         return undefined;
       }
-      const target = resolveSchemaUri(vscode.Uri.parse(resource), bundledSchemaUri);
+      const target = resolveSchemaUri(
+        vscode.Uri.parse(resource),
+        bundledSchemaUri,
+        engineState,
+      );
       // A plain file: URI. The redhat.vscode-yaml server fetches file: URIs
       // itself, so the path survives intact on Windows (drive letter and all).
       return target.toString();
@@ -189,7 +325,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return undefined;
       }
       // Synchronous read: the API contract requires a string return. The schema
-      // is small (~19 KB) and read at most once per (file, schema) pair. Use
+      // is small and read at most once per (file, schema) pair. Use
       // `parsed.fsPath` so the platform-native path (with the Windows drive
       // letter) is reconstructed from the file: URI without manual parsing.
       try {
@@ -202,15 +338,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   if (!registered) {
+    channel.appendLine('YAML registerContributor returned false; contributor not active.');
     return;
   }
 
-  // Surface override-setting changes. `requestSchema` is re-invoked by the YAML
-  // language server on the next validation pass (e.g. the next edit/save), at
-  // which point the new `vouchfx.schemaPath` value is picked up automatically;
-  // we deliberately do NOT mutate the user's document to force this.
+  // Re-resolve when cliPath / schemaPath change. `requestSchema` is re-invoked
+  // by the YAML language server on the next validation pass (e.g. the next
+  // edit/save); we deliberately do NOT mutate the user's document to force this.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.${CONFIG_CLI_PATH}`)) {
+        void (async () => {
+          await refreshEngineSchema(
+            context,
+            engineState,
+            channel,
+            bundledSchemaFsPath,
+          );
+          void vscode.window.setStatusBarMessage(
+            'vouchfx: CLI path changed — schema source refreshed; reopen or edit .e2e.yaml files to re-validate.',
+            5000,
+          );
+        })();
+      }
       if (event.affectsConfiguration(`${CONFIG_SECTION}.${CONFIG_SCHEMA_PATH}`)) {
         void vscode.window.setStatusBarMessage(
           'vouchfx: schema override changed — reopen or edit .e2e.yaml files to re-validate.',

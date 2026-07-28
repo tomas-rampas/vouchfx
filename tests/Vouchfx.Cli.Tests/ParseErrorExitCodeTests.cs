@@ -19,11 +19,11 @@
 //     remapped — only a parse error is.
 //
 // ParseErrorPreconditionTests exercises the real System.CommandLine wiring — a RootCommand
-// built from RunCommand + TelemetryCommand + ValidateCommand + ListCommand exactly as
-// Program.cs assembles it — to confirm the helper's precondition is real: an unrecognised
-// option on every subcommand genuinely produces a non-empty ParseResult.Errors, while --help
-// and --version produce none (System.CommandLine resolves those itself, exit 0 — never
-// remapped, because there are no parse errors to trigger the remap).
+// built from RunCommand + TelemetryCommand + ValidateCommand + ListCommand + SchemaCommand
+// exactly as Program.cs assembles it — to confirm the helper's precondition is real: an
+// unrecognised option on every subcommand genuinely produces a non-empty ParseResult.Errors,
+// while --help and --version produce none (System.CommandLine resolves those itself, exit 0 —
+// never remapped, because there are no parse errors to trigger the remap).
 
 using System.CommandLine;
 using Vouchfx.Cli;
@@ -80,6 +80,7 @@ public sealed class ParseErrorPreconditionTests
         root.Add(TelemetryCommand.Build());
         root.Add(ValidateCommand.Build());
         root.Add(ListCommand.Build());
+        root.Add(SchemaCommand.Build());
         return root;
     }
 

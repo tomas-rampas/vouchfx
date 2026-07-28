@@ -147,9 +147,11 @@ vouchfx run ./tests/users.e2e.yaml --watch    # re-run on save
 vouchfx run ./tests --html ./report.html --junit ./results.xml
 ```
 
-Two Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
-(schema, parse, AST, provider binding, Roslyn) without starting anything, and `vouchfx list` prints the
-sealed step-type catalogue. Both take `--json` for tooling.
+Three Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
+(schema, parse, AST, provider binding, Roslyn) without starting anything, `vouchfx list` prints the
+sealed step-type catalogue (with shape-level fields on `--json`), and `vouchfx schema` emits the
+composed v1 JSON Schema. `validate` and `list` also take `--json` for tooling; in-process hosts can
+use `EngineExport` in `Vouchfx.Engine.Compilation` instead of shelling out.
 
 **Exit codes follow the verdict taxonomy:**
 
