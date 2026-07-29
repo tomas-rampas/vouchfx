@@ -54,8 +54,12 @@ public sealed class PlanReportContractFreezeTests
         var findings = new List<PlanFinding>
         {
             new(
+                // MAJOR fix-round: Suite is the declaring suite, never null, for this kind —
+                // VocabularyGapAnalyser now scopes every dependency-missing-step-type /
+                // service-missing-http-step finding to the suite that declares the
+                // dependency/service (see that analyser's own header comment).
                 Kind: PlanFindingKinds.DependencyMissingStepType,
-                Suite: null,
+                Suite: "checkout.e2e.yaml",
                 StepId: null,
                 Target: "orders-db",
                 TargetKind: PlanTargetKinds.Dependency,
@@ -80,8 +84,10 @@ public sealed class PlanReportContractFreezeTests
                 Detail: "Dependency 'events' is targeted by a declared step but by no step of an asserting family.",
                 RelatedSuites: Array.Empty<string>()),
             new(
+                // MAJOR fix-round: Suite is the declaring suite, never null — see the same
+                // note on the DependencyMissingStepType finding above.
                 Kind: PlanFindingKinds.ServiceMissingHttpStep,
-                Suite: null,
+                Suite: "checkout.e2e.yaml",
                 StepId: null,
                 Target: "api",
                 TargetKind: PlanTargetKinds.Service,
@@ -236,8 +242,10 @@ public sealed class PlanReportContractFreezeTests
             Services: new[] { "api" },
             Dependencies: new[]
             {
-                new PlanDependencyEntry("events", "kafka"),
-                new PlanDependencyEntry("orders-db", "postgres"),
+                // MAJOR fix-round: Suite is required (REQ-011 additive) — both dependencies
+                // here are declared inside checkout.e2e.yaml's own environment section.
+                new PlanDependencyEntry("events", "kafka", "checkout.e2e.yaml"),
+                new PlanDependencyEntry("orders-db", "postgres", "checkout.e2e.yaml"),
             },
             StepTypes: new[] { "db-assert.postgres", "http.rest", "mq-publish.kafka" },
             RunCount: 3,
@@ -253,7 +261,8 @@ public sealed class PlanReportContractFreezeTests
             // freeze for what IS token-frozen). That divergence is acceptable: this fixture's
             // job is pinning the wire SHAPE (a Reason property exists, is a string, sits at
             // this JsonPropertyOrder), not pinning DescribeUnmappable's exact wording.
-            UnmappableDependencies: new[] { new PlanUnmappableDependency("legacy-cache", "cassandra", "Dependency kind is not recognised by the engine's dependency-kind vocabulary.") });
+            // MAJOR fix-round: Suite is required (REQ-011 additive) — see PlanDependencyEntry.Suite's remarks.
+            UnmappableDependencies: new[] { new PlanUnmappableDependency("legacy-cache", "cassandra", "Dependency kind is not recognised by the engine's dependency-kind vocabulary.", "refund.e2e.yaml") });
 
         return new PlanReportDocument(
             SchemaVersion: PlanExport.PlanSchemaVersion,

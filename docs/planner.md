@@ -2,7 +2,7 @@
 
 The **Planner** is a deterministic, read-only analysis tool that intersects three engine-side sources — the **declared** universe (the `.e2e.yaml` suite folder), the **exercised** reality (your run history), and the **available** vocabulary (the registered step catalogue) — and emits a coverage-and-gap report. It answers the question: **what should I test next?**
 
-Every gap finding carries the structured hints the [`scaffold`](getting-started.md#generator--suite-scaffold) tool needs, so you can pick a gap, generate a skeleton step, and validate it — all without re-deriving anything. The Planner never writes a suite file, never calls a model, and never claims coverage it cannot evidence from its declared inputs.
+Every gap finding carries the structured hints the [`scaffold`](getting-started.md#generator-suite-scaffold) tool needs, so you can pick a gap, generate a skeleton step, and validate it — all without re-deriving anything. The Planner never writes a suite file, never calls a model, and never claims coverage it cannot evidence from its declared inputs.
 
 ## What the Planner reads
 
@@ -19,7 +19,7 @@ The Planner reads three things:
 - **Production traffic** — the Planner knows nothing of your live systems or production behaviour.
 - **OpenAPI / AsyncAPI contracts** — the Planner does not inspect API documentation.
 - **Docker Compose or cloud-infrastructure definitions** — no IaC parsing.
-- **Git history** — no blame, no commits-per-file, no blame.
+- **Git history** — no blame, no commits-per-file, no commit metadata of any kind.
 - **Version-control metadata** — the declared suites are the source of truth, as they exist on disk right now.
 
 The Planner is a **declared-vs-exercised-vs-available** gap detector, not a coverage inference engine.
@@ -84,11 +84,13 @@ A suite counts as **exercised** when a `scenario-started` event's `scenarioId` m
 | Exit code | Meaning | When |
 |---|---|---|
 | **0** | Successful analysis — regardless of how many gaps or health issues were found | Always, unless `--fail-on-gap` is set and gaps exist |
-| **2** | UsageError — bad/missing suite path, empty suite folder, a threshold out of range (`--stale-days` ≥ 1, `--flaky-min-runs` ≥ 1, `--fragile-min-env-errors` ≥ 1, `--inconclusive-min` ≥ 1), or a missing `--output` parent directory; also when an event history file exceeds 64 MiB | Usage mistakes |
+| **2** | UsageError — bad/missing suite path, empty suite folder, a threshold out of range (`--stale-days` ≥ 0, `--flaky-min-runs` ≥ 1, `--fragile-min-env-errors` ≥ 1, `--inconclusive-min` ≥ 1), or a missing `--output` parent directory; also when an event history file exceeds 64 MiB | Usage mistakes |
 | **3** | Incomplete catalogue metadata — a registered provider lacks a schema fragment (rare; the same class of failure `vouchfx list` and `vouchfx schema` map to) | Engine build problem |
 | **5** | Gaps found — at least one `suite-never-run`, `step-never-exercised`, `dependency-not-asserted`, `dependency-missing-step-type`, or `service-missing-http-step` finding is present | Only when `--fail-on-gap` is set AND gaps exist |
 
 **Key principle:** Gaps are data, not defects. Without `--fail-on-gap`, a report full of gaps still exits 0, mirroring the verdict taxonomy's rule that only a genuine `Fail` breaks CI by default.
+
+**A caveat on exit 2:** one exit-2 case is not actually a bad argument. If your suite path resolves to a real, existing directory but a subdirectory beneath it becomes locked, is deleted mid-scan, or is access-denied while the Planner is walking it, discovery still fails closed with exit 2 — there is no partial-enumeration fallback. This is an environment/infrastructure fault, not a typo'd path, and the error message says so explicitly (it never claims the path itself is invalid) so it is not mistaken for a usage mistake when triaging a failure.
 
 ## Library API
 
@@ -127,10 +129,15 @@ vouchfx plan ./tests/e2e --events ./run-history.jsonl
 #   "suggestedTypes": ["db-assert.postgres"],
 #   "suggestedStepId": "assert-orders-db"
 #
-# Maps directly to scaffold intent:
+# Maps directly to scaffold intent. The finding's target names a DEPENDENCY, so the
+# intent must declare one for the scaffolded step to bind against — a step alone
+# would emit an unbindable placeholder target and fail validation.
 echo '{
   "steps": [
     { "id": "assert-orders-db", "type": "db-assert.postgres" }
+  ],
+  "dependencies": [
+    { "name": "orders-db", "type": "postgres" }
   ]
 }' | vouchfx scaffold --intent - --output ./draft.e2e.yaml
 
@@ -189,9 +196,9 @@ Unmatched observations:  0
 Thresholds:              stale>30d, flaky>=2 runs, fragile>=2 env-errors, inconclusive>=2
 
 Findings: 3 total (2 gap(s)).
-  dependency-missing-step-type  1
-  service-missing-http-step     1
-  step-flaky                     1
+  dependency-missing-step-type     1
+  service-missing-http-step        1
+  step-flaky                       1
 ```
 
 Requesting JSON output:
@@ -227,8 +234,8 @@ vouchfx plan ./tests/e2e --events ./run-history --json
     ],
     "services": ["orders-api"],
     "dependencies": [
-      { "name": "orders-db", "type": "postgres" },
-      { "name": "events", "type": "kafka" }
+      { "name": "orders-db", "type": "postgres", "suite": "tests/e2e/orders.e2e.yaml" },
+      { "name": "events", "type": "kafka", "suite": "tests/e2e/orders.e2e.yaml" }
     ],
     "stepTypes": ["db-assert.postgres", "http.rest", "mq-expect.kafka", "mq-publish.kafka"],
     "runCount": 5,
@@ -242,7 +249,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
   "findings": [
     {
       "kind": "dependency-missing-step-type",
-      "suite": null,
+      "suite": "tests/e2e/orders.e2e.yaml",
       "stepId": null,
       "target": "orders-db",
       "targetKind": "dependency",
@@ -256,7 +263,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
     },
     {
       "kind": "service-missing-http-step",
-      "suite": null,
+      "suite": "tests/e2e/orders.e2e.yaml",
       "stepId": null,
       "target": "orders-api",
       "targetKind": "service",

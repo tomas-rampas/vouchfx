@@ -87,9 +87,14 @@ public sealed class PlanLoopClosureTests
 
         // The dependency's declared KIND is not one of the three hint fields under test — it
         // is read from the same report's own Inventory (structural, machine-derived data a
-        // real host already has), never hand-typed or guessed.
+        // real host already has), never hand-typed or guessed. MAJOR fix-round: Name alone is
+        // no longer a unique key into Inventory.Dependencies once more than one suite is
+        // analysed (two suites may declare a same-named dependency) — key on the finding's own
+        // declaring Suite too, mirroring how a real host would resolve a finding back to its
+        // inventory entry.
         var dependencyType = Assert.Single(
-            report.Inventory.Dependencies, d => d.Name == finding.Target).Type;
+            report.Inventory.Dependencies,
+            d => d.Suite == finding.Suite && d.Name == finding.Target).Type;
 
         var intent = new ScaffoldIntent(
             Steps: new[] { new ScaffoldStepIntent(finding.SuggestedStepId!, finding.SuggestedTypes[0]) },

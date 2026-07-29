@@ -21,8 +21,16 @@ namespace Vouchfx.Engine.Planning.Report;
 /// </param>
 /// <param name="Suite">
 /// The relative path of the suite this finding concerns, or <see langword="null"/> when the
-/// finding is not scoped to a single suite (e.g. a vocabulary gap against a dependency shared
-/// by several suites).
+/// finding is not scoped to a single suite. MAJOR fix-round: a
+/// <see cref="PlanFindingKinds.DependencyMissingStepType"/> or
+/// <see cref="PlanFindingKinds.ServiceMissingHttpStep"/> finding is now ALWAYS scoped to its
+/// declaring suite (never <see langword="null"/>) — a dependency/service is declared inside
+/// exactly one suite's <c>environment</c>, so its vocabulary coverage is judged within that
+/// suite alone, and two suites sharing a same-named dependency/service now stay
+/// distinguishable by this field. <see langword="null"/> is reserved for finding kinds with
+/// no single matching suite at all
+/// — today only <see cref="PlanFindingKinds.SuiteIdentityAmbiguous"/> (a scenario-id collision
+/// between two declared suites, or history referencing a since-renamed file).
 /// </param>
 /// <param name="StepId">
 /// The step id this finding concerns, or <see langword="null"/> when the finding is not

@@ -8,7 +8,16 @@ metadata:
 # suite-b-covered.e2e.yaml (below) declaring a dependency of the SAME NAME that IS covered
 # there. See VocabularyGapAnalyserTests.
 # TwoSuitesDeclaringTheSameDependencyName_OneCoveredOneNot_AreJudgedIndependently.
+#
+# MINOR fix-round: also declares a `web` SERVICE of the same name as suite-b-covered.e2e.yaml's,
+# with likewise ZERO http.* steps targeting it — pinning AnalyseServices' per-declaring-suite
+# scoping the same way the dependency half already pinned AnalyseDependencies'. Before this,
+# only the dependency side of the per-suite fix had a same-name-across-suites regression test;
+# a refactor could silently revert the service side to name-aggregation with nothing to catch it.
 environment:
+  services:
+    web:
+      image: myorg/web:1.0
   dependencies:
     cache:
       type: redis
@@ -16,4 +25,4 @@ environment:
 steps:
   - id: unrelated-step
     type: script.csharp
-    code: "// does not target 'cache' at all"
+    code: "// does not target 'cache' or 'web' at all"

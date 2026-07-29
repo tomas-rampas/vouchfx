@@ -121,10 +121,26 @@ internal static class SuiteSetLoader
                 // for this path too; never silently treated as "zero suites discovered"
                 // (EDGE-009's message), which would misleadingly suggest an empty folder
                 // rather than a folder this process could not fully walk.
+                // MINOR fix-round (reviewed question, resolved — keep exit 2, but the message
+                // must not read like a bad-argument complaint): '{suitePath}' itself is a
+                // confirmed-valid, existing directory (this catch only fires once
+                // EnumerateFiles has begun walking it), so this is an ENVIRONMENT/
+                // infrastructure fault encountered mid-scan, not a usage mistake about the
+                // path argument. The wording says so explicitly, even though the exit code is
+                // still UsageError (2) — the Planner has no partial/best-effort discovery mode
+                // to fall back to, so it must still fail the invocation, but a reader (or an
+                // on-call human paging through logs) must not conclude "the caller typed a bad
+                // path" when the true remedy is fixing a permission/lock/concurrent-delete
+                // condition on the machine, not the command line. See docs/planner.md's exit
+                // code table for the same caveat spelled out for suite authors.
                 throw new PlanInputException(
-                    $"Suite path '{suitePath}' (resolved to '{fullRoot}') could not be fully "
-                    + $"enumerated ({ex.GetType().Name}): a subdirectory may be locked, "
-                    + "deleted, or access-denied.");
+                    $"Suite path '{suitePath}' (resolved to '{fullRoot}') is a valid, existing "
+                    + "directory, but could not be FULLY enumerated because of an "
+                    + $"access/infrastructure fault encountered while scanning it ({ex.GetType().Name}) "
+                    + "— this is an environment problem, NOT a malformed argument: a subdirectory "
+                    + "became locked, was deleted mid-scan, or is access-denied. Exit code 2 still "
+                    + "applies (the Planner has no partial-enumeration fallback), but the remedy is "
+                    + "fixing the environment, not the command line.");
             }
 
             analysedRoot = fullRoot;
@@ -230,13 +246,51 @@ internal static class SuiteSetLoader
             // MaxParseErrorMessageChars before it is embedded — see that constant's own
             // remarks for why (a bad step's raw YAML content can otherwise reach the report
             // with no length limit at all).
-            var message = ex.Message.Length > MaxParseErrorMessageChars
-                ? ex.Message[..MaxParseErrorMessageChars] + "... (truncated)"
-                : ex.Message;
+            var message = TruncateParseErrorMessage(ex.Message);
             unanalysable.Add(new PlanUnanalysableSuite(relativePath, $"Parse / AST error: {message}"));
         }
     }
 
     private static string ToRelativePath(string root, string absolutePath) =>
         Path.GetRelativePath(root, absolutePath).Replace('\\', '/');
+
+    /// <summary>
+    /// Bounds <paramref name="message"/> to <see cref="MaxParseErrorMessageChars"/> UTF-16
+    /// characters, never splitting a surrogate pair (MINOR fix-round). A naive
+    /// <c>message[..MaxParseErrorMessageChars]</c> slice can land exactly between a high
+    /// surrogate and its low-surrogate partner when the offending YAML's raw content (echoed
+    /// verbatim by <c>AstBuilder</c>'s error messages) contains an astral-plane character —
+    /// e.g. an emoji in a bad step's <c>type</c> scalar — leaving a lone, unpaired high
+    /// surrogate in the truncated string. A lone surrogate is invalid UTF-16 and can throw
+    /// when this report is later serialised or transcoded, which would defeat the very point
+    /// of bounding this field (turning a length-limit safeguard into a NEW crash vector).
+    /// </summary>
+    /// <param name="message">The raw, unbounded exception message.</param>
+    /// <returns>
+    /// <paramref name="message"/> unchanged when at or under the limit; otherwise a prefix no
+    /// longer than <see cref="MaxParseErrorMessageChars"/> characters (shorter still when the
+    /// limit would otherwise split a surrogate pair) with <c>"... (truncated)"</c> appended.
+    /// </returns>
+    /// <remarks>
+    /// <see langword="internal"/> (not <see langword="private"/>), matching this file's
+    /// existing testability convention (<see cref="ComputeScenarioId"/>) — exposed so
+    /// SuiteSetLoaderTests can pin the surrogate-pair edge case directly and deterministically
+    /// rather than relying on an end-to-end fixture that would need a real UTF-16 astral
+    /// character positioned at an exact byte offset to exercise it.
+    /// </remarks>
+    internal static string TruncateParseErrorMessage(string message)
+    {
+        if (message.Length <= MaxParseErrorMessageChars)
+        {
+            return message;
+        }
+
+        var cut = MaxParseErrorMessageChars;
+        while (cut > 0 && char.IsHighSurrogate(message[cut - 1]))
+        {
+            cut--;
+        }
+
+        return message[..cut] + "... (truncated)";
+    }
 }

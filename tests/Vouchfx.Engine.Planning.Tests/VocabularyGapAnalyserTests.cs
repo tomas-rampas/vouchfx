@@ -93,6 +93,25 @@ public sealed class VocabularyGapAnalyserTests
         Assert.DoesNotContain(
             report.Findings,
             f => f.Kind == PlanFindingKinds.DependencyMissingStepType && f.Suite == "suite-b-covered.e2e.yaml");
+
+        // MINOR fix-round: the SERVICE half of the same per-declaring-suite regression, pinned
+        // the same way — both suites declare a "web" service of the same name, but only
+        // suite-a-uncovered.e2e.yaml has zero http.* steps targeting it. Without this
+        // assertion, AnalyseServices could silently regress to name-aggregation (the exact
+        // class of bug the dependency half already guards against) with no test to catch it.
+        var serviceFinding = Assert.Single(
+            report.Findings, f => f.Kind == PlanFindingKinds.ServiceMissingHttpStep);
+        Assert.Equal("web", serviceFinding.Target);
+        Assert.Equal(PlanTargetKinds.Service, serviceFinding.TargetKind);
+        Assert.Equal("suite-a-uncovered.e2e.yaml", serviceFinding.Suite);
+        Assert.Equal(new[] { "http.rest" }, serviceFinding.SuggestedTypes);
+        Assert.False(string.IsNullOrEmpty(serviceFinding.SuggestedStepId));
+
+        // suite-b-covered.e2e.yaml's OWN declaration of "web" must never itself be reported —
+        // its http.rest step genuinely covers it, independently of suite-a's gap.
+        Assert.DoesNotContain(
+            report.Findings,
+            f => f.Kind == PlanFindingKinds.ServiceMissingHttpStep && f.Suite == "suite-b-covered.e2e.yaml");
     }
 
     [Fact]

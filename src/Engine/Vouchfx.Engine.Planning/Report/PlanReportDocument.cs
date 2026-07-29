@@ -65,8 +65,12 @@ public sealed record PlanThresholdsReport(
 /// not a technology-kind token.
 /// </param>
 /// <param name="Dependencies">
-/// The distinct dependency name+type pairs declared across every suite's
-/// <c>environment.dependencies</c> block, ordinal-sorted by name.
+/// Every dependency declared across every suite's <c>environment.dependencies</c> block, one
+/// entry per (suite, name, type), ordinal-sorted by name then type then suite. MAJOR
+/// fix-round: entries are NOT deduplicated by name+type alone across suites — a dependency is
+/// declared inside exactly one suite, so two suites declaring a same-named dependency
+/// (optionally with different <c>type</c> values) each get their own entry, disambiguated by
+/// <see cref="PlanDependencyEntry.Suite"/>.
 /// </param>
 /// <param name="StepTypes">
 /// The distinct dotted step types declared across every suite, ordinal-sorted.
@@ -144,12 +148,25 @@ public sealed record PlanSuiteEntry(
     [property: JsonPropertyOrder(2)] string? Name,
     [property: JsonPropertyOrder(3)] int StepCount);
 
-/// <summary>A single declared dependency's name and kind.</summary>
+/// <summary>A single declared dependency's name and kind, scoped to its declaring suite.</summary>
 /// <param name="Name">The dependency's logical name (the map key under <c>environment.dependencies</c>).</param>
 /// <param name="Type">The dependency's declared <c>type</c> token, e.g. <c>postgres</c>, <c>kafka</c>.</param>
+/// <param name="Suite">
+/// MAJOR fix-round (REQ-011 additive): the relative path of the suite that declares this
+/// dependency — the same <see cref="PlanSuiteEntry.Path"/> value, and never
+/// <see langword="null"/> (a dependency is always declared inside exactly one suite's
+/// <c>environment</c>, unlike <see cref="PlanFinding.Suite"/> which can be null for a
+/// finding not scoped to a single suite). Required because <see cref="Name"/> alone stopped
+/// being a unique key into this list the moment findings became per-declaring-suite: two
+/// suites may each declare a dependency of the same name (optionally with different
+/// <see cref="Type"/> values), and a caller matching a <see cref="PlanFinding.Target"/> back
+/// to its inventory entry must disambiguate on (<see cref="Suite"/>, <see cref="Name"/>),
+/// never on <see cref="Name"/> alone.
+/// </param>
 public sealed record PlanDependencyEntry(
     [property: JsonPropertyOrder(0)] string Name,
-    [property: JsonPropertyOrder(1)] string Type);
+    [property: JsonPropertyOrder(1)] string Type,
+    [property: JsonPropertyOrder(2)] string Suite);
 
 /// <summary>A discovered suite that failed to parse (EDGE-003).</summary>
 /// <param name="Path">The suite's path relative to the analysed root, <c>/</c>-separated.</param>
@@ -166,7 +183,13 @@ public sealed record PlanUnanalysableSuite(
 /// is explicitly known to have no asserting/observing Core provider yet, or that it is not
 /// recognised by the engine's dependency-kind vocabulary at all.
 /// </param>
+/// <param name="Suite">
+/// MAJOR fix-round (REQ-011 additive): the relative path of the suite that declares this
+/// dependency — see <see cref="PlanDependencyEntry.Suite"/> for why <see cref="Name"/> alone
+/// is not a unique key once more than one suite is analysed. Never <see langword="null"/>.
+/// </param>
 public sealed record PlanUnmappableDependency(
     [property: JsonPropertyOrder(0)] string Name,
     [property: JsonPropertyOrder(1)] string Type,
-    [property: JsonPropertyOrder(2)] string Reason);
+    [property: JsonPropertyOrder(2)] string Reason,
+    [property: JsonPropertyOrder(3)] string Suite);

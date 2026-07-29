@@ -42,7 +42,7 @@ to published pre-releases on 2026-07-14.
 
 ## [1.0.0-rc.2] — 2026-07-28
 
-Schema and catalogue export for AI and tooling consumers (Spec A / `engine-schema-and-catalogue-export`). The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
+Schema and catalogue export for AI and tooling consumers. The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
 
 ### Added
 

@@ -5,7 +5,14 @@ metadata:
 # declares a `cache` dependency of the SAME NAME and kind (redis), but here it genuinely IS
 # asserted via cache-assert.redis. Evidence from THIS suite must never be allowed to mask
 # suite-a-uncovered.e2e.yaml's completely unexercised seam of the same name.
+#
+# MINOR fix-round: likewise declares a `web` service of the SAME NAME as
+# suite-a-uncovered.e2e.yaml's, genuinely covered here by an http.rest step — the service-side
+# counterpart of the dependency regression pin above.
 environment:
+  services:
+    web:
+      image: myorg/web:1.0
   dependencies:
     cache:
       type: redis
@@ -14,3 +21,6 @@ steps:
   - id: assert-cache
     type: cache-assert.redis
     target: cache
+  - id: call-web
+    type: http.rest
+    target: web

@@ -128,12 +128,18 @@ internal static class PlanPipeline
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
+        // MAJOR fix-round: scoped to (suite, name, type), never name alone — a dependency is
+        // declared inside exactly one suite's environment, and two suites may declare a
+        // same-named dependency (optionally with different Type values), so Suite is carried
+        // on every entry (PlanDependencyEntry.Suite's own remarks) rather than deduplicating
+        // across suites by name the way the pre-fix implementation did.
         var dependencies = inputs.Suites
-            .SelectMany(DependenciesOf)
-            .Select(kvp => new PlanDependencyEntry(kvp.Key, kvp.Value.Type))
+            .SelectMany(suite => DependenciesOf(suite)
+                .Select(kvp => new PlanDependencyEntry(kvp.Key, kvp.Value.Type, suite.RelativePath)))
             .Distinct()
             .OrderBy(d => d.Name, StringComparer.Ordinal)
             .ThenBy(d => d.Type, StringComparer.Ordinal)
+            .ThenBy(d => d.Suite, StringComparer.Ordinal)
             .ToArray();
 
         var stepTypes = inputs.Suites
@@ -151,7 +157,7 @@ internal static class PlanPipeline
         // the mapping table and its prose stay in the same place.
         var unmappable = dependencies
             .Where(d => !DependencyKindStepMap.TryGetCandidates(d.Type, out _))
-            .Select(d => new PlanUnmappableDependency(d.Name, d.Type, DependencyKindStepMap.DescribeUnmappable(d.Type)))
+            .Select(d => new PlanUnmappableDependency(d.Name, d.Type, DependencyKindStepMap.DescribeUnmappable(d.Type), d.Suite))
             .ToArray();
 
         return new PlanInventory(

@@ -28,11 +28,13 @@
     "dependencies": [
       {
         "name": "events",
-        "type": "kafka"
+        "type": "kafka",
+        "suite": "checkout.e2e.yaml"
       },
       {
         "name": "orders-db",
-        "type": "postgres"
+        "type": "postgres",
+        "suite": "checkout.e2e.yaml"
       }
     ],
     "stepTypes": [
@@ -55,14 +57,15 @@
       {
         "name": "legacy-cache",
         "type": "cassandra",
-        "reason": "Dependency kind is not recognised by the engine\u0027s dependency-kind vocabulary."
+        "reason": "Dependency kind is not recognised by the engine\u0027s dependency-kind vocabulary.",
+        "suite": "refund.e2e.yaml"
       }
     ]
   },
   "findings": [
     {
       "kind": "dependency-missing-step-type",
-      "suite": null,
+      "suite": "checkout.e2e.yaml",
       "stepId": null,
       "target": "orders-db",
       "targetKind": "dependency",
@@ -94,7 +97,7 @@
     },
     {
       "kind": "service-missing-http-step",
-      "suite": null,
+      "suite": "checkout.e2e.yaml",
       "stepId": null,
       "target": "api",
       "targetKind": "service",
