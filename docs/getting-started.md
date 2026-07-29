@@ -402,6 +402,42 @@ In-process hosts (MCP servers, custom runners) should call the public API in the
 
 Pass the same frozen `StepKindRegistry` the process uses for validation/run so the export always matches live registration. Incomplete metadata throws `CatalogueExportException` naming the offending step type.
 
+## Coverage analysis (the Planner)
+
+As your test suite grows, the **Planner** is a read-only analysis tool that answers the question: **what should I test next?** It intersects three sources — your declared suite set (the `.e2e.yaml` files on disk), your run history (the JSON Lines event archive from `--events-stream` or `--events`), and the available step catalogue — and emits a structured gap report.
+
+```bash
+# Analyse your declared suites against run history
+vouchfx plan ./tests/e2e --events ./run-history.jsonl
+
+# Exit with code 5 if gaps are found (for CI gating)
+vouchfx plan ./tests/e2e --events ./run-history.jsonl --fail-on-gap
+
+# Machine-readable JSON report (for tooling)
+vouchfx plan ./tests/e2e --events ./run-history.jsonl --json
+```
+
+The Planner identifies:
+
+- **Coverage gaps:** suite never run, step never exercised, dependency not asserted, dependency missing an asserting step type, service missing an HTTP call
+- **History-health signals:** step stale (last run >30 days ago), flaky (both passes and failures), fragile (infrastructure errors), inconclusive (timeouts or unmet conditions)
+- **Identity issues:** suite names colliding or referencing renamed files
+
+Exit codes for `vouchfx plan`:
+
+| Exit code | Meaning |
+|---|---|
+| **0** | Successful analysis (regardless of gaps found). |
+| **2** | Usage error — bad suite path, empty directory, out-of-range threshold, or missing parent directory for `--output`. |
+| **3** | Incomplete catalogue metadata (a provider lacks schema). |
+| **5** | Gaps found (only with `--fail-on-gap`). |
+
+Every gap carries structured hints — step types to test, dependency names, suggested step ids — that the **Generator** (`vouchfx scaffold`) consumes directly to draft a skeleton step. This closes the loop: **plan → pick a gap → scaffold → validate → run**.
+
+Thresholds are configurable (`--stale-days N`, `--flaky-min-runs N`, `--fragile-min-env-errors N`, `--inconclusive-min N`) with sensible defaults (30 days, 2 runs, 2 errors, 2 outcomes respectively).
+
+See the [Planner documentation](planner.md) for the full reference.
+
 ## Generator / suite scaffold
 
 Authoring is often the adoption bottleneck. vouchfx provides a **Generator** path that turns a **structured intent** (chosen step types, environment outline, step ids) into a **schema-valid `.e2e.yaml` skeleton** grounded in the **live step catalogue** — then you (or an MCP host LLM) fill in real semantics, **validate**, and **run**.

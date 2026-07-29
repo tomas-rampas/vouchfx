@@ -3,7 +3,7 @@
 The vouchfx **Planner**: a deterministic, read-only coverage-and-gap analysis over three
 engine-side sources — the **declared** universe (an `.e2e.yaml` suite folder), the
 **exercised** reality (a JSON Lines event history), and the **available** vocabulary (the
-live Spec A step catalogue) — emitting a schema-versioned coverage-and-gap report.
+live step catalogue) — emitting a schema-versioned coverage-and-gap report.
 
 The Planner never writes a suite file, never calls a model API, and never claims coverage
 it cannot evidence from its declared inputs.
@@ -32,7 +32,7 @@ tool without shelling out or reflecting over CLI internals.
 - Never reads: production traffic, telemetry, OpenAPI/AsyncAPI/docker-compose files, or git
   history.
 - Never resolves secrets, never echoes an observation payload or a captured value into the
-  report (EDGE-006).
+  report (protecting against credential leaks in observations).
 
 ## Report shape
 

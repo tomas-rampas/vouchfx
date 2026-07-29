@@ -135,7 +135,7 @@ nav:
       - Getting started (60-minute path): getting-started.md
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
-      - Planner: coverage and gap analysis: planner.md
+      - "Planner: coverage and gap analysis": planner.md
       - Troubleshooting: troubleshooting.md
       - CI integration reference: ci-integration.md
       - Telemetry & privacy: telemetry.md

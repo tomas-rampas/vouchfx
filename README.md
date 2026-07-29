@@ -147,10 +147,10 @@ vouchfx run ./tests/users.e2e.yaml --watch    # re-run on save
 vouchfx run ./tests --html ./report.html --junit ./results.xml
 ```
 
-Four Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
+Five Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
 (schema, parse, AST, provider binding, Roslyn) without starting anything; `vouchfx list` prints the
 sealed step-type catalogue (with shape-level fields on `--json`); `vouchfx schema` emits the
-composed v1 JSON Schema; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
+composed v1 JSON Schema; `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
 run history, and available providers, emitting findings for coverage gaps (suite never run, step never
 exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals
 (stale, flaky, fragile, inconclusive-prone), and identity ambiguity. Most take `--json` for tooling;
@@ -166,6 +166,7 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 | `2` | UsageError — bad option, missing path | Always |
 | `3` | EnvironmentError | Only with `--fail-on-env-error` |
 | `4` | Inconclusive | Only with `--fail-on-inconclusive` |
+| `5` | Gaps found | Only with `vouchfx plan --fail-on-gap` |
 
 One exception: a run in which *every* discovered scenario fails to parse exits 4 unconditionally.
 

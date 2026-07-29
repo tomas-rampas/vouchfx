@@ -2,7 +2,7 @@
 
 The **Planner** is a deterministic, read-only analysis tool that intersects three engine-side sources — the **declared** universe (the `.e2e.yaml` suite folder), the **exercised** reality (your run history), and the **available** vocabulary (the registered step catalogue) — and emits a coverage-and-gap report. It answers the question: **what should I test next?**
 
-Every gap finding carries the structured hints the [`scaffold`](language-reference.md) tool needs, so you can pick a gap, generate a skeleton step, and validate it — all without re-deriving anything. The Planner never writes a suite file, never calls a model, and never claims coverage it cannot evidence from its declared inputs.
+Every gap finding carries the structured hints the [`scaffold`](getting-started.md#generator--suite-scaffold) tool needs, so you can pick a gap, generate a skeleton step, and validate it — all without re-deriving anything. The Planner never writes a suite file, never calls a model, and never claims coverage it cannot evidence from its declared inputs.
 
 ## What the Planner reads
 
@@ -64,8 +64,8 @@ The Planner applies documented defaults to classify history-health findings. You
 |---|---|---|---|
 | `step-stale` | 30 days | `--stale-days <n>` | A step last observed more than `n` days ago (relative to the newest event in your history, not wall-clock now). |
 | `step-flaky` | 2 runs | `--flaky-min-runs <n>` | A step shows Pass and Fail verdicts across at least `n` distinct run IDs. |
-| `step-fragile` | 2 errors | `--fragile-min-env-errors <n>` | A step shows EnvironmentError outcomes in at least `n` runs. |
-| `step-inconclusive-prone` | 2 outcomes | `--inconclusive-min <n>` | A step shows Inconclusive outcomes in at least `n` runs. |
+| `step-fragile` | 2 errors | `--fragile-min-env-errors <n>` | A step shows at least `n` EnvironmentError outcomes (across any number of runs). |
+| `step-inconclusive-prone` | 2 outcomes | `--inconclusive-min <n>` | A step shows at least `n` Inconclusive outcomes (across any number of runs). |
 
 **Important:** "now" is the **newest event timestamp in your analysed history**, never wall-clock time. This means a given input always produces the same report, no matter when you run the command. A stale step is not "stale today" but "stale *relative to the most-recent data you have*".
 
@@ -84,7 +84,7 @@ A suite counts as **exercised** when a `scenario-started` event's `scenarioId` m
 | Exit code | Meaning | When |
 |---|---|---|
 | **0** | Successful analysis — regardless of how many gaps or health issues were found | Always, unless `--fail-on-gap` is set and gaps exist |
-| **2** | UsageError — bad/missing suite path, empty suite folder, or a missing `--output` parent directory | Usage mistakes |
+| **2** | UsageError — bad/missing suite path, empty suite folder, a threshold out of range (`--stale-days` ≥ 1, `--flaky-min-runs` ≥ 1, `--fragile-min-env-errors` ≥ 1, `--inconclusive-min` ≥ 1), or a missing `--output` parent directory; also when an event history file exceeds 64 MiB | Usage mistakes |
 | **3** | Incomplete catalogue metadata — a registered provider lacks a schema fragment (rare; the same class of failure `vouchfx list` and `vouchfx schema` map to) | Engine build problem |
 | **5** | Gaps found — at least one `suite-never-run`, `step-never-exercised`, `dependency-not-asserted`, `dependency-missing-step-type`, or `service-missing-http-step` finding is present | Only when `--fail-on-gap` is set AND gaps exist |
 
@@ -110,7 +110,7 @@ var report = PlanExport.BuildPlan(request, registry, engineVersion: "1.0.0");
 string json = PlanExport.SerializePlan(report);
 ```
 
-Both entry points are in the `Vouchfx.Engine.Planning` package (the same one the CLI uses). The report is a `PlanReportDocument` with frozen v1 wire shape.
+Both entry points are in the `Vouchfx.Engine.Planning` library (the same one the CLI uses), available in-tree in this repository. The report is a `PlanReportDocument` with frozen v1 wire shape.
 
 ## The workflow
 
@@ -128,11 +128,11 @@ vouchfx plan ./tests/e2e --events ./run-history.jsonl
 #   "suggestedStepId": "assert-orders-db"
 #
 # Maps directly to scaffold intent:
-vouchfx scaffold --intent '{
+echo '{
   "steps": [
     { "id": "assert-orders-db", "type": "db-assert.postgres" }
   ]
-}' --output ./draft.e2e.yaml
+}' | vouchfx scaffold --intent - --output ./draft.e2e.yaml
 
 # Validate the scaffold before authoring.
 vouchfx validate ./draft.e2e.yaml
@@ -178,21 +178,20 @@ vouchfx plan ./tests/e2e --events ./run-history
 Human-readable summary:
 
 ```
-Suites analysed:         3 (0 unanalysable)
-Services declared:       2
-Dependencies declared:   3 (0 unmappable)
-Distinct step types:     8
-Runs analysed:           12
+Suites analysed:         2 (0 unanalysable)
+Services declared:       1
+Dependencies declared:   2 (0 unmappable)
+Distinct step types:     4
+Runs analysed:           5
 Event history span:      2026-07-15T10:30:00Z .. 2026-07-27T14:22:15Z
 Skipped event lines:     0
 Unmatched observations:  0
 Thresholds:              stale>30d, flaky>=2 runs, fragile>=2 env-errors, inconclusive>=2
 
-Findings: 5 total (3 gap(s)).
+Findings: 3 total (2 gap(s)).
   dependency-missing-step-type  1
   service-missing-http-step     1
   step-flaky                     1
-  step-stale                     2
 ```
 
 Requesting JSON output:
@@ -250,7 +249,10 @@ vouchfx plan ./tests/e2e --events ./run-history --json
       "suggestedTypes": ["db-assert.postgres"],
       "suggestedStepId": "assert-orders-db",
       "ambiguous": false,
-      "detail": "Dependency 'orders-db' (postgres) has no analysed step of a candidate asserting type."
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Dependency 'orders-db' (postgres) has no analysed step of a candidate asserting type.",
+      "relatedSuites": []
     },
     {
       "kind": "service-missing-http-step",
@@ -261,7 +263,10 @@ vouchfx plan ./tests/e2e --events ./run-history --json
       "suggestedTypes": ["http.rest"],
       "suggestedStepId": "assert-orders-api",
       "ambiguous": false,
-      "detail": "Service 'orders-api' has no http.* step targeting it."
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Service 'orders-api' has no http.* step targeting it.",
+      "relatedSuites": []
     },
     {
       "kind": "step-flaky",
@@ -272,6 +277,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
       "suggestedTypes": [],
       "suggestedStepId": null,
       "ambiguous": false,
+      "ambiguityReason": null,
       "history": {
         "passCount": 3,
         "failCount": 2,
@@ -281,7 +287,8 @@ vouchfx plan ./tests/e2e --events ./run-history --json
         "lastObserved": "2026-07-27T14:22:15+00:00",
         "ageDays": 1
       },
-      "detail": "Step 'create-order' passed 3 and failed 2 times across 2 distinct runs."
+      "detail": "Step 'create-order' passed 3 and failed 2 times across 2 distinct runs.",
+      "relatedSuites": []
     }
   ]
 }
@@ -298,4 +305,4 @@ vouchfx plan ./tests/e2e --events ./run-history --fail-on-gap
 
 ---
 
-**Learn more:** Read the [Technical Architecture Blueprint § 16](01_Technical_Architecture_and_Engineering_Blueprint.md#16-test-runner-orchestration-and-verdict-taxonomy) for the verdict taxonomy and runner design, and the [Language Reference](language-reference.md) for the declared DSL that the Planner analyses.
+**Learn more:** Read the [Technical Architecture Blueprint § 16](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes) (particularly § 16.4 for the verdict taxonomy) for the runner design, and the [Language Reference](language-reference.md) for the declared DSL that the Planner analyses.
