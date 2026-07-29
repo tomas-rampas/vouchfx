@@ -5,7 +5,9 @@
 // [JsonDerivedType] hierarchy: the whole event-stream contract in this repo is already
 // flat-with-nullables for exactly the same reason (EventPayloads.cs: "Wire-format contract
 // — FLAT shape"). A single PlanFinding type also makes the EDGE-005 deterministic sort
-// (kind, then target, then suite, then step id) a single OrderBy/ThenBy chain over one type.
+// (kind, then target, then suite, then step id, then ambiguity reason, then detail — see
+// PlanPipeline.Sort's remarks for why the sort needs all six) a single OrderBy/ThenBy chain
+// over one type.
 
 using System.Text.Json.Serialization;
 

@@ -30,8 +30,15 @@ namespace Vouchfx.Engine.Planning.Report;
 /// <param name="Inventory">The REQ-003 inventory section.</param>
 /// <param name="Findings">
 /// Every coverage gap, vocabulary gap, history-health, and suite-identity-ambiguity finding,
-/// in the EDGE-005 deterministic order (kind, then target, then suite path, then step id;
-/// all <see cref="StringComparer.Ordinal"/>, nulls last).
+/// in the EDGE-005 deterministic order: kind, then target, then suite path, then step id,
+/// then ambiguity reason, then detail text — all keys <see cref="StringComparer.Ordinal"/>,
+/// nulls last. The last two keys exist to break ties the first four cannot: two
+/// suite-identity-ambiguity findings on the same collision (kind, target, suite, and step id
+/// all <see langword="null"/> on both) are only distinguished by which scenario-id collision
+/// they describe, so the tie-break is deliberate — not an incidental artefact of upstream
+/// ordering — and a consumer sorting or diffing findings must apply all six keys to get the
+/// same order the engine produces. See <c>PlanPipeline.Sort</c> for the implementation and
+/// its remarks for the full history of why four keys stopped being sufficient.
 /// </param>
 public sealed record PlanReportDocument(
     [property: JsonPropertyOrder(0)] int SchemaVersion,
