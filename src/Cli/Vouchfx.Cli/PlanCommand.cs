@@ -346,7 +346,11 @@ internal static class PlanCommand
 
         if (json)
         {
-            output.Write(reportJson);
+            // MINOR fix-round: WriteLine (not Write) so the shell prompt does not land
+            // attached to the closing brace — mirrors SchemaCommand's own stdout convention.
+            // --output's file content (above) stays exactly PlanExport.SerializePlan's
+            // output with no appended newline; only stdout gets one.
+            output.WriteLine(reportJson);
         }
         else
         {

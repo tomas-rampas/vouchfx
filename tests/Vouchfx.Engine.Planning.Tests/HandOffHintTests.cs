@@ -310,7 +310,10 @@ public sealed class HandOffHintTests
     /// same internal Ingest seam <c>RunCorrelatorTests</c> already exercises directly
     /// (<see cref="SuiteSetLoader"/>, <see cref="EventHistoryReader"/>,
     /// <see cref="RunCorrelator"/>) plus <see cref="EngineExport.BuildCatalogue"/> — the exact
-    /// sequence <c>PlanExport.BuildPlan</c> itself runs. No event history: every fixture this
+    /// sequence <c>PlanExport.BuildPlan</c> itself runs (including its fail-closed catalogue
+    /// guard, whose return value <see cref="PlanInputs"/> no longer carries — see
+    /// <c>PlanExport.BuildPlan</c>'s own comment; REQ-005/REQ-007 classify against
+    /// <see cref="PlanInputs.Registry"/> directly). No event history: every fixture this
     /// file uses is analysed with an absent history (REQ-009), which is irrelevant here since
     /// <see cref="HandOffHints.Enrich"/> never reads <see cref="PlanInputs.History"/>.
     /// </summary>
@@ -319,12 +322,11 @@ public sealed class HandOffHintTests
         var registry = PlannerTestFixtures.BuildCoreRegistry();
         var suiteDir = PlannerTestFixtures.FixtureRoot(fixtureRelativePath);
         var loadResult = SuiteSetLoader.Load(suiteDir, registry);
-        var catalogue = EngineExport.BuildCatalogue(registry);
+        _ = EngineExport.BuildCatalogue(registry);
         var history = RunCorrelator.Correlate(loadResult.Suites, loadResult.AnalysedRoot, EventHistoryReader.Read(null));
 
         return new PlanInputs(
             Registry: registry,
-            Catalogue: catalogue,
             Thresholds: PlanThresholds.Defaults,
             AnalysedRoot: loadResult.AnalysedRoot,
             Suites: loadResult.Suites,

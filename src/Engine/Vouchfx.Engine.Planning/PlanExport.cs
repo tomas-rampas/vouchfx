@@ -103,19 +103,23 @@ public static class PlanExport
         // folder against a BROKEN registry — the two can never race for the same invocation.
         var loadResult = SuiteSetLoader.Load(request.SuitePath, registry);
 
-        // REQ-005 / REQ-007 need the live step catalogue — the "available vocabulary" source
-        // — to classify vocabulary gaps and validate hand-off hints against the CURRENT
-        // registration. Fails closed exactly like EngineExport.BuildCatalogue's own contract;
-        // the CLI maps CatalogueExportException to exit 3, the same class of failure as
-        // `vouchfx list` / `vouchfx schema`.
-        var catalogue = EngineExport.BuildCatalogue(registry, engineVersion);
+        // MINOR fix-round: this call is a FAIL-CLOSED GUARD, not a data source — its return
+        // value is intentionally discarded. REQ-005's vocabulary-gap analyser and REQ-007's
+        // hand-off-hint validation both classify against the CURRENT registration via
+        // StepKindRegistry.TryGet directly (PlanInputs.Registry), never via a parsed
+        // StepCatalogueDocument, so keeping the built document around would be dead state.
+        // The call itself stays load-bearing: it fails closed exactly like
+        // EngineExport.BuildCatalogue's own contract (a registered provider lacking a schema
+        // fragment throws CatalogueExportException, which the CLI maps to exit 3 — the same
+        // class of failure as `vouchfx list` / `vouchfx schema`), so an incomplete catalogue
+        // is caught here rather than surfacing as a confusing downstream failure.
+        _ = EngineExport.BuildCatalogue(registry, engineVersion);
 
         var rawHistory = EventHistoryReader.Read(request.EventsPath);
         var correlatedHistory = RunCorrelator.Correlate(loadResult.Suites, loadResult.AnalysedRoot, rawHistory);
 
         var inputs = new PlanInputs(
             Registry: registry,
-            Catalogue: catalogue,
             Thresholds: thresholds,
             AnalysedRoot: loadResult.AnalysedRoot,
             Suites: loadResult.Suites,

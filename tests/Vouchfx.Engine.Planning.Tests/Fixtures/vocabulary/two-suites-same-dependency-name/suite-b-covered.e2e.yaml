@@ -1,0 +1,16 @@
+metadata:
+  name: suite-b-covered
+
+# The other half of the MAJOR fix-round regression pin (see suite-a-uncovered.e2e.yaml):
+# declares a `cache` dependency of the SAME NAME and kind (redis), but here it genuinely IS
+# asserted via cache-assert.redis. Evidence from THIS suite must never be allowed to mask
+# suite-a-uncovered.e2e.yaml's completely unexercised seam of the same name.
+environment:
+  dependencies:
+    cache:
+      type: redis
+
+steps:
+  - id: assert-cache
+    type: cache-assert.redis
+    target: cache

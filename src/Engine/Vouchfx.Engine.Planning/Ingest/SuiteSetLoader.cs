@@ -32,6 +32,22 @@ internal static class SuiteSetLoader
     /// </summary>
     internal const long MaxDocumentSizeBytes = 1024 * 1024;
 
+    /// <summary>
+    /// The maximum permitted length, in UTF-16 characters, of a captured parse/AST-build
+    /// error message surfaced in <see cref="PlanUnanalysableSuite.Error"/> (MINOR fix-round).
+    /// Unlike the adjacent I/O-fault catch in <see cref="ParseFile"/> (which deliberately
+    /// names only the exception TYPE, never <c>Message</c>, to avoid leaking an absolute
+    /// path), a parse/AST-build message IS embedded here because it is the author's own
+    /// actionable diagnostic (e.g. "unknown step type 'x'"). But <c>AstBuilder</c>'s error
+    /// messages echo raw content straight from the offending YAML verbatim (a bad step's
+    /// entire <c>type</c> scalar, however long) — an unbounded message would let a suite
+    /// file's own content reach a shared report with no size limit at all. This bound caps
+    /// that blast radius without losing the diagnostic's actionable point; a real parser
+    /// message is normally well under 200 characters, so 500 is generous headroom, not a
+    /// tight fit.
+    /// </summary>
+    internal const int MaxParseErrorMessageChars = 500;
+
     /// <summary>The outcome of a suite-set load: the analysed root plus every suite, split by whether it parsed.</summary>
     /// <param name="AnalysedRoot">
     /// The absolute directory used to compute every suite's <see cref="PlanSuite.RelativePath"/>
@@ -83,11 +99,34 @@ internal static class SuiteSetLoader
         }
         else if (Directory.Exists(fullRoot))
         {
-            files = Directory
-                .EnumerateFiles(fullRoot, ScenarioGlob, SearchOption.AllDirectories)
-                .Select(Path.GetFullPath)
-                .OrderBy(p => p, StringComparer.Ordinal)
-                .ToList();
+            try
+            {
+                files = Directory
+                    .EnumerateFiles(fullRoot, ScenarioGlob, SearchOption.AllDirectories)
+                    .Select(Path.GetFullPath)
+                    .OrderBy(p => p, StringComparer.Ordinal)
+                    .ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // MINOR fix-round (reviewed question, resolved: harden rather than accept
+                // parity with ScenarioDiscovery.Discover, which has this identical gap — a
+                // raw BCL exception escaping this PUBLIC library API's entry point is worse
+                // than parity with an internal CLI helper whose caller already wraps every
+                // call site). SearchOption.AllDirectories walks lazily, so a permission
+                // denial or delete race on any subdirectory beneath an otherwise-accessible
+                // root surfaces here, not at the top-level Directory.Exists check above.
+                // Wrapped as PlanInputException (never the raw type) so BuildPlan's contract
+                // — only PlanInputException/CatalogueExportException ever leave it — holds
+                // for this path too; never silently treated as "zero suites discovered"
+                // (EDGE-009's message), which would misleadingly suggest an empty folder
+                // rather than a folder this process could not fully walk.
+                throw new PlanInputException(
+                    $"Suite path '{suitePath}' (resolved to '{fullRoot}') could not be fully "
+                    + $"enumerated ({ex.GetType().Name}): a subdirectory may be locked, "
+                    + "deleted, or access-denied.");
+            }
+
             analysedRoot = fullRoot;
         }
         else
@@ -187,8 +226,14 @@ internal static class SuiteSetLoader
         {
             // Mirrors ScenarioDiscovery.ParseFile: a parse / AST-build failure must not
             // abort the rest of the suite set (EDGE-003), so every exception is captured
-            // here rather than propagated.
-            unanalysable.Add(new PlanUnanalysableSuite(relativePath, $"Parse / AST error: {ex.Message}"));
+            // here rather than propagated. MINOR fix-round: ex.Message is bounded to
+            // MaxParseErrorMessageChars before it is embedded — see that constant's own
+            // remarks for why (a bad step's raw YAML content can otherwise reach the report
+            // with no length limit at all).
+            var message = ex.Message.Length > MaxParseErrorMessageChars
+                ? ex.Message[..MaxParseErrorMessageChars] + "... (truncated)"
+                : ex.Message;
+            unanalysable.Add(new PlanUnanalysableSuite(relativePath, $"Parse / AST error: {message}"));
         }
     }
 

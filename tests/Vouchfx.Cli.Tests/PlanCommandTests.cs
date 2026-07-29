@@ -402,7 +402,12 @@ public sealed class PlanCommandTests
                 new PlanRequest(dir, null, thresholds), registry, CliJsonContract.EngineVersion);
             var expectedJson = PlanExport.SerializePlan(expectedDocument);
 
-            Assert.Equal(expectedJson, stdoutText);
+            // MINOR fix-round: stdout now gets a trailing newline (WriteLine, not Write —
+            // mirrors SchemaCommand) so the shell prompt never lands attached to the closing
+            // brace. --output's file content (asserted byte-identical with NO added newline
+            // in Execute_Output_WritesByteIdenticalJsonRegardlessOfJsonFlag below) is
+            // deliberately unaffected — only stdout changed.
+            Assert.Equal(expectedJson + Environment.NewLine, stdoutText);
         }
         finally
         {

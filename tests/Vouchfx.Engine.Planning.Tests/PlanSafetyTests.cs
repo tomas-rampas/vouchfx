@@ -5,12 +5,22 @@
 // an analysis" acceptance criterion below. T6 EXTENDS this same file (never recreates it) with
 // two more safety proofs, kept in one file because both are about the Planner's promise to
 // never leak or mutate anything beyond its own report:
-//   - EDGE-006: a fake secret value planted BOTH in an environment variable and inside a
-//     fixture event's `observation` payload must never appear anywhere in the serialised
-//     report.
+//   - EDGE-006: a fake secret value planted inside a fixture event's `observation` payload and
+//     inside a malformed suite's own raw content must never appear, un-bounded, anywhere in
+//     the serialised report.
 //   - REQ-013's "no model SDK on the code path" review-grep check: the Planner's own source
 //     (and its CLI wiring in PlanCommand.cs) must contain no reference to a model SDK,
 //     endpoint, or credential shape.
+//
+// MINOR fix-round: this file previously ALSO planted the secret as the value of a process
+// environment variable, mutated for the duration of the test. That mutation was removed —
+// not merely restored-in-a-finally — because the Planner never reads an environment variable
+// anywhere on its code path (confirmed by grep; PlannerSourceAndCliWiring_
+// ReferenceNoModelSdkOrCredential below scans the same source tree for a different purpose,
+// but the same tree). A mutation of process-global state that cannot possibly affect the
+// system under test buys no coverage while adding a real (if narrow) risk under xUnit's
+// parallel test-class execution; removing it is strictly better than the alternative of
+// justifying it, since there is nothing to justify.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
@@ -26,11 +36,21 @@ public sealed class PlanSafetyTests
 {
     // The fake secret literal is deliberately distinctive (a GUID-shaped, obviously synthetic
     // token) so a false-positive match against unrelated report content is not plausible. It
-    // is planted BOTH as the value of an environment variable AND, verbatim, inside the
-    // committed Fixtures/acceptance/secret-safety-events/history.jsonl fixture's
-    // step-completed `observation` payload — see that file.
+    // is planted verbatim inside the committed Fixtures/acceptance/secret-safety-events/
+    // history.jsonl fixture's step-completed `observation` payload — see that file — and
+    // (MINOR fix-round) inside Fixtures/acceptance/secret-safety/
+    // malformed-with-planted-secret.e2e.yaml's deliberately garbage step `type` value, padded
+    // past SuiteSetLoader.MaxParseErrorMessageChars. The observation-payload channel is NOT
+    // real on its own (the Planner never reads a step-completed event's `observation` payload
+    // — only its verdict/timestamp/runId/stepId — so absence there only ever proved "content
+    // the Planner never touches doesn't appear in its output"); it is kept as a defence-in-depth
+    // regression guard, not as this test's load-bearing proof. The malformed-suite channel IS
+    // real: AstBuilder.ResolveKind echoes an unrecognised step `type` verbatim into its
+    // exception message, which SuiteSetLoader.ParseFile captures into
+    // PlanUnanalysableSuite.Error — genuinely reachable suite-file content flowing into the
+    // report. This fixture proves the length bound added in the same fix-round actually
+    // truncates it away, rather than merely asserting a channel that was never exercised.
     private const string FakeSecretValue = "sk-vfx-test-9f2b6d41-e006-4c2a-8c58-4b6a9a3d0e21";
-    private const string FakeSecretEnvVarName = "VOUCHFX_PLANNER_TEST_FAKE_SECRET";
 
     /// <summary>
     /// Tokens that would indicate a model SDK, model endpoint, or model-credential shape on
@@ -76,28 +96,30 @@ public sealed class PlanSafetyTests
         }
     }
 
-    // ── EDGE-006: a secret planted in the environment AND in an observation payload never
-    // reaches the serialised report. ─────────────────────────────────────────────────────
+    // ── EDGE-006: a secret planted in an observation payload AND a malformed suite's own raw
+    // content never reaches the serialised report un-bounded. ──────────────────────────────
 
     [Fact]
-    public void SerialisedReport_NeverContainsASecretPlantedInTheEnvironmentOrAnObservationPayload()
+    public void SerialisedReport_NeverContainsASecretPlantedInAnObservationPayloadOrAMalformedSuite()
     {
-        var previousValue = Environment.GetEnvironmentVariable(FakeSecretEnvVarName);
-        Environment.SetEnvironmentVariable(FakeSecretEnvVarName, FakeSecretValue);
-        try
-        {
-            var report = PlannerTestFixtures.Plan(
-                PlannerTestFixtures.FixtureRoot("acceptance/secret-safety"),
-                PlannerTestFixtures.FixtureRoot("acceptance/secret-safety-events"));
+        var report = PlannerTestFixtures.Plan(
+            PlannerTestFixtures.FixtureRoot("acceptance/secret-safety"),
+            PlannerTestFixtures.FixtureRoot("acceptance/secret-safety-events"));
 
-            var json = PlanExport.SerializePlan(report);
+        var json = PlanExport.SerializePlan(report);
 
-            Assert.DoesNotContain(FakeSecretValue, json, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(FakeSecretEnvVarName, previousValue);
-        }
+        Assert.DoesNotContain(FakeSecretValue, json, StringComparison.Ordinal);
+
+        // MINOR fix-round: prove the malformed-suite channel is genuinely exercised — not
+        // merely absent because the file failed to be discovered/scanned at all — by
+        // asserting the report DOES carry a bounded, truncated stand-in for it. A regression
+        // that stopped bounding ex.Message (or stopped scanning the fixture at all) would
+        // make one of these two assertions fail.
+        var malformed = Assert.Single(
+            report.Inventory.UnanalysableSuites,
+            u => u.Path == "malformed-with-planted-secret.e2e.yaml");
+        Assert.Contains("unknown step type", malformed.Error, StringComparison.Ordinal);
+        Assert.Contains("... (truncated)", malformed.Error, StringComparison.Ordinal);
     }
 
     // ── REQ-013: no model SDK reference anywhere on the Planner code path (engine library +

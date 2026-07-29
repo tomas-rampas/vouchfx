@@ -7,7 +7,6 @@
 
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
-using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Planning.Report;
 using Vouchfx.Sdk;
 
@@ -104,14 +103,11 @@ internal sealed record PlanEventHistory(
 /// frozen registry, the effective thresholds, the declared suite set (with parse failures
 /// captured separately), and the correlated event history.
 /// </summary>
-/// <param name="Registry">The frozen provider registry supplied by the caller.</param>
-/// <param name="Catalogue">
-/// The shape-level step catalogue built from <see cref="Registry"/> via
-/// <see cref="EngineExport.BuildCatalogue"/> — the "available vocabulary" source REQ-005's
-/// vocabulary-gap analyser and REQ-007's hand-off-hint validation read against the CURRENT
-/// registration. <see cref="Vouchfx.Engine.Planning.PlanExport.BuildPlan"/> builds this
-/// fail-closed (propagating <see cref="CatalogueExportException"/>) before assembling
-/// <see cref="PlanInputs"/>, exactly like <c>vouchfx list</c> / <c>vouchfx schema</c>.
+/// <param name="Registry">
+/// The frozen provider registry supplied by the caller — the "available vocabulary" source
+/// REQ-005's vocabulary-gap analyser and REQ-007's hand-off-hint validation read against the
+/// CURRENT registration (both via <see cref="StepKindRegistry.TryGet"/>, never a step
+/// catalogue document).
 /// </param>
 /// <param name="Thresholds">The effective REQ-006 thresholds (defaults or caller overrides).</param>
 /// <param name="AnalysedRoot">The absolute path of the analysed suite root (a directory, or a single file's containing directory).</param>
@@ -120,7 +116,6 @@ internal sealed record PlanEventHistory(
 /// <param name="History">The correlated event history.</param>
 internal sealed record PlanInputs(
     StepKindRegistry Registry,
-    StepCatalogueDocument Catalogue,
     PlanThresholds Thresholds,
     string AnalysedRoot,
     IReadOnlyList<PlanSuite> Suites,

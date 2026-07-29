@@ -62,6 +62,39 @@ public sealed class VocabularyGapAnalyserTests
                 || f.Kind == PlanFindingKinds.ServiceMissingHttpStep);
     }
 
+    // ── MAJOR fix-round regression pin (REQ-005 amended): evaluation scope is per DECLARING
+    // suite, never aggregated by dependency/service name across the analysed set. The
+    // existing PlanPrecedenceTests fixture (and every other fixture in this file) is
+    // single-suite and structurally cannot detect this class of bug — a step in one suite
+    // masking a completely unexercised same-named dependency declared in ANOTHER suite. ────
+
+    [Fact]
+    public void TwoSuitesDeclaringTheSameDependencyName_OneCoveredOneNot_AreJudgedIndependently()
+    {
+        var report = PlannerTestFixtures.Plan(
+            PlannerTestFixtures.FixtureRoot("vocabulary/two-suites-same-dependency-name"));
+
+        // Under the OLD name-aggregated implementation, suite-b-covered.e2e.yaml's
+        // cache-assert.redis step would make BOTH suites' "cache" dependency read as
+        // covered, so this finding would never fire at all — the exact bug this fixture
+        // pins down. Suite is now REQUIRED to disambiguate which suite's "cache" is
+        // uncovered, since both suites declare a dependency of that name.
+        var finding = Assert.Single(
+            report.Findings, f => f.Kind == PlanFindingKinds.DependencyMissingStepType);
+        Assert.Equal("cache", finding.Target);
+        Assert.Equal(PlanTargetKinds.Dependency, finding.TargetKind);
+        Assert.Equal("suite-a-uncovered.e2e.yaml", finding.Suite);
+        Assert.Contains("cache-assert.redis", finding.SuggestedTypes);
+        Assert.Contains("mq-expect.redis", finding.SuggestedTypes);
+        Assert.False(string.IsNullOrEmpty(finding.SuggestedStepId));
+
+        // suite-b-covered.e2e.yaml's OWN declaration of "cache" must never itself be reported
+        // — its cache-assert.redis step genuinely covers it, independently of suite-a's gap.
+        Assert.DoesNotContain(
+            report.Findings,
+            f => f.Kind == PlanFindingKinds.DependencyMissingStepType && f.Suite == "suite-b-covered.e2e.yaml");
+    }
+
     [Fact]
     public void MailpitDependency_WithNoSteps_YieldsFindingNamingMailExpectSmtp()
     {

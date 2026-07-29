@@ -1,0 +1,19 @@
+metadata:
+  name: suite-a-uncovered
+
+# MAJOR fix-round regression pin (REQ-005 amended: evaluation scope is per DECLARING suite,
+# never aggregated by dependency name across the analysed set). This suite declares a `cache`
+# dependency of kind `redis` but has ZERO steps targeting it at all — under the OLD
+# name-aggregated implementation, this suite's total lack of coverage was silently masked by
+# suite-b-covered.e2e.yaml (below) declaring a dependency of the SAME NAME that IS covered
+# there. See VocabularyGapAnalyserTests.
+# TwoSuitesDeclaringTheSameDependencyName_OneCoveredOneNot_AreJudgedIndependently.
+environment:
+  dependencies:
+    cache:
+      type: redis
+
+steps:
+  - id: unrelated-step
+    type: script.csharp
+    code: "// does not target 'cache' at all"

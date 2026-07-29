@@ -16,6 +16,17 @@
 //     --filter "FullyQualifiedName~PlanReportContractFreezeTests"
 //   Rewrites Golden/plan-report-document.v1.json from the freshly-serialised fixture.
 //   Review the diff (must be additive only), then commit.
+//
+// MINOR fix-round: every `Detail` string below is hand-derived (not pipeline-generated —
+// this file still never calls a real analyser) to match the CURRENT wording each analyser's
+// own template produces for the literal values chosen here (suite paths, step ids, counts,
+// thresholds) — so this fixture doubles as a real, trustworthy reference sample of the
+// report's prose, not only its shape. This is NOT enforced by any test (a future analyser
+// wording change will not fail this gate — only a shape/token change will, which remains this
+// file's actual freeze), so keeping it in sync is a courtesy to future readers, not a
+// guarantee. Same treatment already applied, before this fix-round, to
+// UnmappableDependencies[0].Reason below (see its own comment) — this generalises that same
+// distinction (frozen SHAPE vs. illustrative-but-real prose) to every Detail string.
 
 using System.Diagnostics.CodeAnalysis;
 using Vouchfx.Engine.Planning.Report;
@@ -92,7 +103,12 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(3, 2, 0, 0, 2, lastObserved, 1),
-                Detail: "Step 'create-order' passed 3 and failed 2 times across 2 distinct runs.",
+                // MINOR fix-round: kept byte-for-byte in sync with HistoryHealthAnalyser's
+                // real template (hand-derived from the source, not pipeline-generated — see
+                // the class remarks below) rather than a loosely-paraphrased stand-in, so this
+                // golden is a genuinely usable reference sample for the wire shape AND the
+                // real prose, not just the former.
+                Detail: "Step 'create-order' (http.rest) in suite 'checkout.e2e.yaml' shows 3 Pass and 2 Fail verdict(s) across 2 distinct run(s) (flaky threshold: 2 run(s)).",
                 RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepFragile,
@@ -105,7 +121,7 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 2, 0, 2, lastObserved, 1),
-                Detail: "Step 'assert-order-row' recorded 2 environment errors.",
+                Detail: "Step 'assert-order-row' (db-assert.postgres) in suite 'checkout.e2e.yaml' shows 2 EnvironmentError verdict(s) (fragile threshold: 2).",
                 RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepInconclusiveProne,
@@ -118,7 +134,7 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 0, 2, 2, lastObserved, 1),
-                Detail: "Step 'create-order' recorded 2 inconclusive outcomes.",
+                Detail: "Step 'create-order' (http.rest) in suite 'checkout.e2e.yaml' shows 2 Inconclusive verdict(s) (inconclusive-prone threshold: 2).",
                 RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepNeverExercised,
@@ -144,7 +160,7 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 0, 0, 1, lastObserved, 45),
-                Detail: "Step 'create-order' was last observed 45 days before the newest event.",
+                Detail: "Step 'create-order' (http.rest) in suite 'checkout.e2e.yaml' was last observed 45 day(s) before the newest event in the analysed history (stale threshold: 30 day(s)).",
                 RelatedSuites: Array.Empty<string>()),
             new(
                 // MAJOR fix-round: Suite is null (never a bound suite path) — rule 1 fires
@@ -165,7 +181,11 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.ScenarioIdCollision,
                 History: null,
-                Detail: "Scenario id 'checkout-flow' is declared by two suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
+                // MINOR fix-round: "2 suites" (numeral), matching CoverageGapAnalyser's real
+                // template exactly ("{collision.SuitePaths.Count} suites") — the golden
+                // previously spelled it out as "two suites", which no real report would ever
+                // produce.
+                Detail: "Scenario id 'checkout-flow' is declared by 2 suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
                 RelatedSuites: new[] { "checkout.e2e.yaml", "checkout-v2.e2e.yaml" }),
             new(
                 // Fix-round B2: an 11th canonical finding is REQUIRED (not decorative) —
@@ -186,7 +206,11 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.HistoryReferencesMissingFile,
                 History: null,
-                Detail: "History references a file for scenario id 'refund' that no longer exists on disk.",
+                // MINOR fix-round: the golden previously omitted the ": '<path>'" suffix
+                // CoverageGapAnalyser's real template always appends
+                // ($"...on disk: '{renamed.RecordedFile}'.") — added here so the golden
+                // matches the real shape, not an abridged paraphrase of it.
+                Detail: "History references a file for scenario id 'refund' that no longer exists on disk: 'refund-legacy.e2e.yaml'.",
                 RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.SuiteNeverRun,

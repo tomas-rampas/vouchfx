@@ -8,9 +8,23 @@
 // further.
 //
 // This is purely a declared-vs-catalogue analysis: unlike CoverageGapAnalyser (T2), it never
-// reads PlanInputs.History. A dependency/service is aggregated by NAME across every suite
-// that declares it (mirroring PlanPipeline.BuildInventory's own REQ-003 aggregation), so a
-// step in ANY analysed suite that targets it counts as coverage.
+// reads PlanInputs.History.
+//
+// MAJOR fix-round (REQ-005 amended): evaluation scope is PER DECLARING SUITE, never
+// aggregated by dependency/service NAME across the analysed set. A dependency (or service) is
+// declared inside exactly one suite's `environment`, so its coverage MUST be judged within
+// that suite — a step in suite B can never mask an unexercised seam in suite A, even when both
+// suites happen to declare a dependency of the same name. The previous name-aggregated
+// implementation let a zero-coverage dependency in one suite silently disappear whenever
+// another suite declared (and covered) a same-named dependency; two suites each declaring
+// `cache: {type: redis}`, one asserting it and one never touching it, now both get judged
+// independently, and the second is still reported. This also settles the case of two suites
+// declaring the same dependency NAME with different `type` values: each is now evaluated
+// against its OWN declared kind, so a dependency can no longer be simultaneously an
+// `unmappable` inventory entry (one suite's kind) and a gap finding (another suite's
+// same-named-but-differently-typed kind) — the two suites are simply never conflated at all.
+// Findings are Suite-scoped (Suite is the declaring suite's RelativePath, never null) so a
+// reader can tell which suite's dependency/service is uncovered when two suites share a name.
 //
 // A dependency whose kind has no REQ-005 candidate step type at all
 // (DependencyKindStepMap.TryGetCandidates returns false) is never reported here — REQ-007
@@ -26,6 +40,7 @@
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Planning.Ingest;
 using Vouchfx.Engine.Planning.Report;
+using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Planning.Analysis;
 
@@ -41,36 +56,28 @@ internal static class VocabularyGapAnalyser
         ArgumentNullException.ThrowIfNull(inputs);
 
         var findings = new List<PlanFinding>();
-        findings.AddRange(AnalyseDependencies(inputs));
-        findings.AddRange(AnalyseServices(inputs));
+        foreach (var suite in inputs.Suites)
+        {
+            findings.AddRange(AnalyseDependencies(suite, inputs.Registry));
+            findings.AddRange(AnalyseServices(suite, inputs.Registry));
+        }
+
         return findings;
     }
 
-    // ── REQ-005: dependency-missing-step-type (zero-of-N rule) ──────────────────
+    // ── REQ-005: dependency-missing-step-type (zero-of-N rule), per declaring suite ─────
 
-    private static IEnumerable<PlanFinding> AnalyseDependencies(PlanInputs inputs)
+    private static IEnumerable<PlanFinding> AnalyseDependencies(PlanSuite suite, StepKindRegistry registry)
     {
-        var typeByName = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var suite in inputs.Suites)
+        var dependencies = suite.Ast.Environment?.Dependencies;
+        if (dependencies is null)
         {
-            var dependencies = suite.Ast.Environment?.Dependencies;
-            if (dependencies is null)
-            {
-                continue;
-            }
-
-            foreach (var (name, spec) in dependencies)
-            {
-                // First-seen type wins for a name declared with conflicting types across
-                // suites — an inconsistency the DSL does not forbid but that is outside this
-                // spec's scope; REQ-003's own inventory aggregation has the same property.
-                typeByName.TryAdd(name, spec.Type);
-            }
+            yield break;
         }
 
-        foreach (var name in typeByName.Keys.OrderBy(n => n, StringComparer.Ordinal))
+        foreach (var name in dependencies.Keys.OrderBy(n => n, StringComparer.Ordinal))
         {
-            var type = typeByName[name];
+            var type = dependencies[name].Type;
 
             if (!DependencyKindStepMap.TryGetCandidates(type, out var candidates))
             {
@@ -81,7 +88,7 @@ internal static class VocabularyGapAnalyser
                 continue;
             }
 
-            var isCovered = IsTargetCovered(inputs, name, PlanTargetKinds.Dependency, step =>
+            var isCovered = IsTargetCoveredWithinSuite(suite, name, PlanTargetKinds.Dependency, step =>
                 candidates.Contains(step.CanonicalType, StringComparer.Ordinal));
 
             if (isCovered)
@@ -89,7 +96,7 @@ internal static class VocabularyGapAnalyser
                 continue;
             }
 
-            var suggestedTypes = HandOffHints.FilterToRegistered(inputs.Registry, candidates);
+            var suggestedTypes = HandOffHints.FilterToRegistered(registry, candidates);
             if (suggestedTypes.Count == 0)
             {
                 // Defensive only: DependencyKindStepMapDriftTests guarantees every mapped
@@ -100,7 +107,7 @@ internal static class VocabularyGapAnalyser
 
             yield return new PlanFinding(
                 Kind: PlanFindingKinds.DependencyMissingStepType,
-                Suite: null,
+                Suite: suite.RelativePath,
                 StepId: null,
                 Target: name,
                 TargetKind: PlanTargetKinds.Dependency,
@@ -114,28 +121,19 @@ internal static class VocabularyGapAnalyser
         }
     }
 
-    // ── REQ-005: service-missing-http-step (the only v1 service rule) ───────────
+    // ── REQ-005: service-missing-http-step (the only v1 service rule), per declaring suite ──
 
-    private static IEnumerable<PlanFinding> AnalyseServices(PlanInputs inputs)
+    private static IEnumerable<PlanFinding> AnalyseServices(PlanSuite suite, StepKindRegistry registry)
     {
-        var names = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var suite in inputs.Suites)
+        var services = suite.Ast.Environment?.Services;
+        if (services is null)
         {
-            var services = suite.Ast.Environment?.Services;
-            if (services is null)
-            {
-                continue;
-            }
-
-            foreach (var name in services.Keys)
-            {
-                names.Add(name);
-            }
+            yield break;
         }
 
-        foreach (var name in names)
+        foreach (var name in services.Keys.OrderBy(n => n, StringComparer.Ordinal))
         {
-            var isCovered = IsTargetCovered(inputs, name, PlanTargetKinds.Service, step =>
+            var isCovered = IsTargetCoveredWithinSuite(suite, name, PlanTargetKinds.Service, step =>
                 string.Equals(step.Kind.Family, HttpFamily, StringComparison.Ordinal));
 
             if (isCovered)
@@ -143,7 +141,7 @@ internal static class VocabularyGapAnalyser
                 continue;
             }
 
-            var suggestedTypes = HandOffHints.FilterToRegistered(inputs.Registry, new[] { ServiceSuggestedStepType });
+            var suggestedTypes = HandOffHints.FilterToRegistered(registry, new[] { ServiceSuggestedStepType });
             if (suggestedTypes.Count == 0)
             {
                 continue;
@@ -151,7 +149,7 @@ internal static class VocabularyGapAnalyser
 
             yield return new PlanFinding(
                 Kind: PlanFindingKinds.ServiceMissingHttpStep,
-                Suite: null,
+                Suite: suite.RelativePath,
                 StepId: null,
                 Target: name,
                 TargetKind: PlanTargetKinds.Service,
@@ -166,19 +164,20 @@ internal static class VocabularyGapAnalyser
     }
 
     /// <summary>
-    /// Returns <see langword="true"/> when at least one step, in any analysed suite, both
-    /// satisfies <paramref name="typePredicate"/> and resolves (via the shared
+    /// Returns <see langword="true"/> when at least one step DECLARED IN <paramref name="suite"/>
+    /// itself (never any other analysed suite — REQ-005's per-declaring-suite evaluation
+    /// scope) both satisfies <paramref name="typePredicate"/> and resolves (via the shared
     /// <see cref="StepTargetResolver.TryClassifyTarget"/> classifier — the same lookup
     /// <c>CoverageGapAnalyser</c> uses, so the two analysers can never disagree about what a
     /// target name resolves to) to <paramref name="name"/> classified as
     /// <paramref name="expectedTargetKind"/>.
     /// </summary>
-    private static bool IsTargetCovered(
-        PlanInputs inputs,
+    private static bool IsTargetCoveredWithinSuite(
+        PlanSuite suite,
         string name,
         string expectedTargetKind,
         Func<StepNode, bool> typePredicate) =>
-        inputs.Suites.Any(suite => suite.Ast.Steps.Any(step =>
+        suite.Ast.Steps.Any(step =>
         {
             if (!typePredicate(step))
             {
@@ -190,5 +189,5 @@ internal static class VocabularyGapAnalyser
                 && string.Equals(target, name, StringComparison.Ordinal)
                 && StepTargetResolver.TryClassifyTarget(suite, target, out var targetKind)
                 && string.Equals(targetKind, expectedTargetKind, StringComparison.Ordinal);
-        }));
+        });
 }

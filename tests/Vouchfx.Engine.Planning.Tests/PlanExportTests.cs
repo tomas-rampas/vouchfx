@@ -5,14 +5,15 @@
 // EDGE-004 (corrupt event lines), EDGE-007 (foreign scenario observation), EDGE-009 (empty
 // suite folder).
 //
-// T1 SCOPE NOTE: CoverageGapAnalyser / VocabularyGapAnalyser / HistoryHealthAnalyser are
-// still T1 stubs (they always return no findings) — a later todo (T2/T3/T4) fills them in.
-// Every assertion below is therefore scoped to what T1 actually computes: successful/failed
-// BuildPlan outcomes and the REQ-003 inventory section (suites, services, dependencies, step
-// types, run count, timestamps, skipped/unmatched counts, unanalysable suites). Acceptance
-// language that depends on FINDING content (e.g. REQ-009's "every declared step reported
-// never-run") is intentionally NOT asserted here — it is exercised once T2 lands, in T6's
-// acceptance suite.
+// T1 SCOPE NOTE: most assertions below are scoped to the REQ-001/REQ-003/REQ-009 concerns T1
+// owns — successful/failed BuildPlan outcomes and the REQ-003 inventory section (suites,
+// services, dependencies, step types, run count, timestamps, skipped/unmatched counts,
+// unanalysable suites). CoverageGapAnalyser / VocabularyGapAnalyser / HistoryHealthAnalyser
+// are all real now that every workstream has landed (T2/T3/T4); the one piece of FINDING
+// CONTENT this file itself is responsible for is REQ-009's "every declared suite/step
+// reported never-run" acceptance criterion (EDGE-001, below) — every other finding-content
+// assertion belongs to the analysers' own test files (CoverageGapAnalyserTests,
+// VocabularyGapAnalyserTests, HistoryHealthAnalyserTests, PlanPrecedenceTests).
 
 using System.Diagnostics.CodeAnalysis;
 using Vouchfx.Engine.Planning.Report;
@@ -168,6 +169,35 @@ public sealed class PlanExportTests
             report.Findings,
             f => f.Kind is PlanFindingKinds.StepStale or PlanFindingKinds.StepFlaky
                 or PlanFindingKinds.StepFragile or PlanFindingKinds.StepInconclusiveProne);
+    }
+
+    // ── EDGE-001 / REQ-009: every declared suite and step is reported never-run ────────
+    //
+    // MAJOR fix-round: this exact acceptance criterion — "an absent event history reports
+    // EVERY declared suite and step as never-run" — was never actually asserted anywhere in
+    // this test suite. The deferral this file's own header used to record ("exercised once
+    // T2 lands, in T6's acceptance suite") was never picked up once T2 landed: a grep for
+    // StepNeverExercised across tests/ found no assertion of completeness against an EMPTY
+    // history. Fixtures/ingest/basic-suites declares exactly 2 suites (checkout.e2e.yaml:
+    // create-order, assert-order-row; refund.e2e.yaml: publish-refund-event) — 3 steps
+    // total — so an absent history must report EXACTLY 2 suite-never-run and EXACTLY 3
+    // step-never-exercised findings (not merely "at least one of each").
+
+    [Fact]
+    public void EmptyOrAbsentHistory_ReportsEveryDeclaredSuiteAndStepNeverRun_Edge001()
+    {
+        var report = PlannerTestFixtures.Plan(PlannerTestFixtures.FixtureRoot("ingest/basic-suites"));
+
+        var suiteNeverRun = report.Findings.Where(f => f.Kind == PlanFindingKinds.SuiteNeverRun).ToList();
+        Assert.Equal(2, suiteNeverRun.Count);
+        Assert.Contains(suiteNeverRun, f => f.Suite == "checkout.e2e.yaml");
+        Assert.Contains(suiteNeverRun, f => f.Suite == "refund.e2e.yaml");
+
+        var stepNeverExercised = report.Findings.Where(f => f.Kind == PlanFindingKinds.StepNeverExercised).ToList();
+        Assert.Equal(3, stepNeverExercised.Count);
+        Assert.Contains(stepNeverExercised, f => f.Suite == "checkout.e2e.yaml" && f.StepId == "create-order");
+        Assert.Contains(stepNeverExercised, f => f.Suite == "checkout.e2e.yaml" && f.StepId == "assert-order-row");
+        Assert.Contains(stepNeverExercised, f => f.Suite == "refund.e2e.yaml" && f.StepId == "publish-refund-event");
     }
 
     // ── EDGE-003 ─────────────────────────────────────────────────────────────────
