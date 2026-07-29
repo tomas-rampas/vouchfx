@@ -268,6 +268,28 @@ public sealed class PlanExportTests
         }
     }
 
+    // ── MINOR fix-round: threshold validation ───────────────────────────────────
+    // PlanThresholds and the four CLI options previously accepted any int — `--stale-days -1`
+    // would silently mark every step with any observed history as stale (a negative "more
+    // than N days" test is vacuously true), and a count threshold of 0 degenerates the same
+    // way ("at least 0" is vacuously true too). Each case below throws PlanInputException,
+    // which PlanCommand.Execute already maps to exit 2 (see
+    // Vouchfx.Cli.Tests/PlanCommandTests.Execute_NegativeStaleDays_ReturnsUsageError).
+
+    [Theory]
+    [InlineData(-1, 2, 2, 2)]
+    [InlineData(30, 0, 2, 2)]
+    [InlineData(30, 2, 0, 2)]
+    [InlineData(30, 2, 2, 0)]
+    public void OutOfRangeThresholds_ThrowPlanInputException(
+        int staleDays, int flakyMinRuns, int fragileMinEnvErrors, int inconclusiveMin)
+    {
+        var thresholds = new PlanThresholds(staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin);
+
+        Assert.Throws<PlanInputException>(() => PlannerTestFixtures.Plan(
+            PlannerTestFixtures.FixtureRoot("ingest/basic-suites"), thresholds: thresholds));
+    }
+
     // ── EDGE-009 ─────────────────────────────────────────────────────────────────
 
     [Fact]

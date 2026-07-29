@@ -74,7 +74,9 @@ public static class PlanExport
     /// <returns>The complete, deterministic <see cref="PlanReportDocument"/>.</returns>
     /// <exception cref="PlanInputException">
     /// Thrown when <paramref name="request"/>'s suite path does not exist, names a file that
-    /// is not a <c>.e2e.yaml</c> scenario, or discovers zero suites at all (EDGE-009).
+    /// is not a <c>.e2e.yaml</c> scenario, or discovers zero suites at all (EDGE-009); or when
+    /// <paramref name="request"/>'s effective thresholds are out of range (MINOR fix-round —
+    /// see <see cref="ValidateThresholds"/>).
     /// </exception>
     /// <exception cref="CatalogueExportException">
     /// Thrown when a registered step type in <paramref name="registry"/> lacks a schema
@@ -91,6 +93,7 @@ public static class PlanExport
         ArgumentNullException.ThrowIfNull(registry);
 
         var thresholds = request.Thresholds ?? PlanThresholds.Defaults;
+        ValidateThresholds(thresholds);
 
         // Ordering is deliberate, not incidental (reviewed and agreed): SuiteSetLoader.Load
         // runs BEFORE EngineExport.BuildCatalogue — usage-error-wins. A bad suite path is the
@@ -129,5 +132,53 @@ public static class PlanExport
     {
         ArgumentNullException.ThrowIfNull(document);
         return JsonSerializer.Serialize(document, PlanJsonOptions);
+    }
+
+    /// <summary>
+    /// MINOR fix-round: rejects an out-of-range <see cref="PlanThresholds"/> before it ever
+    /// reaches <see cref="HistoryHealthAnalyser"/>. Every threshold is a bare
+    /// <see cref="int"/> with no range enforced at the CLI parse layer, so e.g.
+    /// <c>--stale-days -1</c> would otherwise silently mark every step with ANY observed
+    /// history as stale (a negative "more than N days" test is vacuously true), and a
+    /// count threshold of <c>0</c> degenerates identically ("at least 0" is vacuously true
+    /// for a step with zero matching observations too) — both defeat the "documented
+    /// defaults + override flags" contract (REQ-006) by turning a typo'd flag into silent,
+    /// wildly wrong output rather than a loud, actionable failure.
+    /// </summary>
+    /// <param name="thresholds">The effective (default-or-override) thresholds for this analysis.</param>
+    /// <exception cref="PlanInputException">
+    /// Thrown when <see cref="PlanThresholds.StaleDays"/> is negative, or any of
+    /// <see cref="PlanThresholds.FlakyMinRuns"/>, <see cref="PlanThresholds.FragileMinEnvErrors"/>,
+    /// <see cref="PlanThresholds.InconclusiveMin"/> is less than <c>1</c>.
+    /// </exception>
+    private static void ValidateThresholds(PlanThresholds thresholds)
+    {
+        if (thresholds.StaleDays < 0)
+        {
+            throw new PlanInputException(
+                $"Invalid Planner threshold: StaleDays must be zero or greater (received {thresholds.StaleDays}). "
+                + "The CLI maps this from --stale-days.");
+        }
+
+        if (thresholds.FlakyMinRuns < 1)
+        {
+            throw new PlanInputException(
+                $"Invalid Planner threshold: FlakyMinRuns must be at least 1 (received {thresholds.FlakyMinRuns}). "
+                + "The CLI maps this from --flaky-min-runs.");
+        }
+
+        if (thresholds.FragileMinEnvErrors < 1)
+        {
+            throw new PlanInputException(
+                $"Invalid Planner threshold: FragileMinEnvErrors must be at least 1 (received {thresholds.FragileMinEnvErrors}). "
+                + "The CLI maps this from --fragile-min-env-errors.");
+        }
+
+        if (thresholds.InconclusiveMin < 1)
+        {
+            throw new PlanInputException(
+                $"Invalid Planner threshold: InconclusiveMin must be at least 1 (received {thresholds.InconclusiveMin}). "
+                + "The CLI maps this from --inconclusive-min.");
+        }
     }
 }

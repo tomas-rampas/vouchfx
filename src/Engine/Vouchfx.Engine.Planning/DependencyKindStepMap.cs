@@ -1,21 +1,19 @@
 // Vouchfx.Engine.Planning — DependencyKindStepMap (M3 Planner, REQ-005, REQ-007, flag F-4).
 //
-// STUB (T1) — the concrete mapping table is filled in by a later todo (T3). This file's
-// public shape (namespace, type name, member signatures, and XML docs) is final and MUST
-// NOT change: PlanPipeline.cs (frozen) already calls TryGetCandidates to classify every
-// declared dependency as mappable or PlanUnmappableDependency (REQ-007), and
-// VocabularyGapAnalyser.cs (also a T1 stub, filled by the same later todo) will call it to
-// emit REQ-005 findings. While this stub returns no candidates for any kind, EVERY declared
-// dependency is (correctly, if unexcitingly) classified unmappable — the moment the real
-// mapping table lands here, PlanPipeline's inventory classification and
-// VocabularyGapAnalyser's findings both narrow automatically, with no edit required to
-// either caller.
+// The concrete mapping table (T3). PlanPipeline.cs (frozen) already calls TryGetCandidates to
+// classify every declared dependency as mappable or PlanUnmappableDependency (REQ-007), and
+// VocabularyGapAnalyser.cs calls it to emit REQ-005 findings under the zero-of-N candidate
+// rule — both callers narrow automatically as this table changes, with no edit required to
+// either.
 //
 // The dependency-kind -> candidate-step-type relation MUST stay an explicit,
 // engine-maintained mapping, never string equality between the dependency `type` token and
 // the catalogue `provider` token: pure derivation is provably unsound (mailpit ->
 // mail-expect.smtp and minio -> storage-assert.s3 are shipped Core kinds whose tokens do not
-// match the KnownDependencyKinds token).
+// match the KnownDependencyKinds token). Every entry below is checked against the CURRENT
+// registration by DependencyKindStepMapDriftTests, and every KnownDependencyKinds entry is
+// checked to be either mapped here or explicitly exempted in KindsWithoutAssertingProvider —
+// so adding a dependency kind forces a mapping decision in the same change.
 
 using Vouchfx.Engine.Compilation.Scaffold;
 
@@ -36,27 +34,52 @@ namespace Vouchfx.Engine.Planning;
 /// every entry in <c>KnownDependencyKinds.All</c> — so adding a dependency kind forces a
 /// mapping decision in the same change.
 /// </para>
-/// <para>
-/// TODO(T3): populate <see cref="CandidateStepTypes"/> and
-/// <see cref="KindsWithoutAssertingProvider"/> with the real mapping table. This stub
-/// intentionally returns no candidates for any kind.
-/// </para>
 /// </remarks>
 public static class DependencyKindStepMap
 {
     /// <summary>
     /// Dependency kind (a <c>KnownDependencyKinds</c> token, matched
     /// <see cref="StringComparer.OrdinalIgnoreCase"/>) to the dotted step types that assert
-    /// or observe it, ordinal-sorted. Empty until T3 populates the real mapping table.
+    /// or observe it, ordinal-sorted.
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> CandidateStepTypes { get; } =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["postgres"] = new[] { "db-assert.postgres" },
+            ["sqlserver"] = new[] { "db-assert.sqlserver" },
+            ["mysql"] = new[] { "db-assert.mysql" },
+            ["mongodb"] = new[] { "db-assert.mongodb" },
+            ["dynamodb"] = new[] { "db-assert.dynamodb" },
+            // redis ships TWO asserting/observing Core providers: cache-assert.redis (a plain
+            // key/value assertion) and mq-expect.redis (redis pub/sub used as a message-queue
+            // seam). REQ-005's zero-of-N rule means a redis dependency already asserted via
+            // EITHER type is not flagged for lacking the other. Ordinal-sorted: 'c' < 'm'.
+            ["redis"] = new[] { "cache-assert.redis", "mq-expect.redis" },
+            ["elasticsearch"] = new[] { "cache-assert.elasticsearch" },
+            ["rabbitmq"] = new[] { "mq-expect.rabbitmq" },
+            ["nats"] = new[] { "mq-expect.nats" },
+            ["kafka"] = new[] { "mq-expect.kafka" },
+            ["azureservicebus"] = new[] { "mq-expect.azureservicebus" },
+            // mailpit -> mail-expect.smtp: the non-derivable case REQ-005's acceptance
+            // requires. The dependency `type` token "mailpit" names the test-double image
+            // (Mailpit), not the SMTP protocol its asserting provider actually observes —
+            // string equality between "mailpit" and any catalogue `provider` token would
+            // silently yield zero candidates for this shipped kind.
+            ["mailpit"] = new[] { "mail-expect.smtp" },
+            // minio -> storage-assert.s3: the second non-derivable case. minio is an
+            // S3-compatible test-double image; its asserting provider speaks the S3 protocol,
+            // not a "minio" one.
+            ["minio"] = new[] { "storage-assert.s3" },
+        };
 
     /// <summary>
     /// Dependency kinds explicitly known to have no asserting/observing Core provider yet.
     /// Every entry must carry an inline comment justifying it (REQ-007 case (a)). Empty
-    /// today (and until T3 lands) — every shipped Core dependency kind maps to at least one
-    /// candidate step type.
+    /// today — every one of the thirteen <c>KnownDependencyKinds.All</c> entries maps to at
+    /// least one candidate step type above. Kept as a real (empty) set, not omitted
+    /// entirely, so <c>DependencyKindStepMapDriftTests</c>'s exemption branch has somewhere
+    /// to register a future dependency kind that ships with no asserting/observing Core
+    /// provider yet.
     /// </summary>
     public static IReadOnlySet<string> KindsWithoutAssertingProvider { get; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase);

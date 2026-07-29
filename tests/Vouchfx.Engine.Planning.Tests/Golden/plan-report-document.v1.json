@@ -73,7 +73,8 @@
       "ambiguous": false,
       "ambiguityReason": null,
       "history": null,
-      "detail": "Dependency \u0027orders-db\u0027 (postgres) has no analysed step of a candidate asserting type."
+      "detail": "Dependency \u0027orders-db\u0027 (postgres) has no analysed step of a candidate asserting type.",
+      "relatedSuites": []
     },
     {
       "kind": "dependency-not-asserted",
@@ -88,7 +89,8 @@
       "ambiguous": false,
       "ambiguityReason": null,
       "history": null,
-      "detail": "Dependency \u0027events\u0027 is targeted by a declared step but by no step of an asserting family."
+      "detail": "Dependency \u0027events\u0027 is targeted by a declared step but by no step of an asserting family.",
+      "relatedSuites": []
     },
     {
       "kind": "service-missing-http-step",
@@ -103,7 +105,8 @@
       "ambiguous": false,
       "ambiguityReason": null,
       "history": null,
-      "detail": "Service \u0027api\u0027 has no http.* step targeting it."
+      "detail": "Service \u0027api\u0027 has no http.* step targeting it.",
+      "relatedSuites": []
     },
     {
       "kind": "step-flaky",
@@ -124,7 +127,8 @@
         "lastObserved": "2026-01-03T00:05:00+00:00",
         "ageDays": 1
       },
-      "detail": "Step \u0027create-order\u0027 passed 3 and failed 2 times across 2 distinct runs."
+      "detail": "Step \u0027create-order\u0027 passed 3 and failed 2 times across 2 distinct runs.",
+      "relatedSuites": []
     },
     {
       "kind": "step-fragile",
@@ -145,7 +149,8 @@
         "lastObserved": "2026-01-03T00:05:00+00:00",
         "ageDays": 1
       },
-      "detail": "Step \u0027assert-order-row\u0027 recorded 2 environment errors."
+      "detail": "Step \u0027assert-order-row\u0027 recorded 2 environment errors.",
+      "relatedSuites": []
     },
     {
       "kind": "step-inconclusive-prone",
@@ -166,7 +171,8 @@
         "lastObserved": "2026-01-03T00:05:00+00:00",
         "ageDays": 1
       },
-      "detail": "Step \u0027create-order\u0027 recorded 2 inconclusive outcomes."
+      "detail": "Step \u0027create-order\u0027 recorded 2 inconclusive outcomes.",
+      "relatedSuites": []
     },
     {
       "kind": "step-never-exercised",
@@ -181,7 +187,8 @@
       "ambiguous": false,
       "ambiguityReason": null,
       "history": null,
-      "detail": "Step \u0027publish-refund-event\u0027 has no step event attributed to it."
+      "detail": "Step \u0027publish-refund-event\u0027 has no step event attributed to it.",
+      "relatedSuites": []
     },
     {
       "kind": "step-stale",
@@ -202,11 +209,12 @@
         "lastObserved": "2026-01-03T00:05:00+00:00",
         "ageDays": 45
       },
-      "detail": "Step \u0027create-order\u0027 was last observed 45 days before the newest event."
+      "detail": "Step \u0027create-order\u0027 was last observed 45 days before the newest event.",
+      "relatedSuites": []
     },
     {
       "kind": "suite-identity-ambiguous",
-      "suite": "checkout.e2e.yaml",
+      "suite": null,
       "stepId": null,
       "target": null,
       "targetKind": null,
@@ -215,11 +223,15 @@
       "ambiguous": true,
       "ambiguityReason": "scenario-id-collision",
       "history": null,
-      "detail": "Scenario id \u0027checkout-flow\u0027 is declared by two suites: checkout.e2e.yaml, checkout-v2.e2e.yaml."
+      "detail": "Scenario id \u0027checkout-flow\u0027 is declared by two suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
+      "relatedSuites": [
+        "checkout.e2e.yaml",
+        "checkout-v2.e2e.yaml"
+      ]
     },
     {
       "kind": "suite-identity-ambiguous",
-      "suite": "refund.e2e.yaml",
+      "suite": null,
       "stepId": null,
       "target": null,
       "targetKind": null,
@@ -228,7 +240,8 @@
       "ambiguous": true,
       "ambiguityReason": "history-references-missing-file",
       "history": null,
-      "detail": "History references a file for scenario id \u0027refund\u0027 that no longer exists on disk."
+      "detail": "History references a file for scenario id \u0027refund\u0027 that no longer exists on disk.",
+      "relatedSuites": []
     },
     {
       "kind": "suite-never-run",
@@ -241,7 +254,8 @@
       "ambiguous": false,
       "ambiguityReason": null,
       "history": null,
-      "detail": "Suite \u0027refund.e2e.yaml\u0027 never appears in the analysed event history."
+      "detail": "Suite \u0027refund.e2e.yaml\u0027 never appears in the analysed event history.",
+      "relatedSuites": []
     }
   ]
 }

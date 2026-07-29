@@ -1,0 +1,7 @@
+metadata:
+  name: scenario-a
+
+steps:
+  - id: common-step
+    type: http.rest
+    target: api

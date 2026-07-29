@@ -52,6 +52,14 @@ rootCommand.Add(SchemaCommand.Build());
 //   vouchfx scaffold --intent <file|-> [--output <path>]
 rootCommand.Add(ScaffoldCommand.Build());
 
+// Coverage-and-gap Planner (M3 / planner-coverage-and-gap-report): a Docker-free, read-only
+// analysis over a declared suite set, an optional event history, and the live catalogue —
+// never starts a topology, so it is deliberately NOT added to InvocationScope.IsRunInvocation.
+//   vouchfx plan <path> [--events <path>] [--json] [--output <path>] [--fail-on-gap]
+//                [--stale-days N] [--flaky-min-runs N] [--fragile-min-env-errors N]
+//                [--inconclusive-min N]
+rootCommand.Add(PlanCommand.Build());
+
 // Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
 // to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
 // — after that it force-kills the process even mid-DisposeAsync.  HeadlessTopology.DisposeAsync

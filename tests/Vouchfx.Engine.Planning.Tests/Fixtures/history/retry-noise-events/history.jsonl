@@ -1,0 +1,4 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2024-05-01T00:00:00Z","runId":"run-retry-1","scenarioId":"retry-noise-suite"}
+{"v":1,"schemaVersion":"v1","type":"step-attempt","ts":"2024-05-01T00:00:10Z","runId":"run-retry-1","stepId":"retry-step","attempt":1,"tMs":1000,"outcome":"FAIL"}
+{"v":1,"schemaVersion":"v1","type":"step-attempt","ts":"2024-05-01T00:00:20Z","runId":"run-retry-1","stepId":"retry-step","attempt":2,"tMs":1000,"outcome":"FAIL"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2024-05-01T00:00:30Z","runId":"run-retry-1","stepId":"retry-step","verdict":"PASS","durationMs":2000}

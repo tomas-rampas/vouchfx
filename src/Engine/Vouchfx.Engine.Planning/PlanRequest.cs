@@ -72,9 +72,12 @@ public sealed record PlanThresholds(
 }
 
 /// <summary>
-/// Thrown when a <see cref="PlanRequest"/>'s suite path is unusable: it does not exist, it
-/// is a file that does not end in <c>.e2e.yaml</c>, or it discovers zero suites at all
-/// (EDGE-009 — a configuration error, not a finding).
+/// Thrown when a <see cref="PlanRequest"/> is unusable: its suite path does not exist, is a
+/// file that does not end in <c>.e2e.yaml</c>, or discovers zero suites at all (EDGE-009 — a
+/// configuration error, not a finding); or its effective <see cref="PlanThresholds"/> are out
+/// of range (MINOR fix-round — a negative <see cref="PlanThresholds.StaleDays"/>, or any of
+/// the three count thresholds below <c>1</c>, would otherwise silently degenerate the
+/// corresponding REQ-006 classification into "every observed step matches").
 /// </summary>
 /// <remarks>
 /// Deliberately distinct from <see cref="Vouchfx.Engine.Compilation.Schema.CatalogueExportException"/>,

@@ -1,0 +1,22 @@
+metadata:
+  name: history-health-suite
+  owner: qa-team
+
+environment:
+  services:
+    api:
+      image: myorg/history-health-api:1.0
+
+steps:
+  - id: stale-step
+    type: http.rest
+    target: api
+  - id: flaky-step
+    type: http.rest
+    target: api
+  - id: fragile-step
+    type: http.rest
+    target: api
+  - id: inconclusive-step
+    type: http.rest
+    target: api

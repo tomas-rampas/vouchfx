@@ -1,0 +1,7 @@
+metadata:
+  name: shared-name
+
+steps:
+  - id: step-a
+    type: http.rest
+    target: api

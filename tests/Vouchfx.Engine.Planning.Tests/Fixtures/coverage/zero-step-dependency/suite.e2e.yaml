@@ -1,0 +1,20 @@
+metadata:
+  name: zero-step-dep
+
+environment:
+  services:
+    api:
+      image: myorg/checkout-api:1.0
+  dependencies:
+    cache:
+      type: redis
+    queue:
+      type: kafka
+
+steps:
+  - id: create-order
+    type: http.rest
+    target: api
+  - id: publish-to-queue
+    type: mq-publish.kafka
+    target: queue

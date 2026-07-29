@@ -1,0 +1,6 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-03-01T00:00:00Z","runId":"run-a","scenarioId":"scenario-a"}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-03-01T00:00:01Z","runId":"run-b","scenarioId":"scenario-b"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-03-01T00:00:02Z","runId":"run-b","stepId":"step-1","verdict":"PASS","durationMs":10}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-03-01T00:00:03Z","runId":"run-a","stepId":"step-1","verdict":"PASS","durationMs":10}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-03-01T00:00:04Z","runId":"run-a","scenarioId":"scenario-a","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-03-01T00:00:05Z","runId":"run-b","scenarioId":"scenario-b","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}

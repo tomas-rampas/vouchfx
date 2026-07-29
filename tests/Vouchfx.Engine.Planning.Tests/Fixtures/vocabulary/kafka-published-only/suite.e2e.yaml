@@ -1,0 +1,9 @@
+environment:
+  dependencies:
+    events:
+      type: kafka
+
+steps:
+  - id: publish-event
+    type: mq-publish.kafka
+    target: events

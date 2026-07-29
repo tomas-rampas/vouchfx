@@ -53,7 +53,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: null,
-                Detail: "Dependency 'orders-db' (postgres) has no analysed step of a candidate asserting type."),
+                Detail: "Dependency 'orders-db' (postgres) has no analysed step of a candidate asserting type.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.DependencyNotAsserted,
                 Suite: "checkout.e2e.yaml",
@@ -65,7 +66,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: null,
-                Detail: "Dependency 'events' is targeted by a declared step but by no step of an asserting family."),
+                Detail: "Dependency 'events' is targeted by a declared step but by no step of an asserting family.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.ServiceMissingHttpStep,
                 Suite: null,
@@ -77,7 +79,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: null,
-                Detail: "Service 'api' has no http.* step targeting it."),
+                Detail: "Service 'api' has no http.* step targeting it.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepFlaky,
                 Suite: "checkout.e2e.yaml",
@@ -89,7 +92,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(3, 2, 0, 0, 2, lastObserved, 1),
-                Detail: "Step 'create-order' passed 3 and failed 2 times across 2 distinct runs."),
+                Detail: "Step 'create-order' passed 3 and failed 2 times across 2 distinct runs.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepFragile,
                 Suite: "checkout.e2e.yaml",
@@ -101,7 +105,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 2, 0, 2, lastObserved, 1),
-                Detail: "Step 'assert-order-row' recorded 2 environment errors."),
+                Detail: "Step 'assert-order-row' recorded 2 environment errors.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepInconclusiveProne,
                 Suite: "checkout.e2e.yaml",
@@ -113,7 +118,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 0, 2, 2, lastObserved, 1),
-                Detail: "Step 'create-order' recorded 2 inconclusive outcomes."),
+                Detail: "Step 'create-order' recorded 2 inconclusive outcomes.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepNeverExercised,
                 Suite: "refund.e2e.yaml",
@@ -125,7 +131,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: null,
-                Detail: "Step 'publish-refund-event' has no step event attributed to it."),
+                Detail: "Step 'publish-refund-event' has no step event attributed to it.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.StepStale,
                 Suite: "checkout.e2e.yaml",
@@ -137,10 +144,19 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(1, 0, 0, 0, 1, lastObserved, 45),
-                Detail: "Step 'create-order' was last observed 45 days before the newest event."),
+                Detail: "Step 'create-order' was last observed 45 days before the newest event.",
+                RelatedSuites: Array.Empty<string>()),
             new(
+                // MAJOR fix-round: Suite is null (never a bound suite path) — rule 1 fires
+                // only when ZERO declared suites match a given scenarioId, so there is no
+                // single suite this finding is "of"; the OLD "checkout.e2e.yaml" binding here
+                // was not merely arbitrary, it was IMPOSSIBLE (PlanFinding.Suite's own XML
+                // doc: null "when the finding is not scoped to a single suite", and a
+                // collision between two suites is definitionally not). The colliding paths
+                // are now carried machine-readably in RelatedSuites (additive), not only in
+                // Detail's prose.
                 Kind: PlanFindingKinds.SuiteIdentityAmbiguous,
-                Suite: "checkout.e2e.yaml",
+                Suite: null,
                 StepId: null,
                 Target: null,
                 TargetKind: null,
@@ -149,13 +165,19 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.ScenarioIdCollision,
                 History: null,
-                Detail: "Scenario id 'checkout-flow' is declared by two suites: checkout.e2e.yaml, checkout-v2.e2e.yaml."),
+                Detail: "Scenario id 'checkout-flow' is declared by two suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
+                RelatedSuites: new[] { "checkout.e2e.yaml", "checkout-v2.e2e.yaml" }),
             new(
                 // Fix-round B2: an 11th canonical finding is REQUIRED (not decorative) —
                 // before this, "history-references-missing-file" appeared in NO golden
                 // anywhere, so a typo in that frozen token could not fail any CI gate.
+                // MAJOR fix-round: Suite is null for the same reason as the collision finding
+                // above — a rule-2 renamed-file ambiguity means ZERO declared suites matched
+                // at all, so there is no suite to bind. RelatedSuites also stays empty: unlike
+                // a collision, there is no colliding SUITE here either (just a missing file
+                // reference), so there is nothing to relate.
                 Kind: PlanFindingKinds.SuiteIdentityAmbiguous,
-                Suite: "refund.e2e.yaml",
+                Suite: null,
                 StepId: null,
                 Target: null,
                 TargetKind: null,
@@ -164,7 +186,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.HistoryReferencesMissingFile,
                 History: null,
-                Detail: "History references a file for scenario id 'refund' that no longer exists on disk."),
+                Detail: "History references a file for scenario id 'refund' that no longer exists on disk.",
+                RelatedSuites: Array.Empty<string>()),
             new(
                 Kind: PlanFindingKinds.SuiteNeverRun,
                 Suite: "refund.e2e.yaml",
@@ -176,7 +199,8 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: null,
-                Detail: "Suite 'refund.e2e.yaml' never appears in the analysed event history."),
+                Detail: "Suite 'refund.e2e.yaml' never appears in the analysed event history.",
+                RelatedSuites: Array.Empty<string>()),
         };
 
         var inventory = new PlanInventory(

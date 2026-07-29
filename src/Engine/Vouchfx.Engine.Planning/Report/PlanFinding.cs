@@ -64,10 +64,22 @@ namespace Vouchfx.Engine.Planning.Report;
 /// </param>
 /// <param name="Detail">
 /// A short, human-readable explanation of the finding. Composed <strong>only</strong> from
-/// suite paths, step ids, dotted step types, service/dependency names, verdict counts,
-/// timestamps, and threshold numbers (EDGE-006) — never from an observation payload, a
-/// captured value, a YAML scalar, or an environment value, so a secret can never reach the
-/// report through this field.
+/// suite paths, step ids, dotted step types, service/dependency names, dependency-kind
+/// tokens declared in <c>environment.dependencies.*.type</c>, verdict counts, timestamps,
+/// and threshold numbers (EDGE-006) — never from an observation payload, a captured value,
+/// or an environment (secret-bearing) value, so a secret can never reach the report through
+/// this field. A dependency-kind token is a reference (the DSL's own declared vocabulary,
+/// already surfaced in REQ-003's inventory), not a resolved value, so it carries no secret
+/// risk despite being read from the suite's YAML.
+/// </param>
+/// <param name="RelatedSuites">
+/// Fix-round MAJOR (additive, REQ-011-compatible): the relative paths of every OTHER suite
+/// this finding's ambiguity concerns, machine-readably — today populated only for a
+/// <see cref="PlanFindingKinds.SuiteIdentityAmbiguous"/> finding raised by a scenario-id
+/// collision (REQ-008 rule 1), where it duplicates <see cref="Detail"/>'s prose as a
+/// structured list so an MCP consumer never has to regex a sentence. Empty for every other
+/// finding kind, including a rule-2 renamed-file ambiguity (no declared suite matches that
+/// case at all, so there is no suite to relate) and every gap/history-health kind.
 /// </param>
 public sealed record PlanFinding(
     [property: JsonPropertyOrder(0)] string Kind,
@@ -80,7 +92,8 @@ public sealed record PlanFinding(
     [property: JsonPropertyOrder(7)] bool Ambiguous,
     [property: JsonPropertyOrder(8)] string? AmbiguityReason,
     [property: JsonPropertyOrder(9)] PlanStepHistory? History,
-    [property: JsonPropertyOrder(10)] string Detail);
+    [property: JsonPropertyOrder(10)] string Detail,
+    [property: JsonPropertyOrder(11)] IReadOnlyList<string> RelatedSuites);
 
 /// <summary>
 /// REQ-006 evidence attached to a history-health finding: the raw <c>step-completed</c>

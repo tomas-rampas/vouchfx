@@ -1,0 +1,7 @@
+metadata:
+  name: shipping-flow
+
+steps:
+  - id: ship-order
+    type: http.rest
+    target: api
