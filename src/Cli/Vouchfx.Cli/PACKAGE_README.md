@@ -50,7 +50,7 @@ vouchfx run ./tests
 
 **Twenty-five Core providers across eleven step families**: HTTP (REST, SOAP) · database assertions (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB) · message publish/expect (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams) · cache and search (Redis, Elasticsearch) · object storage (S3) · Prometheus metrics · OTLP distributed-trace assertions · SMTP mail capture · webhook listeners · inline C# scripting.
 
-Plus: engine-owned RETRY polling (you never write `Thread.Sleep`), `${secret:…}` references resolved at execution time and redacted at the source, a four-verdict taxonomy where **only `Fail` breaks CI by default** (environment errors and timeouts are kept distinct), scenario selection by tag/owner/path/git-change-set, parallel topology-per-scenario runs, watch mode, and reporting as a schema-versioned JSON Lines event stream rendered to terminal, self-contained HTML and JUnit XML.
+Plus: engine-owned RETRY polling (you never write `Thread.Sleep`), `${secret:…}` references resolved at execution time and redacted at the source, a four-verdict taxonomy where **only `Fail` breaks CI by default** (environment errors and timeouts are kept distinct), scenario selection by tag/owner/path/git-change-set, parallel topology-per-scenario runs, watch mode, and reporting as a schema-versioned JSON Lines event stream rendered to terminal, self-contained HTML and JUnit XML. Also includes `vouchfx plan` for deterministic coverage-and-gap analysis of your declared suites against run history and available providers; `vouchfx scaffold` to generate test skeletons from structured intent; and `vouchfx validate`, `list`, and `schema` for Docker-free compile-time tooling.
 
 ## Learn more
 

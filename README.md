@@ -147,11 +147,15 @@ vouchfx run ./tests/users.e2e.yaml --watch    # re-run on save
 vouchfx run ./tests --html ./report.html --junit ./results.xml
 ```
 
-Three Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
-(schema, parse, AST, provider binding, Roslyn) without starting anything, `vouchfx list` prints the
-sealed step-type catalogue (with shape-level fields on `--json`), and `vouchfx schema` emits the
-composed v1 JSON Schema. `validate` and `list` also take `--json` for tooling; in-process hosts can
-use `EngineExport` in `Vouchfx.Engine.Compilation` instead of shelling out.
+Four Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
+(schema, parse, AST, provider binding, Roslyn) without starting anything; `vouchfx list` prints the
+sealed step-type catalogue (with shape-level fields on `--json`); `vouchfx schema` emits the
+composed v1 JSON Schema; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
+run history, and available providers, emitting findings for coverage gaps (suite never run, step never
+exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals
+(stale, flaky, fragile, inconclusive-prone), and identity ambiguity. Most take `--json` for tooling;
+in-process hosts can use the public library APIs (`EngineExport`, `PlanExport`, `SuiteScaffolder`)
+in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shelling out.
 
 **Exit codes follow the verdict taxonomy:**
 

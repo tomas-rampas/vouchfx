@@ -21,13 +21,14 @@ For a minimal copy-paste starting point, see the CI recipes in
 Both integrations respect the four-verdict taxonomy so CI can tell infrastructure breakage apart from
 a product defect:
 
-| Exit code | Verdict | Breaks CI? |
-|---|---|---|
-| **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – |
-| **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** |
-| **2** | UsageError — unrecognised option, bad arguments, missing path | Always |
-| **3** | EnvironmentError — unhealthy container, image-pull or seed failure | Only when opted in |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in |
+| Exit code | Verdict | Breaks CI? | When |
+|---|---|---|---|
+| **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – | `run` always; `plan` when no gaps or `--fail-on-gap` not set |
+| **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
+| **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
+| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
+| **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
