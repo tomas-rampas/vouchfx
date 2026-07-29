@@ -1,0 +1,7 @@
+metadata:
+  name: good-suite
+
+steps:
+  - id: step1
+    type: http.rest
+    target: api

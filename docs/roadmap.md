@@ -39,8 +39,14 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 - **Live event streaming** — `vouchfx run --events-stream <path>` writes an incremental, tailable JSON Lines
   stream to a file in real time as each step and attempt completes, useful for real-time tailing, CI progress
   streaming, and downstream consumers.
-- **Compile-level suite tooling** — `validate` and `list` subcommands perform Docker-free YAML validation
-  and step-type discovery (machine-readable `--json` output), executed once at suite load time.
+- **Compile-level suite tooling** — `validate`, `list`, `schema`, and `scaffold` subcommands perform Docker-free
+  YAML validation, step-type discovery, schema composition, and test-skeleton generation (machine-readable `--json` output where applicable),
+  executed once at suite load time.
+- **Coverage and gap analysis** — `vouchfx plan` performs deterministic, read-only intersection of declared suites,
+  run history, and available step catalogue, reporting coverage gaps (suite never run, step never exercised, dependency not asserted,
+  vocabulary missing, service missing HTTP step), history-health signals (stale, flaky, fragile, inconclusive-prone), and identity
+  ambiguity. Every gap finding carries structured hints the `scaffold` tool consumes. Docker-free; human-readable summary and JSON output;
+  configurable health thresholds; taxonomy-aware exit codes including exit 5 for gaps (with `--fail-on-gap`).
 - **A headless CLI** with tag/owner/path/change-set selection, taxonomy-aware exit codes (only `Fail` breaks
   CI by default), parallel topology-per-scenario runs, and watch mode.
 - **Editor tooling** — a VSCode extension with schema-driven validation and autocomplete, C# highlighting in

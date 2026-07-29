@@ -1,0 +1,4 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2024-06-01T00:00:00Z","runId":"run-ghost-1","scenarioId":"phantom-step-suite"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2024-06-01T00:05:00Z","runId":"run-ghost-1","stepId":"ghost-step","verdict":"PASS","durationMs":100}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2024-06-05T00:00:00Z","runId":"run-ghost-2","scenarioId":"phantom-step-suite"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2024-06-05T00:05:00Z","runId":"run-ghost-2","stepId":"ghost-step","verdict":"FAIL","durationMs":100}

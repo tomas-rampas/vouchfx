@@ -26,8 +26,10 @@ to published pre-releases on 2026-07-14.
   for routing a tag introduced after its release was already published, and as the recovery path for a run
   GitHub superseded. It refuses any tag whose release is still a draft, preserving the same
   maintainer-confirmed-publish guarantee the `release: published` trigger provides.
-- **`vouchfx scaffold` subcommand** (Spec B / Generator engine half) - emits a machine-drafted, catalogue-grounded, schema-valid `.e2e.yaml` skeleton from a structured JSON intent (`--intent <file|->`, optional `--output <path>`). Steps, services, and dependencies are validated against the live Core registration and known dependency kinds; unknown types, duplicate ids, empty steps, and unknown dependency kinds fail closed (exit 3). Provenance comment header (no timestamps); credential-shaped fields use `${secret:}` references only. Docker-free.
+- **`vouchfx scaffold` subcommand** - emits a machine-drafted, catalogue-grounded, schema-valid `.e2e.yaml` skeleton from a structured JSON intent (`--intent <file|->`, optional `--output <path>`). Steps, services, and dependencies are validated against the live Core registration and known dependency kinds; unknown types, duplicate ids, empty steps, and unknown dependency kinds fail closed (exit 3). Provenance comment header (no timestamps); credential-shaped fields use `${secret:}` references only. Docker-free.
 - **Public library scaffolder** (`Vouchfx.Engine.Compilation.Scaffold.SuiteScaffolder`) - `Generate(StepKindRegistry, ScaffoldIntent, engineVersion?)` is the shared implementation for CLI and future MCP hosts so they cannot drift. `KnownDependencyKinds` mirrors the topology mapper's supported dependency set.
+- **`vouchfx plan` subcommand** — a deterministic, read-only coverage-and-gap analysis that intersects the declared suite set, run history, and available step catalogue, emitting findings for coverage gaps (suite never run, step never exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals (step stale, flaky, fragile, inconclusive-prone), and identity ambiguity. Every gap carries structured hints the `scaffold` tool consumes; the Planner never writes a suite file or calls a model. Human-readable summary on stdout by default; machine-readable JSON via `--json`; configurable thresholds for history-health classification; exit codes: 0 success (regardless of gaps), 2 usage error, 3 incomplete catalogue metadata, 5 gaps found (only with `--fail-on-gap`). Docker-free.
+- **Public library Planner API** (`Vouchfx.Engine.Planning.PlanExport`) — `BuildPlan(PlanRequest, StepKindRegistry, engineVersion?)` and `SerializePlan(PlanReportDocument)` expose the same analysis the CLI uses, so MCP and other in-process hosts need not shell out. The report is a frozen v1 wire shape (`PlanReportDocument` with schema version 1, inventory, and ten finding kinds); evolution within v1 is additive only.
 
 ### Changed
 
@@ -40,7 +42,7 @@ to published pre-releases on 2026-07-14.
 
 ## [1.0.0-rc.2] — 2026-07-28
 
-Schema and catalogue export for AI and tooling consumers (Spec A / `engine-schema-and-catalogue-export`). The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
+Schema and catalogue export for AI and tooling consumers. The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
 
 ### Added
 

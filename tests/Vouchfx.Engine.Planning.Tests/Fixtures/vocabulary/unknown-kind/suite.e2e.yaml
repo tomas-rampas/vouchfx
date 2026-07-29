@@ -1,0 +1,6 @@
+environment:
+  dependencies:
+    legacy-cache:
+      type: cassandra
+
+steps: []

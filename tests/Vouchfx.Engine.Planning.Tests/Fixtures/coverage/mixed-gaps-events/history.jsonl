@@ -1,0 +1,5 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-1","scenarioId":"checkout-flow"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:01:00Z","runId":"run-1","stepId":"create-order","verdict":"PASS","durationMs":50}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:02:00Z","runId":"run-1","stepId":"assert-order-row","verdict":"PASS","durationMs":50}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:03:00Z","runId":"run-1","stepId":"publish-order-event","verdict":"PASS","durationMs":50}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:05:00Z","runId":"run-1","scenarioId":"checkout-flow","verdict":"PASS","counts":{"pass":3,"fail":0,"envError":0,"inconclusive":0}}

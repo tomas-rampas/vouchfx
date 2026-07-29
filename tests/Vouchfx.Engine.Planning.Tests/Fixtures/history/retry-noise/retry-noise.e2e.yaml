@@ -1,0 +1,13 @@
+metadata:
+  name: retry-noise-suite
+
+environment:
+  services:
+    api:
+      image: myorg/retry-noise-api:1.0
+
+steps:
+  - id: retry-step
+    type: http.rest
+    target: api
+    verifyMode: RETRY

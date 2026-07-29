@@ -1,0 +1,3 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-04-01T00:00:00Z","runId":"run-renamed-1","scenarioId":"renamed-scenario","file":"old-name.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-04-01T00:01:00Z","runId":"run-renamed-1","stepId":"some-step","verdict":"PASS","durationMs":10}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-04-01T00:05:00Z","runId":"run-renamed-1","scenarioId":"renamed-scenario","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}

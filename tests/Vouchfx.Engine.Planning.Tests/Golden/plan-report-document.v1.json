@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "1.2.3-golden",
+  "thresholds": {
+    "staleDays": 30,
+    "flakyMinRuns": 2,
+    "fragileMinEnvErrors": 2,
+    "inconclusiveMin": 2
+  },
+  "inventory": {
+    "suites": [
+      {
+        "path": "checkout.e2e.yaml",
+        "scenarioId": "checkout-flow",
+        "name": "checkout-flow",
+        "stepCount": 2
+      },
+      {
+        "path": "refund.e2e.yaml",
+        "scenarioId": "refund",
+        "name": null,
+        "stepCount": 1
+      }
+    ],
+    "services": [
+      "api"
+    ],
+    "dependencies": [
+      {
+        "name": "events",
+        "type": "kafka",
+        "suite": "checkout.e2e.yaml"
+      },
+      {
+        "name": "legacy-cache",
+        "type": "cassandra",
+        "suite": "refund.e2e.yaml"
+      },
+      {
+        "name": "orders-db",
+        "type": "postgres",
+        "suite": "checkout.e2e.yaml"
+      }
+    ],
+    "stepTypes": [
+      "db-assert.postgres",
+      "http.rest",
+      "mq-publish.kafka"
+    ],
+    "runCount": 3,
+    "firstEventTs": "2026-01-01T00:00:00+00:00",
+    "lastEventTs": "2026-01-03T00:05:00+00:00",
+    "skippedEventLines": 2,
+    "unmatchedObservations": 1,
+    "unanalysableSuites": [
+      {
+        "path": "bad.e2e.yaml",
+        "error": "Parse / AST error: a step is missing the required \u0027id\u0027 field."
+      }
+    ],
+    "unmappableDependencies": [
+      {
+        "name": "legacy-cache",
+        "type": "cassandra",
+        "reason": "Dependency kind is not recognised by the engine\u0027s dependency-kind vocabulary.",
+        "suite": "refund.e2e.yaml"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "kind": "dependency-missing-step-type",
+      "suite": "checkout.e2e.yaml",
+      "stepId": null,
+      "target": "orders-db",
+      "targetKind": "dependency",
+      "suggestedTypes": [
+        "db-assert.postgres"
+      ],
+      "suggestedStepId": "assert-orders-db",
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Dependency \u0027orders-db\u0027 (postgres) has no analysed step of a candidate asserting type.",
+      "relatedSuites": []
+    },
+    {
+      "kind": "dependency-not-asserted",
+      "suite": "checkout.e2e.yaml",
+      "stepId": null,
+      "target": "events",
+      "targetKind": "dependency",
+      "suggestedTypes": [
+        "mq-expect.kafka"
+      ],
+      "suggestedStepId": "assert-events",
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Dependency \u0027events\u0027 is targeted by a declared step but by no step of an asserting family.",
+      "relatedSuites": []
+    },
+    {
+      "kind": "service-missing-http-step",
+      "suite": "checkout.e2e.yaml",
+      "stepId": null,
+      "target": "api",
+      "targetKind": "service",
+      "suggestedTypes": [
+        "http.rest"
+      ],
+      "suggestedStepId": "assert-api",
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Service \u0027api\u0027 has no http.* step targeting it.",
+      "relatedSuites": []
+    },
+    {
+      "kind": "step-flaky",
+      "suite": "checkout.e2e.yaml",
+      "stepId": "create-order",
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": {
+        "passCount": 3,
+        "failCount": 2,
+        "envErrorCount": 0,
+        "inconclusiveCount": 0,
+        "distinctRuns": 2,
+        "lastObserved": "2026-01-03T00:05:00+00:00",
+        "ageDays": 1
+      },
+      "detail": "Step \u0027create-order\u0027 (http.rest) in suite \u0027checkout.e2e.yaml\u0027 shows 3 Pass and 2 Fail verdict(s) across 2 distinct run(s) (flaky threshold: 2 run(s)).",
+      "relatedSuites": []
+    },
+    {
+      "kind": "step-fragile",
+      "suite": "checkout.e2e.yaml",
+      "stepId": "assert-order-row",
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": {
+        "passCount": 1,
+        "failCount": 0,
+        "envErrorCount": 2,
+        "inconclusiveCount": 0,
+        "distinctRuns": 2,
+        "lastObserved": "2026-01-03T00:05:00+00:00",
+        "ageDays": 1
+      },
+      "detail": "Step \u0027assert-order-row\u0027 (db-assert.postgres) in suite \u0027checkout.e2e.yaml\u0027 shows 2 EnvironmentError verdict(s) (fragile threshold: 2).",
+      "relatedSuites": []
+    },
+    {
+      "kind": "step-inconclusive-prone",
+      "suite": "checkout.e2e.yaml",
+      "stepId": "create-order",
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": {
+        "passCount": 1,
+        "failCount": 0,
+        "envErrorCount": 0,
+        "inconclusiveCount": 2,
+        "distinctRuns": 2,
+        "lastObserved": "2026-01-03T00:05:00+00:00",
+        "ageDays": 1
+      },
+      "detail": "Step \u0027create-order\u0027 (http.rest) in suite \u0027checkout.e2e.yaml\u0027 shows 2 Inconclusive verdict(s) (inconclusive-prone threshold: 2).",
+      "relatedSuites": []
+    },
+    {
+      "kind": "step-never-exercised",
+      "suite": "refund.e2e.yaml",
+      "stepId": "publish-refund-event",
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [
+        "mq-publish.kafka"
+      ],
+      "suggestedStepId": "publish-refund-event",
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Step \u0027publish-refund-event\u0027 has no step event attributed to it.",
+      "relatedSuites": []
+    },
+    {
+      "kind": "step-stale",
+      "suite": "checkout.e2e.yaml",
+      "stepId": "create-order",
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": {
+        "passCount": 1,
+        "failCount": 0,
+        "envErrorCount": 0,
+        "inconclusiveCount": 0,
+        "distinctRuns": 1,
+        "lastObserved": "2026-01-03T00:05:00+00:00",
+        "ageDays": 45
+      },
+      "detail": "Step \u0027create-order\u0027 (http.rest) in suite \u0027checkout.e2e.yaml\u0027 was last observed 45 day(s) before the newest event in the analysed history (stale threshold: 30 day(s)).",
+      "relatedSuites": []
+    },
+    {
+      "kind": "suite-identity-ambiguous",
+      "suite": null,
+      "stepId": null,
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": true,
+      "ambiguityReason": "scenario-id-collision",
+      "history": null,
+      "detail": "Scenario id \u0027checkout-flow\u0027 is declared by 2 suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
+      "relatedSuites": [
+        "checkout.e2e.yaml",
+        "checkout-v2.e2e.yaml"
+      ]
+    },
+    {
+      "kind": "suite-identity-ambiguous",
+      "suite": null,
+      "stepId": null,
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": true,
+      "ambiguityReason": "history-references-missing-file",
+      "history": null,
+      "detail": "History references a file for scenario id \u0027refund\u0027 that no longer exists on disk: \u0027refund-legacy.e2e.yaml\u0027.",
+      "relatedSuites": []
+    },
+    {
+      "kind": "suite-never-run",
+      "suite": "refund.e2e.yaml",
+      "stepId": null,
+      "target": null,
+      "targetKind": null,
+      "suggestedTypes": [],
+      "suggestedStepId": null,
+      "ambiguous": false,
+      "ambiguityReason": null,
+      "history": null,
+      "detail": "Suite \u0027refund.e2e.yaml\u0027 never appears in the analysed event history.",
+      "relatedSuites": []
+    }
+  ]
+}

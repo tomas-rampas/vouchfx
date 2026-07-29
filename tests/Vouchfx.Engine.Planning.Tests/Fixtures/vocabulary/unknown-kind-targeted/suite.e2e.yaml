@@ -1,0 +1,17 @@
+metadata:
+  name: unknown-kind-targeted
+
+environment:
+  dependencies:
+    legacy-cache:
+      type: cassandra
+
+steps:
+  - id: touch-legacy-cache
+    type: script.csharp
+    target: legacy-cache
+    code: |
+      // Deliberately non-asserting (StepFamilyRoles.NonAssertingFamilies): this makes
+      // "legacy-cache" a "≥1 declared step, none asserting" dependency (REQ-004 bullet 3)
+      // whose kind ("cassandra") has no REQ-005 candidate step type at all (REQ-007's
+      // second documented hint exemption).

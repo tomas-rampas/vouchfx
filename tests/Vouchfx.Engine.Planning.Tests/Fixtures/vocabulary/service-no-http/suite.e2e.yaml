@@ -1,0 +1,8 @@
+environment:
+  services:
+    web:
+      image: myorg/web:1.0
+
+steps:
+  - id: run-script
+    type: script.csharp

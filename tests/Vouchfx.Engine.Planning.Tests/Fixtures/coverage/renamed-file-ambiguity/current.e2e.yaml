@@ -1,0 +1,7 @@
+metadata:
+  name: current-scenario
+
+steps:
+  - id: step-a
+    type: http.rest
+    target: api

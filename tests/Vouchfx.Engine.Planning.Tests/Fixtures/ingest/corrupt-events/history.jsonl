@@ -1,0 +1,3 @@
+not json at all
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-1","scenarioId":"checkout-flow"}
+{"foo": "bar"}

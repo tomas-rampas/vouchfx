@@ -1,0 +1,4 @@
+steps:
+  - id: publish-refund-event
+    type: mq-publish.kafka
+    target: events

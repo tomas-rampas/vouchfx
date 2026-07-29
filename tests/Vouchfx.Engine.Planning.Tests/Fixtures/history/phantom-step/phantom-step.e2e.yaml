@@ -1,0 +1,12 @@
+metadata:
+  name: phantom-step-suite
+
+environment:
+  services:
+    api:
+      image: myorg/phantom-step-api:1.0
+
+steps:
+  - id: current-step
+    type: http.rest
+    target: api

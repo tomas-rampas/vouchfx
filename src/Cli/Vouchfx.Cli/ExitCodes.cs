@@ -66,6 +66,23 @@ internal static class ExitCodes
     public const int Inconclusive = 4;
 
     /// <summary>
+    /// The Planner's <c>plan --fail-on-gap</c> opt-in code (M3 / planner-coverage-and-gap-report,
+    /// REQ-010): at least one coverage or vocabulary gap finding
+    /// (<c>PlanFindingKinds.IsGap</c>) was present in the report AND the caller opted in via
+    /// <c>--fail-on-gap</c>.
+    /// </summary>
+    /// <remarks>
+    /// Sits deliberately ABOVE the existing 0–4 taxonomy so it cannot collide with any of
+    /// them: 0 = ok, 1 = a product Fail, 2 = a usage error, 3 = infra/catalogue broke, 4 = the
+    /// engine could not decide, 5 = the Planner found at least one gap AND the caller asked to
+    /// be told via a non-zero exit. A <c>plan</c> invocation exits 0 on a successful analysis
+    /// regardless of how many gaps were found unless <c>--fail-on-gap</c> is passed — gaps are
+    /// data, mirroring the verdict taxonomy's "only a genuine Fail breaks CI by default" rule
+    /// (§12.1). This code is reserved exclusively for that opt-in path; no other command uses it.
+    /// </remarks>
+    public const int GapsFound = 5;
+
+    /// <summary>
     /// Maps a suite-level <see cref="Verdict"/> to a process exit code, honouring the two opt-in
     /// CI-gating flags.
     /// </summary>

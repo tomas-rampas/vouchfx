@@ -1,0 +1,9 @@
+environment:
+  dependencies:
+    sessions:
+      type: redis
+
+steps:
+  - id: assert-session
+    type: cache-assert.redis
+    target: sessions

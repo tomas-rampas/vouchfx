@@ -1,0 +1,18 @@
+metadata:
+  name: fully-exercised
+
+environment:
+  services:
+    api:
+      image: myorg/checkout-api:1.0
+  dependencies:
+    orders-db:
+      type: postgres
+
+steps:
+  - id: create-order
+    type: http.rest
+    target: api
+  - id: assert-order-row
+    type: db-assert.postgres
+    target: orders-db

@@ -1,0 +1,7 @@
+metadata:
+  name: collision-alpha
+
+steps:
+  - id: step-alpha-1
+    type: http.rest
+    target: api

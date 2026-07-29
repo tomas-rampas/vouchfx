@@ -1,0 +1,6 @@
+environment:
+  dependencies:
+    events:
+      type: kafka
+
+steps: []

@@ -1,0 +1,6 @@
+environment:
+  dependencies:
+    mailbox:
+      type: mailpit
+
+steps: []

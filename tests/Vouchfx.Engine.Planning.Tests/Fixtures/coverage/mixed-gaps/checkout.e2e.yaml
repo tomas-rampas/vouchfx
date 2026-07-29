@@ -1,0 +1,26 @@
+metadata:
+  name: checkout-flow
+
+environment:
+  services:
+    api:
+      image: myorg/checkout-api:1.0
+  dependencies:
+    orders-db:
+      type: postgres
+    events:
+      type: kafka
+
+steps:
+  - id: create-order
+    type: http.rest
+    target: api
+  - id: assert-order-row
+    type: db-assert.postgres
+    target: orders-db
+  - id: publish-order-event
+    type: mq-publish.kafka
+    target: events
+  - id: never-called-step
+    type: http.rest
+    target: api
