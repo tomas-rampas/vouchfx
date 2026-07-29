@@ -1,0 +1,9 @@
+environment:
+  services:
+    payments-api:
+      image: myorg/payments-api:1.0
+
+steps:
+  - id: no-op
+    type: script.csharp
+    code: "// no-op"

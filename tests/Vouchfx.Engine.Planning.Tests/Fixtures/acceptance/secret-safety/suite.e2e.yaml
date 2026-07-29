@@ -1,0 +1,7 @@
+metadata:
+  name: secret-safety-suite
+
+steps:
+  - id: assert-order
+    type: http.rest
+    target: api

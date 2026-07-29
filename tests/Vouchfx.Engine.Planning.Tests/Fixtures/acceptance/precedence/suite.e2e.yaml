@@ -1,0 +1,11 @@
+environment:
+  dependencies:
+    unused-queue:
+      type: kafka
+    events:
+      type: kafka
+
+steps:
+  - id: publish-order-event
+    type: mq-publish.kafka
+    target: events

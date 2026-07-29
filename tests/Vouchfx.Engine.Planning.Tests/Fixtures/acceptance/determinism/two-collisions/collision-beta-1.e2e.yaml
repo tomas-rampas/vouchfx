@@ -1,0 +1,7 @@
+metadata:
+  name: collision-beta
+
+steps:
+  - id: step-beta-1
+    type: http.rest
+    target: api
