@@ -220,13 +220,13 @@ vouchfx plan ./tests/e2e --events ./run-history --json
   "inventory": {
     "suites": [
       {
-        "path": "tests/e2e/orders.e2e.yaml",
+        "path": "orders.e2e.yaml",
         "scenarioId": "checkout-flow",
         "name": "checkout-flow",
         "stepCount": 3
       },
       {
-        "path": "tests/e2e/refund.e2e.yaml",
+        "path": "refund.e2e.yaml",
         "scenarioId": "refund",
         "name": null,
         "stepCount": 1
@@ -234,8 +234,8 @@ vouchfx plan ./tests/e2e --events ./run-history --json
     ],
     "services": ["orders-api"],
     "dependencies": [
-      { "name": "orders-db", "type": "postgres", "suite": "tests/e2e/orders.e2e.yaml" },
-      { "name": "events", "type": "kafka", "suite": "tests/e2e/orders.e2e.yaml" }
+      { "name": "events", "type": "kafka", "suite": "orders.e2e.yaml" },
+      { "name": "orders-db", "type": "postgres", "suite": "orders.e2e.yaml" }
     ],
     "stepTypes": ["db-assert.postgres", "http.rest", "mq-expect.kafka", "mq-publish.kafka"],
     "runCount": 5,
@@ -249,7 +249,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
   "findings": [
     {
       "kind": "dependency-missing-step-type",
-      "suite": "tests/e2e/orders.e2e.yaml",
+      "suite": "orders.e2e.yaml",
       "stepId": null,
       "target": "orders-db",
       "targetKind": "dependency",
@@ -263,7 +263,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
     },
     {
       "kind": "service-missing-http-step",
-      "suite": "tests/e2e/orders.e2e.yaml",
+      "suite": "orders.e2e.yaml",
       "stepId": null,
       "target": "orders-api",
       "targetKind": "service",
@@ -277,7 +277,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
     },
     {
       "kind": "step-flaky",
-      "suite": "tests/e2e/orders.e2e.yaml",
+      "suite": "orders.e2e.yaml",
       "stepId": "create-order",
       "target": null,
       "targetKind": null,

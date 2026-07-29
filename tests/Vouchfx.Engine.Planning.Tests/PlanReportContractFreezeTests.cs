@@ -245,6 +245,13 @@ public sealed class PlanReportContractFreezeTests
                 // MAJOR fix-round: Suite is required (REQ-011 additive) — both dependencies
                 // here are declared inside checkout.e2e.yaml's own environment section.
                 new PlanDependencyEntry("events", "kafka", "checkout.e2e.yaml"),
+                // Fix-round: legacy-cache is the dependency the UnmappableDependencies entry
+                // below refers to. BuildInventory derives unmappable entries BY FILTERING
+                // dependencies (PlanPipeline.BuildInventory), so every unmappable entry is
+                // necessarily also a Dependencies entry — omitting it here made the fixture
+                // depict an inventory state the real pipeline cannot produce (an unmappable
+                // dependency absent from the dependency list it was filtered from).
+                new PlanDependencyEntry("legacy-cache", "cassandra", "refund.e2e.yaml"),
                 new PlanDependencyEntry("orders-db", "postgres", "checkout.e2e.yaml"),
             },
             StepTypes: new[] { "db-assert.postgres", "http.rest", "mq-publish.kafka" },

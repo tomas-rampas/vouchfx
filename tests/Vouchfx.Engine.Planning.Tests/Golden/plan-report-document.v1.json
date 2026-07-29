@@ -32,6 +32,11 @@
         "suite": "checkout.e2e.yaml"
       },
       {
+        "name": "legacy-cache",
+        "type": "cassandra",
+        "suite": "refund.e2e.yaml"
+      },
+      {
         "name": "orders-db",
         "type": "postgres",
         "suite": "checkout.e2e.yaml"
