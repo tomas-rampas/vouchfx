@@ -171,6 +171,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.TraceExpect.O
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Steps.Http.Soap.Tests", "tests\Vouchfx.Steps.Http.Soap.Tests\Vouchfx.Steps.Http.Soap.Tests.csproj", "{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Planning", "src\Engine\Vouchfx.Engine.Planning\Vouchfx.Engine.Planning.csproj", "{3998C2CB-D391-4585-8988-F09A6B5F1452}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Engine.Planning.Tests", "tests\Vouchfx.Engine.Planning.Tests\Vouchfx.Engine.Planning.Tests.csproj", "{E82CCD1C-655B-46DE-A115-FE9E38A5999D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -480,6 +484,14 @@ Global
 		{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3998C2CB-D391-4585-8988-F09A6B5F1452}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3998C2CB-D391-4585-8988-F09A6B5F1452}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3998C2CB-D391-4585-8988-F09A6B5F1452}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3998C2CB-D391-4585-8988-F09A6B5F1452}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E82CCD1C-655B-46DE-A115-FE9E38A5999D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E82CCD1C-655B-46DE-A115-FE9E38A5999D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E82CCD1C-655B-46DE-A115-FE9E38A5999D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E82CCD1C-655B-46DE-A115-FE9E38A5999D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2F5CC80-BD70-48C5-A894-38CB4BDC2E41} = {6664381F-6135-49A8-970A-80BABBB0DDC3}
@@ -557,5 +569,7 @@ Global
 		{472AC540-C97A-4AF7-8B7D-C8EF6DF4616E} = {DAE7D803-ED65-4551-A2A5-109B76F2D0C8}
 		{A158C877-89A9-4E38-B8B1-707F57DEB91B} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 		{2DB1EA4D-EDBD-4391-BFCA-BFB2325E5CD7} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
+		{3998C2CB-D391-4585-8988-F09A6B5F1452} = {A2F5CC80-BD70-48C5-A894-38CB4BDC2E41}
+		{E82CCD1C-655B-46DE-A115-FE9E38A5999D} = {2BD298DA-BBC8-46C3-AE1B-A460B5886CF4}
 	EndGlobalSection
 EndGlobal

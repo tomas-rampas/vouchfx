@@ -1,0 +1,197 @@
+// Vouchfx.Engine.Planning.Ingest — SuiteSetLoader (M3 Planner, REQ-001, REQ-008, EDGE-003,
+// EDGE-009, flag F-6, flag F-19).
+//
+// A behaviour-parity clone of Vouchfx.Cli's internal ScenarioDiscovery: the public library
+// API (REQ-001) cannot call ScenarioDiscovery (it is internal to Vouchfx.Cli, exposed only
+// to Vouchfx.Cli.Tests, and lives above the engine libraries), so the Planner owns its own
+// loader that replicates its behaviour precisely — *.e2e.yaml glob, SearchOption.AllDirectories,
+// Path.GetFullPath + ordinal sort, single-file root accepted with an OrdinalIgnoreCase
+// suffix check, the 1 MiB MaxDocumentSizeBytes cap, and parse failures captured (never
+// thrown). tests/Vouchfx.Cli.Tests/PlanDiscoveryParityTests.cs is the CI-guarded parity gate
+// (flag F-6) against ScenarioDiscovery's ordered path list, AND (flag F-19) against
+// RunCommand.ScenarioName's ScenarioId derivation.
+
+using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Planning.Report;
+using Vouchfx.Sdk;
+
+namespace Vouchfx.Engine.Planning.Ingest;
+
+/// <summary>
+/// Discovers and parses <c>.e2e.yaml</c> suite files under a root directory, or a single
+/// explicitly named <c>.e2e.yaml</c> file, mirroring <c>Vouchfx.Cli.ScenarioDiscovery</c>.
+/// </summary>
+internal static class SuiteSetLoader
+{
+    /// <summary>The glob the discovery walk matches — identical to <c>ScenarioDiscovery.ScenarioGlob</c>.</summary>
+    internal const string ScenarioGlob = "*.e2e.yaml";
+
+    /// <summary>
+    /// The maximum permitted size, in bytes, of a single <c>.e2e.yaml</c> document —
+    /// identical to <c>ScenarioDiscovery.MaxDocumentSizeBytes</c> (1 MiB).
+    /// </summary>
+    internal const long MaxDocumentSizeBytes = 1024 * 1024;
+
+    /// <summary>The outcome of a suite-set load: the analysed root plus every suite, split by whether it parsed.</summary>
+    /// <param name="AnalysedRoot">
+    /// The absolute directory used to compute every suite's <see cref="PlanSuite.RelativePath"/>
+    /// — the discovery root itself for a directory, or the containing directory for a
+    /// single-file root.
+    /// </param>
+    /// <param name="Suites">Every suite that parsed and built successfully.</param>
+    /// <param name="UnanalysableSuites">Every discovered suite that failed to parse (EDGE-003).</param>
+    internal sealed record LoadResult(
+        string AnalysedRoot,
+        IReadOnlyList<PlanSuite> Suites,
+        IReadOnlyList<PlanUnanalysableSuite> UnanalysableSuites);
+
+    /// <summary>
+    /// Discovers every <c>*.e2e.yaml</c> file under <paramref name="suitePath"/> (or the
+    /// single file it names) and parses each into a <see cref="PlanSuite"/>.
+    /// </summary>
+    /// <param name="suitePath">A directory to search recursively, or a single <c>*.e2e.yaml</c> file.</param>
+    /// <param name="registry">The frozen provider registry used to build each suite's AST.</param>
+    /// <returns>The load result: analysed root, parsed suites, and captured parse failures.</returns>
+    /// <exception cref="PlanInputException">
+    /// Thrown when <paramref name="suitePath"/> does not exist, names a file that does not
+    /// end in <c>.e2e.yaml</c>, or discovers zero <c>*.e2e.yaml</c> files at all (EDGE-009).
+    /// </exception>
+    internal static LoadResult Load(string suitePath, StepKindRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(suitePath);
+        ArgumentNullException.ThrowIfNull(registry);
+
+        var fullRoot = Path.GetFullPath(suitePath);
+
+        List<string> files;
+        string analysedRoot;
+
+        if (File.Exists(fullRoot))
+        {
+            // OrdinalIgnoreCase deliberately: an explicitly-named existing file
+            // (Login.E2E.YAML) must not be rejected on a case technicality — mirrors
+            // ScenarioDiscovery.Discover exactly.
+            if (!fullRoot.EndsWith(".e2e.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PlanInputException(
+                    $"Suite path '{suitePath}' is a file but not a {ScenarioGlob} scenario "
+                    + $"(resolved to '{fullRoot}'). Scenario files must end in '.e2e.yaml'.");
+            }
+
+            files = new List<string> { fullRoot };
+            analysedRoot = Path.GetDirectoryName(fullRoot) ?? fullRoot;
+        }
+        else if (Directory.Exists(fullRoot))
+        {
+            files = Directory
+                .EnumerateFiles(fullRoot, ScenarioGlob, SearchOption.AllDirectories)
+                .Select(Path.GetFullPath)
+                .OrderBy(p => p, StringComparer.Ordinal)
+                .ToList();
+            analysedRoot = fullRoot;
+        }
+        else
+        {
+            throw new PlanInputException(
+                $"Suite path '{suitePath}' does not exist (resolved to '{fullRoot}'). Pass a "
+                + $"directory to search recursively for {ScenarioGlob} suites, or a single "
+                + "*.e2e.yaml file.");
+        }
+
+        if (files.Count == 0)
+        {
+            throw new PlanInputException(
+                $"Suite path '{suitePath}' (resolved to '{fullRoot}') discovers zero "
+                + $"{ScenarioGlob} suites. An empty suite folder means there is no declared "
+                + "universe to analyse (EDGE-009) — this is a configuration error, not a finding.");
+        }
+
+        var suites = new List<PlanSuite>(files.Count);
+        var unanalysable = new List<PlanUnanalysableSuite>();
+
+        foreach (var absolutePath in files)
+        {
+            var relativePath = ToRelativePath(analysedRoot, absolutePath);
+            ParseFile(absolutePath, relativePath, registry, suites, unanalysable);
+        }
+
+        return new LoadResult(analysedRoot, suites, unanalysable);
+    }
+
+    /// <summary>
+    /// Computes a suite's <see cref="PlanSuite.ScenarioId"/> exactly as
+    /// <c>Vouchfx.Cli.RunCommand.ScenarioName</c> does: <c>metadata.name</c> when present
+    /// (and not empty/whitespace-only), else the filename stem, stripping a
+    /// <c>.e2e.yaml</c> suffix case-insensitively.
+    /// </summary>
+    /// <param name="metadataName">The suite's raw <c>metadata.name</c>, or <see langword="null"/>.</param>
+    /// <param name="absolutePath">The suite's absolute file path.</param>
+    internal static string ComputeScenarioId(string? metadataName, string absolutePath)
+    {
+        if (!string.IsNullOrWhiteSpace(metadataName))
+        {
+            return metadataName;
+        }
+
+        var fileName = Path.GetFileName(absolutePath);
+        const string suffix = ".e2e.yaml";
+        return fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? fileName[..^suffix.Length]
+            : fileName;
+    }
+
+    private static void ParseFile(
+        string absolutePath,
+        string relativePath,
+        StepKindRegistry registry,
+        List<PlanSuite> suites,
+        List<PlanUnanalysableSuite> unanalysable)
+    {
+        string yamlText;
+        try
+        {
+            var fileInfo = new FileInfo(absolutePath);
+            if (fileInfo.Length > MaxDocumentSizeBytes)
+            {
+                unanalysable.Add(new PlanUnanalysableSuite(
+                    relativePath,
+                    $"File size {fileInfo.Length} bytes exceeds the {MaxDocumentSizeBytes}-byte "
+                    + $"(1 MiB) limit for a single {ScenarioGlob} document; split the suite into "
+                    + "smaller files."));
+                return;
+            }
+
+            yamlText = File.ReadAllText(absolutePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Security minor (fix-round): BCL IOException/UnauthorizedAccessException
+            // messages typically embed the file's ABSOLUTE path. Every other field in this
+            // report is analysed-root-relative (a shareable artefact must not leak local
+            // machine/user path structure), so the exception TYPE is named instead of its
+            // raw Message — never the absolute path.
+            unanalysable.Add(new PlanUnanalysableSuite(
+                relativePath,
+                $"Could not read file ({ex.GetType().Name}): the file may be locked, deleted, or access-denied."));
+            return;
+        }
+
+        try
+        {
+            var doc = YamlDocumentParser.Parse(yamlText);
+            var ast = AstBuilder.Build(doc, registry);
+            var scenarioId = ComputeScenarioId(ast.Metadata?.Name, absolutePath);
+            suites.Add(new PlanSuite(absolutePath, relativePath, scenarioId, ast.Metadata?.Name, ast));
+        }
+        catch (Exception ex)
+        {
+            // Mirrors ScenarioDiscovery.ParseFile: a parse / AST-build failure must not
+            // abort the rest of the suite set (EDGE-003), so every exception is captured
+            // here rather than propagated.
+            unanalysable.Add(new PlanUnanalysableSuite(relativePath, $"Parse / AST error: {ex.Message}"));
+        }
+    }
+
+    private static string ToRelativePath(string root, string absolutePath) =>
+        Path.GetRelativePath(root, absolutePath).Replace('\\', '/');
+}

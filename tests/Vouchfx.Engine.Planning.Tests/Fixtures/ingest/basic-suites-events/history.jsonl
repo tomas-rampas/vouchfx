@@ -1,0 +1,11 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-1","scenarioId":"checkout-flow"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:01:00Z","runId":"run-1","stepId":"create-order","verdict":"PASS","durationMs":120}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:02:00Z","runId":"run-1","stepId":"assert-order-row","verdict":"PASS","durationMs":80}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:05:00Z","runId":"run-1","scenarioId":"checkout-flow","verdict":"PASS","counts":{"pass":2,"fail":0,"envError":0,"inconclusive":0}}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-02T00:00:00Z","runId":"run-2","scenarioId":"checkout-flow"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-02T00:01:00Z","runId":"run-2","stepId":"create-order","verdict":"PASS","durationMs":110}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-02T00:02:00Z","runId":"run-2","stepId":"assert-order-row","verdict":"PASS","durationMs":75}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-02T00:05:00Z","runId":"run-2","scenarioId":"checkout-flow","verdict":"PASS","counts":{"pass":2,"fail":0,"envError":0,"inconclusive":0}}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-03T00:00:00Z","runId":"run-3","scenarioId":"refund"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-03T00:01:00Z","runId":"run-3","stepId":"publish-refund-event","verdict":"PASS","durationMs":30}
+{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-03T00:05:00Z","runId":"run-3","scenarioId":"refund","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}

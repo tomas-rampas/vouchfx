@@ -1,0 +1,3 @@
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-05-01T00:00:00Z","runId":"run-shared","scenarioId":"renamed-elsewhere","file":"missing.e2e.yaml"}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-05-01T00:01:00Z","runId":"run-shared","scenarioId":"checkout-flow"}
+{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-05-01T00:02:00Z","runId":"run-shared","stepId":"create-order","verdict":"PASS","durationMs":10}

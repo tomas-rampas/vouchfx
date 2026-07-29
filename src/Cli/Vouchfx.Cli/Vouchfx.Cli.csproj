@@ -108,6 +108,10 @@
     <!-- Opt-in, privacy-first telemetry (S10-G-04). A plain net8.0 library; no Aspire. -->
     <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Telemetry\Vouchfx.Engine.Telemetry.csproj"
                       IsAspireProjectResource="false" />
+    <!-- M3 Planner (planner-coverage-and-gap-report): read-only coverage-and-gap analysis.
+         A plain net8.0 library; no Aspire, no topology. -->
+    <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Planning\Vouchfx.Engine.Planning.csproj"
+                      IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Vouchfx.Steps.Core.HttpRest\Vouchfx.Steps.Core.HttpRest.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Vouchfx.Steps.Http.Soap\Vouchfx.Steps.Http.Soap.csproj"
