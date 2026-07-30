@@ -58,13 +58,14 @@ The phase-one server is a .NET console process speaking MCP over stdio, built on
 
 ### 3.3 Trust boundary
 
-```text
-┌─────────────────────┐   MCP (stdio)   ┌──────────────────────┐   frozen v1 contracts   ┌────────────────┐
-│  MCP client + LLM   │ ◄─────────────► │  vouchfxai server    │ ◄─────────────────────► │  vouchfx       │
-│  (Claude Code, IDE) │   tool calls    │  deterministic tools │   schema · events ·     │  engine + CLI  │
-│  human reviews all  │                 │  no model calls      │   verdicts · registry   │  containers    │
-│  proposed edits     │                 │  no secret values    │                         │                │
-└─────────────────────┘                 └──────────────────────┘                         └────────────────┘
+```mermaid
+flowchart LR
+    A["MCP client + LLM<br/>(Claude Code, IDE)<br/><br/>human reviews all<br/>proposed edits"]
+    B["vouchfxai server<br/><br/>deterministic tools<br/>no model calls<br/>no secret values"]
+    C["vouchfx<br/>engine + CLI<br/><br/>containers"]
+    
+    A <-->|MCP stdio<br/>tool calls| B
+    B <-->|frozen v1 contracts<br/>schema · events ·<br/>verdicts · registry| C
 ```
 
 The model sees YAML, schemas, diagnostics and event streams. It never sees secret values (section 7.1), and nothing it produces reaches disk or source control without a human applying it.

@@ -83,7 +83,17 @@ extra_css:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  # custom_fences maps a ```mermaid fence to Material's built-in mermaid
+  # renderer: the fence is emitted as <pre class="mermaid"> instead of a
+  # highlighted code block, and Material auto-loads/initialises mermaid.js
+  # for any element carrying that class — no extra_javascript/CDN <script>
+  # needed. Used by docs/04_AI_Companion_Feasibility_and_Design.md's trust-
+  # boundary diagram (issue #311).
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
