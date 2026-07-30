@@ -60,12 +60,14 @@ The phase-one server is a .NET console process speaking MCP over stdio, built on
 
 ```mermaid
 flowchart LR
+    accTitle: vouchfxai trust boundary
+    accDescr: The MCP client and LLM exchange MCP stdio tool calls with the vouchfxai server, which exchanges frozen v1 contracts with the vouchfx engine and CLI.
     A["MCP client + LLM<br/>(Claude Code, IDE)<br/><br/>human reviews all<br/>proposed edits"]
     B["vouchfxai server<br/><br/>deterministic tools<br/>no model calls<br/>no secret values"]
     C["vouchfx<br/>engine + CLI<br/><br/>containers"]
-    
-    A <-->|MCP stdio<br/>tool calls| B
-    B <-->|frozen v1 contracts<br/>schema · events ·<br/>verdicts · registry| C
+
+    A <-->|"MCP (stdio)<br/>tool calls"| B
+    B <-->|"frozen v1 contracts<br/>schema · events ·<br/>verdicts · registry"| C
 ```
 
 The model sees YAML, schemas, diagnostics and event streams. It never sees secret values (section 7.1), and nothing it produces reaches disk or source control without a human applying it.

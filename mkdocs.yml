@@ -45,11 +45,19 @@ exclude_docs: |
 #                    on_post_build hook runs) with the site-root <loc> entry
 #                    EDGE-001 requires. Independent of 1-3 (no read/write
 #                    dependency either way) — listed last by convention only.
+#
+# pin_mermaid.py (5th) is independent of all four above too — it only
+# rewrites MkDocs' own theme static asset (assets/javascripts/bundle*.min.js),
+# which MkDocs copies into site_dir as part of its own build, BEFORE any
+# on_post_build hook runs, same as sitemap.xml. It neither reads nor writes
+# anything the other four touch. Listed last by convention, same reasoning
+# as sitemap.py.
 hooks:
   - scripts/site_hooks/landing.py
   - scripts/site_hooks/facts.py
   - scripts/site_hooks/redirects.py
   - scripts/site_hooks/sitemap.py
+  - scripts/site_hooks/pin_mermaid.py
 
 theme:
   name: material
@@ -85,10 +93,17 @@ markdown_extensions:
   - pymdownx.details
   # custom_fences maps a ```mermaid fence to Material's built-in mermaid
   # renderer: the fence is emitted as <pre class="mermaid"> instead of a
-  # highlighted code block, and Material auto-loads/initialises mermaid.js
-  # for any element carrying that class — no extra_javascript/CDN <script>
-  # needed. Used by docs/04_AI_Companion_Feasibility_and_Design.md's trust-
-  # boundary diagram (issue #311).
+  # highlighted code block, and Material's theme bundle lazily fetches
+  # mermaid and mounts it against any element carrying that class — but
+  # ONLY once a page actually has one (Material's own `watchScript()` call
+  # is conditional on a `.mermaid` element being present). That fetch is
+  # unpinned (a floating `@11` on unpkg.com) and not configurable from this
+  # file at all — see scripts/site_hooks/pin_mermaid.py, registered below in
+  # `hooks:`, which rewrites the literal URL baked into Material's built
+  # theme bundle to a pinned jsdelivr URL (issue #200's rationale) without
+  # disturbing the lazy, per-page fetch itself (issue #311/#320). Used by
+  # docs/04_AI_Companion_Feasibility_and_Design.md's trust-boundary diagram
+  # (issue #311).
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
