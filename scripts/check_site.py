@@ -62,6 +62,24 @@ specs/seo-fleet-audit.md (the fleet-wide SEO audit):
       in either its literal `.html` or directory-slug form — see
       `check_sitemap_excludes_404_and_stubs`.
 
+Two further checks, unrelated to REQ-007, close gaps in the mermaid
+diagram rendering fix (issue #311 / PR #320):
+
+  (n) the AI Companion design doc's built page contains a real
+      `<pre class="mermaid">` container (proving its ```mermaid fence took
+      the custom_fences path) and no highlighted-code-block fallback still
+      carries the raw `flowchart` source — see
+      `check_mermaid_diagram_rendered`. Needed because neither
+      `mkdocs build --strict` nor `check_docs_drift.py`'s box-drawing scan
+      can tell a rendered diagram from a broken one: mermaid is parsed
+      entirely client-side, and raw mermaid source has zero box-drawing
+      characters to trip the drift scan;
+  (o) no built asset references unpkg.com's mermaid CDN at all — see
+      `check_no_unpkg_mermaid_reference`. scripts/site_hooks/pin_mermaid.py
+      rewrites that reference to a pinned jsdelivr URL at build time; this
+      check makes the pin a CI-gated property of the published build
+      itself, not merely something the hook is trusted to have done.
+
 The landing page's `<title>` is also asserted ≤70 characters, folded into
 `check_landing_page` alongside its pre-existing landing-marker check.
 
@@ -1713,6 +1731,155 @@ def check_sitemap_excludes_404_and_stubs(site_dir: Path) -> None:
         )
 
 
+# --- mermaid rendering (issue #311 / PR #320) -------------------------------
+
+# The AI Companion design doc's directory-URL page slug — mirrors
+# KEY_PAGE_SLUGS' own convention of using the source filename's stem.
+MERMAID_TRUST_BOUNDARY_SLUG = "04_AI_Companion_Feasibility_and_Design"
+
+# What a correctly rendered ```mermaid fence emits (pymdownx.superfences'
+# custom_fences with format: fence_code_format — see mkdocs.yml): a bare
+# <pre class="mermaid"> holding the raw source as text, which Material's
+# theme bundle lazily fetches mermaid and replaces with a rendered SVG at
+# runtime (in a closed shadow root — see mkdocs.yml's markdown_extensions
+# comment and scripts/site_hooks/pin_mermaid.py). Matched as a substring,
+# not a regex, since pymdownx always emits this exact opening tag verbatim
+# for this fence shape.
+MERMAID_CONTAINER_MARKER = '<pre class="mermaid">'
+
+# Matched case-insensitively (DNS hostnames are case-insensitive regardless
+# of how a build tool happens to case a URL) — see
+# check_no_unpkg_mermaid_reference.
+UNPKG_MERMAID_MARKER = "unpkg.com/mermaid"
+
+
+def check_mermaid_diagram_rendered(site_dir: Path) -> None:
+    """The trust-boundary diagram on the AI Companion page
+    (docs/04_AI_Companion_Feasibility_and_Design.md section 3.3) must
+    actually render as a mermaid diagram, not silently fall back to a
+    highlighted code block of raw ``flowchart`` source.
+
+    `mkdocs build --strict` never parses mermaid at all — it is a
+    client-side renderer, lazily fetched by Material's theme bundle and
+    pinned to a specific version+origin only by
+    scripts/site_hooks/pin_mermaid.py rewriting that bundle post-build — so
+    a broken custom_fences mapping, a markdown_extensions ordering
+    regression, or a future edit that drops the fence's language tag from
+    exactly ``mermaid`` all still produce a build that exits 0.
+    `check_docs_drift.py`'s box-drawing scan does not catch it either: that
+    scan only counts Unicode box-drawing characters, and raw mermaid source
+    (arrows, brackets, ``<br/>`` tags) contains none — a broken fence
+    renders as an innocuous-looking, zero-box-character code block and
+    sails through both gates. This check is the only gate that actually
+    looks at what this specific page's fence became.
+
+    Two assertions, not one, so a regression is caught by shape rather than
+    by the container's mere absence (which a future class rename could
+    satisfy while still being broken in a *different* way):
+
+    1. The page must contain `MERMAID_CONTAINER_MARKER` at least once —
+       proves the fence took the mermaid path through custom_fences.
+    2. No pymdownx.highlight fenced-code block (`<div class="highlight">`,
+       the wrapper an ORDINARY code fence renders into) may contain the
+       literal word "flowchart" — proves the diagram source never fell
+       through to the highlighted-code-block path pymdownx.superfences
+       uses for every fence that ISN'T custom_fences-mapped.
+    """
+    page = site_dir / MERMAID_TRUST_BOUNDARY_SLUG / "index.html"
+    if not page.is_file():
+        raise CheckFailed(
+            f"{page} does not exist — expected the AI Companion design doc to "
+            "build at this directory-URL location (see KEY_PAGE_SLUGS)."
+        )
+
+    text = page.read_text(encoding="utf-8", errors="replace")
+
+    if MERMAID_CONTAINER_MARKER not in text:
+        raise CheckFailed(
+            f"{page} does not contain {MERMAID_CONTAINER_MARKER!r}. The "
+            "trust-boundary diagram (docs/04_AI_Companion_Feasibility_and_"
+            "Design.md section 3.3) is a ```mermaid fence that mkdocs.yml's "
+            "pymdownx.superfences custom_fences maps to this container; its "
+            "absence means the fence fell back to an ordinary highlighted "
+            "code block of raw flowchart source instead of a diagram. Check "
+            "that custom_fences is still configured in mkdocs.yml and that "
+            "the fence's language tag in the source markdown is still "
+            "exactly 'mermaid'."
+        )
+
+    highlight_block_re = re.compile(r'<div class="highlight">.*?</div>', re.DOTALL)
+    for block in highlight_block_re.findall(text):
+        if "flowchart" in block:
+            raise CheckFailed(
+                f"{page} renders the trust-boundary diagram's raw "
+                '\'flowchart\' source inside a highlighted code block '
+                f'(<div class="highlight">) rather than (or in addition to) '
+                f"the {MERMAID_CONTAINER_MARKER!r} container — the mermaid "
+                "fence did not take effect for at least one occurrence. "
+                "Check mkdocs.yml's custom_fences mapping and the fence's "
+                "language tag."
+            )
+
+
+def check_no_unpkg_mermaid_reference(site_dir: Path) -> int:
+    """No built asset may reference unpkg.com's mermaid CDN (issue #200 /
+    #311 / PR #320).
+
+    scripts/site_hooks/pin_mermaid.py rewrites the literal unpkg.com URL
+    Material's theme bundle calls its lazy watchScript() loader with, to a
+    pinned jsdelivr URL — see that hook's own docstring for the full
+    rationale (a major-version-only CDN URL silently picks up every new
+    minor/patch release, on an origin this project does not control). This
+    check makes that pin a CI-gated property of the PUBLISHED BUILD itself,
+    not merely something the hook is trusted to have done: a hook that
+    silently regressed, or a one-off build that disabled `hooks:`, would
+    otherwise ship an unpinned unpkg.com fetch with nothing here to catch
+    it before a real user's browser did.
+
+    Scans the same text-like surface as `check_no_legacy_domain` (html/js/
+    json/xml/txt — see scripts/site_hooks/_text_like.py), since the
+    reference this check looks for lives inside a built .js asset (the
+    theme bundle), not an HTML page. Returns the number of built files that
+    could not be read (0 normally); callers surface this count rather than
+    swallowing it, matching this module's other content-scan checks.
+    """
+    hits: list[str] = []
+    skipped = 0
+    for file in iter_text_like_files(site_dir):
+        try:
+            text = file.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            skipped += 1
+            print(
+                f"WARN [check_no_unpkg_mermaid_reference]: could not read {file} ({exc}); "
+                "this built file was NOT checked and may hide an unpinned unpkg.com fetch.",
+                file=sys.stderr,
+            )
+            continue
+        count = text.lower().count(UNPKG_MERMAID_MARKER)
+        if count:
+            rel = file.relative_to(site_dir).as_posix()
+            hits.append(f"{rel}: {count} occurrence(s)")
+
+    if hits:
+        lines = [
+            "Built output still references unpkg.com's mermaid CDN (should have "
+            "been pinned to jsdelivr by scripts/site_hooks/pin_mermaid.py):"
+        ]
+        for h in sorted(hits):
+            lines.append(f"  {h}")
+        lines.append(
+            "Check that pin_mermaid.py is still registered in mkdocs.yml's hooks: "
+            "list and ran without error during this build — a failure inside that "
+            "hook normally aborts the build outright (see its own fail-closed "
+            "checks), so a reference surviving to this gate suggests the hook "
+            "either didn't run or its own assertions have gone stale."
+        )
+        raise CheckFailed("\n".join(lines))
+
+    return skipped
+
+
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
@@ -1729,6 +1896,8 @@ CHECKS = (
     check_llms_txt,
     check_og_image_asset,
     check_sitemap_excludes_404_and_stubs,
+    check_mermaid_diagram_rendered,
+    check_no_unpkg_mermaid_reference,
 )
 
 

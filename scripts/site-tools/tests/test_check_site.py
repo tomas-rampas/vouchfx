@@ -100,6 +100,24 @@ check_sitemap_excludes_404_and_stubs (REQ-007d, specs/seo-fleet-audit.md)
     `check_site.build_redirect_table` so this test can never silently drift
     from what the check itself actually disallows.
 
+check_mermaid_diagram_rendered (issue #311 / PR #320)
+    Added alongside `check_mermaid_diagram_rendered` itself, not backfilled
+    later: a synthesised page at the real AI Companion slug covers a
+    correctly rendered `<pre class="mermaid">` container passing; the page
+    missing entirely failing; the container absent (fence fell back to an
+    ordinary `<div class="highlight">` block of raw `flowchart` source)
+    failing; the container present AND a highlighted fallback ALSO present
+    elsewhere on the page (a partial regression) still failing; and an
+    unrelated highlighted code block that does not mention "flowchart" NOT
+    false-positiving.
+
+check_no_unpkg_mermaid_reference (issue #200 / #311 / PR #320)
+    Covers a clean build (theme bundle mentions only the pinned jsdelivr
+    URL) passing; a build where scripts/site_hooks/pin_mermaid.py's rewrite
+    never happened (theme bundle still calls out to unpkg.com) failing; and
+    a differently-cased unpkg.com reference still being caught, since a
+    naive exact-case substring match would silently miss it.
+
 Run (from the repo root):
     python -m pytest scripts/site-tools/tests -q
 or (cwd scripts/site-tools, where [tool.pytest.ini_options] pins testpaths):
@@ -135,6 +153,13 @@ _EXPECTED_HEIGHT = 630
 _MAX_BYTES = 300 * 1024
 
 _SITE_URL_PREFIX = "https://example.vouchfx.test/"
+
+# The AI Companion design doc's real directory-URL slug, defined here
+# independently of check_site.MERMAID_TRUST_BOUNDARY_SLUG for the same
+# reason as _PNG_SIGNATURE above: a fixture that instead imported and
+# reused that constant could pass even if the module under test pointed at
+# the wrong page.
+_MERMAID_TRUST_BOUNDARY_SLUG = "04_AI_Companion_Feasibility_and_Design"
 
 
 # ---------------------------------------------------------------------------
@@ -846,3 +871,139 @@ def test_literal_changelog_stub_path_is_still_disallowed(
 
     with pytest.raises(check_site.CheckFailed, match=r"non-indexable"):
         check_site.check_sitemap_excludes_404_and_stubs(site_dir)
+
+
+# ---------------------------------------------------------------------------
+# check_mermaid_diagram_rendered — issue #311 / PR #320
+# ---------------------------------------------------------------------------
+
+
+def _write_mermaid_page(site_dir: Path, *, body: str) -> None:
+    """A minimal built page at the real AI Companion slug
+    (`_MERMAID_TRUST_BOUNDARY_SLUG`), with `body` spliced in as the
+    section 3.3 content `check_mermaid_diagram_rendered` inspects."""
+    page_dir = site_dir / _MERMAID_TRUST_BOUNDARY_SLUG
+    page_dir.mkdir(parents=True, exist_ok=True)
+    html = f"<html><body><h3>3.3 Trust boundary</h3>{body}</body></html>"
+    (page_dir / "index.html").write_text(html, encoding="utf-8")
+
+
+def test_rendered_mermaid_container_passes(check_site, site_dir: Path) -> None:
+    _write_mermaid_page(
+        site_dir,
+        body='<pre class="mermaid"><code>flowchart LR\n    A --&gt; B\n</code></pre>',
+    )
+
+    check_site.check_mermaid_diagram_rendered(site_dir)  # must not raise
+
+
+def test_missing_page_fails(check_site, site_dir: Path) -> None:
+    with pytest.raises(check_site.CheckFailed, match=r"does not exist"):
+        check_site.check_mermaid_diagram_rendered(site_dir)
+
+
+def test_raw_flowchart_source_without_mermaid_container_fails(
+    check_site, site_dir: Path
+) -> None:
+    """The regression this check exists to catch: a broken custom_fences
+    mapping (or a fence whose language tag drifted off 'mermaid') falls
+    back to pymdownx.highlight's ordinary wrapper, rendering the raw source
+    as an innocuous-looking code block — no mermaid container anywhere on
+    the page."""
+    _write_mermaid_page(
+        site_dir,
+        body=(
+            '<div class="highlight"><pre><span></span>'
+            "<code>flowchart LR\n    A --&gt; B\n</code></pre></div>"
+        ),
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r'<pre class="mermaid">'):
+        check_site.check_mermaid_diagram_rendered(site_dir)
+
+
+def test_mermaid_container_alongside_raw_fallback_still_fails(
+    check_site, site_dir: Path
+) -> None:
+    """A partial regression: the real mermaid container is present, but a
+    highlighted code block elsewhere on the page ALSO still carries the
+    raw 'flowchart' source. The container's mere presence must not be
+    enough to pass."""
+    _write_mermaid_page(
+        site_dir,
+        body=(
+            '<pre class="mermaid"><code>flowchart LR\n    A --&gt; B\n</code></pre>'
+            '<div class="highlight"><pre><span></span>'
+            "<code>flowchart LR\n    A --&gt; B\n</code></pre></div>"
+        ),
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"highlighted code block"):
+        check_site.check_mermaid_diagram_rendered(site_dir)
+
+
+def test_unrelated_highlight_block_does_not_false_positive(
+    check_site, site_dir: Path
+) -> None:
+    """An ordinary, unrelated highlighted code block (e.g. a snippet
+    elsewhere on the same page) must not trip the raw-fallback check
+    merely for existing — only one that actually contains the word
+    'flowchart' should."""
+    _write_mermaid_page(
+        site_dir,
+        body=(
+            '<pre class="mermaid"><code>flowchart LR\n    A --&gt; B\n</code></pre>'
+            '<div class="highlight"><pre><span></span>'
+            "<code>var x = 1;</code></pre></div>"
+        ),
+    )
+
+    check_site.check_mermaid_diagram_rendered(site_dir)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# check_no_unpkg_mermaid_reference — issue #200 / #311 / PR #320
+# ---------------------------------------------------------------------------
+
+
+def test_clean_build_has_no_unpkg_reference(check_site, site_dir: Path) -> None:
+    """A build where scripts/site_hooks/pin_mermaid.py did its job — the
+    theme bundle only mentions the pinned jsdelivr URL — must pass."""
+    js_dir = site_dir / "assets" / "javascripts"
+    js_dir.mkdir(parents=True)
+    (js_dir / "bundle.deadbeef.min.js").write_text(
+        'watchScript("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js")',
+        encoding="utf-8",
+    )
+
+    check_site.check_no_unpkg_mermaid_reference(site_dir)  # must not raise
+
+
+def test_unpinned_unpkg_reference_fails(check_site, site_dir: Path) -> None:
+    """The regression this check exists to catch: pin_mermaid.py didn't run
+    (or was bypassed), and the theme bundle still calls out to unpkg.com's
+    unpinned mermaid CDN."""
+    js_dir = site_dir / "assets" / "javascripts"
+    js_dir.mkdir(parents=True)
+    (js_dir / "bundle.deadbeef.min.js").write_text(
+        'watchScript("https://unpkg.com/mermaid@11/dist/mermaid.min.js")',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"unpkg\.com"):
+        check_site.check_no_unpkg_mermaid_reference(site_dir)
+
+
+def test_unpkg_reference_match_is_case_insensitive(check_site, site_dir: Path) -> None:
+    """A CDN hostname is case-insensitive DNS regardless of how a build
+    tool happens to case it — a differently-cased reference must still be
+    caught, not silently ignored by an exact-case substring match."""
+    js_dir = site_dir / "assets" / "javascripts"
+    js_dir.mkdir(parents=True)
+    (js_dir / "bundle.deadbeef.min.js").write_text(
+        'watchScript("https://UNPKG.COM/Mermaid@11/dist/mermaid.min.js")',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"unpkg\.com"):
+        check_site.check_no_unpkg_mermaid_reference(site_dir)
