@@ -17,7 +17,11 @@ to published pre-releases on 2026-07-14.
 
 ## [1.0.0-rc.3] — 2026-07-30
 
-Completion of the AI-facing tooling surface: the Generator (`vouchfx scaffold`) and Planner (`vouchfx plan`), both with public library APIs so MCP and other in-process hosts need not shell out. This release supersedes 1.0.0-rc.2, which was prepared but never published — consumers upgrading from 1.0.0-rc.1 receive both sets of changes. The language schema, provider SDK surface and event-wire contract are unchanged (additive only).
+Completion of the AI-facing tooling surface: the Generator (`vouchfx scaffold`) and Planner
+(`vouchfx plan`), both with public library APIs so MCP and other in-process hosts need not shell out.
+1.0.0-rc.2 was prepared but never published (no tag, no package); rc.3 ships its contents in addition to
+the changes below. The language schema, provider SDK surface and event-wire contract are unchanged
+(additive only).
 
 ### Added
 
@@ -45,6 +49,8 @@ Completion of the AI-facing tooling surface: the Generator (`vouchfx scaffold`) 
 - **Getting-started documentation** - documents the Generator / scaffold workflow (structured intent, free-text host LLM boundary, validate/run path, provenance, secrets-as-refs, catalogue grounding).
 
 ## [1.0.0-rc.2] — 2026-07-28
+
+*(Never published: no `v1.0.0-rc.2` tag or NuGet package exists; these changes shipped in rc.3.)*
 
 Schema and catalogue export for AI and tooling consumers. The language schema, provider SDK surface, and event-wire contract are unchanged (additive catalogue fields only).
 
