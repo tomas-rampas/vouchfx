@@ -210,7 +210,7 @@ vouchfx plan ./tests/e2e --events ./run-history --json
 ```json
 {
   "schemaVersion": 1,
-  "engineVersion": "1.0.0-rc.1",
+  "engineVersion": "1.0.0-rc.3",
   "thresholds": {
     "staleDays": 30,
     "flakyMinRuns": 2,

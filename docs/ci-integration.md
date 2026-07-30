@@ -74,7 +74,7 @@ which force-moves them to each published release's commit:
 | Tag | Tracks | State |
 |---|---|---|
 | `v1-alpha` | `v1.0.0-alpha.N` and `v1.0.0-beta.N` | Retired at `v1.0.0-alpha.10` — never deleted, simply no longer moved. |
-| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Comes into existence with the first rc published after the tag was introduced, or via a manual run of the workflow; until it exists, pin `v1.0.0-rc.1` directly. |
+| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate; currently points at `v1.0.0-rc.3`. Moving to v1 at GA is an explicit edit. |
 | `v1` | `v1.y.z` GA releases only | Starts moving once v1.0.0 ships. |
 
 **Each pre-GA line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha
@@ -194,7 +194,7 @@ For production use, pin everything to something immutable.
 
 1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
    ```yaml
-   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.1
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.3
    ```
    A branch or tag ref — including the `v1-alpha`/`v1-rc`/`v1` convenience tags — lets the workflow definition
    change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative: it is
@@ -235,7 +235,7 @@ opening an MR to bump the pinned SHA and its trailing comment.
 **Resolving a SHA by hand** (the first pin, or without Dependabot/Renovate):
 
 ```bash
-git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.1
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.3
 ```
 
 Depending on how the release tag was created (both kinds are documented in

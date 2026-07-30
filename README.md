@@ -17,7 +17,7 @@ outbound webhook — the seams where distributed systems actually break.
 
 It is **not** a unit-test framework and **not** a UI/browser tool.
 
-> **Status: `v1.0.0-rc.1`, published on [NuGet.org](https://www.nuget.org/packages/vouchfx/) and
+> **Status: `v1.0.0-rc.3`, published on [NuGet.org](https://www.nuget.org/packages/vouchfx/) and
 > [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases).** The engine is feature-complete
 > for v1.0; the language schema, provider SDK surface and event-wire contract are frozen and CI-gated.
 > What remains before GA is real-world validation and stabilising the Provider SDK at 1.0.0 final —
@@ -341,10 +341,10 @@ Trusted Publishing (OIDC). No long-lived signing or publishing keys are managed 
 pipeline. Verify a downloaded artefact with:
 
 ```bash
-gh attestation verify vouchfx.1.0.0-rc.1.nupkg --repo tomas-rampas/vouchfx
+gh attestation verify vouchfx.1.0.0-rc.3.nupkg --repo tomas-rampas/vouchfx
 
-cosign verify-blob vouchfx.1.0.0-rc.1.nupkg \
-  --bundle vouchfx.1.0.0-rc.1.nupkg.cosign.bundle \
+cosign verify-blob vouchfx.1.0.0-rc.3.nupkg \
+  --bundle vouchfx.1.0.0-rc.3.nupkg.cosign.bundle \
   --certificate-identity-regexp '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
