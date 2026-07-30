@@ -1,0 +1,18 @@
+metadata:
+  name: unresolvable-targets
+
+environment:
+  services:
+    api:
+      image: myorg/api:1.0
+  dependencies:
+    cache:
+      type: redis
+
+steps:
+  - id: call-api-with-placeholder-target
+    type: http.rest
+    target: "{apiName}"
+  - id: assert-cache-with-secret-target
+    type: cache-assert.redis
+    target: "${secret:vault/cache-name}"

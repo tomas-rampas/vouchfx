@@ -1,0 +1,25 @@
+metadata:
+  name: listener-name-collision
+
+environment:
+  services:
+    web:
+      image: myorg/web:1.0
+  dependencies:
+    queue:
+      type: kafka
+
+steps:
+  - id: publish-to-queue
+    type: mq-publish.kafka
+    target: queue
+  - id: listen-for-queue-callback
+    type: webhook-listen.http
+    listener: queue
+    match:
+      method: POST
+  - id: listen-for-web-callback
+    type: webhook-listen.http
+    listener: web
+    match:
+      method: POST
