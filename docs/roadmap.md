@@ -58,7 +58,7 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 ## Pre-releases are live; v1.0 GA targeted Q4 2026
 
 The first public releases shipped on 2026-07-08. The `v1.0.0-alpha` series ran to `v1.0.0-alpha.10`
-and the line has since moved to a release candidate, currently <code>v1.0.0-rc.1</code>. Every
+and the line has since moved to a release candidate, currently <code>v1.0.0-rc.3</code>. Every
 pre-release is published with signed artefacts (cosign, SLSA provenance, CycloneDX SBOMs), and the
 `vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing (every pre-release has both a
 NuGet.org package and a published GitHub release page):
