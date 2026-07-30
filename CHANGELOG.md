@@ -15,6 +15,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] — 2026-07-30
+
+Completion of the AI-facing tooling surface: the Generator (`vouchfx scaffold`) and Planner (`vouchfx plan`), both with public library APIs so MCP and other in-process hosts need not shell out. This release supersedes 1.0.0-rc.2, which was prepared but never published — consumers upgrading from 1.0.0-rc.1 receive both sets of changes. The language schema, provider SDK surface and event-wire contract are unchanged (additive only).
+
 ### Added
 
 - **`v1-rc` floating convenience tag** - `.github/workflows/move-floating-tag.yml` now routes `v1.0.0-rc.N`
