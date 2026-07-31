@@ -6,9 +6,10 @@
 // runs, inside the same health-gated lifecycle (so a failed seed surfaces as an
 // Environment error, never a misattributed assertion failure — §12.1).
 //
-// Grammar (A-01 + A-02):
+// Grammar (A-01 + A-02; `sql` generalised beyond Postgres to every relational
+// db-assert-backed dependency kind):
 //   seed:
-//     orders-db:                       # postgres → SQL (A-01)
+//     orders-db:                       # postgres/sqlserver/mysql → SQL (A-01)
 //       sql: [ "fixtures/a.sql", "fixtures/b.sql" ]
 //     events:                          # broker → warm-up publish (A-02; deferred seam)
 //       publish:
@@ -21,8 +22,8 @@
 //
 // Each top-level key under `seed` is a logical dependency name (matching a key in
 // `environment.dependencies`).  Under it, exactly one seed kind is expected and
-// the kind must match the dependency's declared `type` (postgres → `sql`, a
-// broker → `publish`, a document store → `documents`).  The seed APPLIER enforces
+// the kind must match the dependency's declared `type` (a relational store → `sql`,
+// a broker → `publish`, a document store → `documents`).  The seed APPLIER enforces
 // that match; the PARSER binds whichever kinds are present.
 
 namespace Vouchfx.Engine.Authoring.Model;
@@ -58,8 +59,9 @@ public sealed record SeedSpec(
 /// </summary>
 /// <remarks>
 /// <para>
-/// A dependency declares exactly one seed kind: <see cref="Sql"/> for a Postgres
-/// dependency (applied in A-01), <see cref="Publish"/> for a broker warm-up, or
+/// A dependency declares exactly one seed kind: <see cref="Sql"/> for a relational
+/// dependency (postgres, sqlserver, or mysql — applied in A-01), <see cref="Publish"/>
+/// for a broker warm-up, or
 /// <see cref="Documents"/> for a document store.  The parser binds whichever kind
 /// is present; the seed applier dispatches on the dependency's declared
 /// <c>type</c> and rejects a mismatch (e.g. <c>publish</c> under a Postgres
@@ -77,8 +79,9 @@ public sealed record SeedSpec(
 /// </remarks>
 /// <param name="Sql">
 /// Ordered list of SQL file paths (relative to the seed base directory) whose
-/// contents are executed against a Postgres dependency, in declared order.
-/// <see langword="null"/> when the dependency declares no <c>sql</c> entry.
+/// contents are executed against a relational dependency (postgres, sqlserver, or
+/// mysql), in declared order. <see langword="null"/> when the dependency declares
+/// no <c>sql</c> entry.
 /// </param>
 /// <param name="Publish">
 /// Ordered list of broker warm-up messages to publish to a broker dependency

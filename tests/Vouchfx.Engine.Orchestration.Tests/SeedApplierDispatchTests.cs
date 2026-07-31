@@ -368,4 +368,168 @@ public sealed class SeedApplierDispatchTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // ── sql seeding extended beyond Postgres to every relational db-assert kind ─
+    //
+    // (SQL Server and MySQL join Postgres — RespawnRelationalIsolation already
+    // resets all three via the same Npgsql/SqlClient/MySqlConnector adapters, so
+    // the seed applier's `sql` dispatch is generalised to match.)
+    //
+    // These tests never open a real connection: ApplySqlSeedAsync's file-existence
+    // check runs BEFORE any connection is opened (see the design note at the top
+    // of SeedApplier.cs), so an intentionally-missing fixture proves "accepted for
+    // dispatch" (the SQL-specific code path was reached) without a database, and
+    // the resulting failure classification is asserted the same way the existing
+    // NIT-1 mismatch tests above do.
+
+    /// <summary>
+    /// Syntactically-valid connection strings for each relational kind. The
+    /// host/port pair is never dialled by these tests — only present so the
+    /// discoveredServices lookup succeeds before the file-existence check runs.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> RelationalConnStrings =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["postgres"] = "Host=localhost;Port=1;Database=db;Username=u;Password=p",
+            ["sqlserver"] = "Server=localhost,1;Database=db;User Id=u;Password=p;TrustServerCertificate=True",
+            ["mysql"] = "Server=localhost;Port=1;Database=db;Uid=u;Pwd=p",
+        };
+
+    [Theory]
+    [InlineData("postgres")]
+    [InlineData("sqlserver")]
+    [InlineData("mysql")]
+    public async Task ApplyAsync_SqlOnRelationalKind_IsAccepted_MissingFixtureClassifiedAsEnvironmentError(
+        string relationalType)
+    {
+        var dir = NewTempDir();
+        try
+        {
+            var missing = Path.GetFullPath(Path.Combine(dir, "seed.sql"));
+            var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = new DependencySeed(Sql: new List<string> { "seed.sql" }),
+            });
+
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SeedApplier.ApplyAsync(
+                    seed,
+                    discoveredServices: new Dictionary<string, object>
+                    {
+                        ["orders-db"] = RelationalConnStrings[relationalType],
+                    },
+                    dependencyTypes: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["orders-db"] = relationalType,
+                    },
+                    seedBaseDirectory: dir,
+                    brokerSink: null,
+                    documentSink: null,
+                    ct: CancellationToken.None));
+
+            // Accepted, not rejected: the error is the SQL-specific "file not found"
+            // detail (reached only once dispatch has matched `relationalType` to a
+            // relational kind) — never the NIT-1 "not supported" mismatch message.
+            Assert.DoesNotContain("is not supported for its declared type", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("seed SQL file not found", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(missing, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
+            Assert.Equal("orders-db", ex.Info.ResourceName);
+
+            // §12.1: a broken/missing fixture is an Environment error, never a Fail —
+            // for every relational kind, not just Postgres.
+            var evt = EnvironmentErrorEvents.Create(ex.Info, "run", DateTimeOffset.UnixEpoch);
+            Assert.Equal(Verdict.EnvironmentError, evt.Verdict);
+            Assert.NotEqual(Verdict.Fail, evt.Verdict);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The accepted set must not accidentally widen to everything: a broker, a
+    /// cache and two document stores must all still reject `sql` with the NIT-1
+    /// mismatch, exactly as the existing kafka case above does.
+    /// </summary>
+    [Theory]
+    [InlineData("kafka")]
+    [InlineData("redis")]
+    [InlineData("mongodb")]
+    [InlineData("elasticsearch")]
+    public async Task ApplyAsync_SqlUnderNonRelationalDependency_ThrowsMismatchProvision(string nonRelationalType)
+    {
+        var dir = NewTempDir();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dir, "a.sql"), "SELECT 1;");
+            var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
+            {
+                ["dep"] = new DependencySeed(Sql: new List<string> { "a.sql" }),
+            });
+
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SeedApplier.ApplyAsync(
+                    seed,
+                    discoveredServices: new Dictionary<string, object> { ["dep"] = DummyConnString },
+                    dependencyTypes: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["dep"] = nonRelationalType,
+                    },
+                    seedBaseDirectory: dir,
+                    brokerSink: null,
+                    documentSink: null,
+                    ct: CancellationToken.None));
+
+            Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
+            Assert.Contains("sql", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(nonRelationalType, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("is not supported for its declared type", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Ordering guarantee: sql files are resolved in declared order. Neither file
+    /// exists here, so the exception names whichever one the resolution loop
+    /// reaches FIRST — proving declared order is respected rather than, say,
+    /// reversed or resolved via an unordered structure.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_SqlFiles_ResolvedInDeclaredOrder_FirstMissingFileReportedFirst()
+    {
+        var dir = NewTempDir();
+        try
+        {
+            var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = new DependencySeed(
+                    Sql: new List<string> { "first-missing.sql", "second-missing.sql" }),
+            });
+
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SeedApplier.ApplyAsync(
+                    seed,
+                    discoveredServices: new Dictionary<string, object> { ["orders-db"] = DummyConnString },
+                    dependencyTypes: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["orders-db"] = "postgres",
+                    },
+                    seedBaseDirectory: dir,
+                    brokerSink: null,
+                    documentSink: null,
+                    ct: CancellationToken.None));
+
+            Assert.Contains("first-missing.sql", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("second-missing.sql", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }
