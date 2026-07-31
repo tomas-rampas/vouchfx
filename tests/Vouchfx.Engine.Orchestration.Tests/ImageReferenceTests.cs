@@ -277,4 +277,102 @@ public sealed class ImageReferenceTests
 
         Assert.Equal("reference", ex.ParamName);
     }
+
+    // -----------------------------------------------------------------------
+    // M4 regression — "mongo@sha256:" (empty digest BODY) silently resolved tagless.
+    //
+    // Reproduced before the fix: ImageReferenceParser.Parse("mongo@sha256:") did NOT throw —
+    // digest.Length is 7 ("sha256:"), so the pre-existing `digest.Length == 0` check never
+    // fired. ApplyImageOverrides went on to call WithImageSHA256("") with the empty hash body;
+    // TryGetContainerImageName then reconstructed the pull reference as "mongo@sha256:" which
+    // Docker/Aspire resolve as if NEITHER a digest NOR a tag had been supplied at all —
+    // i.e. silently "mongo:latest". A one-character typo in a digest-pinned reference must be a
+    // loud parse failure, not a silent fall-through to the floating tag.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_DigestWithEmptyHashBody_ThrowsArgumentException()
+    {
+        // "mongo@sha256:" — the algorithm prefix is present and well-formed, but there is no
+        // hash text after its own ':' at all.
+        const string reference = "mongo@sha256:";
+
+        var ex = Assert.Throws<ArgumentException>(() => ImageReferenceParser.Parse(reference));
+
+        Assert.Equal("reference", ex.ParamName);
+        Assert.Contains(reference, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_DigestWithNonHexHashBody_ThrowsArgumentException()
+    {
+        // A one-character typo ('g' is never a valid hex digit) must fail loudly rather than
+        // resolve to SOME arbitrary (wrong) image.
+        var ex = Assert.Throws<ArgumentException>(
+            () => ImageReferenceParser.Parse("mongo@sha256:abcdefg0123456789"));
+
+        Assert.Equal("reference", ex.ParamName);
+        Assert.Contains("abcdefg0123456789", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_DigestWithUppercaseHexHashBody_IsAccepted()
+    {
+        // Hex validation is case-insensitive — uppercase hash characters are still valid hex,
+        // even though the canonical Docker form is lowercase.
+        var result = ImageReferenceParser.Parse("mongo@sha256:ABCDEF0123456789");
+
+        Assert.Equal("mongo", result.Repository);
+        Assert.Equal("sha256:ABCDEF0123456789", result.Digest);
+    }
+
+    // -----------------------------------------------------------------------
+    // MN4 (cheap subset) — empty repository path segments, and a tag containing ':'.
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("myorg/")]
+    [InlineData("/mongo")]
+    [InlineData("a//b")]
+    public void Parse_EmptyPathSegment_ThrowsArgumentException(string reference)
+    {
+        var ex = Assert.Throws<ArgumentException>(() => ImageReferenceParser.Parse(reference));
+
+        Assert.Equal("reference", ex.ParamName);
+        Assert.Contains(reference, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_TagContainingColon_ThrowsArgumentException()
+    {
+        // "mongo:8.0:extra" — the FIRST colon in the last segment introduces the tag per the
+        // existing rule, but a SECOND colon inside that tag is never valid in a Docker tag.
+        const string reference = "mongo:8.0:extra";
+
+        var ex = Assert.Throws<ArgumentException>(() => ImageReferenceParser.Parse(reference));
+
+        Assert.Equal("reference", ex.ParamName);
+        Assert.Contains("8.0:extra", ex.Message, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------------
+    // MN5 regression — leading/trailing whitespace escapes eager validation.
+    //
+    // Reproduced before the fix: ImageReferenceParser.Parse(" mongo:8.0") did NOT throw (the
+    // string is not ALL whitespace, so IsNullOrWhiteSpace never fires), and the leading-space
+    // repository " mongo" then reached Aspire's WithImage(repository, tag) call INSIDE the
+    // Configure closure, which threw ArgumentOutOfRangeException — well past the "reject before
+    // any builder mutation" point every other malformed-input case in this method honours.
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(" mongo:8.0")]
+    [InlineData("mongo:8.0 ")]
+    [InlineData(" mongo:8.0 ")]
+    public void Parse_LeadingOrTrailingWhitespace_ThrowsArgumentException(string reference)
+    {
+        var ex = Assert.Throws<ArgumentException>(() => ImageReferenceParser.Parse(reference));
+
+        Assert.Equal("reference", ex.ParamName);
+    }
 }

@@ -107,10 +107,16 @@ internal static class ImageReferenceParser
     /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="reference"/> is <see langword="null"/>, empty, or
-    /// whitespace-only; or ends with a bare <c>:</c> with no tag text after it (either
-    /// at the very end of the string, or immediately before a valid <c>@digest</c>);
-    /// or ends with a bare <c>@</c> with no digest text after it; or resolves to an
-    /// empty repository (e.g. <c>"@sha256:abc"</c> or <c>":8.0"</c>).
+    /// whitespace-only; or carries leading/trailing whitespace; or ends with a bare
+    /// <c>:</c> with no tag text after it (either at the very end of the string, or
+    /// immediately before a valid <c>@digest</c>); or has a tag containing a <c>:</c>
+    /// (a second colon in the last path segment); or ends with a bare <c>@</c> with no
+    /// digest text after it; or has a digest whose hash body (after the algorithm
+    /// prefix, e.g. <c>"sha256:"</c>) is empty or not valid hexadecimal (e.g.
+    /// <c>"mongo@sha256:"</c>); or resolves to an empty repository (e.g.
+    /// <c>"@sha256:abc"</c> or <c>":8.0"</c>); or has a repository containing an empty
+    /// path segment (leading, trailing, or doubled <c>/</c>, e.g. <c>"myorg/"</c>,
+    /// <c>"/mongo"</c>, <c>"a//b"</c>).
     /// <para>
     /// Every rejected input is degenerate author YAML: the caller is validating a
     /// <c>.e2e.yaml</c> <c>environment.dependencies[].image</c> value and wants a loud,
@@ -124,6 +130,23 @@ internal static class ImageReferenceParser
         {
             throw new ArgumentException(
                 $"Image reference must not be null, empty, or whitespace. Was: '{reference}'.",
+                nameof(reference));
+        }
+
+        // MN5 fix: a leading/trailing-whitespace-padded reference (e.g. " mongo:8.0") is not
+        // all-whitespace, so it survives the check above, but it is still degenerate author
+        // YAML — passing " mongo" through to Aspire's WithImage(repository, tag) throws an
+        // ArgumentOutOfRangeException from deep inside the builder call, INSIDE the Configure
+        // closure, well past the "reject before any builder mutation" point every other
+        // malformed-input case in this method honours. Reject it here, loudly and early,
+        // instead of silently trimming (trimming would make "image: ' mongo:8.0'" and
+        // "image: 'mongo:8.0'" behave identically with no author-visible signal that the
+        // leading space was ever there).
+        if (reference != reference.Trim())
+        {
+            throw new ArgumentException(
+                $"Image reference '{reference}' has leading or trailing whitespace, which is " +
+                "never part of a valid image reference — remove it.",
                 nameof(reference));
         }
 
@@ -142,6 +165,34 @@ internal static class ImageReferenceParser
             {
                 throw new ArgumentException(
                     $"Image reference '{reference}' has a trailing '@' with no digest after it.",
+                    nameof(reference));
+            }
+
+            // M4 fix: "mongo@sha256:" previously passed this far — digest.Length is 7
+            // ("sha256:"), so the check above never fires — and ApplyImageOverrides went on to
+            // call WithImageSHA256("") with the empty hash body, which Aspire/Docker silently
+            // resolves as if no digest (and no tag) had been given at all, i.e. ":latest". A
+            // one-character typo in a digest-pinned reference must be a loud parse failure, not
+            // a silent fall-through to the floating tag. Validate the hash BODY — everything
+            // after the algorithm's own ':' separator, or the whole digest string when it
+            // carries no ':' at all — is both present and valid hexadecimal.
+            var digestAlgorithmSeparator = digest.IndexOf(':', StringComparison.Ordinal);
+            var digestBody = digestAlgorithmSeparator >= 0
+                ? digest[(digestAlgorithmSeparator + 1)..]
+                : digest;
+            if (digestBody.Length == 0)
+            {
+                throw new ArgumentException(
+                    $"Image reference '{reference}' has a digest ('{digest}') with no hash " +
+                    "characters after its algorithm prefix.",
+                    nameof(reference));
+            }
+
+            if (!IsHexString(digestBody))
+            {
+                throw new ArgumentException(
+                    $"Image reference '{reference}' has a digest ('{digest}') whose hash body " +
+                    $"'{digestBody}' is not valid hexadecimal.",
                     nameof(reference));
             }
 
@@ -170,6 +221,19 @@ internal static class ImageReferenceParser
                     nameof(reference));
             }
 
+            // MN4 fix: a SECOND ':' inside the tag (e.g. "mongo:8.0:extra") is not a valid tag —
+            // Docker tags never contain ':' themselves (that is exactly why a ':' is usable as
+            // the tag separator in the first place). Reject rather than silently accepting
+            // "8.0:extra" as a tag string Aspire/Docker would then fail on downstream, further
+            // from the author's YAML.
+            if (tag.Contains(':', StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Image reference '{reference}' has a tag ('{tag}') containing ':', which " +
+                    "is never valid in a Docker tag.",
+                    nameof(reference));
+            }
+
             repository = withoutDigest[..(lastSegmentStart + colonIndex)];
         }
         else
@@ -184,6 +248,38 @@ internal static class ImageReferenceParser
                 nameof(reference));
         }
 
+        // MN4 fix: an empty path segment — leading ("/mongo"), trailing ("myorg/"), or doubled
+        // ("a//b") — is not a valid repository path. None of these trip the repository-is-empty
+        // check above (the repository string itself is non-empty), so a stray extra '/' would
+        // otherwise reach Aspire's WithImage(repository, ...) call unchecked.
+        if (repository.Split('/').Any(segment => segment.Length == 0))
+        {
+            throw new ArgumentException(
+                $"Image reference '{reference}' has an empty path segment in its repository " +
+                $"('{repository}') — repository segments must not be empty (no leading, " +
+                "trailing, or doubled '/').",
+                nameof(reference));
+        }
+
         return new ImageReference(repository, tag, digest);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when every character in <paramref name="value"/> is a
+    /// valid hexadecimal digit (<c>0-9</c>, <c>a-f</c>, <c>A-F</c>). Used to validate a digest's
+    /// hash body (see the M4 fix remarks at its call site) — <paramref name="value"/> is assumed
+    /// non-empty by the caller.
+    /// </summary>
+    private static bool IsHexString(string value)
+    {
+        foreach (var c in value)
+        {
+            if (!Uri.IsHexDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

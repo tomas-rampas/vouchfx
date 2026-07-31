@@ -2145,8 +2145,12 @@ public sealed class EnvironmentMapperTests
     /// <summary>
     /// An 'image:' override on the kafka Aspire-helper kind reaches the broker resource — the
     /// third of the customer's three dependency types (mongodb, sqlserver, kafka) named in the
-    /// feature's motivating scenario. The image here has no explicit registry component, so
-    /// AddKafka's own internal registry default is left untouched (nothing to clear).
+    /// feature's motivating scenario. The image here has no explicit registry component of its
+    /// own, but the M2 fix clears AddKafka's own internal registry default unconditionally
+    /// whenever 'image:' is set at all (Registry is not asserted here — see
+    /// <see cref="Map_DependencyImage_UnqualifiedSqlServerImage_ClearsProviderRegistryDefault"/>
+    /// and <see cref="Map_DependencyImage_UnqualifiedPostgresImage_ClearsProviderRegistryDefault"/>
+    /// for tests that do pin the cleared-Registry outcome for this exact unqualified-image shape).
     /// </summary>
     [Fact]
     public void Map_DependencyImage_OverridesKafkaBroker()
@@ -2574,5 +2578,250 @@ public sealed class EnvironmentMapperTests
         // No imagePullPolicy at all → no pull-policy annotation is ever added.
         Assert.Empty(mappedBuilder.Resources.Single(r => r.Name == "pg")
             .Annotations.OfType<ContainerImagePullPolicyAnnotation>());
+    }
+
+    // -----------------------------------------------------------------------
+    // M1 regression — imageRegistry double-prefixes the azureservicebus containers.
+    //
+    // Reproduced against real Aspire 13.4.2 before the fix: both azureservicebus containers are
+    // registered via AddContainer with the registry EMBEDDED directly in the image string
+    // ("mcr.microsoft.com/..."), so ContainerImageAnnotation.Registry is null for both — there is
+    // nothing in the separate Registry field for a check that only ever inspects
+    // DependencySpec.Image (null here; the author set no per-dependency override) to see. An
+    // env-level imageRegistry then applied unconditionally via WithImageRegistry, double-
+    // prefixing both containers:
+    //   bus-sqledge => artifactory.example.com/mcr.microsoft.com/mssql/server:2022-latest
+    //   bus         => artifactory.example.com/mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "azureservicebus", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: "artifactory.example.com",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var emulatorImage = builder.Resources.Single(r => r.Name == "bus")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Null(emulatorImage.Registry);
+        Assert.Equal("mcr.microsoft.com/azure-messaging/servicebus-emulator", emulatorImage.Image);
+        Assert.Equal("1.1.2", emulatorImage.Tag);
+
+        var sidecarImage = builder.Resources.Single(r => r.Name == "bus-sqledge")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Null(sidecarImage.Registry);
+        Assert.Equal("mcr.microsoft.com/mssql/server", sidecarImage.Image);
+        Assert.Equal("2022-latest", sidecarImage.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // M2 regression — an unqualified 'image:' on sqlserver inherits 'mcr.microsoft.com'.
+    //
+    // Reproduced against real Aspire 13.4.2 before the fix: the registry-clearing branch only
+    // fired when the AUTHOR's own image string carried an explicit registry component — an
+    // unqualified image silently inherited AddSqlServer's own built-in registry default:
+    //   sqlserver + image 'myorg/mssql-mirror:2022' => mcr.microsoft.com/myorg/mssql-mirror:2022
+    // — a path that does not exist. postgres/mysql/mongodb/etc. have the identical shape bug, but
+    // their leftover default ("docker.io") happens to be harmless; sqlserver's is not.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_UnqualifiedSqlServerImage_ClearsProviderRegistryDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["paydb"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null)
+                {
+                    Image = "myorg/mssql-mirror:2022",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "paydb")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/mssql-mirror", image.Image);
+        Assert.Equal("2022", image.Tag);
+        Assert.Null(image.Registry);
+    }
+
+    /// <summary>
+    /// Companion to <see cref="Map_DependencyImage_UnqualifiedSqlServerImage_ClearsProviderRegistryDefault"/>:
+    /// the same unqualified-image shape on postgres (whose provider default happens to be the
+    /// harmless "docker.io") gets the identical treatment under the M2 fix's unconditional-clear
+    /// rule — 'image:' always means exactly what it says for every kind, uniformly, not just the
+    /// one kind where the old leftover default happened to be visibly wrong.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_UnqualifiedPostgresImage_ClearsProviderRegistryDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null)
+                {
+                    Image = "myorg/pg-mirror:16",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/pg-mirror", image.Image);
+        Assert.Equal("16", image.Tag);
+        Assert.Null(image.Registry);
+    }
+
+    // -----------------------------------------------------------------------
+    // M3 regression — a tagless 'image:' silently floats on ':latest'.
+    //
+    // Reproduced against real Aspire 13.4.2 before the fix: WithImage(repository) with no tag
+    // argument makes Aspire write ContainerImageAnnotation.Tag = "latest", discarding the
+    // provider's pinned default:
+    //   mongodb + image 'nexus.corp.local/mirror/mongo' => .../mongo:latest
+    // This is now rejected eagerly, before any builder mutation, in the same validation pass as
+    // the tag/digest-plus-version ambiguity check.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_NoTagNoDigestNoVersion_ThrowsFloatingLatest()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = "nexus.corp.local/mirror/mongo",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("nexus.corp.local/mirror/mongo", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Companion positive case: a tagless, digestless 'image:' with a sibling 'version:' is the
+    /// LEGITIMATE way to pin a tag on a private-mirror image without embedding it in 'image:'
+    /// itself, and must still work exactly as before — the M3 fix only rejects the combination
+    /// with NEITHER a tag/digest NOR a version anywhere.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_NoTagNoDigestWithVersion_UsesVersionAsTag()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: "7.0", Extra: null)
+                {
+                    Image = "nexus.corp.local/mirror/mongo",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("nexus.corp.local/mirror/mongo", image.Image);
+        Assert.Equal("7.0", image.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // MN3 regression — 'version: ""' handled inconsistently with 'version' absent.
+    //
+    // Before the fix, 'image: myrepo/mongo' + 'version: ""' reached ApplyImageOverrides' tag
+    // fallback with spec.Version used RAW (not IsNullOrEmpty-guarded), setting
+    // ContainerImageAnnotation.Tag = "" (an empty-but-non-null tag) — while the SAME image with
+    // 'version' entirely ABSENT set Tag = null (→ Aspire's WithImage(repository) then defaults it
+    // to "latest"). Both are now normalised identically: an empty 'version:' is indistinguishable
+    // from an absent one, so this tagless-image case now hits the SAME M3 rejection either way.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_NoTagNoDigestWithEmptyVersion_ThrowsSameAsAbsentVersion()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: "", Extra: null)
+                {
+                    Image = "nexus.corp.local/mirror/mongo",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The flip side of the same normalisation: an image that ALREADY carries its own tag, paired
+    /// with an EMPTY (not absent) 'version:', must NOT trip the tag/digest-plus-version ambiguity
+    /// check — an empty 'version:' carries no information to conflict with, exactly like an
+    /// absent one.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageWithTag_AndEmptyVersion_DoesNotThrowAmbiguous()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: "", Extra: null)
+                {
+                    Image = "myrepo/mongo:8.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myrepo/mongo", image.Image);
+        Assert.Equal("8.0", image.Tag);
     }
 }

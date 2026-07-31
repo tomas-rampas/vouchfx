@@ -638,8 +638,13 @@ public static class EnvironmentMapper
             if (spec.Image is not null)
             {
                 var parsedImage = ImageReferenceParser.Parse(spec.Image);
-                if ((parsedImage.Tag is not null || parsedImage.Digest is not null) &&
-                    !string.IsNullOrEmpty(spec.Version))
+
+                // MN3 fix: treat 'version: ""' the same as 'version:' absent everywhere this
+                // method reasons about it — the mutation site (ApplyImageOverrides) does the
+                // same normalisation, so both branches agree on what "no version" means.
+                var hasVersion = !string.IsNullOrEmpty(spec.Version);
+
+                if ((parsedImage.Tag is not null || parsedImage.Digest is not null) && hasVersion)
                 {
                     var carries = parsedImage.Digest is not null
                         ? $"digest '{parsedImage.Digest}'"
@@ -651,23 +656,42 @@ public static class EnvironmentMapper
                         "or use 'version:' alone.",
                         nameof(env));
                 }
+
+                // M3 fix: a tagless, digestless 'image:' with no sibling 'version:' would
+                // otherwise reach ApplyImageOverrides' WithImage(repository) call with no tag
+                // argument at all — confirmed empirically against the pinned Aspire.Hosting
+                // 13.4.2 packages, that overload writes ContainerImageAnnotation.Tag = "latest",
+                // silently discarding whatever pinned default tag the provider's own AddXxx/
+                // AddContainer registration established. This violates the §4 determinism
+                // invariant every AddContainer-based registration in this file restates verbatim
+                // three lines above its own call ("Pin a stable tag for determinism (§4): never
+                // float on 'latest'"), it is the single most obvious thing an author will type
+                // (a bare 'image: mongo'), and — before this fix — it had no test and no
+                // documentation. Reject it eagerly, before any builder mutation, exactly like
+                // the ambiguity check above.
+                if (parsedImage.Tag is null && parsedImage.Digest is null && !hasVersion)
+                {
+                    throw new ArgumentException(
+                        $"Dependency '{name}' sets 'image: {spec.Image}' with no tag or digest, " +
+                        "and no sibling 'version:' either. This would silently float on the " +
+                        "':latest' tag, defeating the §4 determinism invariant. Either embed a " +
+                        $"tag in 'image:' (e.g. 'image: {spec.Image}:<tag>'), or add a " +
+                        "'version:' field.",
+                        nameof(env));
+                }
             }
         }
 
-        // feat/dependency-image-override — validate imagePullPolicy eagerly (env-level default,
-        // then each service's override), rejecting an unrecognised value loudly rather than
-        // silently ignoring it (air-gapped users rely on Never/Missing actually taking effect).
+        // feat/dependency-image-override — validate the env-level imagePullPolicy eagerly,
+        // rejecting an unrecognised value loudly rather than silently ignoring it (air-gapped
+        // users rely on Never/Missing actually taking effect). Each SERVICE's own override is
+        // validated once, below, by the servicePullPolicies-building loop (N3 tidy: that loop
+        // already calls ParseImagePullPolicy for every service with its own override and runs
+        // entirely within Map(), before Configure is ever invoked, so a second dedicated
+        // validate-only pass over the same services here was pure duplicate parsing).
         ImagePullPolicy? envPullPolicy = string.IsNullOrEmpty(env.ImagePullPolicy)
             ? null
             : ParseImagePullPolicy(env.ImagePullPolicy, "The environment-level 'imagePullPolicy'");
-
-        foreach (var (name, spec) in env.Services ?? new Dictionary<string, ServiceSpec>())
-        {
-            if (!string.IsNullOrEmpty(spec.ImagePullPolicy))
-            {
-                ParseImagePullPolicy(spec.ImagePullPolicy, $"Service '{name}''s 'imagePullPolicy'");
-            }
-        }
 
         // Validate every service's `env:` mapping eagerly (SUT configuration surface) — every
         // ${conn:name}/${conn:name.part} reference must name a declared dependency and, for the
@@ -695,9 +719,10 @@ public static class EnvironmentMapper
         var services = env.Services ?? new Dictionary<string, ServiceSpec>();
         var dependencies = env.Dependencies ?? new Dictionary<string, DependencySpec>();
 
-        // Effective per-service pull policy: the service's own override when set, else the
-        // env-level default (§3.2.1). Parsing already succeeded above (or this dependency/service
-        // has no imagePullPolicy at all), so this is a pure lookup — no exceptions expected here.
+        // Effective per-service pull policy: the service's own override when set (parsed, and
+        // validated, right here — the only place a service-level imagePullPolicy is parsed), else
+        // the env-level default (§3.2.1, parsed above). Still runs entirely within Map(), before
+        // Configure is ever invoked, so an unrecognised value is still rejected eagerly.
         var servicePullPolicies = new Dictionary<string, ImagePullPolicy?>(StringComparer.Ordinal);
         foreach (var (name, spec) in services)
         {
@@ -1624,19 +1649,25 @@ public static class EnvironmentMapper
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Precedence (Map's eager validation block has already rejected the one ambiguous
-    /// combination — an <c>image:</c> that already carries its own tag or digest together with
-    /// a sibling <c>version:</c> — before <c>Configure</c> ever runs, so at most one of
-    /// (embedded tag, embedded digest, <paramref name="spec"/>.Version) survives to reach here):
+    /// Precedence (Map's eager validation block has already rejected both ambiguous
+    /// combinations — an <c>image:</c> that already carries its own tag or digest together with
+    /// a sibling <c>version:</c>, and a tagless/digestless <c>image:</c> with NO sibling
+    /// <c>version:</c> either (the M3 fix — such a combination would float on <c>:latest</c>) —
+    /// before <c>Configure</c> ever runs, so at most one of (embedded tag, embedded digest,
+    /// <paramref name="spec"/>.Version) survives to reach here, and an image-with-neither-tag-
+    /// nor-digest case reaching here always has a non-empty <paramref name="spec"/>.Version):
     /// </para>
     /// <list type="number">
     ///   <item><description>
     ///     <see cref="DependencySpec.Image"/> set → <c>WithImage(repository[, tag])</c> (a digest
     ///     routes to <c>WithImageSHA256</c> instead). When the image carries no tag/digest of its
-    ///     own, <see cref="DependencySpec.Version"/> — if present — supplies the tag.
+    ///     own, <see cref="DependencySpec.Version"/> supplies the tag (Map's eager validation
+    ///     guarantees it is present and non-empty in this case — see the M3 fix above).
     ///   </description></item>
     ///   <item><description>
-    ///     <see cref="DependencySpec.Image"/> unset, <see cref="DependencySpec.Version"/> set →
+    ///     <see cref="DependencySpec.Image"/> unset, <see cref="DependencySpec.Version"/> set (and
+    ///     non-empty — MN3 fix: an empty <c>version: ""</c> is treated identically to an absent
+    ///     one, matching the <see cref="DependencySpec.Image"/>-set branch's own treatment) →
     ///     <c>WithImageTag(version)</c> (today's pre-existing behaviour, unchanged).
     ///   </description></item>
     ///   <item><description>
@@ -1647,24 +1678,52 @@ public static class EnvironmentMapper
     ///   </description></item>
     /// </list>
     /// <para>
-    /// <paramref name="imageRegistry"/> then applies via <c>WithImageRegistry</c> UNLESS
-    /// <see cref="DependencySpec.Image"/> already names an explicit registry component (the same
-    /// "first path segment contains '.'/':' or equals 'localhost'" rule <see cref="ResolveImage"/>
-    /// already applies for services) — in which case any pre-existing registry is explicitly
-    /// CLEARED (<c>WithImageRegistry(null)</c>) instead. This matters because reflection against
-    /// the pinned Aspire.Hosting.* 13.4.2 packages confirms every one of the 9 helper
-    /// <c>AddXxx</c> calls (<c>AddPostgres</c>/<c>AddMongoDB</c>/...) ALREADY calls
-    /// <c>WithImageRegistry</c> internally with its own built-in default ("docker.io" for most,
-    /// "mcr.microsoft.com" for SqlServer) — and <c>WithImage</c> folds an embedded registry
-    /// straight into the <c>Image</c> annotation field, never into the separate <c>Registry</c>
-    /// field. <see cref="Aspire.Hosting.ApplicationModel.ResourceExtensions.TryGetContainerImageName"/>
+    /// <paramref name="imageRegistry"/> then applies via <c>WithImageRegistry</c> UNLESS the
+    /// resource's CURRENT image annotation — after the tag/digest handling above — already names
+    /// an explicit registry component (the same "first path segment contains '.'/':' or equals
+    /// 'localhost'" rule <see cref="ResolveImage"/> already applies for services), in which case
+    /// any pre-existing registry is explicitly CLEARED (<c>WithImageRegistry(null)</c>) instead.
+    /// Two independent sources can supply that explicit registry component, and both are checked
+    /// (M1/M2 fix — see the inline remarks at each check site below):
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <see cref="DependencySpec.Image"/> itself names one (e.g.
+    ///     <c>"nexus.corp.local:5000/platform/mongo:8.0"</c>) — checked against the PARSED
+    ///     <see cref="ImageReference.Repository"/>, and the registry is cleared UNCONDITIONALLY
+    ///     whenever <see cref="DependencySpec.Image"/> is set at all (M2 fix: 'image:' always
+    ///     means exactly what it says, never inheriting a provider's built-in registry default —
+    ///     previously this clear only fired when the image ITSELF carried a registry, so an
+    ///     unqualified sqlserver image silently inherited AddSqlServer's own "mcr.microsoft.com"
+    ///     default and resolved to a path that does not exist).
+    ///   </description></item>
+    ///   <item><description>
+    ///     No <see cref="DependencySpec.Image"/> override at all, but the CURRENT
+    ///     <see cref="ContainerImageAnnotation.Image"/> the resource already carries embeds a
+    ///     registry component directly in its image string rather than in the separate
+    ///     <see cref="ContainerImageAnnotation.Registry"/> field (M1 fix — this is exactly the
+    ///     azureservicebus shape: both its <c>AddContainer</c> calls pass
+    ///     <c>"mcr.microsoft.com/..."</c> as the image argument itself, so
+    ///     <c>ContainerImageAnnotation.Registry</c> stays null and a check against ONLY
+    ///     <see cref="DependencySpec.Image"/> — which is null here — never fires; an env-level
+    ///     <c>imageRegistry</c> would otherwise double-prefix
+    ///     <c>"artifactory.example.com/mcr.microsoft.com/..."</c>).
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// This matters because reflection against the pinned Aspire.Hosting.* 13.4.2 packages
+    /// confirms every one of the 9 helper <c>AddXxx</c> calls (<c>AddPostgres</c>/
+    /// <c>AddMongoDB</c>/...) ALREADY calls <c>WithImageRegistry</c> internally with its own
+    /// built-in default ("docker.io" for most, "mcr.microsoft.com" for SqlServer) — and
+    /// <c>WithImage</c> folds an embedded registry straight into the <c>Image</c> annotation
+    /// field, never into the separate <c>Registry</c> field.
+    /// <see cref="Aspire.Hosting.ApplicationModel.ResourceExtensions.TryGetContainerImageName"/>
     /// (the method that actually assembles the pull reference) unconditionally prepends
-    /// <c>Registry + "/"</c> whenever <c>Registry</c> is non-null — so leaving the provider's own
-    /// default in place would silently produce
-    /// <c>"{provider's default registry}/{spec.Image's own registry}/{repo}:{tag}"</c> even
-    /// without an env-level <c>imageRegistry</c> at all, corrupting exactly the customer-Nexus
-    /// scenario this feature exists for. <paramref name="pullPolicy"/>, when supplied, always
-    /// applies last via <c>WithImagePullPolicy</c>.
+    /// <c>Registry + "/"</c> whenever <c>Registry</c> is non-null — so leaving either kind of
+    /// pre-existing default in place would silently double-prefix the pull reference, even
+    /// without an env-level <c>imageRegistry</c> at all, corrupting exactly the customer-Nexus/
+    /// air-gapped scenarios this feature exists for. <paramref name="pullPolicy"/>, when supplied,
+    /// always applies last via <c>WithImagePullPolicy</c>.
     /// </para>
     /// </remarks>
     private static IResourceBuilder<T> ApplyImageOverrides<T>(
@@ -1706,29 +1765,65 @@ public static class EnvironmentMapper
             }
             else
             {
-                var tag = parsedImage.Tag ?? spec.Version;
+                // MN3 fix: normalise 'version: ""' to "no version" here too, matching the
+                // IsNullOrEmpty guard the Image-unset branch below has always used — previously
+                // this line used spec.Version raw, so 'image: myrepo/mongo' + 'version: ""' set
+                // Tag = "" (an empty-but-non-null tag) while the SAME image with 'version'
+                // entirely absent set Tag = null (→ WithImage(repository) → Aspire defaults it to
+                // "latest"). Both now resolve identically.
+                var effectiveVersion = string.IsNullOrEmpty(spec.Version) ? null : spec.Version;
+                var tag = parsedImage.Tag ?? effectiveVersion;
                 builder = tag is not null
                     ? builder.WithImage(parsedImage.Repository, tag)
                     : builder.WithImage(parsedImage.Repository);
             }
 
-            if (imageHasExplicitRegistry)
-            {
-                // Every one of the 9 Aspire-helper AddXxx calls (AddPostgres/AddMongoDB/
-                // AddSqlServer/...) ALREADY calls WithImageRegistry internally with its own
-                // built-in default ("docker.io" for most, "mcr.microsoft.com" for SqlServer —
-                // confirmed by decompiling the pinned Aspire.Hosting.* 13.4.2 packages). Left
-                // alone, that pre-existing default would combine with the customer's
-                // ALREADY-qualified Image field to produce a broken, double-prefixed pull
-                // reference (Aspire's own TryGetContainerImageName unconditionally prepends
-                // "{Registry}/" whenever Registry is set). Explicitly clear it — a no-op for the
-                // AddContainer-based kinds, whose Registry is null by default anyway.
-                builder = builder.WithImageRegistry(null);
-            }
+            // M2 fix: clear the registry UNCONDITIONALLY whenever 'image:' is set — regardless of
+            // whether the author's own image string carries an explicit registry component.
+            // Previously this only ran inside `if (imageHasExplicitRegistry)`, so an UNQUALIFIED
+            // image (e.g. sqlserver + 'image: myorg/mssql-mirror:2022') left the provider's own
+            // built-in registry default in place — harmless for the 12 kinds whose default is
+            // "docker.io" (the implicit default anyway), but for sqlserver AddSqlServer's own
+            // default is "mcr.microsoft.com", so the customer's own mirror image silently
+            // resolved to "mcr.microsoft.com/myorg/mssql-mirror:2022" — a path that does not
+            // exist. Net rule: 'image:' always means exactly what it says, optionally re-prefixed
+            // by the env-level imageRegistry check below (which still consults
+            // imageHasExplicitRegistry to decide whether re-applying imageRegistry on top would
+            // double-prefix an image that names its OWN registry, e.g. the Nexus scenario).
+            builder = builder.WithImageRegistry(null);
         }
-        else if (!string.IsNullOrEmpty(spec.Version))
+        else
         {
-            builder = builder.WithImageTag(spec.Version);
+            // MN3 fix: same empty-string normalisation as the Image-set branch above.
+            if (!string.IsNullOrEmpty(spec.Version))
+            {
+                builder = builder.WithImageTag(spec.Version);
+            }
+
+            // M1 fix: no 'image:' override was supplied, so nothing above touched the registry —
+            // but the resource's CURRENT image annotation (whatever its own AddXxx/AddContainer
+            // registration already established) may still embed a registry component directly in
+            // its Image string rather than in the separate Registry field. This is exactly the
+            // azureservicebus shape: both its AddContainer calls
+            // (AddContainer(name, "mcr.microsoft.com/azure-messaging/servicebus-emulator", ...) and
+            // the SQL Edge sidecar's AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", ...))
+            // pass the registry embedded in the image argument itself, so
+            // ContainerImageAnnotation.Registry is null and — before this fix — the check below
+            // (which only ever inspected DependencySpec.Image, itself null here) never caught it,
+            // so an env-level imageRegistry unconditionally applied via WithImageRegistry and
+            // double-prefixed the pull reference
+            // ("artifactory.example.com/mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2").
+            // Reading the CURRENT annotation (rather than re-deriving it from a raw image string
+            // this method never receives here) is the most robust fix: it works uniformly for
+            // every dependency kind and every AddXxx/AddContainer registration without needing to
+            // touch — or keep in sync with — each registration's own hardcoded image literal.
+            var currentImage = builder.Resource.Annotations
+                .OfType<ContainerImageAnnotation>()
+                .LastOrDefault();
+            if (currentImage is not null)
+            {
+                imageHasExplicitRegistry = HasExplicitRegistryComponent(currentImage.Image);
+            }
         }
 
         if (!string.IsNullOrEmpty(imageRegistry) && !imageHasExplicitRegistry)
@@ -1755,6 +1850,21 @@ public static class EnvironmentMapper
     /// per-dependency image identity, so they still apply uniformly here — an air-gapped
     /// customer's <c>imagePullPolicy: Never</c> must reach every container, sidecars included.
     /// </summary>
+    /// <remarks>
+    /// M1 fix: <paramref name="imageRegistry"/> is skipped when the sidecar's OWN hardcoded image
+    /// literal already embeds a registry component — the azureservicebus SQL Edge sidecar is
+    /// registered as <c>AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")</c>,
+    /// so <c>ContainerImageAnnotation.Registry</c> is null (nothing for a naive
+    /// "spec.Image only" check to see) while <c>ContainerImageAnnotation.Image</c> already carries
+    /// "mcr.microsoft.com/...". Applying <paramref name="imageRegistry"/> unconditionally on top
+    /// would double-prefix the pull reference
+    /// ("artifactory.example.com/mcr.microsoft.com/mssql/server:2022-latest") — exactly the same
+    /// failure mode <see cref="ApplyImageOverrides{T}"/>'s M1 fix addresses for the emulator
+    /// container itself, checked the same way (the CURRENT annotation, not a raw image string this
+    /// method never receives). The kafka schema-registry sidecar's own image
+    /// ("confluentinc/cp-schema-registry") carries no such component, so imageRegistry still
+    /// applies to it exactly as before.
+    /// </remarks>
     private static IResourceBuilder<T> ApplySidecarRegistryAndPullPolicy<T>(
         IResourceBuilder<T> builder,
         string? imageRegistry,
@@ -1763,7 +1873,16 @@ public static class EnvironmentMapper
     {
         if (!string.IsNullOrEmpty(imageRegistry))
         {
-            builder = builder.WithImageRegistry(imageRegistry);
+            var currentImage = builder.Resource.Annotations
+                .OfType<ContainerImageAnnotation>()
+                .LastOrDefault();
+            var imageHasExplicitRegistry =
+                currentImage is not null && HasExplicitRegistryComponent(currentImage.Image);
+
+            if (!imageHasExplicitRegistry)
+            {
+                builder = builder.WithImageRegistry(imageRegistry);
+            }
         }
 
         if (pullPolicy is not null)
@@ -1779,9 +1898,11 @@ public static class EnvironmentMapper
     /// component is an explicit registry host — contains a <c>.</c> or a <c>:</c> (a port), or
     /// equals <c>"localhost"</c> — the same heuristic <see cref="ResolveImage"/> already applies
     /// for services (and that <c>OrchestrationErrorClassifier.ParseRegistryHost</c> and
-    /// <see cref="ImageReferenceParser"/>'s own header remarks independently document), applied
-    /// here to an ALREADY tag/digest-stripped <see cref="ImageReference.Repository"/> rather than
-    /// a raw image string.
+    /// <see cref="ImageReferenceParser"/>'s own header remarks independently document). Callers
+    /// pass either an ALREADY tag/digest-stripped <see cref="ImageReference.Repository"/> (from a
+    /// parsed <see cref="DependencySpec.Image"/>), or a resource's CURRENT
+    /// <see cref="ContainerImageAnnotation.Image"/> (the M1 fix — Aspire's own annotation shape
+    /// keeps <c>Image</c> tag/digest-free the same way, so both are equally valid inputs here).
     /// </summary>
     private static bool HasExplicitRegistryComponent(string repository)
     {
