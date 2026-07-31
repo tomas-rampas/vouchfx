@@ -1,8 +1,7 @@
 site_name: vouchfx
-# REQ-008 (specs/seo-custom-domains.md): leads with the mandatory anchor
-# phrase "end-to-end integration testing framework", states the .NET
-# foundation, and names the polyglot reach — 147 chars, under the 160-char
-# meta-description budget.
+# Leads with the mandatory anchor phrase "end-to-end integration testing
+# framework", states the .NET foundation, and names the polyglot reach —
+# 147 chars, under the 160-char meta-description budget.
 site_description: >-
   The end-to-end integration testing framework built on .NET, for services in
   any language (Java, Kotlin, Python, Go, Node.js) running as containers.

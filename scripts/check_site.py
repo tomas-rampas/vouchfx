@@ -62,7 +62,7 @@ specs/seo-fleet-audit.md (the fleet-wide SEO audit):
       in either its literal `.html` or directory-slug form — see
       `check_sitemap_excludes_404_and_stubs`.
 
-Two further checks, unrelated to REQ-007, close gaps in the mermaid
+Three further checks, unrelated to REQ-007, close gaps in the mermaid
 diagram rendering fix (issue #311 / PR #320):
 
   (n) the AI Companion design doc's built page contains a real
@@ -74,11 +74,28 @@ diagram rendering fix (issue #311 / PR #320):
       can tell a rendered diagram from a broken one: mermaid is parsed
       entirely client-side, and raw mermaid source has zero box-drawing
       characters to trip the drift scan;
-  (o) no built asset references unpkg.com's mermaid CDN at all — see
-      `check_no_unpkg_mermaid_reference`. scripts/site_hooks/pin_mermaid.py
-      rewrites that reference to a pinned jsdelivr URL at build time; this
-      check makes the pin a CI-gated property of the published build
-      itself, not merely something the hook is trusted to have done.
+  (o) no built text-like output (html/js/json/xml/txt — see
+      scripts/site_hooks/_text_like.py; `.js.map` source maps are
+      deliberately out of scope, since they are dev-only debugging
+      artefacts no ordinary page load fetches) references unpkg.com's
+      mermaid CDN — see `check_no_unpkg_mermaid_reference`.
+      scripts/site_hooks/pin_mermaid.py rewrites that reference to a
+      pinned jsdelivr URL at build time; this check makes the pin a
+      CI-gated property of the published build itself, not merely
+      something the hook is trusted to have done. This only proves the
+      OLD reference is gone, never that the REPLACEMENT is actually
+      correct — see (p);
+  (p) the theme bundle actually contains the pinned jsdelivr URL, exactly
+      once — see `check_pinned_mermaid_url_present`. (o) alone would still
+      pass even if pin_mermaid.py's own PINNED_MERMAID_URL were ever
+      typo'd, emptied, or pointed at a non-existent version: the
+      unpkg.com reference would be gone, but the diagram would silently
+      stop rendering for every visitor with nothing here to catch it.
+      Scoped to the same assets/javascripts/bundle*.min.js file(s) the
+      hook itself rewrites, mirroring its own EXPECTED_OCCURRENCES
+      discipline; its pinned-URL literal is duplicated here on purpose,
+      not imported from the hook, so a wrong hook and a check that merely
+      agrees with it can never both pass together.
 
 The landing page's `<title>` is also asserted ≤70 characters, folded into
 `check_landing_page` alongside its pre-existing landing-marker check.
@@ -1752,6 +1769,24 @@ MERMAID_CONTAINER_MARKER = '<pre class="mermaid">'
 # check_no_unpkg_mermaid_reference.
 UNPKG_MERMAID_MARKER = "unpkg.com/mermaid"
 
+# The jsdelivr URL scripts/site_hooks/pin_mermaid.py rewrites Material's
+# theme bundle to use. Defined here independently of
+# pin_mermaid.PINNED_MERMAID_URL — the same rationale PNG_SIGNATURE and
+# MERMAID_TRUST_BOUNDARY_SLUG above already follow (see the module
+# docstring's confidential-surface-boundary section for the general
+# principle): a check that imported this literal from the hook it is
+# meant to police could still pass a build where the hook's own constant
+# had been typo'd, emptied, or pointed at a non-existent version, since an
+# import makes both sides agree by construction. Re-pin deliberately,
+# keeping this in lockstep with pin_mermaid.PINNED_MERMAID_URL, whenever
+# that moves.
+PINNED_MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js"
+
+# How many times PINNED_MERMAID_URL is expected to appear in the theme
+# bundle. Mirrors pin_mermaid.EXPECTED_OCCURRENCES, defined independently
+# for the same reason as PINNED_MERMAID_URL itself.
+EXPECTED_PINNED_MERMAID_OCCURRENCES = 1
+
 
 def check_mermaid_diagram_rendered(site_dir: Path) -> None:
     """The trust-boundary diagram on the AI Companion page
@@ -1880,6 +1915,78 @@ def check_no_unpkg_mermaid_reference(site_dir: Path) -> int:
     return skipped
 
 
+def check_pinned_mermaid_url_present(site_dir: Path) -> None:
+    """The pinned jsdelivr mermaid URL must actually BE in the built theme
+    bundle — proving presence, not merely the absence
+    `check_no_unpkg_mermaid_reference` already proves.
+
+    That check passing only means the string "unpkg.com/mermaid" is gone
+    from the build; it says nothing about what replaced it. If
+    scripts/site_hooks/pin_mermaid.py's own PINNED_MERMAID_URL were ever
+    typo'd, emptied, or re-pinned to a version that does not exist on
+    jsdelivr, the hook would still remove the unpkg.com reference (its own
+    fail-closed checks only guard the SOURCE URL's occurrence count, not
+    the correctness of what it is rewritten to), `check_no_unpkg_mermaid_
+    reference` would still pass, and the diagram would silently stop
+    rendering for every visitor — with nothing in this gate to catch it
+    before a real user's browser did.
+
+    Deliberately scoped to assets/javascripts/bundle*.min.js — the same
+    file(s) pin_mermaid.py itself rewrites — rather than the wider
+    text-like surface check_no_unpkg_mermaid_reference scans, and mirrors
+    that hook's own two fail-closed branches: zero or more than one bundle
+    file is a build-layout regression the hook itself would already have
+    caught (this check would only reach it if the hook had somehow not
+    run), and an occurrence count other than
+    EXPECTED_PINNED_MERMAID_OCCURRENCES means either the hook's rewrite
+    did not fire as expected or PINNED_MERMAID_URL itself has drifted from
+    what actually ships.
+
+    PINNED_MERMAID_URL is duplicated from pin_mermaid.py rather than
+    imported — see that constant's own comment for why: an import would
+    let this check silently agree with a wrong hook.
+    """
+    bundles = sorted(site_dir.glob("assets/javascripts/bundle*.min.js"))
+
+    if not bundles:
+        raise CheckFailed(
+            f"No assets/javascripts/bundle*.min.js found under {site_dir} — "
+            "cannot verify the pinned mermaid URL is present. Material's theme "
+            "asset layout may have changed; scripts/site_hooks/pin_mermaid.py "
+            "depends on this same glob and should already have failed the "
+            "build before this gate ran, so also check that the hook is still "
+            "registered in mkdocs.yml's hooks: list and actually ran."
+        )
+    if len(bundles) > 1:
+        raise CheckFailed(
+            "Expected exactly one assets/javascripts/bundle*.min.js under "
+            f"{site_dir}, found {len(bundles)}: "
+            + ", ".join(str(b) for b in bundles)
+            + " — scripts/site_hooks/pin_mermaid.py assumes the same "
+            "singularity and should already have failed the build before "
+            "this gate ran."
+        )
+    bundle = bundles[0]
+
+    text = bundle.read_text(encoding="utf-8", errors="replace")
+    count = text.count(PINNED_MERMAID_URL)
+    if count != EXPECTED_PINNED_MERMAID_OCCURRENCES:
+        raise CheckFailed(
+            f"{bundle} contains {count} occurrence(s) of the pinned mermaid "
+            f"URL {PINNED_MERMAID_URL!r}, expected exactly "
+            f"{EXPECTED_PINNED_MERMAID_OCCURRENCES}. "
+            "check_no_unpkg_mermaid_reference passing only proves the OLD "
+            "unpkg.com URL is gone, never that the REPLACEMENT this hook "
+            "wrote is actually correct — scripts/site_hooks/pin_mermaid.py's "
+            "PINNED_MERMAID_URL may have been typo'd, emptied, or pointed at "
+            "a non-existent version, which would fail silently for every "
+            "visitor's browser until this assertion. Re-verify "
+            "PINNED_MERMAID_URL against a real build if this pin is being "
+            "moved deliberately, and keep check_site.PINNED_MERMAID_URL in "
+            "lockstep with it."
+        )
+
+
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
@@ -1898,6 +2005,7 @@ CHECKS = (
     check_sitemap_excludes_404_and_stubs,
     check_mermaid_diagram_rendered,
     check_no_unpkg_mermaid_reference,
+    check_pinned_mermaid_url_present,
 )
 
 
@@ -1924,8 +2032,8 @@ def main(argv: list[str]) -> int:
     suffix = ""
     if skipped_total:
         suffix = (
-            f" ({skipped_total} file(s) could not be read during a content scan "
-            "(check_boundary and/or check_no_unresolved_facts) — see WARN lines above; "
+            f" ({skipped_total} file(s) could not be read during a content scan — "
+            "see WARN lines above for which check(s) hit the read error; "
             "re-run after fixing the underlying read error before trusting this result "
             "for those files)"
         )

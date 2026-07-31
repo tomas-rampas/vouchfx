@@ -240,8 +240,8 @@ git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.3
 
 Depending on how the release tag was created (both kinds are documented in
 [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md)), this prints either
-*two* lines — `refs/tags/v1.0.0-rc.1` (an annotated tag object's own SHA) and
-`refs/tags/v1.0.0-rc.1^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
+*two* lines — `refs/tags/v1.0.0-rc.3` (an annotated tag object's own SHA) and
+`refs/tags/v1.0.0-rc.3^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
 tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the
 single line's SHA is the commit SHA to pin.
 

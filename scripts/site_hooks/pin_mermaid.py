@@ -28,8 +28,9 @@ ahead of Material's own guard — correct in isolation, but it made
 conditional) eagerly fetch a ~1 MB script on every one of this site's pages,
 not just the one with a diagram. That traded an unpinned-but-lazy dependency
 for a pinned-but-eager one — a real performance and SEO regression on a site
-with deliberate SEO investment (specs/seo-fleet-audit.md,
-specs/seo-custom-domains.md).
+where page-load performance and crawlability are a deliberate product
+requirement, not an afterthought (see CHANGELOG.md's "Project sites migrated
+to custom domains" entry for the public record of that investment).
 
 This hook gets BOTH properties instead, by rewriting the dependency at its
 actual source: the literal URL string inside Material's own built theme
