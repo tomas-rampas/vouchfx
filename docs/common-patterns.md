@@ -305,7 +305,7 @@ metadata:
 environment:
   # Option 1: Redirect all un-qualified images to a single private mirror
   imageRegistry: nexus.corp.local/docker-mirror
-  
+
   services:
     order-api:
       image: myco/order-service:v2.1.0    # Will pull from nexus.corp.local/docker-mirror/myco/order-service:v2.1.0
@@ -316,12 +316,12 @@ environment:
   dependencies:
     orders-db:
       type: postgres
-      version: "16"                        # Will pull from nexus.corp.local/docker-mirror/postgres:16
-    
+      version: "16"                        # Will pull from nexus.corp.local/docker-mirror/library/postgres:16
+
     events:
       type: kafka
       image: nexus.corp.local:5000/platform/kafka:7.5.0    # Override: this one is pinned to a specific port and version
-    
+
     cache:
       type: redis
 ```

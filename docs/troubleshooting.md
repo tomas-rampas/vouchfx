@@ -214,11 +214,11 @@ environment:
   services:
     my-api:
       image: myco/myapi:latest           # Will be redirected to nexus.corp.local/docker-mirror/myco/myapi:latest
-      
+
   dependencies:
     db:
       type: postgres
-      # Will use nexus.corp.local/docker-mirror/postgres (Aspire's default), not Docker Hub
+      # Will use nexus.corp.local/docker-mirror/library/postgres:16 (Docker's library namespace), not Docker Hub
 ```
 
 The `imageRegistry` override applies to every un-qualified reference in both services and dependencies. Already-qualified references (those carrying a registry hostname) are never rewritten — they are pulled from their specified host as-is. When you specify a fully-qualified `image:` on a dependency, the engine also clears any built-in registry default the provider might carry, preventing unintended double-prefixing. The guarantee is: a fully-qualified `image:` is used exactly as written, with no prefixing from any source.
@@ -233,11 +233,11 @@ environment:
     orders-db:
       type: postgres
       image: nexus.corp.local:5000/platform/postgres:16-custom    # Explicit override
-    
+
     events:
       type: kafka
       image: artifactory.mycompany.com/confluent/kafka:7.5.0       # Pulls from Artifactory
-    
+
     cache:
       type: redis
       version: "7"                                                  # Uses Aspire's default: redis:7
@@ -252,11 +252,11 @@ For fully air-gapped or pre-warmed environments, use `imagePullPolicy: Never` to
 ```yaml
 environment:
   imagePullPolicy: Never    # All images must be pre-warmed locally; no external pulls allowed
-  
+
   services:
     my-api:
       image: myco/myapi:v1.2.3
-      
+
   dependencies:
     db:
       type: postgres
@@ -276,8 +276,8 @@ docker pull redis:7
 
 Two resource types provision sidecar containers whose images **cannot** be overridden:
 
-- **`kafka` with `schemaRegistry: true`** — Aspire provisions a Confluent Schema Registry sidecar. The schema-registry image is fixed.
-- **`azureservicebus`** — Aspire provisions a SQL Edge sidecar for emulation. The SQL Edge image is fixed.
+- **`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The image is not yet author-overridable.
+- **`azureservicebus`** — vouchfx provisions a SQL Server 2022 sidecar for emulation (pinned to `mcr.microsoft.com/mssql/server:2022-latest`). The image is not yet author-overridable.
 
 If you rely on either resource and must run it on a private registry, your sidecar's image cannot currently be customised. This is a known limitation; please open an issue on the GitHub repository if this blocks your workflow.
 

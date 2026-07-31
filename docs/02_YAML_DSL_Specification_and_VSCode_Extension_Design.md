@@ -172,10 +172,10 @@ environment:
 
 #### 3.2.3 Known limitation: sidecar container images
 
-Two managed resource types provision a sidecar container alongside the main resource. Their sidecar images cannot be overridden:
+Two managed resource types provision a sidecar container alongside the main resource. Their sidecar images are hardcoded and cannot be overridden:
 
-- **`kafka` with `schemaRegistry: true`** — Aspire provisions a Confluent Schema Registry sidecar. The schema registry image is managed by Aspire and cannot be customised per scenario.
-- **`azureservicebus`** — Aspire provisions a SQL Edge sidecar for emulation. The SQL Edge image is fixed by Aspire.
+- **`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The image is not yet author-overridable.
+- **`azureservicebus`** — vouchfx provisions a SQL Server 2022 sidecar for emulation (pinned to `mcr.microsoft.com/mssql/server:2022-latest`). The image is not yet author-overridable.
 
 If your team relies on either resource and requires the sidecar to run from a private registry, you are currently blocked. This is a known gap; please raise an issue on the GitHub repository if this affects your workflow.
 

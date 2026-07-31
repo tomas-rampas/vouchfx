@@ -15,6 +15,15 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-dependency image override** — `environment.dependencies[].image` field allows explicit specification of a container image for individual managed dependencies, bypassing Aspire's provisioned defaults. An `image:` carrying no tag or digest can be paired with a `version:` field; if both `image:` (with tag) and `version:` are set, the combination is rejected as ambiguous. Fully-qualified `image:` values are used exactly as written, with no prefixing from `imageRegistry` or provider defaults.
+
+### Changed
+
+- **`imageRegistry` now applies to both services and dependencies** — the environment-level `imageRegistry` override previously affected only `services`; it now prefixes every un-qualified image reference in both sections. Already-qualified references (those carrying a registry hostname) are never rewritten and are pulled from their specified host as-is. When a fully-qualified `image:` is specified on a dependency, the engine clears any built-in registry default the provider might carry, preventing unintended double-prefixing.
+- **`imagePullPolicy` is now enforced at topology start** — previously the field was parsed but ignored at runtime. It now governs pull behaviour for all images (Always, Missing, Never) at the environment level. Specifying policy per-dependency is not yet supported.
+
 ## [1.0.0-rc.3] — 2026-07-30
 
 Completion of the AI-facing tooling surface: the Generator (`vouchfx scaffold`) and Planner
