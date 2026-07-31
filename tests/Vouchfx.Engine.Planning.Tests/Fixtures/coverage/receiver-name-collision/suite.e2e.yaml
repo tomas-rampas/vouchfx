@@ -1,0 +1,25 @@
+metadata:
+  name: receiver-name-collision
+
+environment:
+  services:
+    api:
+      image: myorg/api:1.0
+  dependencies:
+    events:
+      type: kafka
+
+steps:
+  - id: publish-event
+    type: mq-publish.kafka
+    target: events
+  - id: watch-events-trace
+    type: trace-expect.otlp
+    receiver: events
+    match:
+      traceId: "{traceId}"
+  - id: watch-api-trace
+    type: trace-expect.otlp
+    receiver: api
+    match:
+      traceId: "{traceId}"
