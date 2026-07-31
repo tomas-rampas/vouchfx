@@ -135,6 +135,56 @@ public sealed class ImageReferenceTests
     }
 
     // -----------------------------------------------------------------------
+    // Long hyphenated host + two-segment path (regression pin) — an anonymised shape
+    // pinned because the synthetic rows above only approximate it: a long, three-label
+    // hostname with hyphens IN THE HOST ITSELF (not just the path), a two-segment
+    // repository path that is itself hyphenated in both segments, and a last path
+    // segment that ends right up against the tag/digest separator with no intervening
+    // punctuation to help a scan find its footing. `.example` is the RFC 2606
+    // documentation TLD, so this can never collide with a real host.
+    // If the last-segment scan is ever "simplified" to something that special-cases
+    // short hostnames or assumes a single-segment repository path, this is the case
+    // that catches it: a naive first-colon split would carve the port-shaped-looking
+    // hyphens out of the host, and a naive first-slash split would stop at
+    // "platform-int-orders" instead of walking to the true last segment.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_LongHyphenatedHostWithTwoSegmentPath_WithLatestTag_SplitsHostAndPathFromTag()
+    {
+        const string reference =
+            "nexus-eu-dev-docker-registry.corp.example/platform-int-orders/orders-mongodb:latest";
+
+        var result = ImageReferenceParser.Parse(reference);
+
+        Assert.Equal(
+            "nexus-eu-dev-docker-registry.corp.example/platform-int-orders/orders-mongodb",
+            result.Repository);
+        Assert.Equal("latest", result.Tag);
+        Assert.Null(result.Digest);
+    }
+
+    [Fact]
+    public void Parse_LongHyphenatedHostWithTwoSegmentPath_WithDigest_ExtractsDigestFromSameHostAndPath()
+    {
+        // Same host and repository path as the ":latest" case above, but pinned by
+        // digest instead — the other reference form this shape needs to survive.
+        const string reference =
+            "nexus-eu-dev-docker-registry.corp.example/platform-int-orders/orders-mongodb" +
+            "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        var result = ImageReferenceParser.Parse(reference);
+
+        Assert.Equal(
+            "nexus-eu-dev-docker-registry.corp.example/platform-int-orders/orders-mongodb",
+            result.Repository);
+        Assert.Null(result.Tag);
+        Assert.Equal(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            result.Digest);
+    }
+
+    // -----------------------------------------------------------------------
     // Degenerate input — documented decision: throw ArgumentException naming the
     // offending reference rather than return an ambiguous/best-effort result. The
     // caller is validating author YAML (`environment.dependencies[].image`) and wants
