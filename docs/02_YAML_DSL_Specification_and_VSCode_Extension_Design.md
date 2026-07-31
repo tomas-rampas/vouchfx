@@ -113,11 +113,11 @@ environment:
 
 Image references in the environment section follow the standard OCI / Docker image format: `[registry-host[:port]/]namespace/repository[:tag|@digest]`. Un-prefixed names resolve through Docker Hub (so `postgres:16` is the official Postgres image); fully-qualified names target any OCI-compliant registry without further configuration (GitHub Container Registry, Azure Container Registry, ECR, GCR, Harbor, Artifactory). Authentication to private registries is handled by the underlying container runtime: a `docker login` beforehand or a CI step that populates the credential store is what enables the pull, and the test platform inherits those credentials transparently.
 
-Three controls on top of the image reference give authors finer-grained control. An `imageRegistry` override at the environment level prefixes every un-prefixed image with the given registry hostname, which is the form teams in regulated environments use to redirect public images to an internal mirror. An `imagePullPolicy` field accepts the standard Docker values — `Always`, `Missing`, `Never` — with the engine choosing a sensible default per image (Always for moving tags such as `:latest`, Missing for semver-shaped tags). Explicit digest pinning with `@sha256:…` is supported and is the recommended form for production-grade reproducibility, because tags can move under the team's feet whereas digests are byte-stable.
+Three controls on top of the image reference give authors finer-grained control. An `imageRegistry` override at the environment level prefixes every un-prefixed image **declared in the `services` section** with the given registry hostname, which is the form teams in regulated environments use to redirect public images to an internal mirror; managed `environment.dependencies` images are not affected by this setting today. An `imagePullPolicy` field accepts the standard Docker values — `Always`, `Missing`, `Never` — with the engine choosing a sensible default per image (Always for moving tags such as `:latest`, Missing for semver-shaped tags). Explicit digest pinning with `@sha256:…` is supported and is the recommended form for production-grade reproducibility, because tags can move under the team's feet whereas digests are byte-stable.
 
 ```yaml
 environment:
-  imageRegistry: artifactory.mycompany.com/docker-mirror   # optional default
+  imageRegistry: artifactory.mycompany.com/docker-mirror   # optional default (applies to services only)
   services:
     orders-api:
       image: myorg/orders-api@sha256:9f4c…         # digest-pinned
@@ -126,6 +126,8 @@ environment:
     orders-db: { type: postgres, version: "16" }
     events:    { type: kafka, schemaRegistry: true }
 ```
+
+> **Note on `imageRegistry` scope:** The `imageRegistry` override currently applies only to container images declared in `services`; managed `environment.dependencies` such as Postgres, Kafka, and Redis are provisioned with their reference image and are not prefixed by the registry override. This allows teams in regulated environments to redirect service images to an internal registry whilst dependencies remain under Aspire's control.
 
 An image-pull failure — registry unreachable, authentication failed, image not found — is classified as an environment error per the verdict taxonomy, not a test failure. The report names the registry hostname and the authentication status alongside the runtime's underlying error, so an engineer can act on it without spelunking. This is the most common cause of early-pilot frustration in Docker-based testing tools, and the architecture handles it explicitly rather than letting it manifest as a generic timeout.
 
