@@ -14,7 +14,7 @@ metadata:
     KNOWN LIMITATION (v1): the receiver is a per-scenario host resource that starts AFTER the
     topology (and therefore the SUT container) is already running, so its URL cannot be
     threaded into environment.services[].env (which is resolved at container-configure time,
-    before the receiver exists) — env: only resolves ${conn:<dependency>} references (§3.2.4).
+    before the receiver exists) — env: only resolves ${conn:<dependency>} references (§3.2.6).
     A containerised SUT would need to be pointed at a STANDING OTel collector whose address is
     stable for the whole suite run, which then forwards to wherever this engine listens — out
     of scope for a minimal, self-contained example. This example instead SIMULATES the SUT's

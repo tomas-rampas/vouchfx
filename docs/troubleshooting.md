@@ -218,10 +218,10 @@ environment:
   dependencies:
     db:
       type: postgres
-      # Will use nexus.corp.local/docker-mirror/library/postgres:16 (Docker's library namespace), not Docker Hub
+      # Will use nexus.corp.local/docker-mirror/library/postgres:18.3 (Docker's library namespace; Aspire pins PostgreSQL 18.3)
 ```
 
-The `imageRegistry` override applies to every un-qualified reference in both services and dependencies. Already-qualified references (those carrying a registry hostname) are never rewritten — they are pulled from their specified host as-is. When you specify a fully-qualified `image:` on a dependency, the engine also clears any built-in registry default the provider might carry, preventing unintended double-prefixing. The guarantee is: a fully-qualified `image:` is used exactly as written, with no prefixing from any source.
+The `imageRegistry` override applies to every un-qualified reference in both services and dependencies. Already-qualified references (those carrying a registry hostname) are never rewritten — they are pulled from their specified host as-is. When you specify any `image:` field on a dependency, the engine also clears any built-in registry default the provider might carry, preventing unintended double-prefixing. The guarantee is: an `image:` is used exactly as written (with the provider's registry default cleared), and `imageRegistry` is applied on top only when the image carries no registry hostname of its own.
 
 ### 2. Override dependency images with per-dependency `image:` field
 
@@ -243,7 +243,7 @@ environment:
       version: "7"                                                  # Uses Aspire's default: redis:7
 ```
 
-The per-dependency `image:` field bypasses Aspire's provisioned default entirely. An `image:` carrying no tag or digest can be paired with a `version:` field; `version:` supplies the tag. If **both** `image:` (with a tag) **and** `version:` are set, that is rejected as ambiguous.
+The per-dependency `image:` field bypasses Aspire's provisioned default entirely. An `image:` carrying no tag or digest **must** be paired with a `version:` field; `version:` supplies the tag. If **both** `image:` (with a tag) **and** `version:` are set, that is rejected as ambiguous. A tagless `image:` without a sibling `version:` is rejected with a clear error: it would silently float on `:latest`, defeating the determinism invariant.
 
 ### 3. Enforce local-cache-only operation
 
@@ -272,14 +272,15 @@ docker pull postgres:16
 docker pull redis:7
 ```
 
-### 4. Known limitation: sidecar container images
+### 4. Built-in images and registry redirect scope
 
-Two resource types provision sidecar containers whose images **cannot** be overridden:
+Some managed resources carry built-in container images. The scope of `imageRegistry` and per-dependency `image:` overrides varies by resource type:
 
-- **`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The image is not yet author-overridable.
-- **`azureservicebus`** — vouchfx provisions a SQL Server 2022 sidecar for emulation (pinned to `mcr.microsoft.com/mssql/server:2022-latest`). The image is not yet author-overridable.
+**`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The sidecar image carries no embedded registry hostname, so `imageRegistry` **does** apply to it. If you set `imageRegistry: artifactory.mycompany.com/docker-mirror`, the sidecar will be pulled from `artifactory.mycompany.com/docker-mirror/confluentinc/cp-schema-registry:7.6.1`. There is no per-dependency `image:` override for this sidecar; authors must rely on `imageRegistry` redirection.
 
-If you rely on either resource and must run it on a private registry, your sidecar's image cannot currently be customised. This is a known limitation; please open an issue on the GitHub repository if this blocks your workflow.
+**`azureservicebus`** — vouchfx provisions two containers. The main emulator container (`mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2`) and the SQL Server 2022 sidecar (`mcr.microsoft.com/mssql/server:2022-latest`) both embed `mcr.microsoft.com`. Because their images are fully qualified, `imageRegistry` does **not** apply to either — the rule "already-qualified references are never rewritten" protects them both. The main emulator **can** be redirected per-dependency with an `image:` field naming your own registry (for example `image: artifactory.mycompany.com/azure-messaging/servicebus-emulator:1.1.2`); `version:` will not help here, because it only replaces the tag on the provider's built-in repository and cannot change the registry. The SQL sidecar cannot be overridden by any author-controlled means.
+
+**Principle:** An `image:` field overrides the main container only (never a sidecar) and is used exactly as written. `imageRegistry` reaches every un-qualified image (including the Kafka schema-registry sidecar) but not images with a registry hostname of their own. `imagePullPolicy` applies to all containers.
 
 ### Best practices for private registry operation
 
@@ -293,7 +294,7 @@ If you rely on either resource and must run it on a private registry, your sidec
      imageRegistry: mirror.internal.corp    # Fallback for any un-qualified reference
      dependencies:
        orders-db:
-         type: postgres                     # Will use mirror.internal.corp/postgres
+         type: postgres                     # Will use mirror.internal.corp/library/postgres:18.3
        events:
          type: kafka
          image: kafka.example.com/cp-kafka:7.5  # Override: this one comes from a different host

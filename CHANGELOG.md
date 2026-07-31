@@ -17,12 +17,12 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
-- **Per-dependency image override** — `environment.dependencies[].image` field allows explicit specification of a container image for individual managed dependencies, bypassing Aspire's provisioned defaults. An `image:` carrying no tag or digest can be paired with a `version:` field; if both `image:` (with tag) and `version:` are set, the combination is rejected as ambiguous. Fully-qualified `image:` values are used exactly as written, with no prefixing from `imageRegistry` or provider defaults.
+- **Per-dependency image override** — `environment.dependencies[].image` field allows explicit specification of a container image for individual managed dependencies, bypassing Aspire's provisioned defaults. An `image:` carrying no tag or digest **must** be paired with a `version:` field; if both `image:` (with tag) and `version:` are set, the combination is rejected as ambiguous. A tagless `image:` without `version:` is rejected to prevent floating on `:latest`. Any `image:` value is used exactly as written, with the provider's registry default cleared, and `imageRegistry` applied on top only if the image carries no registry hostname of its own.
 
 ### Changed
 
 - **`imageRegistry` now applies to both services and dependencies** — the environment-level `imageRegistry` override previously affected only `services`; it now prefixes every un-qualified image reference in both sections. Already-qualified references (those carrying a registry hostname) are never rewritten and are pulled from their specified host as-is. When a fully-qualified `image:` is specified on a dependency, the engine clears any built-in registry default the provider might carry, preventing unintended double-prefixing.
-- **`imagePullPolicy` is now enforced at topology start** — previously the field was parsed but ignored at runtime. It now governs pull behaviour for all images (Always, Missing, Never) at the environment level. Specifying policy per-dependency is not yet supported.
+- **`imagePullPolicy` is now enforced at topology start** — previously the field was parsed but ignored at runtime. It now governs pull behaviour for all images (Always, Missing, Never) and can be set at the environment level (applies to all containers) or per-service to override it; there is no per-dependency form.
 
 ## [1.0.0-rc.3] — 2026-07-30
 

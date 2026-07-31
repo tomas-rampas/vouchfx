@@ -22,7 +22,7 @@ environment:
     app:
       image: quay.io/prometheus/node-exporter:v1.8.2
       # node_exporter listens on 9100, not the generic-image default of 80 —
-      # httpPort tells the engine which port to expose and health-gate (§3.2.4).
+      # httpPort tells the engine which port to expose and health-gate (§3.2.6).
       httpPort: 9100
 
 steps:

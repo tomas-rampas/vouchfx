@@ -111,7 +111,7 @@ environment:
       type: redis
 ```
 
-Vouchfx stands up each dependency, waits for it to be healthy, applies any `seed`, and then makes it available to your steps. The concrete image and version are pinned by the Aspire module (e.g., Aspire pins PostgreSQL 16). Steps reference dependencies by their logical name (e.g., `target: orders-db`).
+Vouchfx stands up each dependency, waits for it to be healthy, applies any `seed`, and then makes it available to your steps. Each dependency has a default image and tag pinned by the Aspire module (e.g., Aspire pins PostgreSQL 18.3). Authors can override this with a per-dependency `version:` field (to change only the tag) or `image:` field (to replace the entire image reference), and can redirect wholesale with `imageRegistry` at the environment level. Steps reference dependencies by their logical name (e.g., `target: orders-db`).
 
 #### seed
 

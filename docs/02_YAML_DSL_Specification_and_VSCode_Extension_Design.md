@@ -150,9 +150,13 @@ environment:
 
 When `image:` is supplied, it bypasses the Aspire-provisioned default entirely. If `image:` carries no tag or digest and `version:` is also present, `version:` supplies the tag — allowing authors to override only the registry or repository whilst adopting a pinned version. If **both** `image:` (with a tag or digest) **and** `version:` are set, that is rejected as ambiguous with a clear error naming both fields.
 
-The `imageRegistry` environment-level override does **not** apply to dependencies whose `image:` is already fully qualified (carries a registry hostname). This is deliberate: a per-dependency `image:` is an explicit opt-in to skip the registry redirect. An un-qualified `image:` reference (e.g., `redis:7`) is still prefixed by `imageRegistry` if set, following the same rule as services.
+An `image:` field that carries no tag or digest and no sibling `version:` is **rejected** with a clear error. A tagless reference without an explicit version would silently float on `:latest`, defeating the determinism invariant; authors must use `version:` to pin the tag, or include a tag in the `image:` itself.
 
-**Why fully-qualified `image:` bypasses all prefixing:** When you specify a fully-qualified `image:`, the engine not only skips `imageRegistry` but also clears any built-in registry default the provider might carry. Without this, a dependency with a default registry would result in double-prefixing (e.g., `docker.io/your-registry/your-repo`), which is never the intent. The guarantee is: a fully-qualified `image:` is used exactly as written, with no prefixing from any source. Authors choosing between `imageRegistry` (blanket redirect) and per-dependency `image:` (precise control) can rely on this rule.
+The `ImageReferenceParser` also rejects other malformed inputs: leading or trailing whitespace; a tag (or digest) with a colon inside it (e.g., `mongodb:5:0` is invalid); a bare trailing `:` or `@` with no text after it; a digest whose hash is empty or not valid hexadecimal (e.g., `@sha256:`); a non-`sha256:` digest algorithm; an empty repository path segment (e.g., a leading or doubled `/`, or paths like `/mongo` or `myrepo/`); and an invalid combination of both `image:` with tag and `version:` (use one or the other to avoid ambiguity).
+
+The `imageRegistry` environment-level override applies to every un-qualified image reference (those without a registry hostname). It does **not** apply to images whose reference already carries a registry hostname, or to any dependency whose built-in image is pre-embedded with a registry host. An un-qualified `image:` reference (e.g., `redis:7`) is still prefixed by `imageRegistry` if set, following the same rule as services.
+
+**Why `image:` clears built-in defaults:** When you specify any `image:` field, the engine clears any built-in registry default the provider might carry and applies `imageRegistry` only if your image carries no registry hostname of its own. Without this, a dependency with a default registry would result in double-prefixing (e.g., `docker.io/your-registry/your-repo`), which is never the intent. The guarantee is: an `image:` is used exactly as written (with the provider's registry default cleared), and `imageRegistry` is applied on top only when the image carries no registry hostname of its own. Authors choosing between `imageRegistry` (blanket redirect) and per-dependency `image:` (precise control) can rely on this rule.
 
 ```yaml
 environment:
@@ -170,14 +174,15 @@ environment:
       version: "7"             # Results in redis:7, prefixed by imageRegistry
 ```
 
-#### 3.2.3 Known limitation: sidecar container images
+#### 3.2.3 Built-in images and registry redirect scope
 
-Two managed resource types provision a sidecar container alongside the main resource. Their sidecar images are hardcoded and cannot be overridden:
+Some managed resources carry built-in container images. The scope of `imageRegistry` and per-dependency `image:` overrides varies by resource type:
 
-- **`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The image is not yet author-overridable.
-- **`azureservicebus`** — vouchfx provisions a SQL Server 2022 sidecar for emulation (pinned to `mcr.microsoft.com/mssql/server:2022-latest`). The image is not yet author-overridable.
+**`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The sidecar image carries no embedded registry hostname, so `imageRegistry` **does** apply to it: setting `imageRegistry: artifactory.mycompany.com/docker-mirror` will redirect the sidecar to `artifactory.mycompany.com/docker-mirror/confluentinc/cp-schema-registry:7.6.1`. There is no per-dependency `image:` override for this sidecar; authors must rely on `imageRegistry` redirection.
 
-If your team relies on either resource and requires the sidecar to run from a private registry, you are currently blocked. This is a known gap; please raise an issue on the GitHub repository if this affects your workflow.
+**`azureservicebus`** — vouchfx provisions two containers. The main emulator container (`mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2`) and the SQL Server 2022 sidecar (`mcr.microsoft.com/mssql/server:2022-latest`) both embed `mcr.microsoft.com`. Because their images are fully qualified, `imageRegistry` does **not** apply to either — the rule "already-qualified references are never rewritten" protects them both. The main emulator **can** be redirected per-dependency using `image: artifactory.mycompany.com/azure-messaging/servicebus-emulator:1.1.2`; the SQL sidecar cannot be overridden by any author-controlled means.
+
+**Principle:** An `image:` field overrides the main container only (never a sidecar); it is used exactly as written, with no prefixing from any source. `imageRegistry` reaches every un-qualified image (including the Kafka schema-registry sidecar) but not images that carry a registry hostname of their own. `imagePullPolicy` applies to all containers.
 
 #### 3.2.4 Schema registries for message brokers
 
