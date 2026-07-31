@@ -1,6 +1,6 @@
 # vouchfxai — AI Companion Feasibility and Design
 
-**Status:** Design document for phase-one delivery. The MCP server itself is built and documented at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/); the wider vouchfxai programme (Generator, Healer, Planner) remains in design.
+**Status:** Design document for phase-one delivery; retained here for its feasibility analysis and phasing rationale, not as a live tool reference. All three phases sketched below have since shipped on the MCP server at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/): Generator (`validate_suite`, `list_step_types`, `describe_step_type`, `search_docs`, `scaffold_suite`, `run_suite`), Healer (`explain_run`, `diagnose_run`), and Planner (`plan_coverage`) — nine tools and two resources in total today, several named differently from this document's original §4 sketch. See [Ecosystem → the MCP companion](ecosystem.md#the-mcp-companion) and the server's own [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html) for the authoritative, current surface; §§4–5 below are kept unchanged as the original design record, annotated in §4.8 and §5 where delivery has since caught up with or diverged from the sketch.
 
 **Date:** 2026-07-20
 
@@ -112,9 +112,9 @@ The Healer's core. Takes an event stream and the suite source, and returns *prop
 
 Proposals are never applied by the tool. The client presents them, the human accepts or rejects — the section 8.2 approval gate in MCP form. Optionally the tool can emit its proposals as `healer-suggestion` events appended to the stream, in the machine-generated, reviewable form blueprint section 14.8 reserves, so the existing renderers can display them inline.
 
-### 4.8 Planner-phase tools (sketch only)
+### 4.8 Planner-phase tools (sketch; partially delivered)
 
-Two tools are anticipated but not specified here: a topology-inspection tool (given a repository or compose file, describe the services, dependencies and seams worth testing) and a coverage-gap tool (given the existing suites and the event streams of recent runs, identify untested seams and propose scenario outlines). Both compose the Generator tools rather than bypassing them: a Planner proposal becomes real only by being scaffolded, filled, validated and run through the same pipeline.
+Two tools were anticipated but not specified here: a topology-inspection tool (given a repository or compose file, describe the services, dependencies and seams worth testing) — still undelivered — and a coverage-gap tool (given the existing suites and the event streams of recent runs, identify untested seams and propose scenario outlines). The coverage-gap tool has since shipped as the MCP `plan_coverage` tool, backed by the engine's `vouchfx plan` CLI subcommand and its public `Vouchfx.Engine.Planning.PlanExport` library API (see CHANGELOG.md). Its delivered shape follows the design below: deterministic and read-only, emitting structured coverage-gap and history-health findings rather than a model-authored scenario outline. Both were designed to compose the Generator tools rather than bypass them: a Planner proposal becomes real only by being scaffolded, filled, validated and run through the same pipeline.
 
 ## 5. Phasing: Generator, then Healer, then Planner
 
@@ -124,7 +124,7 @@ Blueprint section 8.1 lists the agents in pipeline order — Planner feeds Gener
 |---|---|---|---|
 | 1 — Generator | 4.1 `vouchfx_schema`, 4.2 `vouchfx_validate`, 4.3 `vouchfx_step_catalog`, 4.4 `vouchfx_scaffold`, 4.5 `vouchfx_run` | An MCP client can take a service description and produce a validated, runnable suite with a human reviewing every file. | A suite for a reference service is generated, validated and passes, end to end, from a single client conversation. |
 | 2 — Healer | 4.6 `vouchfx_explain_run`, 4.7 `vouchfx_diagnose` | The same client can explain any run and propose verdict-aware repairs, never auto-applied. | A deliberately drifted reference suite is diagnosed and the proposed patch, once human-approved, makes it pass. |
-| 3 — Planner | 4.8 topology inspection, coverage-gap analysis | The client can propose *what* to test, not just write what was asked. | Scoped when phase 2 ships. |
+| 3 — Planner | 4.8 topology inspection, coverage-gap analysis | The client can propose *what* to test, not just write what was asked. | **Partially delivered.** Coverage-gap analysis shipped as `plan_coverage`: a reference project's suites, run history and step catalogue are analysed and every coverage gap and history-health signal is reported, without writing a suite file or calling a model. Topology inspection remains design-only — no acceptance test yet. |
 
 Milestones here are capability-level by design; delivery scheduling lives outside the published documentation.
 

@@ -118,6 +118,18 @@ check_no_unpkg_mermaid_reference (issue #200 / #311 / PR #320)
     a differently-cased unpkg.com reference still being caught, since a
     naive exact-case substring match would silently miss it.
 
+check_pinned_mermaid_url_present (peer review of PR #320: the unpkg gate
+proves absence but never presence)
+    check_no_unpkg_mermaid_reference passing only proves the OLD unpkg.com
+    URL is gone; it says nothing about whether the pin_mermaid.py rewrite
+    actually landed the CORRECT replacement. Covers: a single bundle with
+    exactly one occurrence of the pinned jsdelivr URL passing; the pinned
+    URL missing entirely (the rewrite silently regressed, or never ran)
+    failing; the pinned URL appearing twice in one bundle (a hook or bundle
+    shape this was never verified against) failing; zero bundle files
+    failing; and more than one bundle file failing — the last two mirror
+    pin_mermaid.py's own two build-time fail-closed branches.
+
 Run (from the repo root):
     python -m pytest scripts/site-tools/tests -q
 or (cwd scripts/site-tools, where [tool.pytest.ini_options] pins testpaths):
@@ -1007,3 +1019,78 @@ def test_unpkg_reference_match_is_case_insensitive(check_site, site_dir: Path) -
 
     with pytest.raises(check_site.CheckFailed, match=r"unpkg\.com"):
         check_site.check_no_unpkg_mermaid_reference(site_dir)
+
+
+# ---------------------------------------------------------------------------
+# check_pinned_mermaid_url_present — peer review of PR #320 (the unpkg gate
+# proves absence but never presence)
+# ---------------------------------------------------------------------------
+
+
+def _write_bundle(site_dir: Path, text: str, *, name: str = "bundle.deadbeef.min.js") -> Path:
+    js_dir = site_dir / "assets" / "javascripts"
+    js_dir.mkdir(parents=True, exist_ok=True)
+    bundle = js_dir / name
+    bundle.write_text(text, encoding="utf-8")
+    return bundle
+
+
+def test_single_pinned_occurrence_passes(check_site, site_dir: Path) -> None:
+    """The success path this check exists to prove: exactly one bundle,
+    exactly one occurrence of the pinned jsdelivr URL — what a correct
+    scripts/site_hooks/pin_mermaid.py rewrite leaves behind."""
+    _write_bundle(site_dir, f'watchScript("{check_site.PINNED_MERMAID_URL}")')
+
+    check_site.check_pinned_mermaid_url_present(site_dir)  # must not raise
+
+
+def test_pinned_url_absent_fails(check_site, site_dir: Path) -> None:
+    """The regression this check exists to catch: check_no_unpkg_mermaid_
+    reference would pass this bundle (no unpkg.com reference anywhere), but
+    the pinned replacement URL was never actually written — e.g.
+    pin_mermaid.py's own PINNED_MERMAID_URL was typo'd, emptied, or
+    re-pinned to a version that does not exist. Silent for every visitor's
+    browser until this assertion."""
+    _write_bundle(site_dir, 'watchScript("https://example.invalid/not-mermaid-at-all.js")')
+
+    with pytest.raises(check_site.CheckFailed, match=r"0 occurrence"):
+        check_site.check_pinned_mermaid_url_present(site_dir)
+
+
+def test_pinned_url_duplicated_fails(check_site, site_dir: Path) -> None:
+    """The pinned URL appearing twice in one bundle is a shape this pin was
+    never verified against (pin_mermaid.py's own docstring: verified as
+    exactly one occurrence against a real build) — fail rather than
+    silently accept an unexpected count."""
+    _write_bundle(
+        site_dir,
+        f'watchScript("{check_site.PINNED_MERMAID_URL}"); '
+        f'watchScript("{check_site.PINNED_MERMAID_URL}")',
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"2 occurrence"):
+        check_site.check_pinned_mermaid_url_present(site_dir)
+
+
+def test_no_bundle_file_fails(check_site, site_dir: Path) -> None:
+    """No assets/javascripts/bundle*.min.js at all under site_dir — mirrors
+    pin_mermaid.py's own first fail-closed branch; this gate would only
+    reach it if that hook had somehow not run."""
+    (site_dir / "assets" / "javascripts").mkdir(parents=True)
+
+    with pytest.raises(check_site.CheckFailed, match=r"No assets/javascripts/bundle"):
+        check_site.check_pinned_mermaid_url_present(site_dir)
+
+
+def test_multiple_bundle_files_fails(check_site, site_dir: Path) -> None:
+    """More than one bundle file — mirrors pin_mermaid.py's own second
+    fail-closed branch; this check cannot pick the right one blindly."""
+    _write_bundle(
+        site_dir, f'watchScript("{check_site.PINNED_MERMAID_URL}")', name="bundle.aaaaaaaa.min.js"
+    )
+    _write_bundle(
+        site_dir, f'watchScript("{check_site.PINNED_MERMAID_URL}")', name="bundle.bbbbbbbb.min.js"
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"found 2"):
+        check_site.check_pinned_mermaid_url_present(site_dir)
