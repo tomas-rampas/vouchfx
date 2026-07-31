@@ -69,7 +69,10 @@
         },
         "dependencies": {
           "description": "Managed Aspire resources (databases, brokers, caches) that the engine provisions.",
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/dependency"
+          }
         },
         "seed": {
           "description": "Initial state applied after the topology is healthy and before the first step executes.",
@@ -87,6 +90,55 @@
             "Missing",
             "Never"
           ]
+        }
+      }
+    },
+    "dependency": {
+      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Fields beyond those listed here are preserved and passed through to the dependency's own resource contributor.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "The dependency's technology kind, e.g. postgres, mysql, sqlserver, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus, mailpit, dynamodb, minio. No fixed list is enforced here — new kinds can be added without a schema change — but the engine rejects an unrecognised value at suite-build time.",
+          "type": "string"
+        },
+        "version": {
+          "description": "An optional tag fragment (e.g. \"16\", \"8.0\") applied to the dependency's own built-in image repository. This is ONLY a tag on the provider's built-in repository — it cannot name a different repository or registry; use 'image' for that. Setting 'version' together with an 'image' that already carries its own tag or digest is rejected as ambiguous.",
+          "type": "string"
+        },
+        "image": {
+          "description": "An optional full OCI image reference (registry host with optional port, repository path, and an optional :tag or @sha256:digest) that overrides the dependency's built-in image repository — the only way to point a dependency at a private registry. The reference is used exactly as written: an environment-level 'imageRegistry' prefix is never applied on top of an image that already carries its own registry component. Unlike 'version', which is only a tag on the built-in repository, this names the repository (and registry) itself. May itself embed a tag or digest; combining that with a sibling 'version' is rejected as ambiguous.",
+          "type": "string"
+        },
+        "schemaRegistry": {
+          "description": "Kafka-only: set to true to provision a Confluent Schema Registry sidecar alongside the broker, health-gated after the broker. Ignored for every other dependency type.",
+          "type": "boolean"
+        },
+        "queues": {
+          "description": "Azure Service Bus-only: queue names to declare in the emulator's namespace. A queue not declared here is unavailable to the suite; referencing it surfaces as an environment error.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "topics": {
+          "description": "Azure Service Bus-only: topic declarations for the emulator's namespace. A topic not declared here is unavailable to the suite; referencing it surfaces as an environment error.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "The topic name to declare.",
+                "type": "string"
+              },
+              "subscriptions": {
+                "description": "Subscription names to create under this topic.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

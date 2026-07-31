@@ -1,0 +1,133 @@
+# examples/dependency-image-override/mongodb-private-registry.e2e.yaml —
+# environment.dependencies[].image: pointing a managed dependency at a
+# private OCI registry (feat/dependency-image-override).
+#
+# Demonstrates the db-assert.mongodb step kind against a managed MongoDB
+# dependency whose container image comes from a private mirror rather than
+# the provider's built-in Docker Hub repository — the scenario a team behind
+# an air-gapped or Nexus-style registry needs.
+#
+# NOT RUN IN CI: "registry.internal.example" does not resolve to a real
+# registry — ".example" is an RFC 2606 reserved TLD, chosen deliberately so
+# this fixture can never be mistaken for a real company's mirror. This suite
+# is a documentation fixture proving the SHAPE of `image:`, not one the
+# automated examples roster runs end to end.
+#   • It DOES compile: schema-validate, parse to an AST, and compile through
+#     ProviderPipeline — proven by
+#     `dotnet test --filter "FullyQualifiedName~ExamplesCompileTests"`, which
+#     discovers every examples/**/*.e2e.yaml file recursively.
+#   • It deliberately lives in a SUBDIRECTORY rather than flat under
+#     examples/: .github/workflows/vouchfx-run-examples.yml discovers only
+#     the FLAT examples/*.e2e.yaml files (`find examples -maxdepth 1`), so a
+#     file one level down is never picked up for a live Docker run — which
+#     would otherwise fail trying to pull an image that cannot resolve.
+#
+# Run (would require a real, reachable private registry + Docker):
+#   vouchfx run examples/dependency-image-override/mongodb-private-registry.e2e.yaml
+
+metadata:
+  name: mongodb-private-registry-image
+  owner: platform-team
+  tags: [mongodb, db-assert, dependency-image-override]
+  description: >
+    Verifies that a placed order is persisted correctly in MongoDB with
+    db-assert.mongodb, where the MongoDB dependency's container image is
+    pulled from a private registry mirror instead of the provider's built-in
+    Docker Hub repository.
+
+    HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself
+    talk to MongoDB, and the engine provisions the database EMPTY. In
+    production usage, the SUT's own order-creation handler is the thing that
+    would insert the document this provider observes. This example instead
+    SIMULATES that write with a script.csharp step that inserts the document
+    over the staged connection string — the same HONEST-disclosure approach
+    db-assert-mongodb.e2e.yaml uses.
+
+environment:
+  services:
+    # The system under test. Replace with your own image or project reference.
+    app:
+      image: traefik/whoami:latest
+      env:
+        # Container-native connection string, resolved to the mongodb
+        # dependency's database resource (never the host-published
+        # localhost:randomport) — see the SUT configuration surface (`env:`).
+        MONGO_CONNECTION: "${conn:orders-mongo}"
+
+  dependencies:
+    orders-mongo:
+      type: mongodb
+      # image: names the full OCI reference — registry host (with its :5000
+      # port), repository path, and tag — and is used EXACTLY AS WRITTEN.
+      # Unlike environment.imageRegistry, which only prefixes an image that
+      # has no registry component of its own, an already-qualified reference
+      # like this one is NEVER rewritten or re-prefixed: the engine detects
+      # the embedded registry host and clears its own default before
+      # building the resource. Setting a sibling `version:` here as well
+      # would be rejected as ambiguous, because this `image:` already
+      # carries its own tag ("7.0").
+      image: registry.internal.example:5000/mirror/mongo:7.0
+
+variables:
+  orderId: "ord-2001"
+
+steps:
+  - id: place-order
+    type: http.rest
+    description: >
+      Drive the business transaction that (in a real SUT) persists the
+      order. The whoami placeholder answers 200 to any request and ignores
+      the body — replace it with your real SUT, whose handler would insert
+      the document the next step simulates.
+    target: app
+    method: POST
+    path: /orders
+    body: |
+      {"productId": "XYZ-789", "quantity": 3}
+    expect:
+      status: 200
+
+  - id: simulate-order-write
+    type: script.csharp
+    description: >
+      SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the
+      suite description above): connects with the staged connection string
+      (whose database name MongoUrl carries — the same resolution
+      db-assert.mongodb itself uses), then inserts the document the
+      assertions below expect. The delete-first makes the step idempotent
+      across reruns against the same container. A real suite would delete
+      this step entirely — its SUT already does this write.
+    code: |
+      var connStr = (string)Vars["conn::orders-mongo"];
+      var dbName = new MongoDB.Driver.MongoUrl(connStr).DatabaseName;
+      var client = new MongoDB.Driver.MongoClient(connStr);
+      try
+      {
+          var db = client.GetDatabase(dbName);
+          var collection = db.GetCollection<MongoDB.Bson.BsonDocument>("orders");
+          var orderId = (string)Vars["orderId"];
+          var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", orderId);
+          await collection.DeleteManyAsync(filter);
+          await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+          {
+              { "_id", orderId },
+              { "productId", "XYZ-789" },
+              { "quantity", 3 },
+              { "status", "PENDING" },
+          });
+      }
+      finally { client.Dispose(); }
+
+  - id: assert-order-persisted
+    type: db-assert.mongodb
+    target: orders-mongo
+    collection: orders
+    filter: '{"_id": "{orderId}"}'
+    expect:
+      count: 1
+      document:
+        productId: "XYZ-789"
+        quantity: "3"
+        status: "PENDING"
+    verifyMode: RETRY
+    timeout: 30s
