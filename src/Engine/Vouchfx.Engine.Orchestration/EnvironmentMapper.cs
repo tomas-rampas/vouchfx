@@ -728,7 +728,7 @@ public static class EnvironmentMapper
         {
             servicePullPolicies[name] = string.IsNullOrEmpty(spec.ImagePullPolicy)
                 ? envPullPolicy
-                : ParseImagePullPolicy(spec.ImagePullPolicy, $"Service '{name}''s 'imagePullPolicy'");
+                : ParseImagePullPolicy(spec.ImagePullPolicy, $"The 'imagePullPolicy' on service '{name}'");
         }
 
         // ----------------------------------------------------------------
@@ -1924,8 +1924,8 @@ public static class EnvironmentMapper
     /// </summary>
     /// <param name="value">The raw string as authored, e.g. <c>"Missing"</c>.</param>
     /// <param name="subject">
-    /// A human-readable description of where the value came from (e.g. <c>"Service 'web''s
-    /// 'imagePullPolicy'"</c>), spliced into the exception message so the author can find it.
+    /// A human-readable description of where the value came from (e.g. <c>"The 'imagePullPolicy'
+    /// on service 'web'"</c>), spliced into the exception message so the author can find it.
     /// </param>
     /// <exception cref="ArgumentException">
     /// <paramref name="value"/> is not one of the three author-facing values the JSON Schema
