@@ -634,6 +634,153 @@ public sealed class YamlDocumentParserTests
     }
 
     // -------------------------------------------------------------------------
+    // Dependency 'image:' override (private-registry escape hatch)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_DependencyImage_ParsesIntoTypedField()
+    {
+        // Arrange — a dependency naming a private-registry image via 'image:'.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: mongodb
+                  image: nexus.corp.example.com/mirror/mongo:7.0
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — 'image' is bound to the typed DependencySpec.Image field.
+        var dep = doc.Environment!.Dependencies!["orders-db"];
+        Assert.Equal("mongodb", dep.Type);
+        Assert.Equal("nexus.corp.example.com/mirror/mongo:7.0", dep.Image);
+    }
+
+    [Fact]
+    public void Parse_DependencyImage_DoesNotLeakIntoExtra()
+    {
+        // Arrange — this is the regression that matters most: before DependencySpec
+        // gained a typed Image field, 'image:' under a dependency validated fine
+        // against the (then-untyped) JSON Schema, was swept into the untyped Extra
+        // bucket by BuildExtraNode, and was never read by anything — silently
+        // perturbing the environment hash while doing nothing. Once 'image' is a
+        // named exclusion in BuildExtraNode, it must no longer appear in Extra.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: mongodb
+                  image: nexus.corp.example.com/mirror/mongo:7.0
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — 'image' is the ONLY extra-looking field, so Extra must now be null.
+        var dep = doc.Environment!.Dependencies!["orders-db"];
+        Assert.Equal("nexus.corp.example.com/mirror/mongo:7.0", dep.Image);
+        Assert.Null(dep.Extra);
+    }
+
+    [Fact]
+    public void Parse_DependencyWithoutImage_ImageIsNullAndBehaviourIsUnchanged()
+    {
+        // Arrange — a dependency that never mentions 'image:' at all; back-compat
+        // with every dependency written before this field existed.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["orders-db"];
+        Assert.Equal("postgres", dep.Type);
+        Assert.Equal("16", dep.Version);
+        Assert.Null(dep.Image);
+        Assert.Null(dep.Extra);
+    }
+
+    [Fact]
+    public void Parse_DependencyTypeVersionAndImageTogether_AllThreeLandInTypedFields()
+    {
+        // Arrange — 'type', 'version', and 'image' all present together; each must
+        // land in its own typed field, and none of them should spill into Extra.
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  version: "3.7"
+                  image: nexus.corp.example.com/mirror/kafka:3.7
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["events"];
+        Assert.Equal("kafka", dep.Type);
+        Assert.Equal("3.7", dep.Version);
+        Assert.Equal("nexus.corp.example.com/mirror/kafka:3.7", dep.Image);
+        Assert.Null(dep.Extra);
+    }
+
+    [Fact]
+    public void Parse_DependencyUnrelatedExtraKeyAlongsideImage_StillLandsInExtra()
+    {
+        // Arrange — an unrelated provider-specific field (e.g. Kafka's
+        // 'schemaRegistry: true') alongside 'image:' proves the Extra bucket was
+        // not over-tightened: excluding 'image' must not accidentally exclude (or
+        // fail to capture) genuinely unrecognised fields.
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  version: "3.7"
+                  image: nexus.corp.example.com/mirror/kafka:3.7
+                  schemaRegistry: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — 'image' is typed, and 'schemaRegistry' is the only survivor in Extra.
+        var dep = doc.Environment!.Dependencies!["events"];
+        Assert.Equal("nexus.corp.example.com/mirror/kafka:3.7", dep.Image);
+        Assert.NotNull(dep.Extra);
+        Assert.Single(dep.Extra.Children);
+        var schemaRegistryNode = dep.Extra.Children
+            .FirstOrDefault(kv => kv.Key is YamlDotNet.RepresentationModel.YamlScalarNode ks && ks.Value == "schemaRegistry")
+            .Value as YamlDotNet.RepresentationModel.YamlScalarNode;
+        Assert.NotNull(schemaRegistryNode);
+        Assert.Equal("true", schemaRegistryNode.Value);
+    }
+
+    // -------------------------------------------------------------------------
     // SUT configuration surface — service 'env:' mapping
     // -------------------------------------------------------------------------
 

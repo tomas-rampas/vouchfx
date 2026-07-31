@@ -6,6 +6,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Docker is not running or not reachable](#docker-is-not-running-or-not-reachable)
 - [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
+- [Private registry and air-gapped operation](#private-registry-and-air-gapped-operation)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Script body and document size limits](#script-body-and-document-size-limits)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
@@ -189,6 +190,119 @@ This is **NOT a vouchfx configuration knob** (there is no `--health-check-timeou
 5. **In CI, increase runner capacity or use a faster image pull network.** If your CI runner has constrained network or disk bandwidth, image pulls take longer. Use a faster runner if available, or pre-cache the image in the runner's local Docker registry.
 
 **Why this happens:** Aspire's Distributed Cloud Provisioning (DCP) watches each resource and gives it ~20 seconds to become healthy. This is a safety net to prevent tests from hanging indefinitely. If multiple resources start concurrently, they compete for I/O (disk, network), and a large image pull can exceed 20 seconds. Pre-warming the cache is the most reliable fix.
+
+---
+
+## Private registry and air-gapped operation
+
+**Symptom:**
+Your organisation uses a private or internal container registry, and you need to run vouchfx tests without pulling images from Docker Hub or public registries. Alternatively, you work in an air-gapped environment where containers are pre-warmed locally and must not attempt external pulls.
+
+**What it means:**
+By default, vouchfx pulls container images from public registries (Docker Hub for unqualified names, or directly from the specified registry host). Teams on a private registry (Nexus, Artifactory, ECR, ACR) or in regulated/air-gapped environments need to redirect those pulls or enforce local-cache-only operation. The platform provides two complementary mechanisms: environment-level registry redirection (`imageRegistry`) for un-qualified images, and per-dependency image override (`image:` field) for explicit control.
+
+**Fix:**
+
+### 1. Redirect public images to an internal mirror (imageRegistry)
+
+If your organisation mirrors public images on an internal registry, use the `imageRegistry` environment-level override to redirect un-qualified references:
+
+```yaml
+environment:
+  imageRegistry: nexus.corp.local/docker-mirror
+
+  services:
+    my-api:
+      image: myco/myapi:latest           # Will be redirected to nexus.corp.local/docker-mirror/myco/myapi:latest
+
+  dependencies:
+    db:
+      type: postgres
+      # Will use nexus.corp.local/docker-mirror/library/postgres:18.3 (Docker's library namespace; Aspire pins PostgreSQL 18.3)
+```
+
+The `imageRegistry` override applies to every un-qualified reference in both services and dependencies. Already-qualified references (those carrying a registry hostname) are never rewritten — they are pulled from their specified host as-is. When you specify any `image:` field on a dependency, the engine also clears any built-in registry default the provider might carry, preventing unintended double-prefixing. The guarantee is: an `image:` is used exactly as written (with the provider's registry default cleared), and `imageRegistry` is applied on top only when the image carries no registry hostname of its own.
+
+### 2. Override dependency images with per-dependency `image:` field
+
+For finer-grained control — when you need a specific version or a non-standard image for one dependency — use the `image:` field on individual dependencies:
+
+```yaml
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+      image: nexus.corp.local:5000/platform/postgres:16-custom    # Explicit override
+
+    events:
+      type: kafka
+      image: artifactory.mycompany.com/confluent/kafka:7.5.0       # Pulls from Artifactory
+
+    cache:
+      type: redis
+      version: "7"                                                  # Uses Aspire's default: redis:7
+```
+
+The per-dependency `image:` field bypasses Aspire's provisioned default entirely. An `image:` carrying no tag or digest **must** be paired with a `version:` field; `version:` supplies the tag. If **both** `image:` (with a tag) **and** `version:` are set, that is rejected as ambiguous. A tagless `image:` without a sibling `version:` is rejected with a clear error: it would silently float on `:latest`, defeating the determinism invariant.
+
+### 3. Enforce local-cache-only operation
+
+For fully air-gapped or pre-warmed environments, use `imagePullPolicy: Never` to prevent unexpected outbound pulls:
+
+```yaml
+environment:
+  imagePullPolicy: Never    # All images must be pre-warmed locally; no external pulls allowed
+
+  services:
+    my-api:
+      image: myco/myapi:v1.2.3
+
+  dependencies:
+    db:
+      type: postgres
+      version: "16"
+```
+
+If an image is not present locally, the topology will fail to start. Ensure all required images are pre-warmed on the host:
+
+```bash
+# Before running tests, pre-warm all images
+docker pull myco/myapi:v1.2.3
+docker pull postgres:16
+docker pull redis:7
+```
+
+### 4. Built-in images and registry redirect scope
+
+Some managed resources carry built-in container images. The scope of `imageRegistry` and per-dependency `image:` overrides varies by resource type:
+
+**`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The sidecar image carries no embedded registry hostname, so `imageRegistry` **does** apply to it. If you set `imageRegistry: artifactory.mycompany.com/docker-mirror`, the sidecar will be pulled from `artifactory.mycompany.com/docker-mirror/confluentinc/cp-schema-registry:7.6.1`. There is no per-dependency `image:` override for this sidecar; authors must rely on `imageRegistry` redirection.
+
+**`azureservicebus`** — vouchfx provisions two containers. The main emulator container (`mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2`) and the SQL Server 2022 sidecar (`mcr.microsoft.com/mssql/server:2022-latest`) both embed `mcr.microsoft.com`. Because their images are fully qualified, `imageRegistry` does **not** apply to either — the rule "already-qualified references are never rewritten" protects them both. The main emulator **can** be redirected per-dependency with an `image:` field naming your own registry (for example `image: artifactory.mycompany.com/azure-messaging/servicebus-emulator:1.1.2`); `version:` will not help here, because it only replaces the tag on the provider's built-in repository and cannot change the registry. The SQL sidecar cannot be overridden by any author-controlled means.
+
+**Principle:** An `image:` field overrides the main container only (never a sidecar) and is used exactly as written. `imageRegistry` reaches every un-qualified image (including the Kafka schema-registry sidecar) but not images with a registry hostname of their own. `imagePullPolicy` applies to all containers.
+
+### Best practices for private registry operation
+
+1. **Use `imageRegistry` for wholesale redirects** when you have a private mirror of all public images. This keeps scenarios concise.
+
+2. **Use per-dependency `image:`** when you need per-resource control, or when not all images are mirrored (only some dependencies go to the internal registry).
+
+3. **Combine both:** `imageRegistry` as a safety default, and per-dependency `image:` for exceptions:
+   ```yaml
+   environment:
+     imageRegistry: mirror.internal.corp    # Fallback for any un-qualified reference
+     dependencies:
+       orders-db:
+         type: postgres                     # Will use mirror.internal.corp/library/postgres:18.3
+       events:
+         type: kafka
+         image: kafka.example.com/cp-kafka:7.5  # Override: this one comes from a different host
+   ```
+
+4. **Prefer digest pinning** (`@sha256:…`) over tags in air-gapped environments; digests are byte-stable and prevent accidental pulls of newer versions if a tag is reused.
+
+5. **Document your registry strategy** in your test suite README so teammates understand which images are sourced from where.
 
 ---
 

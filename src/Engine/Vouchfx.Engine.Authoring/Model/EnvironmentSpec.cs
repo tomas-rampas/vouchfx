@@ -101,7 +101,10 @@ public sealed record ServiceSpec(
 /// <c>elasticsearch</c>.
 /// </param>
 /// <param name="Version">
-/// Optional version string for the dependency's container image tag.
+/// Optional version string for the dependency's container image tag. This is
+/// only a tag fragment (e.g. <c>"16"</c>) applied to the provider's built-in
+/// image repository — it cannot name a different repository or registry; see
+/// <see cref="Image"/> for that.
 /// </param>
 /// <param name="Extra">
 /// Raw YAML mapping node retaining any additional provider-specific fields.
@@ -110,4 +113,28 @@ public sealed record ServiceSpec(
 public sealed record DependencySpec(
     string Type,
     string? Version,
-    YamlMappingNode? Extra);
+    YamlMappingNode? Extra)
+{
+    /// <summary>
+    /// Optional full OCI image reference overriding the provider's default
+    /// image repository (e.g. <c>nexus.example.com/mirror/mongo:7.0</c>, or
+    /// with a digest, <c>myrepo/kafka@sha256:...</c>). Unlike
+    /// <see cref="Version"/>, which is only a tag fragment applied to the
+    /// provider's built-in repository, this names the repository (and
+    /// registry) itself — the only way to point a dependency at a private
+    /// registry (e.g. a customer's Nexus mirror holding their own mongo,
+    /// sqlserver, or kafka images). May itself embed a tag or digest;
+    /// reconciling an embedded tag against a sibling <see cref="Version"/> is
+    /// the orchestration-layer mapper's responsibility, not this record's.
+    /// <see langword="null"/> when the dependency does not override the image.
+    /// </summary>
+    /// <remarks>
+    /// Declared as an init-only property rather than a positional record
+    /// parameter deliberately: this record lives in a packable assembly, and
+    /// inserting a new positional parameter would change the primary
+    /// constructor's parameter order/arity and the compiler-generated
+    /// <c>Deconstruct</c> — a binary-breaking change for any already-compiled
+    /// caller. An init-only property is purely additive.
+    /// </remarks>
+    public string? Image { get; init; }
+}
