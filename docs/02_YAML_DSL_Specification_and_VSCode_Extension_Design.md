@@ -93,7 +93,7 @@ The environment section names the infrastructure the test depends on. Each entry
 
 Both services and dependencies must have a mapping (YAML `{ … }`) value; a bare scalar (e.g. an unquoted service name or type) is malformed and rejected by the parser at load time with a line/column error.
 
-Services are the system under test: the customer's own code that the suite exercises. Each service is brought to the topology in one of two forms. The **image** form references a container image — the customer's CI has already built and pushed it — and is the recommended default for speed and isolation. The **project** form references a csproj path — the engine builds and runs the project as part of suite startup — and is the convenience for teams iterating on a service locally. Use exactly one of the two fields per service. Dependencies, by contrast, are managed resources Aspire knows how to provision (databases, brokers, caches): they declare a type and the engine selects the appropriate image.
+Services are the system under test: the customer's own code that the suite exercises. Each service is brought to the topology in one of two forms. The **image** form references a container image — the customer's CI has already built and pushed it — and is the recommended default for speed and isolation. The **project** form references a csproj path — the engine builds and runs the project as part of suite startup — and is the convenience for teams iterating on a service locally. Use exactly one of the two fields per service. Dependencies, by contrast, are managed resources Aspire knows how to provision (databases, brokers, caches): they declare a type and the engine selects the appropriate image. A dependency may also carry an optional **`image:`** field to override the default image for that managed resource — the escape hatch for teams on a private registry or pre-warmed cache.
 
 ```yaml
 environment:
@@ -107,17 +107,18 @@ environment:
     orders-db:    { type: postgres, version: "16" }
     events:       { type: kafka, schemaRegistry: true }
     search:       { type: elasticsearch }
+    orders-mongo: { type: mongodb, image: "nexus.corp.local/platform/mongo:8.0" }
 ```
 
 #### 3.2.1 Container images and registries
 
 Image references in the environment section follow the standard OCI / Docker image format: `[registry-host[:port]/]namespace/repository[:tag|@digest]`. Un-prefixed names resolve through Docker Hub (so `postgres:16` is the official Postgres image); fully-qualified names target any OCI-compliant registry without further configuration (GitHub Container Registry, Azure Container Registry, ECR, GCR, Harbor, Artifactory). Authentication to private registries is handled by the underlying container runtime: a `docker login` beforehand or a CI step that populates the credential store is what enables the pull, and the test platform inherits those credentials transparently.
 
-Three controls on top of the image reference give authors finer-grained control. An `imageRegistry` override at the environment level prefixes every un-prefixed image **declared in the `services` section** with the given registry hostname, which is the form teams in regulated environments use to redirect public images to an internal mirror; managed `environment.dependencies` images are not affected by this setting today. An `imagePullPolicy` field accepts the standard Docker values — `Always`, `Missing`, `Never` — with the engine choosing a sensible default per image (Always for moving tags such as `:latest`, Missing for semver-shaped tags). Explicit digest pinning with `@sha256:…` is supported and is the recommended form for production-grade reproducibility, because tags can move under the team's feet whereas digests are byte-stable.
+Three controls on top of the image reference give authors finer-grained control. An `imageRegistry` override at the environment level prefixes every un-prefixed image (without a registry hostname) in both `services` and `dependencies`, which is the form teams in regulated environments use to redirect public images to an internal mirror. An `imagePullPolicy` field can be set at the environment level (applies to all containers) or per-service to override it; it accepts the standard Docker values — `Always`, `Missing`, `Never` — and is now enforced by the runtime. There is no per-dependency form. Explicit digest pinning with `@sha256:…` is supported and is the recommended form for production-grade reproducibility, because tags can move under the team's feet whereas digests are byte-stable.
 
 ```yaml
 environment:
-  imageRegistry: artifactory.mycompany.com/docker-mirror   # optional default (applies to services only)
+  imageRegistry: artifactory.mycompany.com/docker-mirror   # optional default (applies to un-qualified images)
   services:
     orders-api:
       image: myorg/orders-api@sha256:9f4c…         # digest-pinned
@@ -127,13 +128,58 @@ environment:
     events:    { type: kafka, schemaRegistry: true }
 ```
 
-> **Note on `imageRegistry` scope:** The `imageRegistry` override currently applies only to container images declared in `services`; managed `environment.dependencies` such as Postgres, Kafka, and Redis are provisioned with their reference image and are not prefixed by the registry override. This allows teams in regulated environments to redirect service images to an internal registry whilst dependencies remain under Aspire's control.
-
 An image-pull failure — registry unreachable, authentication failed, image not found — is classified as an environment error per the verdict taxonomy, not a test failure. The report names the registry hostname and the authentication status alongside the runtime's underlying error, so an engineer can act on it without spelunking. This is the most common cause of early-pilot frustration in Docker-based testing tools, and the architecture handles it explicitly rather than letting it manifest as a generic timeout.
 
-> **Note on `imagePullPolicy` enforcement:** The `imagePullPolicy` field is currently accepted by the validator but **not enforced** by the runtime; the underlying Docker/container default applies (pull if image is missing locally). This field is reserved for future enforcement. Authors should not rely on it to prevent unexpected image pulls; use explicit `@sha256:…` digest pinning if reproducibility is critical.
+#### 3.2.2 Overriding dependency images for private registries
 
-#### 3.2.2 Schema registries for message brokers
+A dependency carries an optional **`image:`** field to override the Aspire-provisioned image for that resource. This is the mechanism for teams on a private registry, or those with a pre-warmed local cache. The image reference follows the same OCI format as services: `[registry-host[:port]/]namespace/repository[:tag|@digest]`. A colon after the last `/` introduces a tag; one before it is part of the registry host and port.
+
+```yaml
+environment:
+  dependencies:
+    orders-mongo:
+      type: mongodb
+      image: nexus.corp.local:5000/platform/mongo:8.0    # Private registry, internal port
+    cache:
+      type: redis
+      image: redis@sha256:abc123def456…                 # Digest-pinned for reproducibility
+    events:
+      type: kafka
+      image: confluentinc/cp-kafka:7.5.0                 # Replaces Aspire's default
+```
+
+When `image:` is supplied, it bypasses the Aspire-provisioned default entirely. If `image:` carries no tag or digest and `version:` is also present, `version:` supplies the tag — allowing authors to override only the registry or repository whilst adopting a pinned version. If **both** `image:` (with a tag or digest) **and** `version:` are set, that is rejected as ambiguous with a clear error naming both fields.
+
+The `imageRegistry` environment-level override does **not** apply to dependencies whose `image:` is already fully qualified (carries a registry hostname). This is deliberate: a per-dependency `image:` is an explicit opt-in to skip the registry redirect. An un-qualified `image:` reference (e.g., `redis:7`) is still prefixed by `imageRegistry` if set, following the same rule as services.
+
+**Why fully-qualified `image:` bypasses all prefixing:** When you specify a fully-qualified `image:`, the engine not only skips `imageRegistry` but also clears any built-in registry default the provider might carry. Without this, a dependency with a default registry would result in double-prefixing (e.g., `docker.io/your-registry/your-repo`), which is never the intent. The guarantee is: a fully-qualified `image:` is used exactly as written, with no prefixing from any source. Authors choosing between `imageRegistry` (blanket redirect) and per-dependency `image:` (precise control) can rely on this rule.
+
+```yaml
+environment:
+  imageRegistry: artifactory.mycompany.com/docker-mirror
+  dependencies:
+    cache-explicit:
+      type: redis
+      image: redis:7           # Will be redirected to artifactory.../redis:7
+    cache-explicit-pinned:
+      type: redis
+      image: nexus.corp.local/redis:7    # Already qualified; imageRegistry does not apply
+    cache-version-pinned:
+      type: redis
+      image: redis             # No tag; version below supplies it
+      version: "7"             # Results in redis:7, prefixed by imageRegistry
+```
+
+#### 3.2.3 Known limitation: sidecar container images
+
+Two managed resource types provision a sidecar container alongside the main resource. Their sidecar images cannot be overridden:
+
+- **`kafka` with `schemaRegistry: true`** — Aspire provisions a Confluent Schema Registry sidecar. The schema registry image is managed by Aspire and cannot be customised per scenario.
+- **`azureservicebus`** — Aspire provisions a SQL Edge sidecar for emulation. The SQL Edge image is fixed by Aspire.
+
+If your team relies on either resource and requires the sidecar to run from a private registry, you are currently blocked. This is a known gap; please raise an issue on the GitHub repository if this affects your workflow.
+
+#### 3.2.4 Schema registries for message brokers
 
 A Kafka broker can optionally be paired with a Confluent Schema Registry to provide schema governance and Avro serialisation. When Avro steps in the test need to publish or consume from a schema registry, declare the flag `schemaRegistry: true` on the Kafka dependency. The engine provisions the registry as a sidecar container and wires it to the broker; steps then reference the Kafka dependency by name to access the registry.
 
@@ -147,7 +193,7 @@ environment:
 
 Once declared with `schemaRegistry: true`, a `mq-publish.kafka` step can include an `avro` block to publish Avro-serialised messages, and an `mq-expect.kafka` step can include an `avro` block to consume and decode them (see §5.2 and §5.3). The registry URL is automatically staged and made available to these steps. No manual configuration of registry endpoints is required.
 
-#### 3.2.3 Seeding initial state
+#### 3.2.5 Seeding initial state
 
 Resetting a database between tests is only half of the data lifecycle; the other half is establishing the state a test needs **before** it runs. An optional `seed` block inside the environment section declares that work declaratively. It can apply reference SQL files to a relational dependency, load document fixtures into a document store, and publish warm-up messages to a broker. The engine applies the seed after the topology is healthy and before the first step executes, so a step never races the data it depends on.
 
@@ -170,7 +216,7 @@ Declarative fixtures are the recommended default because they live in source con
 
 > **State reset between sequential scenarios:** Between sequential scenarios that share a single topology, PostgreSQL, SQL Server, MySQL, MongoDB, Redis and Elasticsearch dependencies are automatically reset after each scenario completes. Each store type uses an appropriate data-clearing mechanism — relational tables are cleared via delete order (preserving structure), MongoDB collections are cleared per-collection (preserving indexes), Redis executes FLUSHDB against the designated database, and Elasticsearch executes a delete-by-query across open indices (preserving mappings and settings). Brokers (Kafka, RabbitMQ, NATS, Azure Service Bus) are not applicable — messages are consumed per step; DynamoDB and MinIO are not reset. A failed reset surfaces as an environment error naming the dependency — never as a test failure. Seed applies to the first scenario only; subsequent scenarios receive cleared data. Parallel scenarios (via `--parallel`) are unaffected — each receives its own topology and fresh containers, isolation by construction. The [common patterns guide](common-patterns.md) explains per-store reset mechanics.
 
-#### 3.2.4 Configuring the system under test
+#### 3.2.6 Configuring the system under test
 
 Services declared under `environment.services` may carry an optional `env` map to configure the service container with environment variables. Each variable name maps to a value that may be a literal string, zero or more `${conn:<dependency>}` references to a dependency declared under `environment.dependencies`, or both interleaved. The engine resolves connection references at topology-build time in the consumer service's network context — that is, containerised services receive the container-internal hostnames and ports, not the host-published ones.
 
@@ -209,7 +255,7 @@ Unknown dependency names or parts result in a validation error before the topolo
 
 Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias.
 
-#### 3.2.5 Test doubles
+#### 3.2.7 Test doubles
 
 When a dependency cannot be exercised for real — a payment gateway that costs money, a third-party API with no sandbox, a service that does not yet exist — the platform's position is that a test double is provisioned like any other dependency: as a container running a stubbing tool such as WireMock or Mountebank, declared in this same section and addressed through the same logical name. The platform ships no built-in mocking; a double is a deliberate, visible entry in the environment rather than a hidden behaviour. Because the double speaks the real protocol, the steps that call it are written identically to steps that call the real service, and swapping one for the other later requires no change to the test logic — only to this declaration.
 
@@ -866,7 +912,7 @@ A `trace-expect` step scans the spans exported over OTLP/HTTP by the system unde
 
 **How it works.** The engine stands up an ephemeral, host-owned OTLP/HTTP receiver for each declared `receiver` name and stages its base URL at `svc::<receiver>` and the plain `Vars[<receiver>]` key — exactly the `webhook-listen.http` host-resource pattern (§5.5). In principle the system under test's OpenTelemetry SDK is pointed at it via the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable (with `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` — see the JSON-only limitation below), so the SDK's own export path does the rest with no test-only shim in the SUT.
 
-**Known limitation (v1): host resources cannot yet be wired into `environment.services[].env`.** The receiver is a *per-scenario* host resource started only once the topology (and therefore the SUT container) is already running (§5.5's `env:` support — §3.2.4 — resolves only `${conn:<dependency>}` references at container-configure time, before the receiver exists). A containerised SUT therefore cannot yet be pointed at the per-scenario receiver via its own startup configuration; it would need to target a *standing* OTel collector whose address is stable for the whole suite run, which then forwards to wherever the engine happens to be listening — outside this family's v1 scope. Until that gap closes, the honest, self-contained way to exercise `trace-expect.otlp` is to SIMULATE the export with a `script.csharp` step that posts a synthetic OTLP/HTTP JSON payload directly to the receiver's staged URL (`Vars["<receiver>"]`), exactly as the worked example below does — the same "HONEST disclosure" pattern the engine's own webhook capstone test uses for `webhook-listen.http`. This still exercises the full receiver + staging + RETRY + assertion path end-to-end; only the "real instrumented SUT container" half is simulated.
+**Known limitation (v1): host resources cannot yet be wired into `environment.services[].env`.** The receiver is a *per-scenario* host resource started only once the topology (and therefore the SUT container) is already running (§5.5's `env:` support — §3.2.6 — resolves only `${conn:<dependency>}` references at container-configure time, before the receiver exists). A containerised SUT therefore cannot yet be pointed at the per-scenario receiver via its own startup configuration; it would need to target a *standing* OTel collector whose address is stable for the whole suite run, which then forwards to wherever the engine happens to be listening — outside this family's v1 scope. Until that gap closes, the honest, self-contained way to exercise `trace-expect.otlp` is to SIMULATE the export with a `script.csharp` step that posts a synthetic OTLP/HTTP JSON payload directly to the receiver's staged URL (`Vars["<receiver>"]`), exactly as the worked example below does — the same "HONEST disclosure" pattern the engine's own webhook capstone test uses for `webhook-listen.http`. This still exercises the full receiver + staging + RETRY + assertion path end-to-end; only the "real instrumented SUT container" half is simulated.
 
 **The traceparent idiom.** An earlier `http.rest` step injects a W3C `traceparent` header on its outbound request (a suite typically threads a fresh one forward via `capture`/`{placeholder}`, or generates one with a `script.csharp` step). The SUT's auto-instrumented OpenTelemetry SDK continues that same trace, so the `trace-expect.otlp` step's `traceId` criterion can simply reuse the identical `traceparent` value — the provider extracts the 32-hex trace-id segment from a full `traceparent` automatically.
 

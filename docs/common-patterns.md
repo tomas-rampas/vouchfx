@@ -141,7 +141,7 @@ environment:
       image: myimage:latest  # Resolved as myregistry.azurecr.io/myimage:latest
 ```
 
-> **Note:** The `imagePullPolicy` field is **not currently enforced** by the runtime; the container default applies. This field is reserved for future use. Use explicit `@sha256:…` digest pinning if reproducibility is critical.
+> **Note:** Set `imagePullPolicy` at the **environment level** (applies to every container, including managed dependencies) or per-**service** to override it there; there is **no per-dependency form**. It accepts the standard Docker values — `Always`, `Missing`, `Never` — and is now enforced by the runtime. Combine with explicit digest pinning (`@sha256:…`) for maximum reproducibility in air-gapped environments.
 
 ### variables
 
@@ -293,6 +293,46 @@ steps:
 
 The double is a **visible, deliberate entry** in the environment. Swapping it for the real service later requires only a change to the environment declaration — the test logic stays the same.
 
+### Pattern: dependencies from a private registry
+
+Teams on a private registry (Nexus, Artifactory, ECR, ACR) or in air-gapped environments can override the default image for each dependency. Use the per-dependency `image:` field to name a fully-qualified image reference, or combine `imageRegistry` at the environment level with un-qualified references:
+
+```yaml
+metadata:
+  name: order-service-in-regulated-environment
+  owner: platform-team
+
+environment:
+  # Option 1: Redirect all un-qualified images to a single private mirror
+  imageRegistry: nexus.corp.local/docker-mirror
+  
+  services:
+    order-api:
+      image: myco/order-service:v2.1.0    # Will pull from nexus.corp.local/docker-mirror/myco/order-service:v2.1.0
+      httpPort: 8080
+      env:
+        DATABASE_URL: "${conn:orders-db}"
+
+  dependencies:
+    orders-db:
+      type: postgres
+      version: "16"                        # Will pull from nexus.corp.local/docker-mirror/postgres:16
+    
+    events:
+      type: kafka
+      image: nexus.corp.local:5000/platform/kafka:7.5.0    # Override: this one is pinned to a specific port and version
+    
+    cache:
+      type: redis
+```
+
+The two approaches work together:
+
+- **`imageRegistry`** (environment level) — prefixes every un-qualified image (one without a registry hostname). Use this as a blanket redirect for public images mirrored on an internal registry.
+- **`image:` field** (per dependency) — explicitly names a full OCI reference. Use this to override one dependency, or to target a different registry host than the `imageRegistry` default.
+
+Already-qualified references (those with a registry hostname) are never rewritten by `imageRegistry` — they are fetched from their specified host as-is.
+
 ---
 
 ## Configuring the system under test from the environment block
@@ -367,7 +407,7 @@ steps:
 
 Both `{webhook-listener}` (loopback, for host-local consumers) and `{webhook-listener_container}` (host-gateway, for containerised consumers) are available in `Vars`. The engine automatically configures each containerised service with `--add-host=host.docker.internal:host-gateway`, making the container-form addresses reachable.
 
-**See also:** [docs/02 §3.2.4](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#324-configuring-the-system-under-test) for the complete specification of `env`, connection parts, and validation rules. For real-world worked examples, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository.
+**See also:** [docs/02 §3.2.6](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#326-configuring-the-system-under-test) for the complete specification of `env`, connection parts, and validation rules. For real-world worked examples, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository.
 
 ---
 
