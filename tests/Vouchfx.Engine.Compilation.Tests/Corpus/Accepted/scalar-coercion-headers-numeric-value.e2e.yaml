@@ -1,0 +1,24 @@
+# KNOWN-FAILING today — deliberately excluded from the main accepted-corpus
+# gate and exercised instead by
+# SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche,
+# whose [Theory(Skip = "...")] names the not-yet-scheduled schema-widening
+# tranche that unskips it. http.rest's 'headers' additionalProperties is
+# typed { "type": "string" }, but HttpRestProvider.Bind reads header values
+# via GetScalar (raw scalar text) regardless of their YAML type, so a numeric
+# header value works at runtime today and fails only at this schema gate.
+# Do not move this file out of the scalar-coercion-* naming group and do not
+# let it slide into the plain accepted set — see the Skip reason for why.
+metadata:
+  name: scalar-coercion-headers-numeric-value
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: call-app
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    headers:
+      X-Retry-Count: 3

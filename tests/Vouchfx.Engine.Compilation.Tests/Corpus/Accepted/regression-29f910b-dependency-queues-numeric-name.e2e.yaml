@@ -1,0 +1,15 @@
+# Regression seed — commit 29f910b. A numeric-looking queue name (an unquoted
+# YAML integer inside the 'queues' sequence) parses as a JSON number. The
+# pre-fix schema typed each queue-name item plain "string" and rejected it,
+# even though this shape was valid on main.
+metadata:
+  name: regression-29f910b-dependency-queues-numeric-name
+environment:
+  dependencies:
+    outbox:
+      type: azureservicebus
+      queues: [2024]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the dependency 'queues' field only."

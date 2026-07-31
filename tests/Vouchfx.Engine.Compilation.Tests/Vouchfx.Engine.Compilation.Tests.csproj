@@ -30,6 +30,20 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup Label="Schema accepted/rejected corpus gate (SchemaAcceptedCorpusTests)">
+    <!--
+      The .e2e.yaml corpus documents SchemaAcceptedCorpusTests discovers and
+      validates through DocumentValidator. Copied next to the test DLL (mirrors
+      the Golden/ artifacts above) so the test reads them from
+      AppContext.BaseDirectory/Corpus, rather than depending on the source
+      tree's layout the way ExamplesCompileTests does for examples/ — these
+      files live inside this test project, not at the repo root.
+    -->
+    <Content Include="Corpus\**\*.e2e.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

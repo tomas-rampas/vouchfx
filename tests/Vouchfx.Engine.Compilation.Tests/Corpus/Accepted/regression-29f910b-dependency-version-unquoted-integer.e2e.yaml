@@ -1,0 +1,18 @@
+# Regression seed — commit 29f910b ("fix(schema): widen the dependency types
+# that silently narrowed v1"). Before that fix, environment.dependencies.<name>.
+# version was typed plain "string", so an unquoted YAML integer — which YAML
+# parses as a JSON number, not a string — failed schema validation even though
+# it was valid on main and the engine reads 'version' back as text regardless
+# (EnvironmentMapper does not care whether it arrived as a YAML string or a
+# YAML number).
+metadata:
+  name: regression-29f910b-dependency-version-unquoted-integer
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+      version: 16
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the dependency 'version' field only."

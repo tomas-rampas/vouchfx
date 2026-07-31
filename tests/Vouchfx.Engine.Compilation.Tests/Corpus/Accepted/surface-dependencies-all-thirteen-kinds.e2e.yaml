@@ -1,0 +1,36 @@
+# Surface coverage: every managed dependency kind the engine recognises
+# (docs/02 §3.2.6 parts table; EnvironmentMapper's DependencyRegistration map),
+# declared in one document, including Kafka's schemaRegistry sidecar flag and
+# Azure Service Bus's queues/topics/subscriptions nesting — so a narrowing on
+# $defs/dependency is caught here regardless of which one of the thirteen
+# kinds it happens to touch.
+metadata:
+  name: surface-dependencies-all-thirteen-kinds
+environment:
+  dependencies:
+    orders-db:     { type: postgres }
+    catalog-db:    { type: mysql }
+    legacy-db:     { type: sqlserver }
+    orders-mongo:  { type: mongodb }
+    cache:         { type: redis }
+    search:        { type: elasticsearch }
+    orders-mq:     { type: rabbitmq }
+    events-nats:   { type: nats }
+    events-kafka:
+      type: kafka
+      schemaRegistry: true
+    outbox:
+      type: azureservicebus
+      queues:
+        - orders
+      topics:
+        - name: orders-topic
+          subscriptions:
+            - orders-sub
+    outbound-mail: { type: mailpit }
+    orders-ledger: { type: dynamodb }
+    uploads:       { type: minio }
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.dependencies breadth only."

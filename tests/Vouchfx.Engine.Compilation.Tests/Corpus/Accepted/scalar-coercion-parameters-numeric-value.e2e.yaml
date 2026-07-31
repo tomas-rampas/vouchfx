@@ -1,0 +1,20 @@
+# KNOWN-FAILING today — see scalar-coercion-headers-numeric-value.e2e.yaml for
+# the full explanation. db-assert.postgres's 'parameters' additionalProperties
+# is typed { "type": "string" }, but the binder reads parameter values via
+# GetScalar (raw scalar text) regardless of YAML type, so a numeric parameter
+# value works at runtime today and fails only at this schema gate.
+metadata:
+  name: scalar-coercion-parameters-numeric-value
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+steps:
+  - id: assert-order
+    type: db-assert.postgres
+    target: orders-db
+    query: "SELECT * FROM orders WHERE id = @id"
+    parameters:
+      id: 42
+    expect:
+      rowCount: 1

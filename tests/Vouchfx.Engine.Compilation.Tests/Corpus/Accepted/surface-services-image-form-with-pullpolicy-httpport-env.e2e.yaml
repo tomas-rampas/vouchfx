@@ -1,0 +1,22 @@
+# Surface coverage: environment.services image form with every optional field
+# a future schema narrowing might touch — a per-service 'imagePullPolicy'
+# override, 'httpPort', and an 'env' map containing both bare ${conn:name} and
+# dotted ${conn:name.part} connection references (docs/02 §3.2.6).
+metadata:
+  name: surface-services-image-form-full
+environment:
+  services:
+    orders-api:
+      image: myorg/orders-api:1.2.3
+      imagePullPolicy: Missing
+      httpPort: 8080
+      env:
+        DATABASE_URL: "${conn:orders-db}"
+        DB_USERNAME: "${conn:orders-db.username}"
+  dependencies:
+    orders-db:
+      type: postgres
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises services imagePullPolicy/httpPort/env."

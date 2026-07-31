@@ -1,0 +1,19 @@
+# Regression seed — commit 29f910b. A bare-scalar dependency value (no mapping)
+# is schema-VALID by deliberate design: $defs/dependency carries no top-level
+# "type": "object" constraint, so the PARSER — not the schema — owns rejecting
+# this shape, with a proper line/column diagnostic and a worked example (DSL
+# §3.2). DocumentValidator performs schema validation only (it never invokes
+# YamlDocumentParser), so this document is expected to validate here even
+# though the parser would reject it at a later pipeline stage. A future
+# narrowing that re-adds "type": "object" to $defs/dependency would pre-empt
+# that better parser diagnostic with a generic shape error — this fixture is
+# the tripwire for that regression.
+metadata:
+  name: regression-29f910b-dependency-bare-scalar
+environment:
+  dependencies:
+    db: postgres
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises a bare-scalar dependency value."

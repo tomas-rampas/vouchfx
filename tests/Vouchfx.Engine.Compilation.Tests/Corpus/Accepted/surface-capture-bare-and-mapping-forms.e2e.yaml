@@ -1,0 +1,21 @@
+# Surface coverage: both accepted 'capture' forms (docs/02 §6.1) — the bare
+# scalar (JSONPath, back-compat) form, and the explicit single-key mapping
+# form for both { jsonpath: … } and { xpath: … }.
+metadata:
+  name: surface-capture-bare-and-mapping-forms
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: call-app
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    expect:
+      status: 200
+    capture:
+      bareJsonPath: "$.hostname"
+      explicitJsonPath: { jsonpath: "$.hostname" }
+      explicitXPath: { xpath: "//hostname" }

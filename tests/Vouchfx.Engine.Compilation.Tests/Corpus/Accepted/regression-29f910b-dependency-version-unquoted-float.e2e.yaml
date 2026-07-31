@@ -1,0 +1,14 @@
+# Regression seed — commit 29f910b. An unquoted YAML float (e.g. mongo's "8.0")
+# parses as a JSON number, not a string; the pre-fix schema typed 'version'
+# plain "string" and rejected it, even though this shape was valid on main.
+metadata:
+  name: regression-29f910b-dependency-version-unquoted-float
+environment:
+  dependencies:
+    orders-mongo:
+      type: mongodb
+      version: 8.0
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the dependency 'version' field only."

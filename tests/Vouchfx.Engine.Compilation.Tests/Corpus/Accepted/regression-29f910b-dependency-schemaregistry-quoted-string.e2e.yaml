@@ -1,0 +1,16 @@
+# Regression seed — commit 29f910b. 'schemaRegistry' is documented as accepted
+# either as an unquoted YAML boolean or as a quoted string (the engine compares
+# case-insensitively to "true" either way — KafkaWantsSchemaRegistry). The
+# pre-fix schema typed the field plain "boolean" and rejected the quoted-string
+# form, even though it was valid on main and worked identically at runtime.
+metadata:
+  name: regression-29f910b-dependency-schemaregistry-quoted-string
+environment:
+  dependencies:
+    events:
+      type: kafka
+      schemaRegistry: "true"
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the dependency 'schemaRegistry' field only."

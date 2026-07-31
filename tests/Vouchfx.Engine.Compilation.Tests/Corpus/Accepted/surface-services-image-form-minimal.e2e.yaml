@@ -1,0 +1,16 @@
+# Surface coverage (not a regression reproduction): environment.services image
+# form in its minimal shape — just an 'image:' reference, no optional fields.
+# The root schema places no shape constraint on 'services' beyond "type":
+# "object" (root-language-schema.json), so this is currently unconditionally
+# accepted; the point of this fixture is to catch a FUTURE narrowing the
+# moment it lands, before it reaches a real author.
+metadata:
+  name: surface-services-image-form-minimal
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the services image form only."
