@@ -96,39 +96,39 @@
           "type": "string"
         },
         "version": {
-          "description": "An optional tag fragment (e.g. \"16\", \"8.0\") applied to the dependency's own built-in image repository. This is ONLY a tag on the provider's built-in repository — it cannot name a different repository or registry; use 'image' for that. Setting 'version' together with an 'image' that already carries its own tag or digest is rejected as ambiguous. Written as a plain (unquoted) YAML scalar this is commonly parsed as a number rather than a string, and the engine reads it back as text regardless — so both shapes are accepted.",
-          "type": ["string", "number", "integer"]
+          "description": "An optional tag fragment (e.g. \"16\", \"8.0\") applied to the dependency's own built-in image repository. This is ONLY a tag on the provider's built-in repository — it cannot name a different repository or registry; use 'image' for that. Setting 'version' together with an 'image' that already carries its own tag or digest is rejected as ambiguous. Written as a plain (unquoted) YAML scalar this is commonly parsed as a number rather than a string, and the engine reads it back as text regardless — so both shapes are accepted. A key written with no value at all (or YAML's explicit null, e.g. '~') parses as null and is treated identically to 'version' being absent.",
+          "type": ["string", "number", "integer", "null"]
         },
         "image": {
-          "description": "An optional full OCI image reference (registry host with optional port, repository path, and an optional :tag or @sha256:digest) that overrides the dependency's built-in image repository — the only way to point a dependency at a private registry. The reference is used exactly as written: an environment-level 'imageRegistry' prefix is never applied on top of an image that already carries its own registry component. Unlike 'version', which is only a tag on the built-in repository, this names the repository (and registry) itself. May itself embed a tag or digest; combining that with a sibling 'version' is rejected as ambiguous.",
-          "type": "string"
+          "description": "An optional full OCI image reference (registry host with optional port, repository path, and an optional :tag or @sha256:digest) that overrides the dependency's built-in image repository — the only way to point a dependency at a private registry. The reference is used exactly as written: an environment-level 'imageRegistry' prefix is never applied on top of an image that already carries its own registry component. Unlike 'version', which is only a tag on the built-in repository, this names the repository (and registry) itself. May itself embed a tag or digest; combining that with a sibling 'version' is rejected as ambiguous. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'image' being absent.",
+          "type": ["string", "null"]
         },
         "schemaRegistry": {
-          "description": "Kafka-only: set to true to provision a Confluent Schema Registry sidecar alongside the broker, health-gated after the broker. Ignored for every other dependency type. Accepted as either an unquoted YAML boolean or a quoted string (e.g. \"true\"); the engine compares the value case-insensitively to \"true\" either way.",
-          "type": ["boolean", "string"]
+          "description": "Kafka-only: set to true to provision a Confluent Schema Registry sidecar alongside the broker, health-gated after the broker. Ignored for every other dependency type. Accepted as either an unquoted YAML boolean or a quoted string (e.g. \"true\"); the engine compares the value case-insensitively to \"true\" either way. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'schemaRegistry' being absent (i.e. not \"true\").",
+          "type": ["boolean", "string", "null"]
         },
         "queues": {
-          "description": "Azure Service Bus-only: queue names to declare in the emulator's namespace. A queue not declared here is unavailable to the suite; referencing it surfaces as an environment error.",
-          "type": "array",
+          "description": "Azure Service Bus-only: queue names to declare in the emulator's namespace. A queue not declared here is unavailable to the suite; referencing it surfaces as an environment error. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'queues' being absent (no queues declared).",
+          "type": ["array", "null"],
           "items": {
-            "type": ["string", "number", "integer"]
+            "type": ["string", "number", "integer", "null"]
           }
         },
         "topics": {
-          "description": "Azure Service Bus-only: topic declarations for the emulator's namespace. A topic not declared here is unavailable to the suite; referencing it surfaces as an environment error.",
-          "type": "array",
+          "description": "Azure Service Bus-only: topic declarations for the emulator's namespace. A topic not declared here is unavailable to the suite; referencing it surfaces as an environment error. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'topics' being absent (no topics declared).",
+          "type": ["array", "null"],
           "items": {
             "type": "object",
             "properties": {
               "name": {
                 "description": "The topic name to declare.",
-                "type": ["string", "number", "integer"]
+                "type": ["string", "number", "integer", "null"]
               },
               "subscriptions": {
                 "description": "Subscription names to create under this topic.",
-                "type": "array",
+                "type": ["array", "null"],
                 "items": {
-                  "type": ["string", "number", "integer"]
+                  "type": ["string", "number", "integer", "null"]
                 }
               }
             }

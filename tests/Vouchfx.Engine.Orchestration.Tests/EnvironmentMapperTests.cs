@@ -2824,4 +2824,108 @@ public sealed class EnvironmentMapperTests
         Assert.Equal("myrepo/mongo", image.Image);
         Assert.Equal("8.0", image.Tag);
     }
+
+    // -----------------------------------------------------------------------
+    // MINOR-2 regression (independent re-review) — a digest with a non-'sha256:' algorithm
+    // prefix, or with no algorithm prefix at all, must be rejected eagerly, before any builder
+    // mutation — not from inside the 'configure' closure after earlier dependencies have already
+    // been registered.
+    //
+    // Reproduced before the fix: both 'image: mongo@sha512:...' and 'image: mongo@abcdef0123'
+    // (a digest with no algorithm prefix — a plausible typo) let Map() return successfully; the
+    // ArgumentException only surfaced mid-graph-construction, from ApplyImageOverrides, after
+    // Configure had already mutated the builder for any dependency ordered before this one.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_DigestWithNonSha256AlgorithmPrefix_ThrowsEagerly()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = "mongo@sha512:abcdef0123",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Assert.Throws alone would already prove Map() itself throws (rather than
+        // Configure), because this test never calls mapped.Configure(builder) at all —
+        // no builder is even created here.
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("sha512:abcdef0123", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("sha256", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Companion case: a digest with NO algorithm prefix at all (e.g. a customer who typed
+    /// 'mongo@abcdef0123', dropping 'sha256:' by mistake) must be rejected the same way, not
+    /// silently treated as if no digest had been given.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_DigestWithNoAlgorithmPrefix_ThrowsEagerly()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = "mongo@abcdef0123",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("abcdef0123", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("sha256", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -----------------------------------------------------------------------
+    // MINOR-3 regression (independent re-review) — the one interaction the unconditional
+    // registry clear (M2 fix, WithImageRegistry(null)) could have broken had no test: an
+    // UNQUALIFIED 'image:' together with an env-level 'imageRegistry'. The existing coverage
+    // pins no 'image:' at all (Map_DependencyImageRegistry_AppliesWhenNoOwnImageSet) and a
+    // QUALIFIED 'image:' (Map_DependencyImage_WinsOverImageRegistry_WhenImageHasExplicitRegistry),
+    // but nothing pinned the third combination — exactly where the unconditional
+    // WithImageRegistry(null) clear sits immediately upstream of the env-level imageRegistry
+    // re-apply (the "if (!string.IsNullOrEmpty(imageRegistry) && !imageHasExplicitRegistry)"
+    // branch). It behaves correctly today; a refactor reordering those two calls would break it
+    // with a green suite without this pin.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_UnqualifiedImage_WithEnvImageRegistry_AppliesRegistry()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["paydb"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null)
+                {
+                    Image = "myorg/mssql-mirror:2022",
+                },
+            },
+            Seed: null,
+            ImageRegistry: "nexus.corp.local/docker-mirror",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "paydb")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("nexus.corp.local/docker-mirror", image.Registry);
+        Assert.Equal("myorg/mssql-mirror", image.Image);
+        Assert.Equal("2022", image.Tag);
+    }
 }

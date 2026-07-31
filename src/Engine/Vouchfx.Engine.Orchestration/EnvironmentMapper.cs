@@ -639,6 +639,33 @@ public static class EnvironmentMapper
             {
                 var parsedImage = ImageReferenceParser.Parse(spec.Image);
 
+                // MINOR-2 fix (independent re-review, feat/dependency-image-override): the
+                // digest's own algorithm prefix must be validated HERE, in this eager pass, not
+                // inside ApplyImageOverrides. Reproduced before the fix: 'image: mongo@sha512:...'
+                // and 'image: mongo@abcdef0123' (a digest with no algorithm prefix at all — a
+                // plausible typo) both let Map() return successfully, and were rejected only far
+                // downstream, inside the 'configure' closure, AFTER earlier dependencies in
+                // iteration order had already mutated the builder — violating the "reject before
+                // any builder mutation" discipline every other malformed-'image:' case in this
+                // loop (and this method's own doc comment) is held to.
+                // ImageReferenceParser.Parse only validates that the hash BODY is present and
+                // hex; it deliberately does not care which algorithm prefixes the digest, so that
+                // check alone does not catch this. 'sha256:' is the only digest algorithm
+                // Aspire's ContainerImageAnnotation.SHA256 field supports (confirmed by
+                // decompiling Aspire.Hosting 13.4.2 — see ApplyImageOverrides' own remarks at its
+                // digest branch), so any other (or absent) prefix is rejected eagerly here
+                // instead. ApplyImageOverrides no longer re-checks this — every call site is
+                // reached only after this loop has already validated the same DependencySpec.
+                if (parsedImage.Digest is not null &&
+                    !parsedImage.Digest.StartsWith("sha256:", StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        $"Dependency '{name}' image digest '{parsedImage.Digest}' does not use " +
+                        "the 'sha256:' algorithm prefix — the only digest algorithm Aspire's " +
+                        "container image annotation supports.",
+                        nameof(env));
+                }
+
                 // MN3 fix: treat 'version: ""' the same as 'version:' absent everywhere this
                 // method reasons about it — the mutation site (ApplyImageOverrides) does the
                 // same normalisation, so both branches agree on what "no version" means.
@@ -1747,18 +1774,17 @@ public static class EnvironmentMapper
                 // 13.4.2), but TryGetContainerImageName reconstructs the pull reference as
                 // "{Image}@sha256:{SHA256}" — i.e. SHA256 must be the BARE hex digest. This
                 // mirrors exactly what WithImage's OWN embedded-digest handling does when an
-                // image STRING carries a "name@sha256:..." suffix: validate the "sha256:"
-                // algorithm prefix, then strip it before storing. ImageReferenceParser.Digest
-                // always retains that prefix (its own documented contract), so it must be
-                // stripped here too — passing it through unstripped would double the prefix.
-                if (!parsedImage.Digest.StartsWith("sha256:", StringComparison.Ordinal))
-                {
-                    throw new ArgumentException(
-                        $"Dependency image digest '{parsedImage.Digest}' does not use the " +
-                        "'sha256:' algorithm prefix — the only digest algorithm Aspire's " +
-                        "container image annotation supports.",
-                        nameof(spec));
-                }
+                // image STRING carries a "name@sha256:..." suffix: strip the "sha256:" algorithm
+                // prefix before storing. ImageReferenceParser.Digest always retains that prefix
+                // (its own documented contract), so it must be stripped here too — passing it
+                // through unstripped would double the prefix.
+                //
+                // MINOR-2 fix: the prefix is no longer VALIDATED here — Map()'s eager
+                // dependency-validation loop (before Configure is ever built) already rejects any
+                // spec.Image whose digest lacks the 'sha256:' prefix, and every call site below
+                // is reached only from inside that same Configure closure, always after Map()'s
+                // loop has already validated this exact DependencySpec. Re-checking here would
+                // just be dead code on the only path that reaches it.
 
                 var bareDigest = parsedImage.Digest["sha256:".Length..];
                 builder = builder.WithImage(parsedImage.Repository).WithImageSHA256(bareDigest);
