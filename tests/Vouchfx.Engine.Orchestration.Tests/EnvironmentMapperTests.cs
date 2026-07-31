@@ -2070,4 +2070,509 @@ public sealed class EnvironmentMapperTests
         // the image-form-only '--add-host' container runtime arg.
         Assert.Empty(apiResource.Annotations.OfType<ContainerRuntimeArgsCallbackAnnotation>());
     }
+
+    // -----------------------------------------------------------------------
+    // feat/dependency-image-override — DependencySpec.Image / imageRegistry / imagePullPolicy.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// An 'image:' override on an Aspire-helper kind (mongodb) reaches the server resource's
+    /// image annotation, AND clears the pre-existing registry default AddMongoDB sets internally
+    /// ("docker.io" — confirmed by decompiling the pinned Aspire.Hosting.MongoDB 13.4.2 package).
+    /// Without the explicit clear, the customer's own already-qualified image would be silently
+    /// double-prefixed ("docker.io/nexus.corp.local:5000/platform/mongo:8.0") by
+    /// TryGetContainerImageName, which unconditionally prepends "{Registry}/" whenever Registry
+    /// is set.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_OverridesMongoDbServer_ClearsProviderRegistryDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = "nexus.corp.local:5000/platform/mongo:8.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var server = builder.Resources.Single(r => r.Name == "orders");
+        var image = server.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("nexus.corp.local:5000/platform/mongo", image.Image);
+        Assert.Equal("8.0", image.Tag);
+        Assert.Null(image.Registry);
+    }
+
+    /// <summary>
+    /// An 'image:' override on the sqlserver Aspire-helper kind reaches the server resource and
+    /// clears AddSqlServer's own internal registry default ("mcr.microsoft.com").
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_OverridesSqlServerServer_ClearsProviderRegistryDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["paydb"] = new DependencySpec(Type: "sqlserver", Version: null, Extra: null)
+                {
+                    Image = "myregistry.example.com/sqlplatform/mssql:2022-CU10",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var server = builder.Resources.Single(r => r.Name == "paydb");
+        var image = server.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myregistry.example.com/sqlplatform/mssql", image.Image);
+        Assert.Equal("2022-CU10", image.Tag);
+        Assert.Null(image.Registry);
+    }
+
+    /// <summary>
+    /// An 'image:' override on the kafka Aspire-helper kind reaches the broker resource — the
+    /// third of the customer's three dependency types (mongodb, sqlserver, kafka) named in the
+    /// feature's motivating scenario. The image here has no explicit registry component, so
+    /// AddKafka's own internal registry default is left untouched (nothing to clear).
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_OverridesKafkaBroker()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: null)
+                {
+                    Image = "myorg/kafka-mirror:7.6.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var broker = builder.Resources.Single(r => r.Name == "events");
+        var image = broker.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/kafka-mirror", image.Image);
+        Assert.Equal("7.6.0", image.Tag);
+    }
+
+    /// <summary>
+    /// A kafka dependency's 'image:' override reaches only the broker (the retained/most-specific
+    /// resource matching the dependency name) — the schema-registry SIDECAR has no independent
+    /// identity in the YAML (§ item 6, deliberately out of scope) and keeps its own hardcoded
+    /// image regardless of the broker's override.
+    /// </summary>
+    [Fact]
+    public void Map_KafkaWithSchemaRegistry_ImageOverrideDoesNotReachSidecar()
+    {
+        var extra = new YamlMappingNode
+        {
+            { new YamlScalarNode("schemaRegistry"), new YamlScalarNode("true") },
+        };
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: extra)
+                {
+                    Image = "myorg/kafka-mirror:7.6.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var brokerImage = builder.Resources.Single(r => r.Name == "events")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/kafka-mirror", brokerImage.Image);
+
+        var sidecarImage = builder.Resources.Single(r => r.Name == "events-sr")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("confluentinc/cp-schema-registry", sidecarImage.Image);
+        Assert.Equal("7.6.1", sidecarImage.Tag);
+    }
+
+    /// <summary>
+    /// The env-level imageRegistry DOES reach the kafka schema-registry sidecar even though
+    /// spec.Image does not (§ item 6): imageRegistry/pullPolicy are broad environment-level
+    /// policies, not per-dependency image identity, so an air-gapped customer's private mirror
+    /// setting must still apply to every container, sidecars included.
+    /// </summary>
+    [Fact]
+    public void Map_KafkaWithSchemaRegistry_ImageRegistryAppliesToSidecarToo()
+    {
+        var extra = new YamlMappingNode
+        {
+            { new YamlScalarNode("schemaRegistry"), new YamlScalarNode("true") },
+        };
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: extra),
+            },
+            Seed: null,
+            ImageRegistry: "artifactory.mycompany.com",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var brokerImage = builder.Resources.Single(r => r.Name == "events")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("artifactory.mycompany.com", brokerImage.Registry);
+
+        var sidecarImage = builder.Resources.Single(r => r.Name == "events-sr")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("artifactory.mycompany.com", sidecarImage.Registry);
+    }
+
+    /// <summary>
+    /// An 'image:' override on an AddContainer-based kind (minio) replaces the hardcoded
+    /// "minio/minio" literal entirely.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_OverridesMinioContainer()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["artefacts"] = new DependencySpec(Type: "minio", Version: null, Extra: null)
+                {
+                    Image = "myregistry.example.com/mirror/minio:RELEASE.2024-01-01T00-00-00Z",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "artefacts")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myregistry.example.com/mirror/minio", image.Image);
+        Assert.Equal("RELEASE.2024-01-01T00-00-00Z", image.Tag);
+    }
+
+    /// <summary>
+    /// A digest-form 'image:' (no tag) sets ContainerImageAnnotation.SHA256 to the BARE hex
+    /// digest (no 'sha256:' prefix) and leaves Tag null — matching the shape
+    /// TryGetContainerImageName expects when it reconstructs the pull reference as
+    /// "{Image}@sha256:{SHA256}".
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_DigestForm_SetsBareSha256()
+    {
+        const string digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85";
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = $"myrepo/mongo@sha256:{digest}",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myrepo/mongo", image.Image);
+        Assert.Equal(digest, image.SHA256);
+        Assert.Null(image.Tag);
+    }
+
+    /// <summary>
+    /// The env-level imageRegistry now reaches a dependency that sets no 'image:' of its own —
+    /// previously imageRegistry was captured by Map but consumed only inside the services loop,
+    /// so dependencies got NO registry treatment at all. This overrides AddRedis's own internal
+    /// "docker.io" default.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageRegistry_AppliesWhenNoOwnImageSet()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: "artifactory.mycompany.com",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "cache")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("artifactory.mycompany.com", image.Registry);
+    }
+
+    /// <summary>
+    /// 'image:' wins over imageRegistry: when the dependency's own image already names an
+    /// explicit registry, the env-level imageRegistry must NOT apply on top of it — otherwise
+    /// the pull reference would be silently double-prefixed
+    /// ("artifactory.mycompany.com/nexus.corp.local:5000/platform/mongo:8.0").
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_WinsOverImageRegistry_WhenImageHasExplicitRegistry()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: null, Extra: null)
+                {
+                    Image = "nexus.corp.local:5000/platform/mongo:8.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: "artifactory.mycompany.com",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("nexus.corp.local:5000/platform/mongo", image.Image);
+        Assert.Equal("8.0", image.Tag);
+        Assert.Null(image.Registry);
+    }
+
+    /// <summary>
+    /// Decided precedence (§5): an 'image:' that already carries a tag, together with a sibling
+    /// 'version:', is ambiguous and must throw rather than silently picking one.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageWithTag_AndVersion_ThrowsAmbiguous()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: "7.0", Extra: null)
+                {
+                    Image = "myrepo/mongo:8.0",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("myrepo/mongo:8.0", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("7.0", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Decided precedence (§5) extends to a digest too: an 'image:' carrying a digest, together
+    /// with a sibling 'version:', is equally ambiguous.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageWithDigest_AndVersion_ThrowsAmbiguous()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders"] = new DependencySpec(Type: "mongodb", Version: "7.0", Extra: null)
+                {
+                    Image = "myrepo/mongo@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("7.0", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// An unrecognised env-level imagePullPolicy is rejected loudly at Map time rather than
+    /// silently ignored — air-gapped users rely on Never/Missing actually taking effect.
+    /// </summary>
+    [Fact]
+    public void Map_EnvImagePullPolicy_Invalid_Throws()
+    {
+        // A dependency must be present — an environment with neither services nor dependencies
+        // takes Map's empty-environment early-return path before any validation loop runs.
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: "Sometimes");
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("Sometimes", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Always", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Never", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An unrecognised service-level imagePullPolicy is equally rejected loudly at Map time.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceImagePullPolicy_Invalid_Throws()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: "Sometimes",
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("web", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Sometimes", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A valid imagePullPolicy actually applies: the env-level default reaches a dependency
+    /// (which has no per-dependency override field of its own), a service without its own
+    /// override inherits the env-level default too, and a service WITH its own override wins
+    /// over the env-level default.
+    /// </summary>
+    [Fact]
+    public void Map_ImagePullPolicy_AppliesToDependencyAndServices()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: "Always",
+                    HttpPort: null,
+                    Env: null),
+                ["worker"] = new ServiceSpec(
+                    Image: "myorg/worker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: "Never");
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        // Dependency: no per-dependency override field exists, so the env-level default applies.
+        var cachePolicy = builder.Resources.Single(r => r.Name == "cache")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
+        Assert.Equal(ImagePullPolicy.Never, cachePolicy.ImagePullPolicy);
+
+        // Service with its own override: the service-level value wins over the env-level default.
+        var webPolicy = builder.Resources.Single(r => r.Name == "web")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
+        Assert.Equal(ImagePullPolicy.Always, webPolicy.ImagePullPolicy);
+
+        // Service without its own override: inherits the env-level default.
+        var workerPolicy = builder.Resources.Single(r => r.Name == "worker")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
+        Assert.Equal(ImagePullPolicy.Never, workerPolicy.ImagePullPolicy);
+    }
+
+    /// <summary>
+    /// Regression: a dependency with no 'image:', no 'version:', no env-level imageRegistry, and
+    /// no imagePullPolicy behaves EXACTLY as before this feature — proven empirically by
+    /// comparing the mapped resource's image annotation against a raw AddPostgres(name) call on
+    /// an independent builder, rather than hardcoding Aspire's own package-internal default image/
+    /// tag/registry strings (which are an Aspire.Hosting.PostgreSQL implementation detail, not
+    /// this mapper's concern, and could change on an Aspire version bump).
+    /// </summary>
+    [Fact]
+    public void Map_DependencyWithNoOverrides_MatchesRawAddPostgresDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["pg"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var mappedBuilder = CreateBuilder();
+        mapped.Configure(mappedBuilder);
+
+        var baselineBuilder = CreateBuilder();
+        baselineBuilder.AddPostgres("pg");
+
+        var mappedImage = mappedBuilder.Resources.Single(r => r.Name == "pg")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "pg")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, mappedImage.Image);
+        Assert.Equal(baselineImage.Tag, mappedImage.Tag);
+        Assert.Equal(baselineImage.Registry, mappedImage.Registry);
+        Assert.Equal(baselineImage.SHA256, mappedImage.SHA256);
+
+        // No imagePullPolicy at all → no pull-policy annotation is ever added.
+        Assert.Empty(mappedBuilder.Resources.Single(r => r.Name == "pg")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>());
+    }
 }

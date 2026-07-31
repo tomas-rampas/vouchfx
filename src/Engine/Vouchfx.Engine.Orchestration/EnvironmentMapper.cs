@@ -138,11 +138,21 @@ public static class EnvironmentMapper
     /// an <see cref="EndpointReference"/> and stores a factory lambda that constructs the
     /// connection string from the resolved host/port after <c>StartAsync</c> completes.
     /// Existing types that do not need this mechanism receive <c>_</c> for the parameter.
+    /// <para>
+    /// The sixth and seventh parameters (<c>imageRegistry</c>, <c>pullPolicy</c>) are the
+    /// env-level <see cref="EnvironmentSpec.ImageRegistry"/>/<see cref="EnvironmentSpec.ImagePullPolicy"/>
+    /// overrides (feat/dependency-image-override), threaded through so every registration's
+    /// Build lambda can apply them via <see cref="ApplyImageOverrides{T}"/> — previously
+    /// <c>imageRegistry</c> was captured by <see cref="Map"/> but consumed only inside the
+    /// services loop, so dependencies never saw it at all.
+    /// </para>
     /// </remarks>
     private sealed record DependencyRegistration(
         Func<IDistributedApplicationBuilder, string, DependencySpec,
              Dictionary<string, EndpointReference>,
              Dictionary<string, Func<CancellationToken, Task<string?>>>,
+             string?,
+             ImagePullPolicy?,
              (IResourceBuilder<IResource> Retained, IResourceBuilder<IResource> MostSpecific)> Build,
         Func<string, DependencySpec, IEnumerable<string>> HealthGateNames);
 
@@ -155,11 +165,9 @@ public static class EnvironmentMapper
             // hardware.  Retain the DATABASE builder for connection-string discovery too.
 
             ["postgres"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddPostgres(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddPostgres(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
                     var retainedDb = (IResourceBuilder<IResource>)(object)dbBuilder;
                     return (retainedDb, retainedDb);
@@ -167,11 +175,9 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["sqlserver"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddSqlServer(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddSqlServer(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
                     var retainedDb = (IResourceBuilder<IResource>)(object)dbBuilder;
                     return (retainedDb, retainedDb);
@@ -179,11 +185,9 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mysql"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddMySql(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddMySql(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
                     var retainedDb = (IResourceBuilder<IResource>)(object)dbBuilder;
                     return (retainedDb, retainedDb);
@@ -191,11 +195,9 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mongodb"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddMongoDB(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddMongoDB(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
                     var retainedDb = (IResourceBuilder<IResource>)(object)dbBuilder;
                     return (retainedDb, retainedDb);
@@ -205,22 +207,18 @@ public static class EnvironmentMapper
             // ---- server-only: gate on the server itself ----
 
             ["redis"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddRedis(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddRedis(name), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
                     return (retained, retained);
                 },
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["elasticsearch"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddElasticsearch(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddElasticsearch(name), spec, imageRegistry, pullPolicy);
                     // Stability environment variables: single-node discovery, security
                     // disabled (avoids TLS/credential setup in test environments), and
                     // bounded JVM heap to prevent OOM on CI runners.  Disk-watermark
@@ -241,26 +239,23 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["rabbitmq"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
-                    var serverBuilder = builder.AddRabbitMQ(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(builder.AddRabbitMQ(name), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
                     return (retained, retained);
                 },
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["nats"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
                 {
                     // WithJetStream() appends the '-js' flag so the NATS container starts with
                     // JetStream enabled.  Without it, CreateStreamAsync / PublishAsync throw
                     // NatsJSApiException and every mq-publish.nats / mq-expect.nats step
                     // returns EnvironmentError — FIX B1.
-                    var serverBuilder = builder.AddNats(name).WithJetStream();
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        serverBuilder = serverBuilder.WithImageTag(spec.Version);
+                    var serverBuilder = ApplyImageOverrides(
+                        builder.AddNats(name).WithJetStream(), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
                     return (retained, retained);
                 },
@@ -273,11 +268,9 @@ public static class EnvironmentMapper
             // Gate ordering: broker first, then SR (SR depends on the broker).
 
             ["kafka"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, _) =>
+                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy) =>
                 {
-                    var kafkaBuilder = builder.AddKafka(name);
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        kafkaBuilder = kafkaBuilder.WithImageTag(spec.Version);
+                    var kafkaBuilder = ApplyImageOverrides(builder.AddKafka(name), spec, imageRegistry, pullPolicy);
 
                     if (KafkaWantsSchemaRegistry(spec.Extra))
                     {
@@ -285,16 +278,25 @@ public static class EnvironmentMapper
                         var internalEndpoint = kafkaBuilder.Resource.InternalEndpoint;
                         var bootstrapServers = ReferenceExpression.Create(
                             $"PLAINTEXT://{internalEndpoint.Property(EndpointProperty.Host)}:{internalEndpoint.Property(EndpointProperty.Port)}");
-                        var srContainerBuilder = builder
-                            .AddContainer(srName, "confluentinc/cp-schema-registry", "7.6.1")
-                            .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", srName)
-                            .WithEnvironment(
-                                "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
-                                bootstrapServers)
-                            .WithEnvironment("SCHEMA_REGISTRY_LISTENERS", "http://0.0.0.0:8081")
-                            .WithHttpEndpoint(targetPort: 8081, name: "http")
-                            .WithHttpHealthCheck(path: "/subjects", endpointName: "http")
-                            .WaitFor(kafkaBuilder);
+                        // feat/dependency-image-override (§ item 6, sidecars out of scope): this
+                        // sidecar has no independent identity in the YAML — spec.Image names only
+                        // the BROKER (the retained/mostSpecific resource matching the dependency
+                        // name). The author cannot point the schema-registry sidecar at their own
+                        // mirror even after this change. imageRegistry/pullPolicy are env-level
+                        // policies (not per-dependency image identity), so they still apply here.
+                        var srContainerBuilder = ApplySidecarRegistryAndPullPolicy(
+                            builder
+                                .AddContainer(srName, "confluentinc/cp-schema-registry", "7.6.1")
+                                .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", srName)
+                                .WithEnvironment(
+                                    "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
+                                    bootstrapServers)
+                                .WithEnvironment("SCHEMA_REGISTRY_LISTENERS", "http://0.0.0.0:8081")
+                                .WithHttpEndpoint(targetPort: 8081, name: "http")
+                                .WithHttpHealthCheck(path: "/subjects", endpointName: "http")
+                                .WaitFor(kafkaBuilder),
+                            imageRegistry,
+                            pullPolicy);
                         serviceEndpoints[srName] = srContainerBuilder.GetEndpoint("http");
                     }
 
@@ -318,13 +320,17 @@ public static class EnvironmentMapper
             // Health gate: container's /api/v1/info endpoint via HTTP health check.
 
             ["mailpit"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, _) =>
+                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy) =>
                 {
                     // Pin a stable tag for determinism (§4): never float on 'latest'.
-                    // Authors may still override via the dependency's 'version' field.
-                    var tag = string.IsNullOrEmpty(spec.Version) ? "v1.21" : spec.Version;
-                    var containerBuilder = builder
-                        .AddContainer(name, "axllent/mailpit", tag)
+                    // Authors may still override via the dependency's 'version' field, or now
+                    // via 'image:' (feat/dependency-image-override) — ApplyImageOverrides applies
+                    // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
+                    var containerBuilder = ApplyImageOverrides(
+                        builder.AddContainer(name, "axllent/mailpit", "v1.21"),
+                        spec,
+                        imageRegistry,
+                        pullPolicy)
                         .WithHttpEndpoint(targetPort: 8025, name: "http")
                         .WithEndpoint(targetPort: 1025, name: "smtp")
                         .WithHttpHealthCheck(path: "/api/v1/info", endpointName: "http");
@@ -362,7 +368,7 @@ public static class EnvironmentMapper
             // ready, so the sidecar's "running" state is subsumed by the emulator gate).
 
             ["azureservicebus"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, depConnBuilders) =>
+                Build: (builder, name, spec, _, depConnBuilders, imageRegistry, pullPolicy) =>
                 {
                     var sidecarName = name + "-sqledge";
 
@@ -371,10 +377,19 @@ public static class EnvironmentMapper
                     // The "2022-latest" tag is intentionally floating: SQL Server 2022 minor/CU
                     // updates are backwards-compatible and this topology validates the ASB layer,
                     // not SQL internals — pinning would add upgrade churn with no safety benefit.
-                    var sidecarBuilder = builder
-                        .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")
-                        .WithEnvironment("ACCEPT_EULA", "Y")
-                        .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1");
+                    // feat/dependency-image-override (§ item 6, sidecars out of scope): this
+                    // sidecar has no independent identity in the YAML — spec.Image names only the
+                    // emulator itself (below), never this SQL persistence sidecar; the author
+                    // cannot point it at their own mirror even after this change. imageRegistry/
+                    // pullPolicy are env-level policies (not per-dependency image identity), so
+                    // they still apply here.
+                    var sidecarBuilder = ApplySidecarRegistryAndPullPolicy(
+                        builder
+                            .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")
+                            .WithEnvironment("ACCEPT_EULA", "Y")
+                            .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1"),
+                        imageRegistry,
+                        pullPolicy);
 
                     // Generate a Config.json that declares the ASB emulator namespace.
                     // Queues and topics are read from spec.Extra; if absent, an empty
@@ -405,8 +420,7 @@ public static class EnvironmentMapper
                         .WithHttpHealthCheck(path: "/health", endpointName: "health")
                         .WaitFor(sidecarBuilder);
 
-                    if (!string.IsNullOrEmpty(spec.Version))
-                        emulatorBuilder = emulatorBuilder.WithImageTag(spec.Version);
+                    emulatorBuilder = ApplyImageOverrides(emulatorBuilder, spec, imageRegistry, pullPolicy);
 
                     // Capture the AMQP endpoint reference; resolve after StartAsync.
                     // IResourceBuilder<T> is covariant (out T) in Aspire 13.x, so
@@ -460,12 +474,17 @@ public static class EnvironmentMapper
             // for a containerised SUT exactly as they do for kafka/elasticsearch/mailpit.
 
             ["dynamodb"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, depConnBuilders) =>
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy) =>
                 {
                     // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
-                    var tag = string.IsNullOrEmpty(spec.Version) ? "2.5.2" : spec.Version;
-                    var containerBuilder = builder
-                        .AddContainer(name, "amazon/dynamodb-local", tag)
+                    // Authors may override via 'version', or now via 'image:'
+                    // (feat/dependency-image-override) — ApplyImageOverrides applies
+                    // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
+                    var containerBuilder = ApplyImageOverrides(
+                        builder.AddContainer(name, "amazon/dynamodb-local", "2.5.2"),
+                        spec,
+                        imageRegistry,
+                        pullPolicy)
                         .WithHttpEndpoint(targetPort: 8000, name: "http")
                         .WithHttpHealthCheck(path: "/", statusCode: 400, endpointName: "http");
 
@@ -503,14 +522,19 @@ public static class EnvironmentMapper
             // registrations above use fixed default test credentials.
 
             ["minio"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, depConnBuilders) =>
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy) =>
                 {
                     // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
-                    var tag = string.IsNullOrEmpty(spec.Version) ? "RELEASE.2025-09-07T16-13-09Z" : spec.Version;
+                    // Authors may override via 'version', or now via 'image:'
+                    // (feat/dependency-image-override) — ApplyImageOverrides applies
+                    // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     const string accessKey = "vouchfx-minio";
                     const string secretKey = "vouchfx-minio-secret";
-                    var containerBuilder = builder
-                        .AddContainer(name, "minio/minio", tag)
+                    var containerBuilder = ApplyImageOverrides(
+                        builder.AddContainer(name, "minio/minio", "RELEASE.2025-09-07T16-13-09Z"),
+                        spec,
+                        imageRegistry,
+                        pullPolicy)
                         .WithArgs("server", "/data")
                         .WithEnvironment("MINIO_ROOT_USER", accessKey)
                         .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
@@ -604,6 +628,45 @@ public static class EnvironmentMapper
                     $"Supported types: {string.Join(", ", s_dependencyRegistry.Keys)}.",
                     nameof(env));
             }
+
+            // feat/dependency-image-override — decided precedence (§5): an 'image:' that already
+            // carries its own tag or digest, together with a sibling 'version:', is ambiguous —
+            // reject it outright rather than silently picking one, which is how customers lose
+            // hours chasing the wrong image. Runs after the type check above so the dependency is
+            // already known-registered; ImageReferenceParser.Parse itself throws ArgumentException
+            // on a malformed 'image:' string, which is left to surface unwrapped.
+            if (spec.Image is not null)
+            {
+                var parsedImage = ImageReferenceParser.Parse(spec.Image);
+                if ((parsedImage.Tag is not null || parsedImage.Digest is not null) &&
+                    !string.IsNullOrEmpty(spec.Version))
+                {
+                    var carries = parsedImage.Digest is not null
+                        ? $"digest '{parsedImage.Digest}'"
+                        : $"tag '{parsedImage.Tag}'";
+                    throw new ArgumentException(
+                        $"Dependency '{name}' sets both 'image: {spec.Image}' (which already " +
+                        $"carries a {carries}) and 'version: {spec.Version}'. This is ambiguous — " +
+                        "specify the tag/digest in exactly one place: either embed it in 'image:', " +
+                        "or use 'version:' alone.",
+                        nameof(env));
+                }
+            }
+        }
+
+        // feat/dependency-image-override — validate imagePullPolicy eagerly (env-level default,
+        // then each service's override), rejecting an unrecognised value loudly rather than
+        // silently ignoring it (air-gapped users rely on Never/Missing actually taking effect).
+        ImagePullPolicy? envPullPolicy = string.IsNullOrEmpty(env.ImagePullPolicy)
+            ? null
+            : ParseImagePullPolicy(env.ImagePullPolicy, "The environment-level 'imagePullPolicy'");
+
+        foreach (var (name, spec) in env.Services ?? new Dictionary<string, ServiceSpec>())
+        {
+            if (!string.IsNullOrEmpty(spec.ImagePullPolicy))
+            {
+                ParseImagePullPolicy(spec.ImagePullPolicy, $"Service '{name}''s 'imagePullPolicy'");
+            }
         }
 
         // Validate every service's `env:` mapping eagerly (SUT configuration surface) — every
@@ -631,6 +694,17 @@ public static class EnvironmentMapper
         var imageRegistry = env.ImageRegistry;
         var services = env.Services ?? new Dictionary<string, ServiceSpec>();
         var dependencies = env.Dependencies ?? new Dictionary<string, DependencySpec>();
+
+        // Effective per-service pull policy: the service's own override when set, else the
+        // env-level default (§3.2.1). Parsing already succeeded above (or this dependency/service
+        // has no imagePullPolicy at all), so this is a pure lookup — no exceptions expected here.
+        var servicePullPolicies = new Dictionary<string, ImagePullPolicy?>(StringComparer.Ordinal);
+        foreach (var (name, spec) in services)
+        {
+            servicePullPolicies[name] = string.IsNullOrEmpty(spec.ImagePullPolicy)
+                ? envPullPolicy
+                : ParseImagePullPolicy(spec.ImagePullPolicy, $"Service '{name}''s 'imagePullPolicy'");
+        }
 
         // ----------------------------------------------------------------
         // Mutable dictionaries captured by the closures.
@@ -684,7 +758,7 @@ public static class EnvironmentMapper
             {
                 var entry = s_dependencyRegistry[spec.Type];
                 var (retained, mostSpecific) = entry.Build(
-                    builder, name, spec, serviceEndpoints, depConnBuilders);
+                    builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
             }
@@ -732,6 +806,15 @@ public static class EnvironmentMapper
                         // SAME hostname resolve on plain Linux Docker Engine (CI runners), which
                         // has no built-in host.docker.internal DNS entry.
                         .WithContainerRuntimeArgs("--add-host=host.docker.internal:host-gateway");
+
+                    // feat/dependency-image-override (§ item 4): apply the effective pull policy
+                    // (service-level override, else the env-level default) — WithImagePullPolicy
+                    // requires T : ContainerResource, which only the image-form branch satisfies;
+                    // a project-form service has no container image at all, so pull policy is
+                    // meaningless there and is never applied in the 'else if Project' branch below.
+                    var servicePullPolicy = servicePullPolicies[name];
+                    if (servicePullPolicy is not null)
+                        containerBuilder = containerBuilder.WithImagePullPolicy(servicePullPolicy.Value);
 
                     // §4 invariant: WaitFor the most-specific dependency resource.
                     foreach (var depBuilder in mostSpecificDependencyResources)
@@ -1525,5 +1608,220 @@ public static class EnvironmentMapper
             string.Equals(firstComponent, "localhost", StringComparison.Ordinal);
 
         return hasRegistry ? image : $"{registry}/{image}";
+    }
+
+    // -----------------------------------------------------------------------
+    // feat/dependency-image-override — per-dependency image/registry/pull-policy overrides.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Applies a dependency's image/tag override (<see cref="DependencySpec.Image"/>, else
+    /// <see cref="DependencySpec.Version"/>) plus the env-level <c>imageRegistry</c>/pull-policy
+    /// overrides to a container-backed Aspire resource builder.  Collapses the
+    /// <c>if (!string.IsNullOrEmpty(spec.Version)) ... WithImageTag(...)</c> duplication
+    /// that used to appear in every one of the 13 dependency registrations, and additionally
+    /// wires up <see cref="DependencySpec.Image"/>/<c>imageRegistry</c>/<c>pullPolicy</c> support.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Precedence (Map's eager validation block has already rejected the one ambiguous
+    /// combination — an <c>image:</c> that already carries its own tag or digest together with
+    /// a sibling <c>version:</c> — before <c>Configure</c> ever runs, so at most one of
+    /// (embedded tag, embedded digest, <paramref name="spec"/>.Version) survives to reach here):
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     <see cref="DependencySpec.Image"/> set → <c>WithImage(repository[, tag])</c> (a digest
+    ///     routes to <c>WithImageSHA256</c> instead). When the image carries no tag/digest of its
+    ///     own, <see cref="DependencySpec.Version"/> — if present — supplies the tag.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <see cref="DependencySpec.Image"/> unset, <see cref="DependencySpec.Version"/> set →
+    ///     <c>WithImageTag(version)</c> (today's pre-existing behaviour, unchanged).
+    ///   </description></item>
+    ///   <item><description>
+    ///     Neither set → this method makes no image/tag call at all, leaving whatever default
+    ///     the resource's own <c>AddXxx</c>/<c>AddContainer</c> call already established (a
+    ///     provider's built-in default, or this file's own pinned default tag for the
+    ///     <c>AddContainer</c>-based kinds).
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// <paramref name="imageRegistry"/> then applies via <c>WithImageRegistry</c> UNLESS
+    /// <see cref="DependencySpec.Image"/> already names an explicit registry component (the same
+    /// "first path segment contains '.'/':' or equals 'localhost'" rule <see cref="ResolveImage"/>
+    /// already applies for services) — in which case any pre-existing registry is explicitly
+    /// CLEARED (<c>WithImageRegistry(null)</c>) instead. This matters because reflection against
+    /// the pinned Aspire.Hosting.* 13.4.2 packages confirms every one of the 9 helper
+    /// <c>AddXxx</c> calls (<c>AddPostgres</c>/<c>AddMongoDB</c>/...) ALREADY calls
+    /// <c>WithImageRegistry</c> internally with its own built-in default ("docker.io" for most,
+    /// "mcr.microsoft.com" for SqlServer) — and <c>WithImage</c> folds an embedded registry
+    /// straight into the <c>Image</c> annotation field, never into the separate <c>Registry</c>
+    /// field. <see cref="Aspire.Hosting.ApplicationModel.ResourceExtensions.TryGetContainerImageName"/>
+    /// (the method that actually assembles the pull reference) unconditionally prepends
+    /// <c>Registry + "/"</c> whenever <c>Registry</c> is non-null — so leaving the provider's own
+    /// default in place would silently produce
+    /// <c>"{provider's default registry}/{spec.Image's own registry}/{repo}:{tag}"</c> even
+    /// without an env-level <c>imageRegistry</c> at all, corrupting exactly the customer-Nexus
+    /// scenario this feature exists for. <paramref name="pullPolicy"/>, when supplied, always
+    /// applies last via <c>WithImagePullPolicy</c>.
+    /// </para>
+    /// </remarks>
+    private static IResourceBuilder<T> ApplyImageOverrides<T>(
+        IResourceBuilder<T> builder,
+        DependencySpec spec,
+        string? imageRegistry,
+        ImagePullPolicy? pullPolicy)
+        where T : ContainerResource
+    {
+        var imageHasExplicitRegistry = false;
+
+        if (spec.Image is not null)
+        {
+            var parsedImage = ImageReferenceParser.Parse(spec.Image);
+            imageHasExplicitRegistry = HasExplicitRegistryComponent(parsedImage.Repository);
+
+            if (parsedImage.Digest is not null)
+            {
+                // WithImageSHA256 stores its argument into ContainerImageAnnotation.SHA256
+                // VERBATIM (no prefix handling at all — confirmed by decompiling Aspire.Hosting
+                // 13.4.2), but TryGetContainerImageName reconstructs the pull reference as
+                // "{Image}@sha256:{SHA256}" — i.e. SHA256 must be the BARE hex digest. This
+                // mirrors exactly what WithImage's OWN embedded-digest handling does when an
+                // image STRING carries a "name@sha256:..." suffix: validate the "sha256:"
+                // algorithm prefix, then strip it before storing. ImageReferenceParser.Digest
+                // always retains that prefix (its own documented contract), so it must be
+                // stripped here too — passing it through unstripped would double the prefix.
+                if (!parsedImage.Digest.StartsWith("sha256:", StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        $"Dependency image digest '{parsedImage.Digest}' does not use the " +
+                        "'sha256:' algorithm prefix — the only digest algorithm Aspire's " +
+                        "container image annotation supports.",
+                        nameof(spec));
+                }
+
+                var bareDigest = parsedImage.Digest["sha256:".Length..];
+                builder = builder.WithImage(parsedImage.Repository).WithImageSHA256(bareDigest);
+            }
+            else
+            {
+                var tag = parsedImage.Tag ?? spec.Version;
+                builder = tag is not null
+                    ? builder.WithImage(parsedImage.Repository, tag)
+                    : builder.WithImage(parsedImage.Repository);
+            }
+
+            if (imageHasExplicitRegistry)
+            {
+                // Every one of the 9 Aspire-helper AddXxx calls (AddPostgres/AddMongoDB/
+                // AddSqlServer/...) ALREADY calls WithImageRegistry internally with its own
+                // built-in default ("docker.io" for most, "mcr.microsoft.com" for SqlServer —
+                // confirmed by decompiling the pinned Aspire.Hosting.* 13.4.2 packages). Left
+                // alone, that pre-existing default would combine with the customer's
+                // ALREADY-qualified Image field to produce a broken, double-prefixed pull
+                // reference (Aspire's own TryGetContainerImageName unconditionally prepends
+                // "{Registry}/" whenever Registry is set). Explicitly clear it — a no-op for the
+                // AddContainer-based kinds, whose Registry is null by default anyway.
+                builder = builder.WithImageRegistry(null);
+            }
+        }
+        else if (!string.IsNullOrEmpty(spec.Version))
+        {
+            builder = builder.WithImageTag(spec.Version);
+        }
+
+        if (!string.IsNullOrEmpty(imageRegistry) && !imageHasExplicitRegistry)
+        {
+            builder = builder.WithImageRegistry(imageRegistry);
+        }
+
+        if (pullPolicy is not null)
+        {
+            builder = builder.WithImagePullPolicy(pullPolicy.Value);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Applies ONLY the env-level <c>imageRegistry</c>/pull-policy overrides to a sidecar
+    /// container that has no independent per-dependency image identity of its own — the kafka
+    /// schema-registry sidecar and the azureservicebus SQL Edge sidecar (§ item 6: sidecars are
+    /// deliberately out of scope for <see cref="DependencySpec.Image"/>; see the comments at
+    /// their call sites). Never consults <see cref="DependencySpec.Image"/>: the author cannot
+    /// name these containers even after feat/dependency-image-override. <paramref name="imageRegistry"/>
+    /// and <paramref name="pullPolicy"/> are broad, environment-level policies rather than
+    /// per-dependency image identity, so they still apply uniformly here — an air-gapped
+    /// customer's <c>imagePullPolicy: Never</c> must reach every container, sidecars included.
+    /// </summary>
+    private static IResourceBuilder<T> ApplySidecarRegistryAndPullPolicy<T>(
+        IResourceBuilder<T> builder,
+        string? imageRegistry,
+        ImagePullPolicy? pullPolicy)
+        where T : ContainerResource
+    {
+        if (!string.IsNullOrEmpty(imageRegistry))
+        {
+            builder = builder.WithImageRegistry(imageRegistry);
+        }
+
+        if (pullPolicy is not null)
+        {
+            builder = builder.WithImagePullPolicy(pullPolicy.Value);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="repository"/>'s first slash-delimited
+    /// component is an explicit registry host — contains a <c>.</c> or a <c>:</c> (a port), or
+    /// equals <c>"localhost"</c> — the same heuristic <see cref="ResolveImage"/> already applies
+    /// for services (and that <c>OrchestrationErrorClassifier.ParseRegistryHost</c> and
+    /// <see cref="ImageReferenceParser"/>'s own header remarks independently document), applied
+    /// here to an ALREADY tag/digest-stripped <see cref="ImageReference.Repository"/> rather than
+    /// a raw image string.
+    /// </summary>
+    private static bool HasExplicitRegistryComponent(string repository)
+    {
+        var slashIndex = repository.IndexOf('/', StringComparison.Ordinal);
+        if (slashIndex < 0)
+        {
+            return false;
+        }
+
+        var firstComponent = repository[..slashIndex];
+        return firstComponent.Contains('.', StringComparison.Ordinal) ||
+               firstComponent.Contains(':', StringComparison.Ordinal) ||
+               string.Equals(firstComponent, "localhost", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Parses an author-supplied <c>imagePullPolicy</c> string (env-level or service-level) into
+    /// Aspire's <see cref="ImagePullPolicy"/> enum, case-insensitively.
+    /// </summary>
+    /// <param name="value">The raw string as authored, e.g. <c>"Missing"</c>.</param>
+    /// <param name="subject">
+    /// A human-readable description of where the value came from (e.g. <c>"Service 'web''s
+    /// 'imagePullPolicy'"</c>), spliced into the exception message so the author can find it.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="value"/> is not one of the three author-facing values the JSON Schema
+    /// accepts (<c>Always</c>, <c>Missing</c>, <c>Never</c>) — this rejects both genuinely
+    /// unrecognised strings and Aspire's own internal-only <see cref="ImagePullPolicy.Default"/>
+    /// enum member, which is not a value an author ever writes in YAML.
+    /// </exception>
+    private static ImagePullPolicy ParseImagePullPolicy(string value, string subject)
+    {
+        if (Enum.TryParse<ImagePullPolicy>(value, ignoreCase: true, out var parsed) &&
+            parsed != ImagePullPolicy.Default)
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException(
+            $"{subject} has an unrecognised value '{value}'. Accepted values: Always, Missing, Never.",
+            nameof(value));
     }
 }
