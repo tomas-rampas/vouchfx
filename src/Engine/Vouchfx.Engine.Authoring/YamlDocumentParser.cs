@@ -604,12 +604,14 @@ public static class YamlDocumentParser
             }
 
             var version = GetScalar(depMapping, "version");
+            var image = GetScalar(depMapping, "image");
 
-            // Collect any extra fields (everything except 'type' and 'version') into
-            // a new mapping node so provider resource contributors can bind them.
-            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version");
+            // Collect any extra fields (everything except 'type', 'version', and
+            // 'image') into a new mapping node so provider resource contributors
+            // can bind them.
+            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image");
 
-            dict[keyScalar.Value] = new DependencySpec(type, version, extra);
+            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image };
         }
 
         return dict.Count > 0 ? dict : null;
