@@ -157,7 +157,7 @@ public sealed class MqPublishNatsProvider
                     $"mq-publish.nats: 'target' '{model.Target}' is not a " +
                     "nats dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "nats", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "nats", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-publish.nats: 'target' '{model.Target}' is declared as a " +

@@ -156,8 +156,13 @@ public static class EnvironmentMapper
              (IResourceBuilder<IResource> Retained, IResourceBuilder<IResource> MostSpecific)> Build,
         Func<string, DependencySpec, IEnumerable<string>> HealthGateNames);
 
+    // Pre-GA decision (feat/case-sensitive-kinds): Ordinal, not OrdinalIgnoreCase — a dependency
+    // `type` has exactly one canonical spelling (the lower-case keys below), matching the JSON
+    // Schema's own treatment of `imagePullPolicy` and the DSL's `verifyMode`. Widening this to
+    // accept every case variant would make editor completion noisy ("Postgres"/"postgres"/
+    // "POSTGRES") and stop the vocabulary from being a clean, single-spelling statement.
     private static readonly Dictionary<string, DependencyRegistration> s_dependencyRegistry =
-        new(StringComparer.OrdinalIgnoreCase)
+        new(StringComparer.Ordinal)
         {
             // ---- database-backed: gate on the database, not the server ----
             // §4 invariant: the server resource returns healthy before the DCP lifecycle
@@ -623,10 +628,23 @@ public static class EnvironmentMapper
         {
             if (!s_dependencyRegistry.ContainsKey(spec.Type))
             {
-                throw new ArgumentException(
-                    $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
-                    $"Supported types: {string.Join(", ", s_dependencyRegistry.Keys)}.",
-                    nameof(env));
+                // Dependency types are matched case-sensitively (Ordinal, above). When the
+                // author's spelling matches a known type in every way except case, name the
+                // exact-case fix directly — an author whose suite just broke on this change
+                // deserves to be told what to write, not merely that what they wrote is wrong.
+                var caseInsensitiveMatch = s_dependencyRegistry.Keys.FirstOrDefault(
+                    k => string.Equals(k, spec.Type, StringComparison.OrdinalIgnoreCase));
+                var supportedTypes = string.Join(
+                    ", ", s_dependencyRegistry.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+                var message = caseInsensitiveMatch is not null
+                    ? $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
+                      $"Dependency types are case-sensitive — did you mean '{caseInsensitiveMatch}'? " +
+                      $"Supported types: {supportedTypes}."
+                    : $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
+                      $"Supported types: {supportedTypes}.";
+
+                throw new ArgumentException(message, nameof(env));
             }
 
             // feat/dependency-image-override — decided precedence (§5): an 'image:' that already
@@ -997,12 +1015,15 @@ public static class EnvironmentMapper
 
     /// <summary>
     /// Returns the <c>${conn:name.part}</c> accessor names supported for a dependency of
-    /// <paramref name="dependencyType"/> (case-insensitive).  Empty for any type this feature
-    /// does not support (currently only <c>azureservicebus</c>, which is rejected earlier and
-    /// never reaches this lookup in practice).
+    /// <paramref name="dependencyType"/>.  Matched case-sensitively: by the time a
+    /// <see cref="DependencySpec.Type"/> reaches here it has already passed <see cref="Map"/>'s
+    /// eager, case-sensitive validation against <see cref="s_dependencyRegistry"/>, so it is
+    /// always the exact-case canonical spelling.  Empty for any type this feature does not
+    /// support (currently only <c>azureservicebus</c>, which is rejected earlier and never
+    /// reaches this lookup in practice).
     /// </summary>
     private static string[] GetSupportedEnvParts(string dependencyType) =>
-        dependencyType.ToLowerInvariant() switch
+        dependencyType switch
         {
             "postgres" or "mysql" or "sqlserver" or "mongodb" => s_dbKindParts,
             "rabbitmq" => s_rabbitmqParts,
@@ -1062,7 +1083,7 @@ public static class EnvironmentMapper
                     nameof(envValue));
             }
 
-            if (string.Equals(depSpec.Type, "azureservicebus", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(depSpec.Type, "azureservicebus", StringComparison.Ordinal))
             {
                 throw new ArgumentException(
                     $"Service '{serviceName}' env entry '{envKey}' references dependency " +
@@ -1186,7 +1207,7 @@ public static class EnvironmentMapper
         IResourceBuilder<IResource> retained,
         IReadOnlyDictionary<string, EndpointReference> serviceEndpoints)
     {
-        if (string.Equals(dependencyType, "mailpit", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(dependencyType, "mailpit", StringComparison.Ordinal))
         {
             var smtp = serviceEndpoints[name + "-smtp"];
             return new DependencyEnvAccess(
@@ -1198,8 +1219,8 @@ public static class EnvironmentMapper
                 Database: null);
         }
 
-        if (string.Equals(dependencyType, "dynamodb", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(dependencyType, "minio", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(dependencyType, "dynamodb", StringComparison.Ordinal)
+            || string.Equals(dependencyType, "minio", StringComparison.Ordinal))
         {
             // Both are plain containers (§4) whose Build lambda stages its single HTTP
             // endpoint into serviceEndpoints[name] for exactly this purpose — mirrors the
@@ -1946,7 +1967,7 @@ public static class EnvironmentMapper
 
     /// <summary>
     /// Parses an author-supplied <c>imagePullPolicy</c> string (env-level or service-level) into
-    /// Aspire's <see cref="ImagePullPolicy"/> enum, case-insensitively.
+    /// Aspire's <see cref="ImagePullPolicy"/> enum, matching the exact author-facing casing.
     /// </summary>
     /// <param name="value">The raw string as authored, e.g. <c>"Missing"</c>.</param>
     /// <param name="subject">
@@ -1957,11 +1978,14 @@ public static class EnvironmentMapper
     /// <paramref name="value"/> is not one of the three author-facing values the JSON Schema
     /// accepts (<c>Always</c>, <c>Missing</c>, <c>Never</c>) — this rejects both genuinely
     /// unrecognised strings and Aspire's own internal-only <see cref="ImagePullPolicy.Default"/>
-    /// enum member, which is not a value an author ever writes in YAML.
+    /// enum member, which is not a value an author ever writes in YAML. Pre-GA decision
+    /// (feat/case-sensitive-kinds): matching is case-sensitive — the JSON Schema enum already
+    /// only ever listed the exact-case forms below, so a value differing only by case (e.g.
+    /// <c>"always"</c>) is rejected identically to a genuinely unrecognised one.
     /// </exception>
     private static ImagePullPolicy ParseImagePullPolicy(string value, string subject)
     {
-        if (Enum.TryParse<ImagePullPolicy>(value, ignoreCase: true, out var parsed) &&
+        if (Enum.TryParse<ImagePullPolicy>(value, ignoreCase: false, out var parsed) &&
             parsed != ImagePullPolicy.Default)
         {
             return parsed;

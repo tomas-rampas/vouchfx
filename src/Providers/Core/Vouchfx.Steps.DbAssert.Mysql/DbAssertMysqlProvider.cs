@@ -224,7 +224,7 @@ public sealed class DbAssertMysqlProvider
                     $"db-assert.mysql: 'target' '{model.Target}' is not a " +
                     "mysql dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "mysql", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "mysql", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"db-assert.mysql: 'target' '{model.Target}' is not a " +

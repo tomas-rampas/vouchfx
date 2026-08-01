@@ -265,7 +265,7 @@ public sealed class MqPublishKafkaProvider
                     $"mq-publish.kafka: 'target' '{model.Target}' is not a " +
                     "kafka dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "kafka", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-publish.kafka: 'target' '{model.Target}' is declared as a " +
@@ -288,7 +288,7 @@ public sealed class MqPublishKafkaProvider
                     $"mq-publish.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is not a " +
                     "kafka dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(srType, "kafka", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(srType, "kafka", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-publish.kafka: 'avro.schemaRegistry' '{avro.SchemaRegistryTarget}' is declared as a " +

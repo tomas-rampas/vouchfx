@@ -122,6 +122,23 @@ public sealed class DependencyKindStepMapDriftTests
         }
     }
 
+    /// <summary>
+    /// Kind matching is case-sensitive (pre-GA decision, feat/case-sensitive-kinds): only the
+    /// exact canonical (lower-case) spelling has candidate step types — mirrors
+    /// EnvironmentMapper's own s_dependencyRegistry and KnownDependencyKinds so the Planner,
+    /// the Scaffolder and the engine all agree on exactly one spelling per kind.
+    /// </summary>
+    [Theory]
+    [InlineData("Postgres")]
+    [InlineData("POSTGRES")]
+    [InlineData("Kafka")]
+    [InlineData("MongoDB")]
+    public void TryGetCandidates_WrongCaseKind_ReturnsFalse(string wrongCaseKind)
+    {
+        Assert.False(DependencyKindStepMap.TryGetCandidates(wrongCaseKind, out var candidates));
+        Assert.Empty(candidates);
+    }
+
     [Fact]
     public void EveryRegisteredFamily_IsClassifiedInStepFamilyRoles()
     {

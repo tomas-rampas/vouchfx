@@ -187,6 +187,24 @@ public sealed class MailExpectSmtpProviderTests
             e.Contains("mailpit", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Dependency type comparison is case-sensitive (pre-GA decision,
+    /// feat/case-sensitive-kinds): "Mailpit" does not match the canonical "mailpit" — treated
+    /// identically to a genuinely mismatched type.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetWrongCase_ReturnsInvalid()
+    {
+        var model = MakeModel("db", new MailMatch(To: "x@y.com"));
+        var ctx = new StubProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["db"] = "Mailpit" });
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("db", StringComparison.Ordinal));
+    }
+
     // ── 8. Validate: all match criteria null ─────────────────────────────────────
 
     [Fact]

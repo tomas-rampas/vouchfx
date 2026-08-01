@@ -493,6 +493,62 @@ public sealed class SeedApplierDispatchTests
         }
     }
 
+    // ── Case-sensitivity: reset and seed must agree (feat/case-sensitive-kinds) ──────
+    //
+    // ScenarioIsolationFactory.MapRelationalKind is the single shared definition of "which
+    // dependency types count as relational" (see the header remark above MapRelationalKind
+    // itself). A wrong-case relational type must be treated as non-relational HERE exactly as
+    // ScenarioIsolationFactoryTests.TypeMatching_IsCaseSensitive_WrongCaseIsNotResettable proves
+    // for the reset path — never relational for one and not the other, which would let a suite
+    // seed rows into a store the runner then never resets between scenarios (or vice versa).
+
+    /// <summary>
+    /// A relational type spelled with the wrong case (e.g. <c>Postgres</c>) is not treated as
+    /// relational by the seed dispatcher: a <c>sql</c> seed under it throws the same NIT-1
+    /// mismatch as any other non-relational type — proving the seed and reset paths agree via
+    /// the shared <c>MapRelationalKind</c>, rather than one silently accepting the wrong case
+    /// while the other rejects it.
+    /// </summary>
+    [Theory]
+    [InlineData("Postgres")]
+    [InlineData("POSTGRES")]
+    [InlineData("SqlServer")]
+    [InlineData("MySql")]
+    public async Task ApplyAsync_SqlUnderWrongCaseRelationalType_ThrowsMismatchProvision(
+        string wrongCaseType)
+    {
+        var dir = NewTempDir();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dir, "a.sql"), "SELECT 1;");
+            var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = new DependencySeed(Sql: new List<string> { "a.sql" }),
+            });
+
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SeedApplier.ApplyAsync(
+                    seed,
+                    discoveredServices: new Dictionary<string, object> { ["orders-db"] = DummyConnString },
+                    dependencyTypes: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["orders-db"] = wrongCaseType,
+                    },
+                    seedBaseDirectory: dir,
+                    brokerSink: null,
+                    documentSink: null,
+                    ct: CancellationToken.None));
+
+            Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
+            Assert.Contains("is not supported for its declared type", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(wrongCaseType, ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Ordering guarantee: sql files are resolved in declared order. Neither file
     /// exists here, so the exception names whichever one the resolution loop

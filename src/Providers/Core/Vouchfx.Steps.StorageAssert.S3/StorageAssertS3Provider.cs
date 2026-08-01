@@ -283,7 +283,7 @@ public sealed class StorageAssertS3Provider
                     $"storage-assert.s3: 'target' '{model.Target}' is not a " +
                     "minio dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "minio", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "minio", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"storage-assert.s3: 'target' '{model.Target}' is not a " +

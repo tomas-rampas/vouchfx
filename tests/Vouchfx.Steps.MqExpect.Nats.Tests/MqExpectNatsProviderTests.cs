@@ -258,10 +258,11 @@ public sealed class MqExpectNatsProviderTests
     // ── 8. Validate: case-insensitive dep type ────────────────────────────────
 
     /// <summary>
-    /// Dependency type comparison is case-insensitive ("Nats" matches "nats").
+    /// Dependency type comparison is case-sensitive (pre-GA decision,
+    /// feat/case-sensitive-kinds): "Nats" does not match the canonical "nats".
     /// </summary>
     [Fact]
-    public void Validate_DependencyTypeCaseInsensitive_IsValid()
+    public void Validate_DependencyTypeWrongCase_IsInvalid()
     {
         var deps = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -275,7 +276,8 @@ public sealed class MqExpectNatsProviderTests
 
         var result = _provider.Validate(model, ctx);
 
-        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("bus", StringComparison.Ordinal));
     }
 
     // ── 9. Validate: no criteria declared ─────────────────────────────────────

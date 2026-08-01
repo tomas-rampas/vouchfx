@@ -113,18 +113,24 @@ public sealed class CacheAssertRedisProviderTests
         Assert.Null(model.Expect.Length);
     }
 
-    // ── 3. Bind: operation case-insensitive ────────────────────────────────────
+    // ── 3. Bind: operation is the lower-case DSL token, matched ordinally ──────
+    //
+    // Every token the schema's operation enum declares must bind to its
+    // operation. This is the assertion that would have caught the ordinal
+    // Enum.TryParse mistake: the CLR members are PascalCase (HGet, LLen, SCard)
+    // while these tokens are lower-case, so an Enum-name-based ordinal parse
+    // matches NONE of them — and since ParseOperation falls back to Get rather
+    // than throwing, every hget/llen/scard step would have silently become a get.
 
     [Theory]
     [InlineData("get", RedisOp.Get)]
-    [InlineData("GET", RedisOp.Get)]
-    [InlineData("Exists", RedisOp.Exists)]
-    [InlineData("TTL", RedisOp.Ttl)]
-    [InlineData("hGet", RedisOp.HGet)]
-    [InlineData("HLEN", RedisOp.HLen)]
+    [InlineData("exists", RedisOp.Exists)]
+    [InlineData("ttl", RedisOp.Ttl)]
+    [InlineData("hget", RedisOp.HGet)]
+    [InlineData("hlen", RedisOp.HLen)]
     [InlineData("llen", RedisOp.LLen)]
-    [InlineData("SCard", RedisOp.SCard)]
-    public void Bind_OperationScalar_ParsedCaseInsensitively(string raw, RedisOp expected)
+    [InlineData("scard", RedisOp.SCard)]
+    public void Bind_OperationScalar_BindsEveryCanonicalToken(string raw, RedisOp expected)
     {
         var yaml = new YamlMappingNode
         {
@@ -136,6 +142,42 @@ public sealed class CacheAssertRedisProviderTests
         var model = _provider.Bind(yaml, s_bindCtx);
 
         Assert.Equal(expected, model.Operation);
+    }
+
+    /// <summary>
+    /// A wrong-case token is NOT silently reinterpreted as another operation.
+    /// </summary>
+    /// <remarks>
+    /// The schema's <c>operation</c> enum is lower-case only, so <c>HGET</c> is
+    /// rejected at authoring time and this binder is never reached with it in
+    /// practice. Pinned anyway because <c>ParseOperation</c> falls back to
+    /// <see cref="RedisOp.Get"/> rather than throwing: any caller that skips
+    /// schema validation would otherwise get a silently-wrong operation instead
+    /// of an error. The fallback is the reason the earlier ordinal-Enum.TryParse
+    /// attempt was dangerous rather than merely broken.
+    /// </remarks>
+    // Deliberately excludes "GET": it would fall back to Get under BOTH the old
+    // and new behaviour, so it distinguishes nothing. Each case below names an
+    // operation a case-insensitive parse WOULD have matched.
+    [Theory]
+    [InlineData("HGet", RedisOp.HGet)]
+    [InlineData("Ttl", RedisOp.Ttl)]
+    [InlineData("SCARD", RedisOp.SCard)]
+    [InlineData("LLen", RedisOp.LLen)]
+    public void Bind_OperationScalar_WrongCase_DoesNotBindToThatOperation(
+        string raw, RedisOp wouldHaveBeenIfCaseInsensitive)
+    {
+        var yaml = new YamlMappingNode
+        {
+            { "target", new YamlScalarNode("cache") },
+            { "key", new YamlScalarNode("k") },
+            { "operation", new YamlScalarNode(raw) },
+        };
+
+        var model = _provider.Bind(yaml, s_bindCtx);
+
+        Assert.NotEqual(wouldHaveBeenIfCaseInsensitive, model.Operation);
+        Assert.Equal(RedisOp.Get, model.Operation);
     }
 
     // ── 4. Bind: expect.exists / expect.length ────────────────────────────────
@@ -199,10 +241,14 @@ public sealed class CacheAssertRedisProviderTests
         Assert.Empty(result.Errors);
     }
 
-    // ── 6. Validate: dependency type case-insensitive ─────────────────────────
+    // ── 6. Validate: dependency type case-sensitive ────────────────────────────
 
+    /// <summary>
+    /// Pre-GA decision (feat/case-sensitive-kinds): "Redis" does not match the canonical
+    /// "redis" — treated identically to a genuinely mismatched type.
+    /// </summary>
     [Fact]
-    public void Validate_DependencyTypeCaseInsensitive_IsValid()
+    public void Validate_DependencyTypeWrongCase_IsInvalid()
     {
         var ctx = new StubProjectContext(new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -218,7 +264,8 @@ public sealed class CacheAssertRedisProviderTests
 
         var result = _provider.Validate(model, ctx);
 
-        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("cache", StringComparison.Ordinal));
     }
 
     // ── 7. Validate: empty target ─────────────────────────────────────────────

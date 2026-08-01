@@ -312,7 +312,7 @@ public sealed class CacheAssertElasticsearchProvider
 
         // target must name a declared elasticsearch dependency.
         if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType)
-            || !string.Equals(depType, "elasticsearch", StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(depType, "elasticsearch", StringComparison.Ordinal))
         {
             errors.Add(
                 $"cache-assert.elasticsearch: 'target' '{model.Target}' is not an " +

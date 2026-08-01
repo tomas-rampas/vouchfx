@@ -173,7 +173,7 @@ public sealed class MqExpectRabbitmqProvider
                     $"mq-expect.rabbitmq: 'target' '{model.Target}' is not a " +
                     "rabbitmq dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "rabbitmq", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "rabbitmq", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-expect.rabbitmq: 'target' '{model.Target}' is declared as a " +

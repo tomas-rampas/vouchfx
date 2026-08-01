@@ -224,7 +224,7 @@ public sealed class DbAssertSqlServerProvider
                     $"db-assert.sqlserver: 'target' '{model.Target}' is not a " +
                     "sqlserver dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "sqlserver", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "sqlserver", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"db-assert.sqlserver: 'target' '{model.Target}' is not a " +

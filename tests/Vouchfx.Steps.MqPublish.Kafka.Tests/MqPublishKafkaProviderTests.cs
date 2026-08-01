@@ -159,10 +159,11 @@ public sealed class MqPublishKafkaProviderTests
     }
 
     /// <summary>
-    /// Dependency type comparison is case-insensitive ("Kafka" matches "kafka").
+    /// Dependency type comparison is case-sensitive (pre-GA decision,
+    /// feat/case-sensitive-kinds): "Kafka" does not match the canonical "kafka".
     /// </summary>
     [Fact]
-    public void Validate_DependencyTypeCaseInsensitive_IsValid()
+    public void Validate_DependencyTypeWrongCase_IsInvalid()
     {
         var deps = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -174,7 +175,8 @@ public sealed class MqPublishKafkaProviderTests
 
         var result = _provider.Validate(model, ctx);
 
-        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("bus", StringComparison.Ordinal));
     }
 
     // ── 5. Validate: empty target ──────────────────────────────────────────────

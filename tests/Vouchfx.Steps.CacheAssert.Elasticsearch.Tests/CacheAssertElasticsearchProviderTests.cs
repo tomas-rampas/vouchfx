@@ -314,10 +314,14 @@ public sealed class CacheAssertElasticsearchProviderTests
         Assert.True(result.IsValid);
     }
 
-    // ── 11. Validate: dependency type comparison is case-insensitive ──────────
+    // ── 11. Validate: dependency type comparison is case-sensitive ────────────
 
+    /// <summary>
+    /// Pre-GA decision (feat/case-sensitive-kinds): "ELASTICSEARCH" does not match the
+    /// canonical "elasticsearch" — treated identically to a genuinely mismatched type.
+    /// </summary>
     [Fact]
-    public void Validate_DependencyTypeCaseInsensitive_ReturnsSuccess()
+    public void Validate_DependencyTypeWrongCase_ReturnsFailure()
     {
         var model = MakeModel(target: "es");
         var ctx = new StubProjectContext(new Dictionary<string, string>(StringComparer.Ordinal)
@@ -327,7 +331,8 @@ public sealed class CacheAssertElasticsearchProviderTests
 
         var result = _provider.Validate(model, ctx);
 
-        Assert.True(result.IsValid);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("es", StringComparison.Ordinal));
     }
 
     // ── 12. Validate: blank index → invalid ──────────────────────────────────

@@ -12,7 +12,9 @@ namespace Vouchfx.Engine.Compilation.Scaffold;
 /// </summary>
 /// <remarks>
 /// Values are the lowercase <c>environment.dependencies.&lt;name&gt;.type</c> tokens.
-/// Lookup is ordinal-ignore-case via <see cref="Contains"/>.
+/// Lookup is ordinal (case-sensitive) via <see cref="Contains"/> — pre-GA decision,
+/// feat/case-sensitive-kinds: exactly one canonical spelling per kind, matching
+/// EnvironmentMapper's own s_dependencyRegistry.
 /// </remarks>
 public static class KnownDependencyKinds
 {
@@ -37,7 +39,7 @@ public static class KnownDependencyKinds
     };
 
     private static readonly HashSet<string> s_set =
-        new(All, StringComparer.OrdinalIgnoreCase);
+        new(All, StringComparer.Ordinal);
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="kind"/> is a supported

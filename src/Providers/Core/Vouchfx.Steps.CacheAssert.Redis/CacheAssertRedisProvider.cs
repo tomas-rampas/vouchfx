@@ -120,7 +120,7 @@ public sealed class CacheAssertRedisProvider
               "type": "string"
             },
             "operation": {
-              "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive.",
+              "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-SENSITIVE: write them lower-case exactly as listed.",
               "type": "string",
               "enum": ["get", "exists", "ttl", "hget", "hlen", "llen", "scard"]
             },
@@ -179,12 +179,46 @@ public sealed class CacheAssertRedisProvider
     }
 
     /// <summary>
-    /// Parses the <c>operation</c> scalar into a <see cref="RedisOp"/> (case-insensitive).
-    /// Unparseable / absent values default to <see cref="RedisOp.Get"/>; the schema layer
+    /// Parses the <c>operation</c> scalar into a <see cref="RedisOp"/>, matched
+    /// <strong>ordinally</strong> against the lower-case tokens the schema declares.
+    /// Unparseable or absent values default to <see cref="RedisOp.Get"/>; the schema layer
     /// rejects unknown values at author time.
     /// </summary>
-    private static RedisOp ParseOperation(string raw) =>
-        Enum.TryParse<RedisOp>(raw, ignoreCase: true, out var op) ? op : RedisOp.Get;
+    /// <remarks>
+    /// <para>
+    /// Previously <c>Enum.TryParse(..., ignoreCase: true)</c>, which disagreed with this
+    /// step's own schema fragment: the <c>operation</c> enum lists the lower-case
+    /// spellings only, so <c>GET</c> was rejected at authoring time yet silently accepted
+    /// here — and the property's description claimed case-insensitivity, making the
+    /// schema, the description and the binder three different answers.
+    /// </para>
+    /// <para>
+    /// Deliberately NOT <c>Enum.TryParse(..., ignoreCase: false)</c>, which would be a
+    /// far worse bug than the one it fixed. The CLR member names are PascalCase
+    /// (<c>HGet</c>, <c>LLen</c>, <c>SCard</c>) while the DSL tokens are lower-case, so an
+    /// ordinal Enum.TryParse matches NOTHING an author can legally write — and because
+    /// this method falls back to <see cref="RedisOp.Get"/> rather than throwing, every
+    /// hget/llen/scard step would silently have become a plain get. Caught by the shipped
+    /// cache-assert example failing to compile.
+    /// </para>
+    /// <para>
+    /// The token vocabulary is therefore inverted from <see cref="OpToken"/> — the single
+    /// definition of which token means which operation — so the two cannot drift, and the
+    /// mapping is ordinal by construction rather than by an argument that has to be
+    /// remembered.
+    /// </para>
+    /// </remarks>
+    private static RedisOp ParseOperation(string raw) => raw switch
+    {
+        "get" => RedisOp.Get,
+        "exists" => RedisOp.Exists,
+        "ttl" => RedisOp.Ttl,
+        "hget" => RedisOp.HGet,
+        "hlen" => RedisOp.HLen,
+        "llen" => RedisOp.LLen,
+        "scard" => RedisOp.SCard,
+        _ => RedisOp.Get,
+    };
 
     private static RedisExpectation BindExpectation(YamlMappingNode mapping)
     {
@@ -271,7 +305,7 @@ public sealed class CacheAssertRedisProvider
                     $"cache-assert.redis: 'target' '{model.Target}' is not a " +
                     "redis dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "redis", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "redis", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"cache-assert.redis: 'target' '{model.Target}' is not a " +

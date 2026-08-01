@@ -408,8 +408,11 @@ public sealed class SuiteTopology : IAsyncDisposable
         var dependencyTypes = BuildDependencyTypeMap(_environment);
         foreach (var dependencyName in seed.Dependencies.Keys)
         {
+            // Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: a
+            // declaredType reaching here has already passed EnvironmentMapper.Map's eager,
+            // case-sensitive validation, so it is always the exact-case canonical spelling.
             if (!dependencyTypes.TryGetValue(dependencyName, out var declaredType) ||
-                !string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase))
+                !string.Equals(declaredType, "postgres", StringComparison.Ordinal))
             {
                 // Non-Postgres (or undeclared) seed dependency: SeedApplier validates/dispatches
                 // it; no SQL schema to reset here.  (Broker/document seeds are content-recorded,

@@ -169,9 +169,20 @@ public static partial class SuiteScaffolder
 
                 if (!KnownDependencyKinds.Contains(dep.Type))
                 {
-                    throw new ScaffoldException(
-                        $"Unsupported dependency type '{dep.Type}' for dependency '{dep.Name}'. "
-                        + $"Supported types: {string.Join(", ", KnownDependencyKinds.All)}.");
+                    // Dependency kinds are matched case-sensitively (KnownDependencyKinds).
+                    // When the supplied kind matches a known one in every way except case, name
+                    // the exact-case fix directly, mirroring EnvironmentMapper's own message.
+                    var caseInsensitiveMatch = KnownDependencyKinds.All.FirstOrDefault(
+                        k => string.Equals(k, dep.Type, StringComparison.OrdinalIgnoreCase));
+
+                    var message = caseInsensitiveMatch is not null
+                        ? $"Unsupported dependency type '{dep.Type}' for dependency '{dep.Name}'. "
+                          + $"Dependency types are case-sensitive — did you mean '{caseInsensitiveMatch}'? "
+                          + $"Supported types: {string.Join(", ", KnownDependencyKinds.All)}."
+                        : $"Unsupported dependency type '{dep.Type}' for dependency '{dep.Name}'. "
+                          + $"Supported types: {string.Join(", ", KnownDependencyKinds.All)}.";
+
+                    throw new ScaffoldException(message);
                 }
             }
         }
@@ -703,12 +714,16 @@ public static partial class SuiteScaffolder
             }
 
             // Prefer a dependency whose kind matches the provider / family convention.
+            // Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: dep.Type
+            // has already passed KnownDependencyKinds.Contains's case-sensitive validation
+            // above, and 'kind' is always one of PreferredDependencyKinds' own canonical
+            // lower-case literals, so both sides are guaranteed exact-case already.
             var preferredKinds = PreferredDependencyKinds(stepType, family, provider);
             foreach (var kind in preferredKinds)
             {
                 foreach (var dep in _dependencies)
                 {
-                    if (string.Equals(dep.Type, kind, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(dep.Type, kind, StringComparison.Ordinal))
                         return dep.Name;
                 }
             }
