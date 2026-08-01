@@ -252,7 +252,7 @@ public sealed class SchemaAcceptedCorpusTests
     // never guessed).
     //
     // Three categories, in order of how many fixtures they cover:
-    //   (A) Deliberately minimal step bodies (32 fixtures) — the systemic
+    //   (A) Deliberately minimal step bodies (31 fixtures) — the systemic
     //       case above: real steps present, but shaped for the planner's own
     //       purposes, never meant to be schema-complete documents.
     //   (B) Deliberately zero-step ('steps: []', 3 fixtures) — a suite that
@@ -295,7 +295,7 @@ public sealed class SchemaAcceptedCorpusTests
             // ── (A) Deliberately minimal step bodies — planner tests coverage/
             //        vocabulary/determinism/history graph shape only; steps
             //        omit the provider-required fields a compilable document
-            //        needs. This is the dominant category (32 of 38).
+            //        needs. This is the dominant category (31 of 38).
             ["acceptance/determinism/two-collisions/collision-alpha-1.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture — only 'id'/'type'/'target' matter). " +
                 "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
