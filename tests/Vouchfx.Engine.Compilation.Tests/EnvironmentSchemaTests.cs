@@ -124,11 +124,17 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid, "A service with both 'image' and 'project' must be rejected.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/services/app/project" &&
-            e.Message.Contains(
-                "[properties] Property 'project' cannot be combined with 'image' on service 'app'",
-                System.StringComparison.Ordinal));
+        // Exactly one error (feat/close-remaining-surfaces, Part A pin): both
+        // 'anyOf' branches (required:[image], required:[project]) are
+        // individually SATISFIED here (both fields are present), so neither
+        // contributes noise — only the genuine 'allOf/if/then' mutual-
+        // exclusion violation survives.
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/project", onlyError.InstanceLocation);
+        Assert.Contains(
+            "[properties] Property 'project' cannot be combined with 'image' on service 'app'",
+            onlyError.Message,
+            System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -147,9 +153,17 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid, "A service with neither 'image' nor 'project' must be rejected.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/services/app" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal));
+        // Exactly two errors (feat/close-remaining-surfaces, Part A pin): the
+        // 'anyOf' composite genuinely fails here (NEITHER branch is
+        // satisfied), so — unlike the noise this suite elsewhere guards
+        // against — both branches' 'required' errors are genuine,
+        // independently-reportable defects and must both survive, exactly as
+        // $defs/service's own description promises.
+        Assert.Equal(2, result.Errors.Count);
+        Assert.All(result.Errors, e => Assert.Equal("/environment/services/app", e.InstanceLocation));
+        Assert.Contains(result.Errors, e => e.Message.Contains("\"image\"", System.StringComparison.Ordinal));
+        Assert.Contains(result.Errors, e => e.Message.Contains("\"project\"", System.StringComparison.Ordinal));
+        Assert.All(result.Errors, e => Assert.Contains("[required]", e.Message, System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -205,6 +219,14 @@ public sealed class EnvironmentSchemaTests
     /// runtime would accept it — the case-sensitivity finding reported
     /// alongside this change.
     /// </summary>
+    /// <remarks>
+    /// Also pins the <c>[enum]</c> enrichment (feat/close-remaining-surfaces,
+    /// Part C): a case-insensitive match exists ('Always'), so the message
+    /// must both list the accepted values AND name the correct spelling
+    /// directly — the CHANGELOG's "the fix is in the message" promise, made
+    /// true at the gate an author actually hits first (schema validation, not
+    /// EnvironmentMapper.ParseImagePullPolicy, which never runs on this path).
+    /// </remarks>
     [Fact]
     public void Service_ImagePullPolicyLowerCase_IsRejectedByTheSchemaThoughTheEngineWouldAcceptIt()
     {
@@ -224,9 +246,49 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A lower-cased imagePullPolicy value must be rejected by the case-sensitive schema enum.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/imagePullPolicy" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal));
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("'always'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Always", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Missing", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Never", System.StringComparison.Ordinal) &&
+            e.Message.Contains("write 'Always'", System.StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Same field, the ENVIRONMENT level rather than per-service — same enum,
+    /// same enrichment mechanism, pinned independently since the two live at
+    /// different schema locations (<c>$defs/environment/properties/imagePullPolicy</c>
+    /// vs <c>$defs/service/properties/imagePullPolicy</c>).
+    /// </summary>
+    [Fact]
+    public void Environment_ImagePullPolicyLowerCase_IsRejectedWithActionableMessage()
+    {
+        const string yaml = """
+            environment:
+              imagePullPolicy: never
+              services:
+                app:
+                  image: myorg/app:1.0
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/imagePullPolicy" &&
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("write 'Never'", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The contrastive case: an unrecognised value with NO case-insensitive
+    /// match must still list the accepted values, but must NOT fabricate a
+    /// "write '...'" suggestion — see <c>FormatEnumError</c>'s no-fabrication
+    /// rule.
+    /// </summary>
     [Fact]
     public void Service_ImagePullPolicyUnrecognisedValue_IsRejected()
     {
@@ -246,7 +308,10 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/imagePullPolicy" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal));
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("'Sometimes'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Always", System.StringComparison.Ordinal) &&
+            !e.Message.Contains("write '", System.StringComparison.Ordinal));
     }
 
     [Theory]
@@ -272,6 +337,17 @@ public sealed class EnvironmentSchemaTests
             $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
     }
 
+    /// <summary>
+    /// Strengthened (feat/close-remaining-surfaces, Part A1): a bare
+    /// out-of-range integer must yield EXACTLY ONE error, carrying
+    /// <c>[minimum]</c> or <c>[maximum]</c> — not the old two-branch
+    /// <c>oneOf</c>'s spurious second entry (<c>[type] Value is "integer" but
+    /// should be "string"</c>, from the string branch, which the JSON value
+    /// was never going to match anyway). The original assertion only pinned
+    /// location, which stayed green across that exact regression — see the
+    /// class header's "A NOTE ON MESSAGE SHAPE" precedent for why this class
+    /// pins keyword AND count, not merely location.
+    /// </summary>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -293,8 +369,166 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid, $"httpPort {port} is out of the real TCP port range and must be rejected.");
+        var onlyError = Assert.Single(result.Errors,
+            e => e.InstanceLocation == "/environment/services/app/httpPort");
+        Assert.True(
+            onlyError.Message.Contains("[minimum]", System.StringComparison.Ordinal) ||
+            onlyError.Message.Contains("[maximum]", System.StringComparison.Ordinal),
+            $"Expected a [minimum]/[maximum] error, got: {onlyError.Message}");
+    }
+
+    // ── A1: httpPort/timeout/captureEntry de-branching (composite-branch noise, prong 1) ──
+    //
+    // The service anyOf/script.csharp oneOf tests above pin PRONG 2 (A2 —
+    // SchemaErrorCollector's satisfied-composite-group filter, for composites
+    // that genuinely cannot be de-branched into a single type union). These
+    // pin PRONG 1: httpPort/timeout/captureEntry's two-branch oneOf/anyOf
+    // shapes are REPLACED outright with a single merged schema (verified
+    // empirically that minimum/maximum/pattern/required/properties/
+    // additionalProperties are all no-ops against a non-matching JSON type,
+    // JsonSchema.Net 9.2.1), so there is no second branch left to leak noise
+    // from at all — A2's filter alone cannot fix these, because a value that
+    // matches NEITHER old branch well (e.g. an out-of-range bare integer
+    // against the string branch) makes the OLD two-branch oneOf genuinely
+    // invalid as a whole, which is exactly the case A2 must NOT suppress.
+
+    /// <summary>
+    /// A perfectly valid, BARE-INTEGER httpPort must never contribute a
+    /// spurious "[type] should be string" entry (the old string branch's own
+    /// mismatch) merely because the document fails elsewhere.
+    /// </summary>
+    [Fact]
+    public void Service_ValidBareIntegerHttpPort_InDocumentFailingElsewhere_NoSpuriousTypeError()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+              - type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "The second step is missing 'id' and must still be rejected.");
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation == "/environment/services/app/httpPort");
+        Assert.Contains(result.Errors, e => e.InstanceLocation == "/steps/1");
+    }
+
+    /// <summary>
+    /// Same, for the QUOTED-STRING form: must never advise undoing the
+    /// quoting this very schema legalised — the old integer branch's own
+    /// type mismatch.
+    /// </summary>
+    [Fact]
+    public void Service_ValidQuotedStringHttpPort_InDocumentFailingElsewhere_NoAdviceToUnquote()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: "8080"
+            steps:
+              - id: noop
+                type: noop.echo
+              - type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation == "/environment/services/app/httpPort");
+    }
+
+    // ── Composite-branch noise (combined findings, feat/close-remaining-surfaces) ──
+    //
+    // JsonSchema.Net's List output is FLAT: every node it evaluates — including
+    // a non-selected anyOf/oneOf branch's own failing sub-evaluation — is
+    // reported as a direct entry, regardless of whether the branch's logical
+    // "parent" (the service/step instance the branch belongs to) is itself
+    // fully valid. IsIfDiscriminatorNoise (issue #259) already filters this
+    // shape for the 'if' keyword; these tests pin the SAME class of noise for
+    // 'anyOf'/'oneOf' composites that cannot be de-branched into a single
+    // type union (see root-language-schema.json's $defs/service — TWO
+    // services sharing the identical EvaluationPath through
+    // 'additionalProperties' is exactly why the fix must key on
+    // (evaluationPath, instanceLocation) together, not evaluationPath alone).
+
+    /// <summary>
+    /// A fully valid, image-only service must never contribute a spurious
+    /// "[required] project" entry merely because the document is invalid for
+    /// a totally unrelated reason elsewhere (here: a second step missing its
+    /// required 'id'). Confirmed by direct execution against the current code
+    /// (pre-fix) to leak exactly this: 'loc=/environment/services/app
+    /// msg=[required] Required properties ["project"] are not present'
+    /// alongside the genuine '/steps/1' error.
+    /// </summary>
+    [Fact]
+    public void Service_ValidImageOnlyService_PlusUnrelatedFailureElsewhere_NoSpuriousProjectError()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+            steps:
+              - id: noop
+                type: noop.echo
+              - type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "The second step is missing 'id' and must still be rejected.");
+        Assert.DoesNotContain(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/app" ||
+            e.InstanceLocation.StartsWith("/environment/services/app/", System.StringComparison.Ordinal));
+
+        // The genuine, unrelated defect must still be reported.
+        Assert.Contains(result.Errors, e => e.InstanceLocation == "/steps/1");
+    }
+
+    /// <summary>
+    /// Two services in the SAME document: one fully valid (image only), one
+    /// genuinely broken (neither image nor project). Both share the IDENTICAL
+    /// EvaluationPath through 'additionalProperties' (a single schema applied
+    /// uniformly to every map value) — only InstanceLocation distinguishes
+    /// them. This is the disambiguation case a evaluationPath-only noise
+    /// filter would get wrong: it must suppress the valid service's spurious
+    /// branch noise WITHOUT ALSO suppressing the broken service's genuine
+    /// "neither field set" errors.
+    /// </summary>
+    [Fact]
+    public void Service_OneValidOneGenuinelyBroken_EachJudgedIndependently()
+    {
+        const string yaml = """
+            environment:
+              services:
+                good:
+                  image: myorg/good:1.0
+                bad:
+                  httpPort: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "Service 'bad' has neither 'image' nor 'project' and must be rejected.");
+
+        // 'good' contributes nothing at all.
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation.StartsWith("/environment/services/good", System.StringComparison.Ordinal));
+
+        // 'bad' still reports its genuine "neither field set" defect.
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/services/app/httpPort");
+            e.InstanceLocation == "/environment/services/bad" &&
+            e.Message.Contains("[required]", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -360,8 +594,9 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid, $"httpPort \"{port}\" is port zero and must be rejected.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/services/app/httpPort");
+        var onlyError = Assert.Single(result.Errors,
+            e => e.InstanceLocation == "/environment/services/app/httpPort");
+        Assert.Contains("[pattern]", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -444,11 +679,22 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// ParseEnvMap throws on a value that is not a non-null scalar; an explicit
-    /// YAML null must therefore remain rejected even after the type-union
+    /// An explicit YAML null must remain rejected even after the type-union
     /// widening above — the widening adds sibling scalar shapes, it does not
-    /// drop the non-null requirement.
+    /// open the door to null.
     /// </summary>
+    /// <remarks>
+    /// Corrected rationale (feat/close-remaining-surfaces, Part B): the
+    /// original comment claimed "ParseEnvMap requires a non-null scalar" and
+    /// "throws" on '~' — false. With the pinned YamlDotNet 16.3.0
+    /// representation model, a YAML '~' scalar is read back as the LITERAL,
+    /// ONE-CHARACTER TEXT '~', not as a null value (verified directly against
+    /// <c>YamlScalarNode.Value</c>), so <c>ParseEnvMap</c> does NOT throw —
+    /// it happily sets the variable to the literal string '~', which is
+    /// never what an author means by writing '~'. That is the actual defect
+    /// this rejection prevents: a silently-wrong container environment
+    /// variable, not a parser exception.
+    /// </remarks>
     [Fact]
     public void Service_EnvExplicitNullValue_IsRejected()
     {
@@ -466,7 +712,7 @@ public sealed class EnvironmentSchemaTests
 
         var result = YamlSchemaValidator.Validate(yaml);
 
-        Assert.False(result.IsValid, "An explicit null env value must be rejected — ParseEnvMap requires a non-null scalar.");
+        Assert.False(result.IsValid, "An explicit null env value must be rejected — the parser would set it to the literal string '~', never what an author means.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/env/FOO" &&
             e.Message.Contains("[type]", System.StringComparison.Ordinal));
@@ -512,8 +758,9 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid, $"Quoted httpPort {quotedPort} is out of the real TCP port range and must be rejected, exactly like its bare-integer equivalent.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/services/app/httpPort");
+        var onlyError = Assert.Single(result.Errors,
+            e => e.InstanceLocation == "/environment/services/app/httpPort");
+        Assert.Contains("[pattern]", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     // ── Part 2: environment.dependencies ────────────────────────────────────
@@ -606,7 +853,11 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An unrecognised dependency 'type' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/type" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal));
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("'cassandra'", System.StringComparison.Ordinal) &&
+            // No accepted kind case-insensitively matches 'cassandra' — no
+            // suggestion may be fabricated (FormatEnumError's no-guess rule).
+            !e.Message.Contains("write '", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -635,7 +886,17 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/type" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal));
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            // Part C (feat/close-remaining-surfaces): the schema now rejects
+            // wrong-case values FIRST on every production path, so the
+            // helpful "write the right spelling" message must live here, not
+            // only in EnvironmentMapper's own (now-unreachable-until-direct-
+            // Map-call) message — see the brief's exact worked example.
+            e.Message.Contains("Value 'Postgres' is not one of the accepted values for 'type'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("write 'postgres'", System.StringComparison.Ordinal) &&
+            // The 13-member enum exceeds MaxListedEnumValues (8): pins that
+            // truncation is actually live, not merely implemented.
+            e.Message.Contains("… and 5 more", System.StringComparison.Ordinal));
     }
 
     [Theory]
@@ -668,6 +929,40 @@ public sealed class EnvironmentSchemaTests
 
         Assert.True(result.IsValid,
             $"Expected '{kind}' to be accepted but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// Binds <see cref="Dependency_EachRegisteredKind_IsAccepted"/>'s 13
+    /// hardcoded <c>[InlineData]</c> cases to
+    /// <see cref="KnownDependencyKinds"/> — the canonical kind list — via
+    /// reflection over the Theory's own attributes, rather than duplicating
+    /// the 13 literals a second time (which would itself be a THIRD place to
+    /// keep in sync, alongside the schema's own enum and
+    /// EnvironmentMapper's s_dependencyRegistry). A kind added to
+    /// <see cref="KnownDependencyKinds"/> without a matching new
+    /// <c>[InlineData]</c> case (or vice versa) fails here with a precise
+    /// diff, instead of the Theory silently under/over-covering the real
+    /// vocabulary (feat/close-remaining-surfaces, Part D).
+    /// </summary>
+    [Fact]
+    public void DependencyEachRegisteredKindTheory_CoversExactlyKnownDependencyKinds()
+    {
+        var method = typeof(EnvironmentSchemaTests).GetMethod(
+            nameof(Dependency_EachRegisteredKind_IsAccepted),
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)!;
+
+        var theoryKinds = method
+            .GetCustomAttributes(typeof(InlineDataAttribute), inherit: false)
+            .Cast<InlineDataAttribute>()
+            .Select(a => (string)a.GetData(method).Single()[0]!)
+            .OrderBy(k => k, System.StringComparer.Ordinal)
+            .ToList();
+
+        var canonicalKinds = Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds.All
+            .OrderBy(k => k, System.StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(canonicalKinds, theoryKinds);
     }
 
     [Fact]
@@ -888,15 +1183,26 @@ public sealed class EnvironmentSchemaTests
     // ── Part 4a: topics[].name explicit null (alignment fix) ────────────────
 
     /// <summary>
-    /// An explicit null 'name' ('name: ~') previously validated (the type union
-    /// included 'null'), yet ParseAsbTopics (EnvironmentMapper) silently drops
-    /// such a topic entry exactly as it does an absent 'name' — the same defect
-    /// <see cref="Topics_ItemMissingName_IsRejected"/> already closes for the
-    /// absent case. Narrowing the type union to exclude 'null' closes this
-    /// residual gap: both shapes ParseAsbTopics drops are now rejected at
-    /// schema time instead of surfacing later as an unrelated-looking Service
-    /// Bus environment error.
+    /// An explicit null 'name' ('name: ~') previously validated (the type
+    /// union included 'null'). Narrowing the type union to exclude 'null'
+    /// closes this at schema time instead of surfacing later as an
+    /// unrelated-looking Service Bus environment error.
     /// </summary>
+    /// <remarks>
+    /// Corrected rationale (feat/close-remaining-surfaces, Part B): the
+    /// original comment claimed ParseAsbTopics "silently drops" an
+    /// explicit-null-named topic entry "exactly as it does an absent 'name'"
+    /// — false, and a DIFFERENT defect from the genuinely-true absent-name
+    /// case <see cref="Topics_ItemMissingName_IsRejected"/> closes. With the
+    /// pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is
+    /// read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value
+    /// (verified directly against <c>YamlScalarNode.Value</c>) — so
+    /// <c>ParseAsbTopics</c>' pattern <c>YamlScalarNode { Value: { } name }</c>
+    /// MATCHES on '~' and the topic is KEPT, with the literal name '~' —
+    /// never what an author means by writing '~'. Rejecting it here prevents
+    /// the emulator provisioning a topic no author intended, not a silent
+    /// drop.
+    /// </remarks>
     [Fact]
     public void Topics_ItemNameExplicitNull_IsRejected()
     {
@@ -914,7 +1220,7 @@ public sealed class EnvironmentSchemaTests
 
         var result = YamlSchemaValidator.Validate(yaml);
 
-        Assert.False(result.IsValid, "A topics[] item with an explicit null 'name' must be rejected — ParseAsbTopics silently drops it otherwise.");
+        Assert.False(result.IsValid, "A topics[] item with an explicit null 'name' must be rejected — the parser would keep the topic, literally named '~', never what an author means.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/asb/topics/0/name" &&
             e.Message.Contains("[type]", System.StringComparison.Ordinal));

@@ -4,6 +4,8 @@
 // validates the four top-level sections of a `.e2e.yaml` file, and that
 // <see cref="YamlSchemaValidator"/> surfaces useful, located error messages.
 using System.Linq;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
@@ -172,11 +174,54 @@ public sealed class RootSchemaTests
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// A step that sets <c>verifyMode</c> to an undeclared value (not
-    /// <c>IMMEDIATE</c> or <c>RETRY</c>) must be rejected.
+    /// A step that sets <c>verifyMode</c> to a value that DIFFERS FROM AN
+    /// ACCEPTED ONE ONLY BY CASE (not <c>IMMEDIATE</c> or <c>RETRY</c>) must
+    /// be rejected, located exactly at the offending field, with an
+    /// actionable <c>[enum]</c> message that names the correct spelling.
     /// </summary>
+    /// <remarks>
+    /// Strengthened (feat/close-remaining-surfaces): the original assertion
+    /// pinned only <c>IsValid == false</c>, unlike its neighbouring
+    /// <c>schemaVersion</c>/enum-shaped tests above, which already pin
+    /// location and keyword. Also pins the Part C <c>[enum]</c> enrichment
+    /// for a case-insensitive match ('retry' -&gt; 'RETRY'). See
+    /// <see cref="Validate_VerifyModeUnrecognisedValue_IsRejectedWithNoFabricatedSuggestion"/>
+    /// for the CONTRASTIVE case (a value matching nothing at all, not merely
+    /// by case) this summary's original, broader "undeclared value" wording
+    /// implied but did not itself exercise (MINOR-11).
+    /// </remarks>
     [Fact]
     public void Validate_VerifyModeInvalidEnum_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                verifyMode: retry
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "A lower-cased verifyMode value must be rejected by the case-sensitive schema enum.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/steps/0/verifyMode" &&
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("'retry'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("IMMEDIATE", System.StringComparison.Ordinal) &&
+            e.Message.Contains("write 'RETRY'", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The contrastive case (MINOR-11): a <c>verifyMode</c> value matching
+    /// NEITHER accepted spelling, not even by case, must still be rejected
+    /// with a located, actionable <c>[enum]</c> message — but must NEVER
+    /// fabricate a "write '...'" suggestion, since nothing case-insensitively
+    /// matches. Mirrors the identical with-hint/without-hint pairing already
+    /// pinned for <c>imagePullPolicy</c> and dependency <c>type</c> in
+    /// EnvironmentSchemaTests.cs.
+    /// </summary>
+    [Fact]
+    public void Validate_VerifyModeUnrecognisedValue_IsRejectedWithNoFabricatedSuggestion()
     {
         const string yaml = """
             steps:
@@ -188,7 +233,72 @@ public sealed class RootSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid);
-        Assert.NotEmpty(result.Errors);
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/steps/0/verifyMode" &&
+            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("'SOMETIMES'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("IMMEDIATE", System.StringComparison.Ordinal) &&
+            !e.Message.Contains("write '", System.StringComparison.Ordinal));
+    }
+
+    // -------------------------------------------------------------------------
+    // A1: 'timeout' de-branching (composite-branch noise, prong 1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A malformed <c>timeout</c> value (neither a genuine duration string nor
+    /// a number — the OLD two-branch <c>oneOf</c>'s <c>{string}</c>/
+    /// <c>{number}</c> shapes both rejected it identically, but a BOOLEAN
+    /// hits neither JSON type at all) must yield exactly one error. Chosen
+    /// deliberately over an "invalid string" case: any string at all
+    /// satisfies the merged <c>"type": ["string","number"]</c>'s type check
+    /// (there is no format constraint on the string form), so a boolean is
+    /// the only shape that still demonstrates a genuine rejection post-merge.
+    /// </summary>
+    [Fact]
+    public void Validate_TimeoutBoolean_IsRejected()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: noop.echo
+                timeout: true
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+        var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/timeout");
+        Assert.Contains("[type]", onlyError.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A valid <c>timeout</c> (either shape) must never contribute noise from
+    /// the OLD two-branch <c>oneOf</c>'s non-matching branch merely because
+    /// the document fails elsewhere — the pre-existing noise the brief names
+    /// directly (this field's <c>oneOf</c> predates the services/dependencies
+    /// closure). Now impossible by construction: a single merged
+    /// <c>"type": ["string","number"]</c> schema has no second branch to leak
+    /// from.
+    /// </summary>
+    [Theory]
+    [InlineData("30s")]
+    [InlineData("45")]
+    public void Validate_ValidTimeout_InDocumentFailingElsewhere_NoSpuriousTypeError(string timeoutValue)
+    {
+        var yaml = $$"""
+            steps:
+              - id: s1
+                type: noop.echo
+                timeout: {{timeoutValue}}
+              - type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "The second step is missing 'id' and must still be rejected.");
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation == "/steps/0/timeout");
+        Assert.Contains(result.Errors, e => e.InstanceLocation == "/steps/1");
     }
 
     // -------------------------------------------------------------------------
@@ -462,5 +572,72 @@ public sealed class RootSchemaTests
         Assert.True(result.IsValid,
             $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
         Assert.Empty(result.Errors);
+    }
+
+    // ── Publication boundary: no internal identifiers in any 'description' ─────
+
+    /// <summary>
+    /// MAJOR-3 (feat/close-remaining-surfaces, second-round gatekeeper
+    /// finding): a schema node's <c>description</c> ships verbatim to the
+    /// VSCode extension's hover text AND, via <c>LanguageReferenceGenerator</c>,
+    /// to the published Pages site — an internal branch or task identifier
+    /// there is both meaningless to a YAML author and a publication-boundary
+    /// violation (CLAUDE.md: task/sprint identifiers stay out of every
+    /// published surface). Maintainer rationale belongs in a sibling
+    /// <c>$comment</c> (validation-inert, never read by the generator — see
+    /// $defs/step's own 'capture' node for the established pattern), never in
+    /// <c>description</c>. Scans every 'description' string anywhere in the
+    /// root schema — not merely the sites this branch happened to introduce —
+    /// for a branch/PR/issue-shaped token, so a future edit cannot
+    /// reintroduce the same leak elsewhere undetected.
+    /// </summary>
+    [Fact]
+    public void NoDescriptionAnywhereInTheSchema_ContainsAnInternalIdentifier()
+    {
+        var schemaJson = SchemaResources.ReadRootLanguageSchemaJson();
+        using var doc = JsonDocument.Parse(schemaJson);
+
+        // Matches e.g. 'feat/close-remaining-surfaces', 'fix/dependency-image-override',
+        // a bare '#337', or 'PR #123' — deliberately broad rather than an exact
+        // enumeration, since the whole point is to catch a NEW pattern too.
+        var identifierPattern = new Regex(
+            @"\b(feat|fix|chore|docs)/[a-z0-9-]+\b|(?<![A-Za-z0-9])#\d+\b",
+            RegexOptions.Compiled);
+
+        var offenders = new List<string>();
+        FindDescriptionOffenders(doc.RootElement, "", identifierPattern, offenders);
+
+        Assert.True(offenders.Count == 0,
+            "The following schema 'description' fields contain an internal "
+            + $"branch/task identifier — move the rationale into a sibling '$comment' instead:{System.Environment.NewLine}"
+            + string.Join(System.Environment.NewLine, offenders));
+    }
+
+    private static void FindDescriptionOffenders(
+        JsonElement element, string path, Regex identifierPattern, List<string> offenders)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name == "description" &&
+                    property.Value.ValueKind == JsonValueKind.String &&
+                    identifierPattern.IsMatch(property.Value.GetString() ?? string.Empty))
+                {
+                    offenders.Add($"{path}/description");
+                }
+
+                FindDescriptionOffenders(property.Value, $"{path}/{property.Name}", identifierPattern, offenders);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var item in element.EnumerateArray())
+            {
+                FindDescriptionOffenders(item, $"{path}/{index}", identifierPattern, offenders);
+                index++;
+            }
+        }
     }
 }

@@ -35,6 +35,15 @@ public static class YamlSchemaValidator
 {
     private static readonly JsonSchema _schema = LoadSchema();
 
+    // A parsed copy of the SAME root-language-schema.json text _schema was
+    // built from, kept alive for the process lifetime alongside it (never
+    // disposed — mirrors _schema's own "load once, live forever" caching).
+    // SchemaErrorCollector's enum enrichment (FormatEnumError) needs a
+    // JsonElement view of the schema to resolve a failing node's live
+    // accepted-values list; only this class's root-only schema ever needs
+    // this specific copy, so it lives here rather than in SchemaResources.
+    private static readonly JsonDocument _schemaDocument = JsonDocument.Parse(SchemaResources.ReadRootLanguageSchemaJson());
+
     private static readonly EvaluationOptions _options = new()
     {
         OutputFormat = OutputFormat.List,
@@ -83,8 +92,10 @@ public static class YamlSchemaValidator
             // Pass the instance through so an unevaluatedProperties violation
             // can still name the offending step's own 'type' even though this
             // root-only schema carries no provider allOf/if/then clauses —
-            // see SchemaErrorCollector.
-            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement);
+            // see SchemaErrorCollector. Also pass the schema itself so an
+            // enum violation (e.g. dependency 'type', 'imagePullPolicy') can
+            // be enriched with its live accepted-values list.
+            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement, _schemaDocument.RootElement);
             return new SchemaValidationResult(false, errors);
         }
     }

@@ -24,6 +24,7 @@
 // particular Corpus/Accepted/surface-capture-bare-and-mapping-forms.e2e.yaml,
 // which must keep validating unchanged by this narrowing.
 using System.Linq;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
@@ -127,6 +128,14 @@ public sealed class CaptureSchemaTests
             e.InstanceLocation.StartsWith("/steps/0/capture/ambiguous", System.StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Strengthened (feat/close-remaining-surfaces, Part A1): the schema's
+    /// two-branch <c>anyOf</c> ('at least one of jsonpath/xpath') was
+    /// replaced with <c>minProperties: 1</c> — a single keyword, one error,
+    /// no branch-exploration noise. Also pins the corpus fixture
+    /// Corpus/Rejected/capture-empty-mapping.e2e.yaml's own header, which
+    /// must name the SAME new keyword.
+    /// </summary>
     [Fact]
     public void Capture_EmptyMapping_IsRejected()
     {
@@ -142,8 +151,37 @@ public sealed class CaptureSchemaTests
 
         Assert.False(result.IsValid,
             "A capture entry declaring neither 'jsonpath' nor 'xpath' must be rejected.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0/capture/neither");
+        var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/neither");
+        Assert.Contains("[minProperties]", onlyError.Message, System.StringComparison.Ordinal);
+    }
+
+    // ── A1: captureEntry de-branching (composite-branch noise, prong 1) ────────
+
+    /// <summary>
+    /// A perfectly valid <c>{ jsonpath: ... }</c> capture entry must never
+    /// contribute a spurious "[required] jsonpath"/"[required] xpath" entry
+    /// merely because the document fails elsewhere — the OLD two-branch
+    /// <c>anyOf</c>'s own noise (see the class header). Now impossible by
+    /// construction: <c>minProperties: 1</c> has no second branch to leak
+    /// from at all.
+    /// </summary>
+    [Fact]
+    public void Capture_ValidJsonPathEntry_InDocumentFailingElsewhere_NoSpuriousRequiredError()
+    {
+        const string yaml = """
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  orderId: { jsonpath: "$.id" }
+              - type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "The second step is missing 'id' and must still be rejected.");
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation.StartsWith("/steps/0/capture/orderId", System.StringComparison.Ordinal));
+        Assert.Contains(result.Errors, e => e.InstanceLocation == "/steps/1");
     }
 
     [Fact]
@@ -207,12 +245,20 @@ public sealed class CaptureSchemaTests
 
     // ── Reserved-prefix key rejection (mirrors AstBuilder.CheckReservedPrefix) ──
 
+    /// <summary>
+    /// Derived from <see cref="VarKeys"/>'s own constants (feat/close-remaining-surfaces,
+    /// Part D) rather than repeated string literals — a const-string
+    /// concatenation is itself a compile-time constant, so this is usable
+    /// directly in <c>[InlineData]</c>. If a prefix ever changes in
+    /// <see cref="VarKeys"/>, this Theory's cases move with it instead of
+    /// silently testing a stale value.
+    /// </summary>
     [Theory]
-    [InlineData("svc::orders-db")]
-    [InlineData("conn::orders-db")]
-    [InlineData("__outcome::s1")]
-    [InlineData("__capture_status::s1")]
-    [InlineData("__attempts::s1")]
+    [InlineData(VarKeys.ServicesPrefix + "orders-db")]
+    [InlineData(VarKeys.ConnectionsPrefix + "orders-db")]
+    [InlineData(VarKeys.OutcomePrefix + "s1")]
+    [InlineData(VarKeys.CaptureStatusPrefix + "s1")]
+    [InlineData(VarKeys.AttemptsPrefix + "s1")]
     public void Capture_ReservedPrefixKey_IsRejected(string reservedKey)
     {
         var yaml = $$"""
@@ -231,23 +277,76 @@ public sealed class CaptureSchemaTests
         // keyword ('pattern', from the negative-lookahead regex — not a literal
         // '[propertyNames]' tag) and reports it at the property's own instance
         // location (the value's pointer, not a synthetic key-only pointer).
+        // MINOR-7 (second-round gatekeeper finding): the raw JsonSchema.Net
+        // message ("The string value is not a match for the indicated
+        // regular expression") is unactionable — SchemaErrorCollector now
+        // enriches this exact shape, naming the offending key and explaining
+        // WHY, generically (no hardcoded prefix list — see
+        // FormatReservedPrefixError).
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == $"/steps/0/capture/{reservedKey}" &&
-            e.Message.Contains("[pattern]", System.StringComparison.Ordinal));
+            e.Message.Contains("[pattern]", System.StringComparison.Ordinal) &&
+            e.Message.Contains($"'{reservedKey}'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("engine-reserved", System.StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void Capture_NonReservedKeyThatSharesAPrefixSubstring_IsAccepted()
+    /// <summary>
+    /// The IDENTICAL guard applies to top-level <c>variables:</c> keys (Part
+    /// D symmetry fix) — pinned independently since it lives at a different
+    /// schema location (<c>properties/variables/propertyNames</c>, not
+    /// <c>$defs/step/properties/capture/propertyNames</c>) and no prior test
+    /// exercised it at all.
+    /// </summary>
+    [Theory]
+    [InlineData(VarKeys.ServicesPrefix + "orders-db")]
+    [InlineData(VarKeys.AttemptsPrefix + "s1")]
+    public void Variables_ReservedPrefixKey_IsRejectedWithActionableMessage(string reservedKey)
     {
-        // A key that merely CONTAINS a reserved substring, but does not START
-        // with it, must not be caught by the propertyNames pattern — the guard
-        // is a prefix check, not a substring ban.
-        const string yaml = """
+        var yaml = $$"""
+            variables:
+              {{reservedKey}}: "some-value"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            $"A variables key beginning with an engine-reserved prefix ('{reservedKey}') must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == $"/variables/{reservedKey}" &&
+            e.Message.Contains("[pattern]", System.StringComparison.Ordinal) &&
+            e.Message.Contains($"'{reservedKey}'", System.StringComparison.Ordinal) &&
+            e.Message.Contains("engine-reserved", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A key that CONTAINS a reserved prefix, but not at position 0, must not
+    /// be caught by the anchored (<c>^(?!prefix)...</c>) negative-lookahead
+    /// pattern — the guard is a PREFIX check, not a substring ban.
+    /// </summary>
+    /// <remarks>
+    /// Strengthened (feat/close-remaining-surfaces, Part D): the original
+    /// fixture ('mySvcName') contains no reserved prefix substring AT ALL —
+    /// 'Svc' differs in case from 'svc::' and carries no '::' — so it never
+    /// exercised the anchoring the test claims to prove. These two keys
+    /// genuinely embed a full reserved prefix starting at a NON-ZERO offset
+    /// ('orders_' + 'conn::', 'x' + '__attempts::'), verified against the
+    /// regex to still match (and therefore be accepted) precisely because the
+    /// lookaheads are anchored to the start of the string.
+    /// </remarks>
+    [Theory]
+    [InlineData("orders_conn::db")]
+    [InlineData("x__attempts::s1")]
+    public void Capture_NonReservedKeyThatEmbedsAPrefixOffPositionZero_IsAccepted(string key)
+    {
+        var yaml = $$"""
             steps:
               - id: noop
                 type: noop.echo
                 capture:
-                  mySvcName: "$.id"
+                  {{key}}: "$.id"
             """;
 
         var result = YamlSchemaValidator.Validate(yaml);

@@ -424,8 +424,22 @@ internal static class LanguageReferenceGenerator
     /// <summary>
     /// Reads a <c>type</c> keyword that is either a single string or an array of
     /// strings, returning a compact textual form (e.g. <c>string</c> or
-    /// <c>string|null</c>), or null when no <c>type</c> is declared.
+    /// <c>string\|null</c>), or null when no <c>type</c> is declared.
     /// </summary>
+    /// <remarks>
+    /// MAJOR-2 (feat/close-remaining-surfaces, second-round gatekeeper
+    /// finding): multiple types join with an ESCAPED pipe (<c>\|</c>), not a
+    /// raw one. The caller always wraps this return value in a single pair
+    /// of backticks (<see cref="DescribeType"/>'s "direct" branch) before it
+    /// lands in a Markdown table cell; GFM/python-markdown table-row
+    /// splitting cuts a row on ANY <c>|</c> character, even one sitting
+    /// inside a code span, so an unescaped join here silently fragments the
+    /// row (the field's own name/required/type columns intact, but every
+    /// column AFTER the type — the description — dropped or shifted). This
+    /// mirrors <see cref="DescribeType"/>'s OWN oneOf-alternatives branch,
+    /// which already joins ITS backtick-wrapped tokens with <c>" \| "</c> for
+    /// the identical reason.
+    /// </remarks>
     private static string? ReadScalarOrArrayType(JsonElement schemaObject)
     {
         if (schemaObject.ValueKind != JsonValueKind.Object)
@@ -451,7 +465,7 @@ internal static class LanguageReferenceGenerator
             }
 
             if (parts.Count > 0)
-                return string.Join("|", parts);
+                return string.Join("\\|", parts);
         }
 
         return null;

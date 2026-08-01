@@ -51,7 +51,88 @@
 // offending property and, wherever the InstanceLocation pointer or the
 // instance itself lets it be resolved without guessing, the property's
 // container. See FormatAdditionalPropertiesError / FormatForbiddenPropertyError.
+//
+// Composite-branch noise (feat/close-remaining-surfaces, combined peer-review +
+// gatekeeper findings on #337): OutputFormat.List's flat reporting (see the
+// class remarks below) means a non-selected `oneOf`/`anyOf` branch's own
+// failing sub-evaluation is reported exactly like IsIfDiscriminatorNoise's
+// non-matching `if` clause — a schema-machinery artefact, not a document
+// defect — whenever the composite ITSELF is satisfied (some branch matched).
+// Unlike the `if`/`then` discriminator, this cannot be recognised from the
+// EvaluationPath string alone: a `oneOf`/`anyOf` composite that genuinely
+// fails (no branch matches, e.g. a service with neither 'image' nor
+// 'project') must keep every branch's error, since each one is then a
+// genuine, independently-reportable defect (the schema's own $defs/service
+// description relies on exactly this to report both missing fields). The
+// fix therefore tracks, per WALK rather than per path-string, which
+// (EvaluationPath-prefix, InstanceLocation) branch GROUPS were satisfied,
+// and drops every non-matching sibling's error in a satisfied group.
+// InstanceLocation is part of the group key, not merely EvaluationPath,
+// because a schema reached via `additionalProperties` (e.g. $defs/service,
+// applied uniformly to every entry in environment.services) gives every map
+// entry the IDENTICAL EvaluationPath — only InstanceLocation tells two
+// sibling services' `anyOf` branches apart, and grouping on path alone would
+// let ONE valid service silently launder another, genuinely broken,
+// service's real defect. See CompositeGroupState / IsCompositeBranchRoot /
+// SuppressSatisfiedCompositeBranchNoise, and SchemaErrorCollectorTests for
+// the disambiguation proof.
+//
+// Second-round gatekeeper findings (same branch, follow-up fix — CRITICAL-1
+// and MAJOR-4, both addressed by the SAME rewrite):
+//
+//   CRITICAL-1 — satisfaction must be COUNTED, not merely flagged. The first
+//   cut marked a group "satisfied" the instant ANY single branch validated —
+//   correct for `anyOf` (>= 1 match IS satisfaction) but WRONG for `oneOf`,
+//   whose own semantics require EXACTLY one match: two or more matching
+//   branches make the `oneOf` itself invalid, a genuine defect, yet the old
+//   code still flagged the group satisfied on the FIRST match and suppressed
+//   any OTHER, genuinely-failing branch too — with nothing replacing it
+//   (JsonSchema.Net attaches no message to a failing `oneOf` node itself; see
+//   $defs/service's own description for the same finding, applied there to
+//   justify avoiding `oneOf` altogether). Unreachable via today's two real
+//   composites (both exactly 2-branch), live the moment any provider ships a
+//   3-or-more-way `oneOf` (a public extension point). Fixed by COUNTING
+//   valid branches per group during the walk and computing satisfaction
+//   afterwards: `oneOf` needs count == 1, `anyOf` needs count >= 1. See
+//   CompositeGroupState.IsSatisfied.
+//
+//   MAJOR-4 — suppression must be depth-independent, mirroring
+//   IsIfDiscriminatorNoise's OWN deliberate depth-independence (see that
+//   method's remarks). The first cut only recognised a branch's error when
+//   the FAILING node's own EvaluationPath terminated EXACTLY at
+//   `.../oneOf/<N>` or `.../anyOf/<N>` — a losing branch with its own nested
+//   sub-schema fails at a DEEPER path instead (e.g.
+//   `.../anyOf/1/properties/x`, not `.../anyOf/1` itself), which the
+//   original check never matched, so it always survived as noise regardless
+//   of whether the composite validated. Safe direction (extra noise, never a
+//   hidden genuine defect) but broke the general "no composite-branch noise"
+//   guarantee the CHANGELOG promises. Fixed by scanning the FULL
+//   EvaluationPath for every `oneOf`/`anyOf`-then-index occurrence, at any
+//   depth — not only the path's own final two segments — via
+//   FindCompositeBranchOccurrences, exactly as IsIfDiscriminatorNoise scans
+//   its own full path for `allOf`/`if` occurrences. Over-suppression is the
+//   dangerous direction, so every new suppression this generalisation adds
+//   is paired with a survives-test: a deep failure under a LOSING branch of
+//   a SATISFIED composite is dropped, but the SAME shape under an
+//   UNSATISFIED composite (the count rule says "not satisfied") survives —
+//   see SchemaErrorCollectorTests' NestedAnyOf_* pair.
+//
+// [enum] enrichment (same change): a wrong-case or misspelled enum value
+// (dependency `type`, `imagePullPolicy`, `verifyMode`, cache-assert.redis's
+// `operation`) used to surface only the generic, un-actionable "[enum] Value
+// should match one of the values specified by the enum" — the CHANGELOG's
+// "the fix is in the message" promise (case-sensitivity, #335) was true only
+// of EnvironmentMapper's OWN runtime message, never reachable because schema
+// validation always runs first. FormatEnumError resolves the LIVE allowed-
+// value list from the composed schema JSON via the failing node's own
+// SchemaLocation (a JSON Pointer into the schema text, stable across $ref/
+// $defs/additionalProperties indirection — verified empirically) rather than
+// hardcoding any vocabulary, so the message stays correct if a provider ever
+// adds/removes an enum member. Never fabricates: an offending value or an
+// enum array this cannot resolve degrades to a generic (but still
+// `[enum]`-tagged) message rather than guessing.
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using Json.Schema;
 
@@ -100,9 +181,19 @@ internal static class SchemaErrorCollector
     /// The original document instance the schema was evaluated against, when
     /// available. Never consulted for filtering or validity — only to enrich
     /// an <c>unevaluatedProperties</c> violation's message with the offending
-    /// step's own <c>type</c> value (see the class remarks). Passing
+    /// step's own <c>type</c> value, and an <c>enum</c> violation's message
+    /// with the offending value itself (see the class remarks). Passing
     /// <see langword="null"/> degrades gracefully: the property name is still
-    /// reported, just without the "on step type '…'" suffix.
+    /// reported, just without the enrichment.
+    /// </param>
+    /// <param name="schema">
+    /// The composed schema being evaluated against, as a parsed
+    /// <see cref="JsonElement"/> of its own JSON text, when available. Used
+    /// only to resolve an <c>enum</c> violation's live list of accepted
+    /// values via the failing node's own <c>SchemaLocation</c> (see
+    /// <see cref="FormatEnumError"/>). Passing <see langword="null"/>
+    /// degrades gracefully: the offending value is still named, without the
+    /// accepted-values list.
     /// </param>
     /// <returns>
     /// A non-empty list of <see cref="SchemaValidationError"/> entries. When
@@ -112,12 +203,49 @@ internal static class SchemaErrorCollector
     /// error at the root location is returned so the caller always receives
     /// at least one actionable message.
     /// </returns>
-    internal static List<SchemaValidationError> CollectErrors(EvaluationResults results, JsonElement? instance = null)
+    internal static List<SchemaValidationError> CollectErrors(
+        EvaluationResults results, JsonElement? instance = null, JsonElement? schema = null)
     {
         var collected = new List<CollectedError>();
-        CollectErrorsRecursive(results, collected, instance);
+        var groupStates = new Dictionary<string, CompositeGroupState>(StringComparer.Ordinal);
+        CollectErrorsRecursive(results, collected, groupStates, instance, schema);
 
-        var survivors = SuppressUnevaluatedPropertiesCascade(collected);
+        // Synthesise the genuine defect a oneOf's "too many matches" failure
+        // represents (MINOR-8): JsonSchema.Net attaches NO message of its
+        // own to this case (verified empirically — every matching branch is
+        // individually valid, so none carries an error), and the CRITICAL-1
+        // count fix correctly leaves the group unsatisfied, so without this
+        // the ONLY symptom would be every matched branch's own fields wrongly
+        // reported as "unknown" by the unevaluatedProperties cascade below.
+        // Added to 'collected' BEFORE both suppression passes run so this
+        // genuine "other error" correctly participates in — and is itself
+        // correctly exempt from — both: SuppressSatisfiedCompositeBranchNoise
+        // never touches it (its EvaluationPath is the GROUP's own prefix,
+        // e.g. '.../oneOf', with no trailing branch index, so
+        // FindCompositeBranchOccurrences finds nothing to match against —
+        // safe by construction, not merely because the group is unsatisfied
+        // anyway), while SuppressUnevaluatedPropertiesCascade correctly DOES
+        // drop the two misleading unevaluatedProperties entries once this
+        // genuine error registers the step as having "another error".
+        foreach (var state in groupStates.Values)
+        {
+            if (state.HasTooManyOneOfMatches && state.ValidBranchFieldNames is { Count: > 0 } fieldNames)
+            {
+                collected.Add(new CollectedError(
+                    state.InstanceLocation,
+                    state.Prefix,
+                    FormatTooManyOneOfMatchesError(fieldNames),
+                    IsUnevaluatedProperties: false));
+            }
+        }
+
+        // Composite-branch suppression MUST run before the cascade below: a
+        // step whose only "other error" was itself composite-branch noise
+        // (e.g. script.csharp's oneOf, see the class remarks) must not have
+        // its genuine unevaluatedProperties entry hidden by a phantom sibling
+        // that is about to be dropped anyway.
+        var afterCompositeSuppression = SuppressSatisfiedCompositeBranchNoise(collected, groupStates);
+        var survivors = SuppressUnevaluatedPropertiesCascade(afterCompositeSuppression);
 
         var errors = new List<SchemaValidationError>(survivors.Count);
         foreach (var error in survivors)
@@ -137,30 +265,120 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// One collected, already-formatted error, plus enough of its own shape
-    /// (see <see cref="IsUnevaluatedPropertiesShape"/>) for
-    /// <see cref="SuppressUnevaluatedPropertiesCascade"/> to judge it without
-    /// re-parsing the message text it is about to hand back to the caller.
+    /// for the two suppression passes to judge it without re-parsing the
+    /// message text it is about to hand back to the caller:
+    /// <c>IsUnevaluatedProperties</c> (see <see cref="IsUnevaluatedPropertiesShape"/>)
+    /// for <see cref="SuppressUnevaluatedPropertiesCascade"/>, and the raw
+    /// <c>EvaluationPath</c> (re-scanned lazily by
+    /// <see cref="SuppressSatisfiedCompositeBranchNoise"/> — see
+    /// <see cref="FindCompositeBranchOccurrences"/> — rather than
+    /// pre-computed here, since it is only ever needed when at least one
+    /// composite group turned out satisfied).
     /// </summary>
-    private readonly record struct CollectedError(string InstanceLocation, string Message, bool IsUnevaluatedProperties);
+    private readonly record struct CollectedError(
+        string InstanceLocation, string EvaluationPath, string Message, bool IsUnevaluatedProperties);
 
-    private static void CollectErrorsRecursive(EvaluationResults node, List<CollectedError> sink, JsonElement? instance)
+    /// <summary>
+    /// Per-(EvaluationPath-prefix, InstanceLocation) tally for one
+    /// <c>oneOf</c>/<c>anyOf</c> application, built up during the walk and
+    /// consulted afterwards by <see cref="SuppressSatisfiedCompositeBranchNoise"/>
+    /// and (for a <c>oneOf</c> specifically) by the too-many-matches
+    /// synthesis in <see cref="CollectErrors"/> (MINOR-8).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsSatisfied"/> encodes the CRITICAL-1 fix: <c>oneOf</c>
+    /// requires EXACTLY one matching branch (two or more is itself a genuine
+    /// violation of "exactly one" — nothing here is noise), while
+    /// <c>anyOf</c> only ever requires AT LEAST one. A mutable class, not a
+    /// struct: the walk increments <see cref="ValidBranchCount"/> in place
+    /// via repeated dictionary lookups, which a value type would make
+    /// awkward (get, mutate, re-store) for no benefit — these instances never
+    /// outlive one <see cref="CollectErrors"/> call.
+    /// </remarks>
+    private sealed class CompositeGroupState
     {
+        public required string Prefix { get; init; }
+        public required string InstanceLocation { get; init; }
+        public required bool IsOneOf { get; init; }
+        public int ValidBranchCount { get; set; }
+
+        /// <summary>
+        /// The <c>required</c> field name(s) of every branch that validated,
+        /// in encounter order — <c>oneOf</c> groups only (see
+        /// <see cref="CollectErrorsRecursive"/>'s populating call), read
+        /// directly from the schema so <see cref="FormatTooManyOneOfMatchesError"/>
+        /// never hardcodes a provider's own field names. Null until the first
+        /// valid oneOf branch is seen; used only when
+        /// <see cref="ValidBranchCount"/> ends up >= 2 (JsonSchema.Net
+        /// attaches no message of its own to that "too many matches" case —
+        /// see the class remarks — so this is the only source for one).
+        /// </summary>
+        public List<string>? ValidBranchFieldNames { get; set; }
+
+        public bool IsSatisfied => IsOneOf ? ValidBranchCount == 1 : ValidBranchCount >= 1;
+
+        public bool HasTooManyOneOfMatches => IsOneOf && ValidBranchCount >= 2;
+    }
+
+    private static void CollectErrorsRecursive(
+        EvaluationResults node,
+        List<CollectedError> sink,
+        Dictionary<string, CompositeGroupState> groupStates,
+        JsonElement? instance,
+        JsonElement? schema)
+    {
+        var evaluationPath = node.EvaluationPath.ToString();
+        var location = node.InstanceLocation.ToString();
+
+        // Tally composite (oneOf/anyOf) branch validity regardless of THIS
+        // node's own validity — a branch that satisfies its composite is, by
+        // definition, itself VALID, so this must run before the early-return
+        // below or the walk would never see it (see the class remarks).
+        // Scoped to a BRANCH ROOT only (IsCompositeBranchRoot: the node's OWN
+        // EvaluationPath terminates exactly at oneOf/<N> or anyOf/<N>) — this
+        // tally needs the branch's own AGGREGATE validity (does its entire
+        // nested sub-schema pass?), never a deeper descendant's.
+        if (node.IsValid && IsCompositeBranchRoot(evaluationPath, out var branchPrefix, out var branchIsOneOf))
+        {
+            var key = branchPrefix + "|" + location;
+            if (!groupStates.TryGetValue(key, out var state))
+            {
+                state = new CompositeGroupState { Prefix = branchPrefix, InstanceLocation = location, IsOneOf = branchIsOneOf };
+                groupStates[key] = state;
+            }
+
+            state.ValidBranchCount++;
+
+            // Only ever consulted for a oneOf that ends up with 2+ matches
+            // (MINOR-8) — reading it for anyOf groups too would be wasted
+            // work, since HasTooManyOneOfMatches is oneOf-only by definition.
+            if (branchIsOneOf && schema is { } schemaRootForFieldNames)
+            {
+                var fieldNames = TryReadRequiredFieldNames(schemaRootForFieldNames, node.SchemaLocation);
+                if (fieldNames is { Count: > 0 })
+                {
+                    state.ValidBranchFieldNames ??= new List<string>();
+                    state.ValidBranchFieldNames.AddRange(fieldNames);
+                }
+            }
+        }
+
         if (node.IsValid)
             return;
 
         // Skip "if"-discriminator noise (issue #259): a non-matching provider
         // clause's own 'if' sub-evaluation is legitimately invalid but describes
         // no real document problem — see the class remarks.
-        if (node.Errors is { Count: > 0 } && !IsIfDiscriminatorNoise(node.EvaluationPath.ToString()))
+        if (node.Errors is { Count: > 0 } && !IsIfDiscriminatorNoise(evaluationPath))
         {
-            var location = node.InstanceLocation.ToString();
-            var evaluationPath = node.EvaluationPath.ToString();
+            var schemaLocation = node.SchemaLocation;
 
             foreach (var (keyword, message) in node.Errors)
             {
                 sink.Add(new CollectedError(
                     location,
-                    FormatError(keyword, message, evaluationPath, location, instance),
+                    evaluationPath,
+                    FormatError(keyword, message, evaluationPath, location, instance, schema, schemaLocation),
                     IsUnevaluatedPropertiesShape(keyword, evaluationPath)));
             }
         }
@@ -169,9 +387,167 @@ internal static class SchemaErrorCollector
         {
             foreach (var child in node.Details)
             {
-                CollectErrorsRecursive(child, sink, instance);
+                CollectErrorsRecursive(child, sink, groupStates, instance, schema);
             }
         }
+    }
+
+    /// <summary>
+    /// Drops a composite-branch error whose EvaluationPath passes through a
+    /// SATISFIED <c>oneOf</c>/<c>anyOf</c> group's branch, at ANY depth (see
+    /// <see cref="FindCompositeBranchOccurrences"/> and the class remarks —
+    /// MAJOR-4's depth-independence fix). When a group has NO satisfied
+    /// branch (the composite genuinely failed — e.g. a service with neither
+    /// 'image' nor 'project' — or a <c>oneOf</c> with two-or-more matches,
+    /// CRITICAL-1's fix), every branch's error is a genuine,
+    /// independently-reportable defect and survives untouched.
+    /// </summary>
+    private static List<CollectedError> SuppressSatisfiedCompositeBranchNoise(
+        List<CollectedError> errors, Dictionary<string, CompositeGroupState> groupStates)
+    {
+        List<CompositeGroupState>? satisfiedGroups = null;
+        foreach (var state in groupStates.Values)
+        {
+            if (state.IsSatisfied)
+            {
+                satisfiedGroups ??= new List<CompositeGroupState>();
+                satisfiedGroups.Add(state);
+            }
+        }
+
+        // Fast path: nothing in this document satisfied any composite at
+        // all, so there is nothing to suppress — mirrors
+        // SuppressUnevaluatedPropertiesCascade's own fast path.
+        if (satisfiedGroups is null)
+            return errors;
+
+        var survivors = new List<CollectedError>(errors.Count);
+        foreach (var error in errors)
+        {
+            if (IsUnderAnySatisfiedGroup(error.EvaluationPath, error.InstanceLocation, satisfiedGroups))
+            {
+                continue;
+            }
+
+            survivors.Add(error);
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
+    /// True when <paramref name="evaluationPath"/> passes through some
+    /// SATISFIED group's branch and <paramref name="instanceLocation"/> is
+    /// that same group's own instance location or a descendant of it — i.e.
+    /// this error belongs to a branch that lost only because a SIBLING
+    /// branch of the SAME satisfied composite won.
+    /// </summary>
+    private static bool IsUnderAnySatisfiedGroup(
+        string evaluationPath, string instanceLocation, List<CompositeGroupState> satisfiedGroups)
+    {
+        foreach (var (prefix, _) in FindCompositeBranchOccurrences(evaluationPath))
+        {
+            foreach (var group in satisfiedGroups)
+            {
+                if (string.Equals(prefix, group.Prefix, StringComparison.Ordinal) &&
+                    IsPathOrDescendant(group.InstanceLocation, instanceLocation))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="evaluationPath"/>'s FINAL two segments are a
+    /// <c>oneOf</c>/<c>anyOf</c> keyword followed by a bare array index (e.g.
+    /// <c>.../anyOf/1</c>) — i.e. this node IS one specific branch's own
+    /// aggregate result, not merely something nested inside one. Used only
+    /// for the walk-time valid-branch TALLY (<see cref="CollectErrorsRecursive"/>),
+    /// which needs a branch's own aggregate <c>IsValid</c>; the (separate,
+    /// depth-independent) suppression check is
+    /// <see cref="FindCompositeBranchOccurrences"/>, deliberately not this
+    /// method — see the class remarks on why the two must differ (MAJOR-4).
+    /// Deliberately excludes <c>allOf</c>: an <c>allOf</c> branch is never
+    /// exploration noise (EVERY branch must pass, so a failing one is always
+    /// diagnostic) — that is exactly why the existing <c>if</c>/<c>then</c>
+    /// discriminator pattern uses <c>allOf</c>, not <c>anyOf</c>/<c>oneOf</c>,
+    /// and why <see cref="IsIfDiscriminatorNoise"/> and this method target
+    /// disjoint shapes.
+    /// </summary>
+    private static bool IsCompositeBranchRoot(string evaluationPath, out string prefix, out bool isOneOf)
+    {
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length >= 2 &&
+            (segments[^2] == "oneOf" || segments[^2] == "anyOf") &&
+            int.TryParse(segments[^1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            isOneOf = segments[^2] == "oneOf";
+            prefix = "/" + string.Join('/', segments[..^1]);
+            return true;
+        }
+
+        prefix = string.Empty;
+        isOneOf = false;
+        return false;
+    }
+
+    /// <summary>
+    /// Scans EVERY position in <paramref name="evaluationPath"/> — not only
+    /// its own final two segments — for a <c>oneOf</c>/<c>anyOf</c> keyword
+    /// immediately followed by a branch index, yielding the prefix (up to and
+    /// including the keyword) at each occurrence found. Mirrors
+    /// <see cref="IsIfDiscriminatorNoise"/>'s OWN deliberate depth-independent
+    /// full-path scan (see that method's remarks for why depth-independence
+    /// is CORRECT, not merely convenient, for a composite/discriminator
+    /// keyword's own pass/fail): a losing branch's failure can sit arbitrarily
+    /// deep inside that branch's own nested sub-schema (e.g.
+    /// <c>.../anyOf/1/properties/x</c>, not merely <c>.../anyOf/1</c> itself),
+    /// and every such descendant belongs to that SAME branch for suppression
+    /// purposes (MAJOR-4).
+    /// </summary>
+    /// <remarks>
+    /// Segment-based reconstruction (split, then rejoin the prefix with a
+    /// single leading slash) rather than a raw substring cut: JsonSchema.Net
+    /// evaluation paths are always <c>/</c>-rooted RFC 6901 pointers with no
+    /// empty segments in practice (schema keywords never have empty names),
+    /// so this reconstruction is byte-identical to the original text for
+    /// every prefix it produces — verified against
+    /// <see cref="IsCompositeBranchRoot"/>'s own (independently written, for
+    /// the shallow case only) prefix computation.
+    /// </remarks>
+    private static IEnumerable<(string Prefix, bool IsOneOf)> FindCompositeBranchOccurrences(string evaluationPath)
+    {
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        for (var i = 0; i + 1 < segments.Length; i++)
+        {
+            if ((segments[i] == "oneOf" || segments[i] == "anyOf") &&
+                int.TryParse(segments[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            {
+                yield return ("/" + string.Join('/', segments[..(i + 1)]), segments[i] == "oneOf");
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="descendant"/> is <paramref name="ancestor"/>
+    /// itself, or a proper descendant of it under RFC 6901 JSON Pointer
+    /// segment boundaries (e.g. <c>/steps/1</c> is a descendant of
+    /// <c>/steps</c>, but <c>/steps/10</c> is deliberately NOT a descendant of
+    /// <c>/steps/1</c> — a raw <see cref="string.StartsWith(string)"/> would
+    /// wrongly accept that second case).
+    /// </summary>
+    private static bool IsPathOrDescendant(string ancestor, string descendant)
+    {
+        if (string.Equals(ancestor, descendant, StringComparison.Ordinal))
+            return true;
+
+        return descendant.Length > ancestor.Length &&
+               descendant.StartsWith(ancestor, StringComparison.Ordinal) &&
+               descendant[ancestor.Length] == '/';
     }
 
     /// <summary>
@@ -278,12 +654,15 @@ internal static class SchemaErrorCollector
     /// substituting a named, actionable message for each of the three
     /// blank-keyword false-schema shapes (see the class remarks —
     /// <c>unevaluatedProperties</c>, <c>additionalProperties</c>, and a
-    /// per-field <c>properties/&lt;name&gt;: false</c>) and falling back to
-    /// the original <c>[{keyword}] {message}</c> format for every other,
+    /// per-field <c>properties/&lt;name&gt;: false</c>), enriching an
+    /// <c>enum</c> violation with the offending value and the live accepted
+    /// list (see <see cref="FormatEnumError"/>), and falling back to the
+    /// original <c>[{keyword}] {message}</c> format for every other,
     /// genuinely-named keyword.
     /// </summary>
     private static string FormatError(
-        string keyword, string message, string evaluationPath, string instanceLocation, JsonElement? instance)
+        string keyword, string message, string evaluationPath, string instanceLocation,
+        JsonElement? instance, JsonElement? schema, Uri schemaLocation)
     {
         if (IsUnevaluatedPropertiesShape(keyword, evaluationPath))
         {
@@ -298,6 +677,16 @@ internal static class SchemaErrorCollector
         if (IsForbiddenPropertyShape(keyword, evaluationPath))
         {
             return FormatForbiddenPropertyError(instanceLocation, instance);
+        }
+
+        if (keyword == "enum")
+        {
+            return FormatEnumError(instanceLocation, instance, schema, schemaLocation);
+        }
+
+        if (IsPropertyNamesPatternShape(keyword, evaluationPath))
+        {
+            return FormatReservedPrefixError(instanceLocation);
         }
 
         return $"[{keyword}] {message}";
@@ -352,6 +741,37 @@ internal static class SchemaErrorCollector
 
         var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.Length >= 2 && segments[^2] == "properties";
+    }
+
+    /// <summary>
+    /// True for a <c>propertyNames</c> sub-schema's own <c>pattern</c>
+    /// keyword failure — the shape both <c>capture</c>'s and top-level
+    /// <c>variables</c>'s reserved-bookkeeping-prefix guard produce (a
+    /// negative-lookahead regex, see VarKeys). Unlike the blank-keyword
+    /// shapes above, this node's OWN keyword is genuinely <c>pattern</c> (a
+    /// real, non-boolean sub-schema), so EvaluationPath is what disambiguates
+    /// this SPECIFIC pattern failure from any other <c>pattern</c> keyword
+    /// elsewhere in the schema (a step's own <c>id</c>/<c>type</c> pattern,
+    /// httpPort's range pattern, …).
+    /// </summary>
+    /// <remarks>
+    /// Every <c>propertyNames</c> declaration in the current schema exists
+    /// SOLELY for the reserved-prefix guard, so this shape is treated as
+    /// exactly that without needing to inspect the regex text itself — see
+    /// <see cref="FormatReservedPrefixError"/>'s own generic-but-specific
+    /// message, which deliberately never hardcodes the prefix list (MINOR-7:
+    /// that list already lives in one place, VarKeys, and the schema's own
+    /// 'description' — repeating it here would be a THIRD place to keep in
+    /// sync).
+    /// </remarks>
+    private static bool IsPropertyNamesPatternShape(string keyword, string evaluationPath)
+    {
+        // Verified empirically (JsonSchema.Net 9.2.1): the 'pattern' failure
+        // is reported ON the propertyNames node itself — EvaluationPath ends
+        // AT '.../propertyNames', not a deeper '.../propertyNames/pattern' —
+        // so this checks the FINAL segment, mirroring EndsWithSegment's other
+        // callers, not a "second-to-last" check like IsForbiddenPropertyShape.
+        return keyword == "pattern" && EndsWithSegment(evaluationPath, "propertyNames");
     }
 
     /// <summary>
@@ -473,6 +893,359 @@ internal static class SchemaErrorCollector
         }
 
         return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";
+    }
+
+    /// <summary>
+    /// Builds the actionable message for a <c>propertyNames</c>
+    /// reserved-prefix rejection (MINOR-7): names the offending key and
+    /// explains WHY, generically — never hardcoding the actual prefix list
+    /// (that authoritative list lives in VarKeys and the schema's own
+    /// 'description'; hardcoding it a third time here is exactly the
+    /// drift risk the class remarks warn against elsewhere in this file).
+    /// </summary>
+    private static string FormatReservedPrefixError(string instanceLocation)
+    {
+        var propertyName = LastPointerSegment(instanceLocation);
+
+        return $"[pattern] Property name '{propertyName}' begins with an engine-reserved bookkeeping " +
+               "prefix — see this field's own description for the reserved prefix list.";
+    }
+
+    /// <summary>
+    /// Builds the actionable message for a <c>oneOf</c> that failed via
+    /// "too many matches" (MINOR-8) — e.g. script.csharp's <c>code</c>/
+    /// <c>file</c> both set. Named generically from
+    /// <paramref name="matchedFieldNames"/> (each matching branch's own
+    /// <c>required</c> member, read from the live schema — see
+    /// <see cref="TryReadRequiredFieldNames"/>), so this reads correctly for
+    /// ANY provider's alternative-field <c>oneOf</c>, not merely
+    /// script.csharp specifically.
+    /// </summary>
+    private static string FormatTooManyOneOfMatchesError(List<string> matchedFieldNames)
+    {
+        var quotedNames = string.Join(", ", matchedFieldNames.Select(n => $"'{n}'"));
+
+        return matchedFieldNames.Count == 2
+            ? $"[oneOf] Exactly one of {quotedNames} may be set — both are present."
+            : $"[oneOf] Exactly one of {quotedNames} may be set — " +
+              $"{matchedFieldNames.Count.ToString(CultureInfo.InvariantCulture)} are present.";
+    }
+
+    /// <summary>
+    /// The maximum number of accepted values <see cref="FormatEnumError"/>
+    /// lists inline before truncating with a "… and N more" tail. Chosen so
+    /// the real 13-member dependency-<c>type</c> enum (the largest in the
+    /// current schema) exercises truncation, proving the cap is live rather
+    /// than merely theoretical.
+    /// </summary>
+    private const int MaxListedEnumValues = 8;
+
+    /// <summary>
+    /// Builds the actionable message for an <c>enum</c> rejection: names the
+    /// offending value, lists the accepted values (truncated past
+    /// <see cref="MaxListedEnumValues"/>), and — when the offending value is a
+    /// case-insensitive match for exactly one accepted value — says so
+    /// directly, e.g. <c>[enum] Value 'Postgres' is not one of the accepted
+    /// values for 'type': postgres, sqlserver, … — write 'postgres'</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Generic by construction: the accepted-values list is read from the
+    /// LIVE composed schema via <paramref name="schemaLocation"/> (see
+    /// <see cref="TryReadEnumArray"/>), never hardcoded, so this one
+    /// mechanism enriches every enum in the language — dependency
+    /// <c>type</c>, <c>imagePullPolicy</c> (environment- and service-level),
+    /// step <c>verifyMode</c>, and cache-assert.redis's <c>operation</c> —
+    /// without knowing any of their vocabularies in advance, and stays
+    /// correct if a provider ever adds or removes a member.
+    /// </para>
+    /// <para>
+    /// Degrades to a generic (but still <c>[enum]</c>-tagged) message,
+    /// exactly the no-fabrication discipline every other formatter in this
+    /// class follows, when either the offending value or the accepted list
+    /// cannot be resolved (no <paramref name="instance"/>/<paramref name="schema"/>
+    /// supplied, or an exotic pointer shape this best-effort walk cannot
+    /// follow) — never a guess.
+    /// </para>
+    /// </remarks>
+    private static string FormatEnumError(
+        string instanceLocation, JsonElement? instance, JsonElement? schema, Uri schemaLocation)
+    {
+        var offendingValue = instance is { } instanceRoot
+            ? TryReadScalarText(instanceLocation, instanceRoot)
+            : null;
+        var allowedValues = schema is { } schemaRoot
+            ? TryReadEnumArray(schemaRoot, schemaLocation)
+            : null;
+
+        if (offendingValue is null || allowedValues is null || allowedValues.Count == 0)
+        {
+            return "[enum] Value does not match any of the values accepted here.";
+        }
+
+        var propertyName = LastPointerSegment(instanceLocation);
+        var allowedList = FormatAllowedValuesList(allowedValues);
+
+        // Uniqueness, not merely existence (MINOR-6): the suggestion below
+        // claims to name THE correct spelling, so it must never be offered
+        // when two-or-more accepted values case-insensitively match the
+        // offending value — an arbitrary pick (the original FirstOrDefault)
+        // would name a value the author may not have meant at all. Computed
+        // against the FULL, untruncated value — never the display-bounded
+        // one below — so a long offending value's truncation can never
+        // change which (if any) match is found.
+        var caseInsensitiveMatches = allowedValues.Where(v =>
+            !string.Equals(v, offendingValue, StringComparison.Ordinal) &&
+            string.Equals(v, offendingValue, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        var suggestion = caseInsensitiveMatches.Count == 1
+            ? $" — write '{caseInsensitiveMatches[0]}'"
+            : string.Empty;
+
+        return $"[enum] Value '{TruncateForDisplay(offendingValue)}' is not one of the accepted values for " +
+               $"'{propertyName}': {allowedList}{suggestion}";
+    }
+
+    /// <summary>
+    /// The maximum number of characters of an offending SCALAR VALUE
+    /// <see cref="FormatEnumError"/> echoes verbatim before truncating.
+    /// </summary>
+    /// <remarks>
+    /// Security finding (feat/close-remaining-surfaces, second round): unlike
+    /// <see cref="FormatAllowedValuesList"/> (bounded by
+    /// <see cref="MaxListedEnumValues"/>, a fixed, schema-controlled count),
+    /// the OFFENDING value is author/attacker-controlled document content
+    /// with no length bound of its own — a multi-kilobyte string in an enum
+    /// position previously inflated <see cref="SchemaValidationError.Message"/>
+    /// without limit, and that message flows into the §14 JSON Lines event
+    /// stream every renderer (and the Healer agent) consumes. Bounded here to
+    /// keep every error message O(1) in the size of the offending value,
+    /// mirroring the discipline <see cref="FormatAllowedValuesList"/> already
+    /// applies to the accepted side.
+    /// </remarks>
+    private const int MaxOffendingValueChars = 200;
+
+    /// <summary>
+    /// Truncates <paramref name="value"/> to <see cref="MaxOffendingValueChars"/>
+    /// with a "… (N chars total)" tail when it exceeds that bound, returning
+    /// it unchanged otherwise.
+    /// </summary>
+    private static string TruncateForDisplay(string value)
+    {
+        if (value.Length <= MaxOffendingValueChars)
+        {
+            return value;
+        }
+
+        var totalChars = value.Length.ToString(CultureInfo.InvariantCulture);
+        return $"{value[..MaxOffendingValueChars]}… ({totalChars} chars total)";
+    }
+
+    /// <summary>
+    /// Renders an accepted-values list for <see cref="FormatEnumError"/>,
+    /// truncating past <see cref="MaxListedEnumValues"/> with a "… and N
+    /// more" tail rather than dumping an arbitrarily long enum inline.
+    /// </summary>
+    private static string FormatAllowedValuesList(List<string> allowedValues)
+    {
+        if (allowedValues.Count <= MaxListedEnumValues)
+        {
+            return string.Join(", ", allowedValues);
+        }
+
+        var shown = string.Join(", ", allowedValues.Take(MaxListedEnumValues));
+        var remaining = (allowedValues.Count - MaxListedEnumValues).ToString(CultureInfo.InvariantCulture);
+        return $"{shown}, … and {remaining} more";
+    }
+
+    /// <summary>
+    /// Reads the <c>enum</c> array a failing node's own <c>SchemaLocation</c>
+    /// points at, from a parsed copy of the composed schema's JSON text.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="EvaluationResults.SchemaLocation"/>'s fragment is a JSON
+    /// Pointer into the schema document, from ITS root, ending at the schema
+    /// object that owns the failing <c>enum</c> keyword — verified
+    /// empirically against JsonSchema.Net 9.2.1, including across a
+    /// <c>$ref</c>/<c>$defs</c>/<c>additionalProperties</c> indirection chain
+    /// (e.g. <c>environment.dependencies.&lt;name&gt;.type</c>, reached via
+    /// <c>$ref</c>): the pointer always resolves against the composed
+    /// schema's OWN root, never a separately-registered sub-resource, so a
+    /// single parsed copy of the composed schema text is sufficient for
+    /// every enum in the language, including one nested inside a provider's
+    /// own spliced fragment (e.g. cache-assert.redis's <c>operation</c>).
+    /// </remarks>
+    private static List<string>? TryReadEnumArray(JsonElement schemaRoot, Uri schemaLocation)
+    {
+        var fragment = schemaLocation.Fragment;
+        if (fragment.Length == 0)
+        {
+            return null;
+        }
+
+        var pointer = Uri.UnescapeDataString(fragment.TrimStart('#'));
+
+        if (!TryResolvePointer(schemaRoot, pointer, out var schemaNode) ||
+            schemaNode.ValueKind != JsonValueKind.Object ||
+            !schemaNode.TryGetProperty("enum", out var enumArray) ||
+            enumArray.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var values = new List<string>(enumArray.GetArrayLength());
+        foreach (var item in enumArray.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { } s)
+            {
+                values.Add(s);
+            }
+        }
+
+        return values.Count > 0 ? values : null;
+    }
+
+    /// <summary>
+    /// Reads the <c>required</c> array of the schema object a <c>oneOf</c>
+    /// BRANCH's own <c>SchemaLocation</c> points at directly (unlike
+    /// <see cref="TryReadEnumArray"/>, no further descent is needed — a
+    /// branch root's SchemaLocation already IS that branch's own schema
+    /// object, e.g. <c>{"required":["code"]}</c>) — MINOR-8's too-many-
+    /// matches synthesis, so the field name(s) named in the synthesised
+    /// message are read from the LIVE schema rather than hardcoded to any
+    /// one provider's own vocabulary (e.g. script.csharp's 'code'/'file').
+    /// </summary>
+    private static List<string>? TryReadRequiredFieldNames(JsonElement schemaRoot, Uri schemaLocation)
+    {
+        var fragment = schemaLocation.Fragment;
+        if (fragment.Length == 0)
+        {
+            return null;
+        }
+
+        var pointer = Uri.UnescapeDataString(fragment.TrimStart('#'));
+
+        if (!TryResolvePointer(schemaRoot, pointer, out var branchSchemaNode) ||
+            branchSchemaNode.ValueKind != JsonValueKind.Object ||
+            !branchSchemaNode.TryGetProperty("required", out var requiredArray) ||
+            requiredArray.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var names = new List<string>(requiredArray.GetArrayLength());
+        foreach (var item in requiredArray.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { } s)
+            {
+                names.Add(s);
+            }
+        }
+
+        return names.Count > 0 ? names : null;
+    }
+
+    /// <summary>
+    /// Reads the raw textual form of the scalar at <paramref name="pointer"/>
+    /// within <paramref name="root"/> — the offending value <see cref="FormatEnumError"/>
+    /// names. Every enum in the current schema constrains a string, but this
+    /// degrades gracefully (rather than throwing) for any other JSON scalar
+    /// kind, and returns <see langword="null"/> for a non-scalar or an
+    /// unresolvable pointer — never fabricated.
+    /// </summary>
+    private static string? TryReadScalarText(string pointer, JsonElement root)
+    {
+        if (!TryResolvePointer(root, pointer, out var element))
+        {
+            return null;
+        }
+
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Walks EVERY segment of a JSON Pointer (RFC 6901) against
+    /// <paramref name="root"/>, unlike <see cref="TryResolveContainerType"/>
+    /// (which deliberately stops one segment short). Returns
+    /// <see langword="false"/> at the first sign the walk cannot proceed (an
+    /// out-of-range index, a missing key, a non-container node) rather than
+    /// throwing — shared, generic navigation for both
+    /// <see cref="TryReadScalarText"/> (over the document instance) and
+    /// <see cref="TryReadEnumArray"/> (over the schema text).
+    /// </summary>
+    /// <remarks>
+    /// <b>Tolerates a JsonSchema.Net 9.2.1 SchemaLocation quirk (verified
+    /// empirically):</b> a single-schema applicator keyword — <c>if</c>,
+    /// <c>then</c>, <c>else</c> — is represented internally as if it held a
+    /// LIST of subschemas, even though its JSON text is a bare object, not an
+    /// array. SchemaLocation reflects that internal shape: a keyword nested
+    /// inside a provider's <c>then</c> branch (e.g. cache-assert.redis's
+    /// <c>operation</c> enum) resolves to a fragment like
+    /// <c>.../allOf/0/then/0/properties/operation</c> — note the synthetic
+    /// <c>/0</c> directly after <c>then</c>, which does not exist anywhere in
+    /// the actual composed schema JSON (there is no array to index; <c>then</c>
+    /// maps straight to the fragment object). When the current node is an
+    /// OBJECT and a bare-digit segment does not exist as a literal property on
+    /// it, this is that synthetic index — skipped, staying on the same node,
+    /// rather than failing the walk over an artefact of the internal model
+    /// that was never written into the schema text. A genuinely array-valued
+    /// keyword (<c>allOf</c>/<c>anyOf</c>/<c>oneOf</c>) is unaffected: its
+    /// node's <c>ValueKind</c> is <c>Array</c>, so it is always handled by the
+    /// branch below instead, which indexes for real.
+    /// </remarks>
+    private static bool TryResolvePointer(JsonElement root, string pointer, out JsonElement result)
+    {
+        var current = root;
+
+        foreach (var rawSegment in pointer.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var segment = DecodePointerSegment(rawSegment);
+
+            if (current.ValueKind == JsonValueKind.Object)
+            {
+                if (current.TryGetProperty(segment, out var next))
+                {
+                    current = next;
+                    continue;
+                }
+
+                if (int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                {
+                    // Synthetic if/then/else index (see remarks) — not a real
+                    // property; skip it and stay on the current node.
+                    continue;
+                }
+
+                result = default;
+                return false;
+            }
+            else if (current.ValueKind == JsonValueKind.Array)
+            {
+                if (!int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out var index) ||
+                    index < 0 || index >= current.GetArrayLength())
+                {
+                    result = default;
+                    return false;
+                }
+
+                current = current[index];
+            }
+            else
+            {
+                result = default;
+                return false;
+            }
+        }
+
+        result = current;
+        return true;
     }
 
     /// <summary>The container-kind label <see cref="FormatForbiddenPropertyError"/> and <see cref="FormatAdditionalPropertiesError"/> use for a service.</summary>

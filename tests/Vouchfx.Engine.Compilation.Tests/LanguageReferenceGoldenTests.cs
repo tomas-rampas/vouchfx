@@ -200,6 +200,107 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("**Schema version:** `v1`", generated, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// MAJOR-2 (feat/close-remaining-surfaces, second-round gatekeeper
+    /// finding): <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
+    /// from a <c>oneOf</c> of typed alternatives (whose OWN join, <c>" \| "</c>
+    /// between whole backtick-wrapped tokens, was already correctly escaped)
+    /// onto a bare <c>"type": [...]</c> array, which
+    /// <c>ReadScalarOrArrayType</c> joined with a RAW, unescaped <c>"|"</c>.
+    /// GFM/python-markdown table-row splitting cuts a row on ANY pipe
+    /// character, even one sitting inside a code span, so
+    /// <c>`string|number`</c> rendered as 5 cells in a 4-column table and
+    /// silently dropped the description column on the live site — a golden
+    /// test blind to this, since the golden was simply regenerated to match
+    /// the bug. Pins the exact fix for the field that exposed it.
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_TimeoutTypeCell_UsesAnEscapedPipeNotARawOne()
+    {
+        var generated = GenerateReference();
+        var timeoutLine = Array.Find(generated.Split('\n'), l => l.StartsWith("| `timeout` |", StringComparison.Ordinal));
+
+        Assert.NotNull(timeoutLine);
+        Assert.Contains("`string\\|number`", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("`string|number`", timeoutLine, StringComparison.Ordinal);
+
+        // Structural confirmation: the row splits into exactly 4 columns.
+        Assert.Equal(4, CountUnescapedPipeDelimitedColumns(timeoutLine!));
+    }
+
+    /// <summary>
+    /// General guard (not merely the one field that happened to expose the
+    /// bug): NO backtick-delimited span anywhere in the generated reference
+    /// may contain a raw, unescaped <c>|</c> — the same anti-pattern could
+    /// recur for any future multi-type-array field (a provider's own
+    /// <c>"type": [...]</c> declaration), not only <c>timeout</c>.
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_NeverEmitsAnUnescapedPipeInsideABacktickSpan()
+    {
+        var generated = GenerateReference();
+        var offendingLines = new List<string>();
+
+        foreach (var line in generated.Split('\n'))
+        {
+            if (ContainsUnescapedPipeInsideBackticks(line))
+            {
+                offendingLines.Add(line);
+            }
+        }
+
+        Assert.True(offendingLines.Count == 0,
+            "A backtick-delimited span contains a raw (unescaped) '|' — GFM/python-markdown "
+            + "table-row splitting cuts cells on ANY pipe character, even inside a code span, "
+            + "silently dropping a table column. Found on:\n"
+            + string.Join("\n", offendingLines));
+    }
+
+    /// <summary>
+    /// True when some backtick-delimited span on <paramref name="line"/>
+    /// contains a <c>|</c> not immediately preceded by <c>\</c>.
+    /// </summary>
+    private static bool ContainsUnescapedPipeInsideBackticks(string line)
+    {
+        var inSpan = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            if (line[i] == '`')
+            {
+                inSpan = !inSpan;
+                continue;
+            }
+
+            if (inSpan && line[i] == '|' && (i == 0 || line[i - 1] != '\\'))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Counts the pipe-delimited columns a Markdown table ROW splits into,
+    /// treating a backslash-escaped <c>\|</c> as literal text rather than a
+    /// column delimiter (mirroring GFM table parsing).
+    /// </summary>
+    private static int CountUnescapedPipeDelimitedColumns(string line)
+    {
+        var columns = 0;
+        for (var i = 0; i < line.Length; i++)
+        {
+            if (line[i] == '|' && (i == 0 || line[i - 1] != '\\'))
+            {
+                columns++;
+            }
+        }
+
+        // N unescaped pipes delimit N-1 columns for a well-formed
+        // "| c1 | c2 | ... | cN |" row (leading/trailing pipes both count).
+        return columns - 1;
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private static string GenerateReference()

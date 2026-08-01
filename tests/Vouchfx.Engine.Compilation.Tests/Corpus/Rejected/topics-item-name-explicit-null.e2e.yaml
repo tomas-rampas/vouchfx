@@ -1,14 +1,22 @@
 # expected-instance-location: /environment/dependencies/asb/topics/0/name
 # expected-keyword: type
 #
-# Alignment fix (feat/close-remaining-surfaces): an explicit null 'name'
-# ('name: ~') previously validated — the type union included 'null' — yet
-# ParseAsbTopics (EnvironmentMapper) silently drops such a topic entry
-# exactly as it does an absent 'name' (see topics-item-missing-name.e2e.yaml,
-# the sibling fixture for the absent case). Narrowing the type union to
-# exclude 'null' closes this residual gap: both shapes ParseAsbTopics drops
-# are now rejected at schema time instead of surfacing later as an
-# unrelated-looking Service Bus environment error.
+# Behaviour narrowing (feat/close-remaining-surfaces): an explicit null
+# 'name' ('name: ~') previously validated — the type union included 'null'.
+# Narrowing the type union to exclude 'null' rejects it at schema time
+# instead of surfacing later as an unrelated-looking Service Bus environment
+# error.
+#
+# The TRUE reason (corrected — the original text here claimed ParseAsbTopics
+# "silently drops" this shape "exactly as it does an absent 'name'", which is
+# false): with the pinned YamlDotNet 16.3.0 representation model, a YAML '~'
+# scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null
+# value. ParseAsbTopics' pattern 'YamlScalarNode { Value: { } name }' MATCHES
+# on '~' and KEEPS the topic, literally named '~' — never what an author
+# means by writing '~'. This is a different, narrower defect than the
+# genuinely-true absent-name case (see topics-item-missing-name.e2e.yaml,
+# which ParseAsbTopics really does drop), rejected here for the same reason:
+# never what an author meant.
 metadata:
   name: rejected-topics-item-name-explicit-null
 environment:

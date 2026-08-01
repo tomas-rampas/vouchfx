@@ -501,42 +501,53 @@ public sealed class SchemaStepSurfaceClosureTests
     /// (25 at full Core scale) once <see cref="SchemaErrorCollector.IsIfDiscriminatorNoise"/>
     /// has done its job.
     /// </summary>
-    [Fact]
-    public void SingleTypo_YieldsExactlyOneError_NotOnePerProvider()
+    /// <remarks>
+    /// Generalised (feat/close-remaining-surfaces, combined #337 peer review
+    /// + gatekeeper findings) from a single <c>http.rest</c> <c>[Fact]</c>
+    /// into a <c>[Theory]</c> over all 25 registered providers, reusing
+    /// <see cref="MinimalValidStepDocuments"/> — this is the test that WOULD
+    /// have caught the original composite-branch-noise bug: on
+    /// <c>script.csharp</c> specifically, a valid <c>code:</c> plus this same
+    /// typo used to report ONLY the phantom <c>[required] file</c> branch
+    /// noise from its frozen <c>oneOf</c> (never touched here — see
+    /// <c>SchemaErrorCollector</c>'s composite-branch-noise fix), silently
+    /// swallowing the genuine <c>unevaluatedProperties</c>/'taget' message
+    /// the single-provider version of this test could never have exposed.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(MinimalValidStepPerProviderType))]
+    public void SingleTypo_YieldsExactlyOneError_NotOnePerProvider(string typeKey, string validYaml)
     {
         var registry = FullRegistry();
 
-        const string yaml = """
-            steps:
-              - id: call-api
-                type: http.rest
-                target: orders-api
-                method: GET
-                path: /health
-                taget: oops
-            """;
+        // Append a typo'd property as a sibling of the step's own fields.
+        // Every MinimalValidStepDocuments entry shares the identical
+        // step-property indent (4 spaces) — a structural consequence of
+        // C#'s raw-string-literal dedent rule applying uniformly across the
+        // one dictionary literal they are all defined in.
+        var yaml = validYaml + "\n    taget: oops";
 
         var result = DocumentValidator.Validate(yaml, registry);
 
-        Assert.False(result.IsValid);
-        Assert.Single(result.Errors);
+        Assert.False(result.IsValid, $"{typeKey}: expected the 'taget' typo to be rejected.");
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/taget", onlyError.InstanceLocation);
+        Assert.Contains("taget", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains(typeKey, onlyError.Message, StringComparison.Ordinal);
 
-        // None of the surviving error(s) may reference another provider's own
+        // The one surviving error may not reference another provider's own
         // <family>.<provider> discriminator key — the black-box noise check
         // used by SchemaErrorCollectionAtScaleTests, re-run here for
         // unevaluatedProperties.
         var otherTypeKeys = registry.All
             .Select(p => $"{p.Kind.Family}.{p.Kind.Provider}")
-            .Where(key => key != "http.rest")
+            .Where(key => key != typeKey)
             .ToList();
 
-        foreach (var error in result.Errors)
+        foreach (var key in otherTypeKeys)
         {
-            foreach (var key in otherTypeKeys)
-            {
-                Assert.False(error.Message.Contains(key, StringComparison.Ordinal),
-                    $"Found discriminator-noise referencing '{key}': loc='{error.InstanceLocation}' msg='{error.Message}'");
-            }
+            Assert.False(onlyError.Message.Contains(key, StringComparison.Ordinal),
+                $"{typeKey}: found discriminator-noise referencing '{key}': msg='{onlyError.Message}'");
         }
     }
 

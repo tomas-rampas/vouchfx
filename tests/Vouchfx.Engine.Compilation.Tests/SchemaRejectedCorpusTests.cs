@@ -66,15 +66,24 @@ public sealed class SchemaRejectedCorpusTests
     }
 
     /// <summary>
-    /// <see cref="RejectedFiles"/> must discover at least one file — an empty
-    /// result would make every <see cref="RejectedDocument_IsInvalidAtExpectedLocation"/>
-    /// case silently vanish instead of failing loudly.
+    /// <see cref="RejectedFiles"/> must discover AT LEAST a known-safe floor of
+    /// files — a bare "at least one" would still pass if a glob/path
+    /// regression silently dropped all but a single fixture, letting every
+    /// OTHER <see cref="RejectedDocument_IsInvalidAtExpectedLocation"/> case
+    /// vanish instead of failing loudly. The floor is set comfortably below
+    /// the current committed count (25); safe to raise as fixtures are added
+    /// (feat/close-remaining-surfaces, Part D).
     /// </summary>
     [Fact]
     public void RejectedFiles_DiscoversAtLeastOneFile()
     {
-        Assert.True(RejectedFiles().Any(),
-            $"No Corpus/Rejected files were discovered under '{RejectedCorpusDirectory}'.");
+        const int minRejectedFiles = 15;
+
+        var count = RejectedFiles().Count();
+
+        Assert.True(count >= minRejectedFiles,
+            $"Expected at least {minRejectedFiles} Corpus/Rejected files under " +
+            $"'{RejectedCorpusDirectory}', found {count}.");
     }
 
     /// <summary>
