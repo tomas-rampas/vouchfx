@@ -835,6 +835,49 @@ public sealed class SchemaStepSurfaceClosureTests
     }
 
     /// <summary>
+    /// EVERY provider clause must be free of a top-level
+    /// <c>additionalProperties</c>, not merely the one the mutation test below
+    /// happens to touch.
+    /// </summary>
+    /// <remarks>
+    /// The sibling test proves that reintroducing the key on ONE fragment
+    /// reopens the surface for that provider alone. The corollary is the risk
+    /// this test exists to cover: if a single fragment ever kept — or
+    /// regained — its own <c>additionalProperties</c>, that provider's steps
+    /// would silently accept unknown keys again, and nothing else would
+    /// notice. The typo-rejection acceptance tests only exercise
+    /// <c>http.rest</c>, and the all-25-types test asserts that valid steps
+    /// still VALIDATE, which an over-permissive fragment does not break.
+    ///
+    /// So the hole would be provider-shaped and invisible: 24 providers
+    /// closed, one open, every test green. This asserts the property
+    /// structurally over all 25 clauses instead, and names the offender.
+    /// </remarks>
+    [Fact]
+    public void EveryProviderClause_HasNoTopLevelAdditionalProperties()
+    {
+        var registry = FullRegistry();
+        var rootObj = JsonNode.Parse(SchemaComposer.ComposeSchemaJson(registry))!.AsObject();
+        var allOf = rootObj["$defs"]!["step"]!.AsObject()["allOf"]!.AsArray();
+
+        var offenders = allOf
+            .Select(n => n!.AsObject())
+            .Where(clause => clause["then"] is JsonObject then && then.ContainsKey("additionalProperties"))
+            .Select(clause => clause["if"]!["properties"]!["type"]!["const"]!.GetValue<string>())
+            .ToList();
+
+        Assert.True(
+            offenders.Count == 0,
+            "These provider fragments still declare their own top-level 'additionalProperties', " +
+            "which reopens the step surface for those providers alone while every other test " +
+            $"stays green:{Environment.NewLine}  {string.Join($"{Environment.NewLine}  ", offenders)}");
+
+        // Guards the guard: if the composer ever stopped emitting clauses, the
+        // assertion above would pass vacuously over an empty collection.
+        Assert.Equal(registry.All.Count, allOf.Count);
+    }
+
+    /// <summary>
     /// The second half of finding 2: reintroducing just ONE provider
     /// fragment's own top-level additionalProperties: true (here,
     /// http.rest's) reopens the hole for THAT provider ALONE — its own

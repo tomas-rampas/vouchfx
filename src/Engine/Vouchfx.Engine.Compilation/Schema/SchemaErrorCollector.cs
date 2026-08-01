@@ -347,7 +347,14 @@ internal static class SchemaErrorCollector
             }
             else if (current.ValueKind == JsonValueKind.Array)
             {
-                if (!int.TryParse(segment, out var index) || index < 0 || index >= current.GetArrayLength())
+                // NumberStyles.None + InvariantCulture, matching TryGetStepScope: a JSON
+                // Pointer array index is a bare run of digits, so a leading sign, embedded
+                // whitespace or a culture-specific group separator is malformed, not a
+                // number to be helpfully coerced. Bare int.TryParse accepts all three and
+                // would silently resolve " 1", "+1" or "-1" to an element — different
+                // behaviour from the sibling helper walking the same pointers.
+                if (!int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out var index) ||
+                    index < 0 || index >= current.GetArrayLength())
                     return null;
 
                 current = current[index];
