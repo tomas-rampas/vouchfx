@@ -201,28 +201,47 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
-    /// MAJOR-2 (feat/close-remaining-surfaces, second-round gatekeeper
+    /// MAJOR-2 / m1 (feat/close-remaining-surfaces, TWO rounds of the same
     /// finding): <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
-    /// from a <c>oneOf</c> of typed alternatives (whose OWN join, <c>" \| "</c>
-    /// between whole backtick-wrapped tokens, was already correctly escaped)
-    /// onto a bare <c>"type": [...]</c> array, which
-    /// <c>ReadScalarOrArrayType</c> joined with a RAW, unescaped <c>"|"</c>.
-    /// GFM/python-markdown table-row splitting cuts a row on ANY pipe
-    /// character, even one sitting inside a code span, so
-    /// <c>`string|number`</c> rendered as 5 cells in a 4-column table and
-    /// silently dropped the description column on the live site — a golden
-    /// test blind to this, since the golden was simply regenerated to match
-    /// the bug. Pins the exact fix for the field that exposed it.
+    /// from a <c>oneOf</c> of typed alternatives (rendered as separate,
+    /// backtick-wrapped tokens joined OUTSIDE every span, e.g.
+    /// <c>`string` \| `number`</c>) onto a bare <c>"type": [...]</c> array,
+    /// which the generator originally joined as a RAW, unescaped pipe INSIDE
+    /// one shared span (<c>`string|number`</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Round 1 fixed that as an ESCAPED pipe still INSIDE the one shared span
+    /// (<c>`string\|number`</c>) — WRONG, per round 2's measurement: fed all
+    /// three forms through <c>markdown.markdown(...)</c> with this repo's
+    /// pinned <c>mkdocs-material==9.7.7</c> and its configured
+    /// <c>markdown_extensions</c> (MkDocs always adds the <c>tables</c>
+    /// builtin regardless of that list — confirmed from
+    /// <c>mkdocs.config.defaults</c>). Results: the ORIGINAL raw-pipe form
+    /// does NOT actually split the table row in Python-Markdown's own
+    /// <c>tables</c> extension (only GitHub's GFM renderer breaks on that
+    /// shape); round 1's escaped-INSIDE-span fix renders the LITERAL
+    /// BACKSLASH character visibly (code-span content is verbatim; escape
+    /// processing never reaches inside it) — the WORST of the three forms on
+    /// the deployed MkDocs Pages site. Round 1's "silently dropped the
+    /// description column on the live site" claim was therefore an
+    /// UNVERIFIED INFERENCE from the GFM-only defect, not a measurement of
+    /// the actual deployed renderer; corrected here. This test now pins the
+    /// OUTSIDE-span form, which measured clean on both renderers.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void GeneratedReference_TimeoutTypeCell_UsesAnEscapedPipeNotARawOne()
+    public void GeneratedReference_TimeoutTypeCell_UsesAnEscapedPipeOutsideTheCodeSpans()
     {
         var generated = GenerateReference();
         var timeoutLine = Array.Find(generated.Split('\n'), l => l.StartsWith("| `timeout` |", StringComparison.Ordinal));
 
         Assert.NotNull(timeoutLine);
-        Assert.Contains("`string\\|number`", timeoutLine, StringComparison.Ordinal);
+        // timeout's schema is "type": ["string", "number"] (root-language-schema.json).
+        Assert.Contains("`string` \\| `number`", timeoutLine, StringComparison.Ordinal);
         Assert.DoesNotContain("`string|number`", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\|number", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("string\\|", timeoutLine, StringComparison.Ordinal);
 
         // Structural confirmation: the row splits into exactly 4 columns.
         Assert.Equal(4, CountUnescapedPipeDelimitedColumns(timeoutLine!));

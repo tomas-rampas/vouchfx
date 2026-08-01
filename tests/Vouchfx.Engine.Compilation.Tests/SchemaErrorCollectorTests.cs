@@ -67,6 +67,25 @@ public sealed class SchemaErrorCollectorTests
         return schema.Evaluate(doc.RootElement.Clone(), s_listOptions);
     }
 
+    /// <summary>
+    /// Parses the same schema text <see cref="Evaluate"/> compiled, as the
+    /// <c>JsonElement</c> form <see cref="SchemaErrorCollector.CollectErrors"/>'s
+    /// <c>schema</c> parameter expects — required by any test that exercises
+    /// <see cref="SchemaErrorCollector.FormatTooManyOneOfMatchesError"/>'s
+    /// name resolution (<c>TryReadRequiredFieldNames</c> reads a matching
+    /// branch's own <c>required</c> member from THIS tree, via the failing
+    /// node's <c>SchemaLocation</c> pointer) since that resolution is a no-op
+    /// whenever <c>schema</c> is <see langword="null"/> — exactly how
+    /// production actually calls it (<c>SchemaComposer</c>/
+    /// <c>YamlSchemaValidator</c> both thread the composed schema through).
+    /// Cloned for the same use-after-dispose reason as <see cref="Evaluate"/>.
+    /// </summary>
+    private static JsonElement ParseSchemaElement(string schemaJson)
+    {
+        using var doc = JsonDocument.Parse(schemaJson);
+        return doc.RootElement.Clone();
+    }
+
     private const string ThreeBranchOneOfSchema = """
         {
           "type": "object",
@@ -101,6 +120,32 @@ public sealed class SchemaErrorCollectorTests
         // fallback CollectErrors emits when every real error was suppressed.
         Assert.DoesNotContain(errors, e =>
             e.Message.Contains("no detailed error messages", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Nit n1: when the synthesised <c>[oneOf]</c> "too many matches" error
+    /// coexists with an unrelated GENUINE error (here, branch 'c's own
+    /// missing-required failure — same fixture as
+    /// <see cref="ThreeBranchOneOf_TwoBranchesMatch_ThirdBranchErrorSurvives"/>,
+    /// this time with the schema threaded through so the named synthesis
+    /// fires), the synthesised message — naming the actual defect directly —
+    /// must be FIRST, not merely present somewhere in the list. Pins
+    /// <c>CollectErrors</c>' <c>InsertRange(0, …)</c> against a regression
+    /// back to appending.
+    /// </summary>
+    [Fact]
+    public void ThreeBranchOneOf_TwoBranchesMatchWithSurvivingThirdError_SynthesisedMessageIsFirst()
+    {
+        using var schemaDoc = JsonDocument.Parse(ThreeBranchOneOfSchema);
+        var results = Evaluate(ThreeBranchOneOfSchema, """{"a": "x", "b": "y"}""");
+
+        Assert.False(results.IsValid, "Two matching branches violate oneOf's 'exactly one' rule.");
+
+        var errors = SchemaErrorCollector.CollectErrors(results, schema: schemaDoc.RootElement.Clone());
+
+        Assert.Equal(2, errors.Count);
+        Assert.Contains("[oneOf]", errors[0].Message, StringComparison.Ordinal);
+        Assert.Contains("\"c\"", errors[1].Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -389,13 +434,23 @@ public sealed class SchemaErrorCollectorTests
     /// messages for the two canonical, correctly-spelled fields. This
     /// synthesises the genuine defect directly ("[oneOf] Exactly one of
     /// 'code', 'file' may be set — both are present."), reading the
-    /// branches' own 'required' members from the schema so the message
-    /// generalises to any provider's alternative-field oneOf, not merely
-    /// script.csharp. Also proves the interplay with the EXISTING
-    /// unevaluatedProperties cascade suppression: once this genuine error is
-    /// present, the two misleading "unknown property" entries must be
-    /// dropped automatically, not merely coexist alongside the real one.
+    /// branches' own 'required' members from the schema. Also proves the
+    /// interplay with the EXISTING unevaluatedProperties cascade
+    /// suppression: once this genuine error is present, the two misleading
+    /// "unknown property" entries must be dropped automatically, not merely
+    /// coexist alongside the real one.
     /// </summary>
+    /// <remarks>
+    /// script.csharp's oneOf happens to be the shape M1's guard was written
+    /// to keep working: two branches, each a single-field <c>required</c>,
+    /// so <c>ValidBranchFieldNames.Count == ValidBranchCount</c> holds and
+    /// the named message fires. It does NOT generalise to every provider's
+    /// oneOf unconditionally — see TypeShapedOneOf_*,
+    /// MixedRequiredAndTypeOnlyOneOf_*, and MultiRequiredPairOneOf_* below
+    /// for the shapes where naming individual fields would be wrong, and
+    /// SchemaErrorCollector's own "Third-round gatekeeper findings" remarks
+    /// for why.
+    /// </remarks>
     [Fact]
     public void ScriptCsharp_BothCodeAndFile_SynthesisesGenuineOneOfError_AndSuppressesMisleadingUnknownPropertyNoise()
     {
@@ -423,6 +478,130 @@ public sealed class SchemaErrorCollectorTests
         // correctly spelled and genuinely declared by the fragment) must
         // never appear alongside — or instead of — the genuine defect.
         Assert.DoesNotContain(result.Errors, e => e.Message.Contains("Unknown property", StringComparison.Ordinal));
+    }
+
+    // ── Composite-branch noise: the too-many-matches NAMING guard (M1) ──────────
+    //
+    // Third-round gatekeeper finding: the MINOR-8 synthesis above assumed
+    // every matching oneOf branch contributes exactly one name to
+    // ValidBranchFieldNames — true for script.csharp's code/file (each a
+    // single-field 'required') but not in general. These three Facts
+    // reproduce the reviewer's three measured failure shapes directly
+    // against SchemaErrorCollector.CollectErrors, mirroring the
+    // ThreeBranchOneOf_* trio's no-wrapper-needed pattern above (a oneOf's
+    // own "too many matches" failure makes the whole schema invalid on its
+    // own, so there is no need to nest it under an unrelated always-missing
+    // required field just to reach CollectErrors the way production does).
+
+    private const string TypeShapedOneOfSchema = """
+        {
+          "type": "string",
+          "oneOf": [
+            { "minLength": 1 },
+            { "maxLength": 100 }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// Neither branch declares a 'required' member — both are bare scalar
+    /// constraints on the string itself — so a value satisfying both (any
+    /// short, non-empty string) leaves ValidBranchFieldNames null: zero
+    /// names for two matches. Pre-fix, the unconditional
+    /// <c>fieldNames is { Count: &gt; 0 }</c> check was simply never true, so
+    /// the synthesis silently produced NOTHING — reproducing the exact
+    /// CRITICAL-1 symptom (a genuine "too many matches" failure with no
+    /// message at all, falling through to the synthetic "no detailed error
+    /// messages" root fallback) for a shape CRITICAL-1's own fix never
+    /// covered.
+    /// </summary>
+    [Fact]
+    public void TypeShapedOneOf_TwoBranchesMatch_FallsBackToHonestCountMessage_NeverSilent()
+    {
+        var results = Evaluate(TypeShapedOneOfSchema, "\"hi\"");
+
+        Assert.False(results.IsValid, "\"hi\" satisfies both minLength:1 and maxLength:100 — oneOf's 'exactly one' rule is violated.");
+
+        var errors = SchemaErrorCollector.CollectErrors(results, schema: ParseSchemaElement(TypeShapedOneOfSchema));
+
+        Assert.Contains(errors, e => e.Message.Contains("[oneOf]", StringComparison.Ordinal));
+        Assert.DoesNotContain(errors, e =>
+            e.Message.Contains("no detailed error messages", StringComparison.Ordinal));
+    }
+
+    private const string MixedRequiredAndTypeOnlyOneOfSchema = """
+        {
+          "type": "object",
+          "oneOf": [
+            { "required": ["a"] },
+            { "type": "object" },
+            { "required": ["zzz"] }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// Branch 0 ('a' required) and branch 1 (bare 'type: object', no
+    /// 'required' at all) both match {"a": "x"} — two matches, but only ONE
+    /// of them contributes a name ('a'). Pre-fix, the unconditional call
+    /// treated that partial, coincidental single-name list as if it were
+    /// complete, fabricating "[oneOf] Exactly one of 'a' may be set — 1 are
+    /// present." — wrong on two counts: 'a' is not what makes branch 1
+    /// match (branch 1 doesn't mention it at all), and "1 are present" is
+    /// ungrammatical on top of being misleading. Branch 2 ('zzz' required,
+    /// absent) is the group's genuinely losing branch (the group is NOT
+    /// satisfied — two matches, oneOf needs exactly one) and must still
+    /// survive untouched.
+    /// </summary>
+    [Fact]
+    public void MixedRequiredAndTypeOnlyOneOf_TwoBranchesMatch_DoesNotFabricateASingleFieldName()
+    {
+        var results = Evaluate(MixedRequiredAndTypeOnlyOneOfSchema, """{"a": "x"}""");
+
+        Assert.False(results.IsValid, "Branch 0 ('a') and branch 1 (bare type:object) both match — oneOf's 'exactly one' rule is violated.");
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(MixedRequiredAndTypeOnlyOneOfSchema));
+
+        Assert.DoesNotContain(errors, e =>
+            e.Message.Contains("Exactly one of 'a' may be set", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Message.Contains("\"zzz\"", StringComparison.Ordinal));
+    }
+
+    private const string MultiRequiredPairOneOfSchema = """
+        {
+          "type": "object",
+          "oneOf": [
+            { "required": ["a", "b"] },
+            { "required": ["c", "d"] }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// Each branch requires a PAIR, not a single discriminator field. When
+    /// all four fields are present, both pairs match — two matches — but
+    /// each branch contributes TWO names, so the flat list ('a','b','c','d')
+    /// coincidentally still has as many entries as there are matches only
+    /// by chance of arithmetic (2 branches x 2 names = 4 = 2 x 2), while the
+    /// actual correspondence (each branch names TWO fields, not one) is
+    /// broken. Pre-fix, this produced "[oneOf] Exactly one of 'a', 'b', 'c',
+    /// 'd' may be set — 4 are present." — advice to remove individual
+    /// fields, when the real choice is between the two PAIRS as a whole.
+    /// </summary>
+    [Fact]
+    public void MultiRequiredPairOneOf_BothPairsPresent_DoesNotAdviseRemovingIndividualFields()
+    {
+        var results = Evaluate(MultiRequiredPairOneOfSchema, """{"a": 1, "b": 2, "c": 3, "d": 4}""");
+
+        Assert.False(results.IsValid, "Both two-field pairs are present, violating oneOf's 'exactly one' rule.");
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(MultiRequiredPairOneOfSchema));
+
+        Assert.DoesNotContain(errors, e =>
+            e.Message.Contains("Exactly one of 'a', 'b', 'c', 'd' may be set", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Message.Contains("[oneOf]", StringComparison.Ordinal));
     }
 
     // ── [enum] enrichment through a PROVIDER fragment (Part C) ──────────────────
@@ -737,5 +916,74 @@ public sealed class SchemaErrorCollectorTests
         /// <see cref="IStepBinder{TModel}"/> contract.
         /// </remarks>
         public NestedConditionalTestModel Bind(YamlNode node, IBindingContext ctx) => new();
+    }
+
+    // ── captureEntry pair-message parity with the service standard (m6) ────────
+    //
+    // Third-round gatekeeper finding: capture's 'both set' and 'empty
+    // mapping' rejections read as generic, un-actionable "[properties]
+    // Property 'xpath' is not valid here" / raw library minProperties text
+    // — unlike $defs/service's own image/project mutual exclusion, which
+    // names both fields and the rule. FormatForbiddenPropertyError and a
+    // new FormatMinPropertiesError now bring captureEntry up to the same
+    // standard, reading the sibling field name(s) from the LIVE schema
+    // (TryReadSiblingPropertyNames) rather than hardcoding 'jsonpath'/'xpath'.
+
+    /// <summary>
+    /// Both 'jsonpath' and 'xpath' set — the message now names the rule
+    /// (mutual exclusion) and BOTH fields, not merely the one JsonSchema.Net
+    /// happened to evaluate against the per-field 'false' subschema.
+    /// </summary>
+    [Fact]
+    public void Capture_BothJsonPathAndXPath_MessageNamesBothFieldsAndTheRule()
+    {
+        const string yaml = """
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  ambiguous: { jsonpath: "$.id", xpath: "//id" }
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "A capture entry declaring both 'jsonpath' and 'xpath' must be rejected — the format is ambiguous.");
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/capture/ambiguous/xpath", onlyError.InstanceLocation);
+        Assert.Contains("[properties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'xpath'", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'jsonpath'", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("cannot be combined with", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'ambiguous'", onlyError.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("is not valid here", onlyError.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Neither 'jsonpath' nor 'xpath' set — the message now names both
+    /// accepted choices, not merely the raw library minProperties count
+    /// text.
+    /// </summary>
+    [Fact]
+    public void Capture_EmptyMapping_MessageNamesBothChoices()
+    {
+        const string yaml = """
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  neither: {}
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "A capture entry declaring neither 'jsonpath' nor 'xpath' must be rejected.");
+        var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/neither");
+        Assert.Contains("[minProperties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'jsonpath'", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'xpath'", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'neither'", onlyError.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("at least 1 properties", onlyError.Message, StringComparison.Ordinal);
     }
 }

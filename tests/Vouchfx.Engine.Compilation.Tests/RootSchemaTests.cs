@@ -4,9 +4,36 @@
 // validates the four top-level sections of a `.e2e.yaml` file, and that
 // <see cref="YamlSchemaValidator"/> surfaces useful, located error messages.
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Sdk;
+using Vouchfx.Steps.CacheAssert.Elasticsearch;
+using Vouchfx.Steps.CacheAssert.Redis;
+using Vouchfx.Steps.DbAssert.Dynamodb;
+using Vouchfx.Steps.DbAssert.Mongodb;
+using Vouchfx.Steps.DbAssert.Mysql;
+using Vouchfx.Steps.DbAssert.Postgres;
+using Vouchfx.Steps.DbAssert.SqlServer;
+using Vouchfx.Steps.Http.Soap;
+using Vouchfx.Steps.HttpRest;
+using Vouchfx.Steps.MailExpect.Smtp;
+using Vouchfx.Steps.MetricsAssert.Prometheus;
+using Vouchfx.Steps.MqExpect.AzureServiceBus;
+using Vouchfx.Steps.MqExpect.Kafka;
+using Vouchfx.Steps.MqExpect.Nats;
+using Vouchfx.Steps.MqExpect.Rabbitmq;
+using Vouchfx.Steps.MqExpect.Redis;
+using Vouchfx.Steps.MqPublish.AzureServiceBus;
+using Vouchfx.Steps.MqPublish.Kafka;
+using Vouchfx.Steps.MqPublish.Nats;
+using Vouchfx.Steps.MqPublish.Rabbitmq;
+using Vouchfx.Steps.MqPublish.Redis;
+using Vouchfx.Steps.Script.Csharp;
+using Vouchfx.Steps.StorageAssert.S3;
+using Vouchfx.Steps.TraceExpect.Otlp;
+using Vouchfx.Steps.WebhookListen.Http;
 using Xunit;
 
 namespace Vouchfx.Engine.Compilation.Tests;
@@ -85,6 +112,17 @@ public sealed class RootSchemaTests
     /// Any value other than the literal 'v1' is rejected — the field is now a
     /// real rejection hook for a future v2 language schema, not decoration.
     /// </summary>
+    /// <remarks>
+    /// m4 (third-round gatekeeper finding): before SchemaErrorCollector grew
+    /// an <c>IsConstShape</c>/<c>FormatConstError</c> branch, this surfaced
+    /// raw JsonSchema.Net library text with literal escape sequences —
+    /// <c>[const] Expected ""v1""</c> — the only new user-facing keyword this
+    /// branch's error-message work had left un-enriched. The message now
+    /// names what was written and what to write instead, read from the LIVE
+    /// schema's own <c>const</c> value (never hardcoded), exactly as
+    /// <c>[enum]</c> already does for dependency <c>type</c>/<c>imagePullPolicy</c>/
+    /// <c>verifyMode</c>.
+    /// </remarks>
     [Fact]
     public void Validate_MetadataSchemaVersionV2_IsRejected()
     {
@@ -100,9 +138,13 @@ public sealed class RootSchemaTests
 
         Assert.False(result.IsValid,
             "A schemaVersion other than 'v1' must be rejected by the const constraint.");
-        Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/metadata/schemaVersion" &&
-            e.Message.Contains("[const]", System.StringComparison.Ordinal));
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/metadata/schemaVersion", onlyError.InstanceLocation);
+        Assert.Contains("[const]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("'v2'", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("'v1'", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("omit", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Expected", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     // -------------------------------------------------------------------------
@@ -587,14 +629,31 @@ public sealed class RootSchemaTests
     /// <c>$comment</c> (validation-inert, never read by the generator — see
     /// $defs/step's own 'capture' node for the established pattern), never in
     /// <c>description</c>. Scans every 'description' string anywhere in the
-    /// root schema — not merely the sites this branch happened to introduce —
-    /// for a branch/PR/issue-shaped token, so a future edit cannot
-    /// reintroduce the same leak elsewhere undetected.
+    /// FULL COMPOSED schema — root language schema AND every registered
+    /// provider's own spliced fragment, not merely the root — for a
+    /// branch/PR/issue-shaped token, so a future edit cannot reintroduce the
+    /// same leak elsewhere undetected.
     /// </summary>
+    /// <remarks>
+    /// m2 (third-round gatekeeper finding): the original version of this
+    /// guard read ONLY <c>SchemaResources.ReadRootLanguageSchemaJson()</c> —
+    /// the static root schema — which covers 45 of the 217 descriptions the
+    /// composed schema actually ships. A provider fragment (a PUBLIC
+    /// extension point — Core today, Community or a customer's own tomorrow)
+    /// could leak an internal identifier into its own <c>description</c> and
+    /// this gate would never see it. Reading
+    /// <see cref="SchemaComposer.ComposeSchemaJson"/> instead — the same
+    /// composed-schema construction <c>LanguageReferenceGoldenTests</c> and
+    /// <c>SchemaFreezeTests</c> already anchor their own golden files to —
+    /// brings every provider fragment inside the gate. Widens coverage only:
+    /// re-run against the full 25-Core-provider composed schema found zero
+    /// offenders beyond the root-schema sites already fixed for MAJOR-3.
+    /// </remarks>
     [Fact]
     public void NoDescriptionAnywhereInTheSchema_ContainsAnInternalIdentifier()
     {
-        var schemaJson = SchemaResources.ReadRootLanguageSchemaJson();
+        var registry = StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
+        var schemaJson = SchemaComposer.ComposeSchemaJson(registry);
         using var doc = JsonDocument.Parse(schemaJson);
 
         // Matches e.g. 'feat/close-remaining-surfaces', 'fix/dependency-image-override',
@@ -612,6 +671,43 @@ public sealed class RootSchemaTests
             + $"branch/task identifier — move the rationale into a sibling '$comment' instead:{System.Environment.NewLine}"
             + string.Join(System.Environment.NewLine, offenders));
     }
+
+    /// <summary>
+    /// The Core provider assemblies that compose the v1 schema, anchored by
+    /// one concrete provider type per assembly (mirrors
+    /// <c>SchemaFreezeTests.CoreProviderAssemblies</c> and
+    /// <c>LanguageReferenceGoldenTests.CoreProviderAssemblies</c>). Listing
+    /// them by anchor type makes a renamed/removed provider a compile error
+    /// here too, rather than a silently-narrower scan.
+    /// </summary>
+    private static Assembly[] CoreProviderAssemblies() => new[]
+    {
+        typeof(HttpRestProvider).Assembly,            // http.rest
+        typeof(DbAssertPostgresProvider).Assembly,    // db-assert.postgres
+        typeof(DbAssertSqlServerProvider).Assembly,   // db-assert.sqlserver
+        typeof(DbAssertMongodbProvider).Assembly,     // db-assert.mongodb
+        typeof(DbAssertMysqlProvider).Assembly,       // db-assert.mysql
+        typeof(ScriptCsharpProvider).Assembly,        // script.csharp
+        typeof(MqPublishKafkaProvider).Assembly,      // mq-publish.kafka
+        typeof(MqExpectKafkaProvider).Assembly,       // mq-expect.kafka
+        typeof(WebhookListenHttpProvider).Assembly,   // webhook-listen.http
+        typeof(MailExpectSmtpProvider).Assembly,      // mail-expect.smtp
+        typeof(CacheAssertRedisProvider).Assembly,    // cache-assert.redis
+        typeof(MqPublishRabbitmqProvider).Assembly,   // mq-publish.rabbitmq
+        typeof(MqExpectRabbitmqProvider).Assembly,    // mq-expect.rabbitmq
+        typeof(MqPublishNatsProvider).Assembly,       // mq-publish.nats
+        typeof(MqExpectNatsProvider).Assembly,        // mq-expect.nats
+        typeof(CacheAssertElasticsearchProvider).Assembly, // cache-assert.elasticsearch
+        typeof(MqPublishAzureServiceBusProvider).Assembly, // mq-publish.azureservicebus
+        typeof(MqExpectAzureServiceBusProvider).Assembly,  // mq-expect.azureservicebus
+        typeof(MqPublishRedisProvider).Assembly,      // mq-publish.redis
+        typeof(MqExpectRedisProvider).Assembly,        // mq-expect.redis
+        typeof(MetricsAssertPrometheusProvider).Assembly,  // metrics-assert.prometheus
+        typeof(DbAssertDynamodbProvider).Assembly,    // db-assert.dynamodb
+        typeof(StorageAssertS3Provider).Assembly,     // storage-assert.s3
+        typeof(TraceExpectOtlpProvider).Assembly,     // trace-expect.otlp
+        typeof(HttpSoapProvider).Assembly,             // http.soap
+    };
 
     private static void FindDescriptionOffenders(
         JsonElement element, string path, Regex identifierPattern, List<string> offenders)

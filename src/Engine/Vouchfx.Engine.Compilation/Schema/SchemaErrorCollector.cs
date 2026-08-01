@@ -117,6 +117,38 @@
 //   UNSATISFIED composite (the count rule says "not satisfied") survives —
 //   see SchemaErrorCollectorTests' NestedAnyOf_* pair.
 //
+// Third-round gatekeeper findings (same branch, second follow-up — M1):
+//
+//   M1 — the too-many-matches synthesis above (MINOR-8) assumed every
+//   matching oneOf branch contributes exactly one name to
+//   ValidBranchFieldNames — true only for the two real composites that
+//   motivated it (script.csharp's code/file, each a single-field
+//   `required`). A matching branch with no `required` member at all (a
+//   bare `type`/scalar constraint) contributes NO name, so whenever such a
+//   branch is one of the matches the whole synthesis went dark — the exact
+//   CRITICAL-1 symptom (a genuine "too many matches" failure with no
+//   message at all), reproduced by TypeShapedOneOf_*. A branch whose
+//   `required` lists MORE than one name (a paired requirement, e.g.
+//   `required: ["a","b"]`) contributes several names for ONE match,
+//   equally breaking the implicit one-name-per-branch correspondence the
+//   old, unconditional call assumed — producing either a false single-name
+//   accusation when a type-only sibling's silence coincidentally leaves
+//   exactly one name behind (MixedRequiredAndTypeOnlyOneOf_*) or advice to
+//   remove individual fields from what is actually a two-branch,
+//   paired-field choice (MultiRequiredPairOneOf_*). Fixed by gating the
+//   named synthesis on `ValidBranchFieldNames.Count == ValidBranchCount` —
+//   true if and only if every matching branch contributed exactly one name
+//   — and falling back to an honest, field-name-free count message
+//   (FormatUnnamedTooManyOneOfMatchesError) otherwise. This guard is
+//   unconditional for every oneOf in the language, Core or Community:
+//   oneOf/anyOf are public extension points a provider fragment can shape
+//   however it needs, so the generic path must be correct on its own
+//   rather than merely correct for the SDK surfaces reviewed so far — the
+//   same reasoning CRITICAL-1's own count fix already rests on. See
+//   SchemaErrorCollectorTests' TypeShapedOneOf_*,
+//   MixedRequiredAndTypeOnlyOneOf_*, and MultiRequiredPairOneOf_* for the
+//   three measured failure modes this closes.
+//
 // [enum] enrichment (same change): a wrong-case or misspelled enum value
 // (dependency `type`, `imagePullPolicy`, `verifyMode`, cache-assert.redis's
 // `operation`) used to surface only the generic, un-actionable "[enum] Value
@@ -217,7 +249,10 @@ internal static class SchemaErrorCollector
         // count fix correctly leaves the group unsatisfied, so without this
         // the ONLY symptom would be every matched branch's own fields wrongly
         // reported as "unknown" by the unevaluatedProperties cascade below.
-        // Added to 'collected' BEFORE both suppression passes run so this
+        // Inserted at the FRONT of 'collected' (nit n1 — this names the
+        // actual defect directly and should be the first thing an author
+        // reads, not buried after whatever the recursive walk happened to
+        // visit first) but still BEFORE both suppression passes run so this
         // genuine "other error" correctly participates in — and is itself
         // correctly exempt from — both: SuppressSatisfiedCompositeBranchNoise
         // never touches it (its EvaluationPath is the GROUP's own prefix,
@@ -227,16 +262,35 @@ internal static class SchemaErrorCollector
         // anyway), while SuppressUnevaluatedPropertiesCascade correctly DOES
         // drop the two misleading unevaluatedProperties entries once this
         // genuine error registers the step as having "another error".
+        //
+        // M1 guard: only NAME the matched branches' fields when every
+        // matching branch contributed exactly one name each
+        // (ValidBranchFieldNames.Count == ValidBranchCount) — see the class
+        // remarks' "Third-round gatekeeper findings" for the three shapes
+        // that break the naive 1:1 assumption. Any other shape falls back to
+        // FormatUnnamedTooManyOneOfMatchesError's honest count-only message:
+        // never silent, never a fabricated field name.
+        List<CollectedError>? synthesisedOneOfErrors = null;
         foreach (var state in groupStates.Values)
         {
-            if (state.HasTooManyOneOfMatches && state.ValidBranchFieldNames is { Count: > 0 } fieldNames)
+            if (!state.HasTooManyOneOfMatches)
             {
-                collected.Add(new CollectedError(
-                    state.InstanceLocation,
-                    state.Prefix,
-                    FormatTooManyOneOfMatchesError(fieldNames),
-                    IsUnevaluatedProperties: false));
+                continue;
             }
+
+            var fieldNames = state.ValidBranchFieldNames;
+            var message = fieldNames is { Count: > 0 } && fieldNames.Count == state.ValidBranchCount
+                ? FormatTooManyOneOfMatchesError(fieldNames)
+                : FormatUnnamedTooManyOneOfMatchesError(state.ValidBranchCount);
+
+            synthesisedOneOfErrors ??= new List<CollectedError>();
+            synthesisedOneOfErrors.Add(new CollectedError(
+                state.InstanceLocation, state.Prefix, message, IsUnevaluatedProperties: false));
+        }
+
+        if (synthesisedOneOfErrors is not null)
+        {
+            collected.InsertRange(0, synthesisedOneOfErrors);
         }
 
         // Composite-branch suppression MUST run before the cascade below: a
@@ -311,7 +365,12 @@ internal static class SchemaErrorCollector
         /// valid oneOf branch is seen; used only when
         /// <see cref="ValidBranchCount"/> ends up >= 2 (JsonSchema.Net
         /// attaches no message of its own to that "too many matches" case —
-        /// see the class remarks — so this is the only source for one).
+        /// see the class remarks — so this is the only source for one). Not,
+        /// by itself, a safe 1:1 map of names to matching branches — a
+        /// branch can contribute zero names (no <c>required</c> member) or
+        /// several (a paired <c>required</c>) — so a caller must additionally
+        /// check <c>Count == ValidBranchCount</c> before trusting it as one
+        /// (M1; see <see cref="FormatTooManyOneOfMatchesError"/>'s remarks).
         /// </summary>
         public List<string>? ValidBranchFieldNames { get; set; }
 
@@ -656,9 +715,10 @@ internal static class SchemaErrorCollector
     /// <c>unevaluatedProperties</c>, <c>additionalProperties</c>, and a
     /// per-field <c>properties/&lt;name&gt;: false</c>), enriching an
     /// <c>enum</c> violation with the offending value and the live accepted
-    /// list (see <see cref="FormatEnumError"/>), and falling back to the
-    /// original <c>[{keyword}] {message}</c> format for every other,
-    /// genuinely-named keyword.
+    /// list (see <see cref="FormatEnumError"/>), enriching a <c>const</c>
+    /// violation similarly (m4 — see <see cref="FormatConstError"/>), and
+    /// falling back to the original <c>[{keyword}] {message}</c> format for
+    /// every other, genuinely-named keyword.
     /// </summary>
     private static string FormatError(
         string keyword, string message, string evaluationPath, string instanceLocation,
@@ -676,12 +736,22 @@ internal static class SchemaErrorCollector
 
         if (IsForbiddenPropertyShape(keyword, evaluationPath))
         {
-            return FormatForbiddenPropertyError(instanceLocation, instance);
+            return FormatForbiddenPropertyError(instanceLocation, instance, schema, schemaLocation);
         }
 
         if (keyword == "enum")
         {
             return FormatEnumError(instanceLocation, instance, schema, schemaLocation);
+        }
+
+        if (keyword == "const")
+        {
+            return FormatConstError(instanceLocation, instance, schema, schemaLocation);
+        }
+
+        if (keyword == "minProperties")
+        {
+            return FormatMinPropertiesError(message, instanceLocation, schema, schemaLocation);
         }
 
         if (IsPropertyNamesPatternShape(keyword, evaluationPath))
@@ -862,37 +932,64 @@ internal static class SchemaErrorCollector
     /// the instance.
     /// </para>
     /// <para>
+    /// On a <c>captureEntry</c> container (m6 — see
+    /// <see cref="TryResolveCaptureEntryContainer"/>), names BOTH keys:
+    /// the offending one and the one already present that makes it
+    /// forbidden, the latter read from the LIVE schema's own sibling
+    /// <c>properties</c> (see <see cref="TryReadSiblingPropertyNames"/>) —
+    /// unlike the service case above, never hardcoded to 'jsonpath'/'xpath'
+    /// specifically, so this stays correct if a provider-independent
+    /// extractor format is ever added to captureEntry.
+    /// </para>
+    /// <para>
     /// Any future <c>properties/&lt;name&gt;: false</c> declaration outside
-    /// both known containers (or a service-level exclusion other than
+    /// all three known containers (or a service-level exclusion other than
     /// 'project') degrades to naming the property alone — never fabricating
     /// a rule this method was not told about.
     /// </para>
     /// </remarks>
-    private static string FormatForbiddenPropertyError(string instanceLocation, JsonElement? instance)
+    private static string FormatForbiddenPropertyError(
+        string instanceLocation, JsonElement? instance, JsonElement? schema, Uri schemaLocation)
     {
         var propertyName = LastPointerSegment(instanceLocation);
 
-        if (!TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName))
+        if (TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName))
         {
-            return $"[properties] Property '{propertyName}' is not valid here";
+            if (containerKind == DependencyContainerKind)
+            {
+                var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
+
+                return dependencyKind is null
+                    ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
+                    : $"[properties] Property '{propertyName}' is not valid on a '{dependencyKind}' dependency";
+            }
+
+            if (containerKind == ServiceContainerKind && propertyName == "project")
+            {
+                return $"[properties] Property 'project' cannot be combined with 'image' on service " +
+                       $"'{containerName}' — exactly one of the two is required (DSL §3.2)";
+            }
+
+            return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";
         }
 
-        if (containerKind == DependencyContainerKind)
+        if (TryResolveCaptureEntryContainer(instanceLocation, out var variableName))
         {
-            var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
+            var siblingNames = schema is { } schemaRoot
+                ? TryReadSiblingPropertyNames(schemaRoot, schemaLocation, excludePropertyName: propertyName)
+                : null;
 
-            return dependencyKind is null
-                ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
-                : $"[properties] Property '{propertyName}' is not valid on a '{dependencyKind}' dependency";
+            if (siblingNames is { Count: > 0 })
+            {
+                var otherNames = string.Join(", ", siblingNames.Select(n => $"'{n}'"));
+                return $"[properties] Property '{propertyName}' cannot be combined with {otherNames} on " +
+                       $"capture entry '{variableName}' — exactly one of the two is required (DSL §6.1)";
+            }
+
+            return $"[properties] Property '{propertyName}' is not valid on capture entry '{variableName}'";
         }
 
-        if (containerKind == ServiceContainerKind && propertyName == "project")
-        {
-            return $"[properties] Property 'project' cannot be combined with 'image' on service " +
-                   $"'{containerName}' — exactly one of the two is required (DSL §3.2)";
-        }
-
-        return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";
+        return $"[properties] Property '{propertyName}' is not valid here";
     }
 
     /// <summary>
@@ -917,10 +1014,19 @@ internal static class SchemaErrorCollector
     /// <c>file</c> both set. Named generically from
     /// <paramref name="matchedFieldNames"/> (each matching branch's own
     /// <c>required</c> member, read from the live schema — see
-    /// <see cref="TryReadRequiredFieldNames"/>), so this reads correctly for
-    /// ANY provider's alternative-field <c>oneOf</c>, not merely
-    /// script.csharp specifically.
+    /// <see cref="TryReadRequiredFieldNames"/>).
     /// </summary>
+    /// <remarks>
+    /// Callers MUST only reach this when <paramref name="matchedFieldNames"/>
+    /// holds exactly one name per matching branch (M1 —
+    /// <c>ValidBranchFieldNames.Count == ValidBranchCount</c>, checked once in
+    /// <see cref="CollectErrors"/>, not re-verified here). A branch with no
+    /// <c>required</c> member, or one whose <c>required</c> lists more than
+    /// one name, breaks that correspondence and must instead use
+    /// <see cref="FormatUnnamedTooManyOneOfMatchesError"/> — see the class
+    /// remarks' "Third-round gatekeeper findings" for the three measured
+    /// shapes this guard exists to catch.
+    /// </remarks>
     private static string FormatTooManyOneOfMatchesError(List<string> matchedFieldNames)
     {
         var quotedNames = string.Join(", ", matchedFieldNames.Select(n => $"'{n}'"));
@@ -930,6 +1036,19 @@ internal static class SchemaErrorCollector
             : $"[oneOf] Exactly one of {quotedNames} may be set — " +
               $"{matchedFieldNames.Count.ToString(CultureInfo.InvariantCulture)} are present.";
     }
+
+    /// <summary>
+    /// Builds the honest fallback for a <c>oneOf</c> "too many matches"
+    /// failure (M1) when the matching branches' own <c>required</c> names
+    /// cannot be safely attributed one-for-one to the branches that matched
+    /// (see <see cref="FormatTooManyOneOfMatchesError"/>'s remarks for the
+    /// guard). Names no field and fabricates nothing beyond the count of
+    /// alternative forms that matched — true regardless of how any
+    /// individual branch is shaped, so this is always safe to emit.
+    /// </summary>
+    private static string FormatUnnamedTooManyOneOfMatchesError(int matchedBranchCount) =>
+        $"[oneOf] {matchedBranchCount.ToString(CultureInfo.InvariantCulture)} of the alternative " +
+        "forms declared here are satisfied — exactly one may be.";
 
     /// <summary>
     /// The maximum number of accepted values <see cref="FormatEnumError"/>
@@ -1059,6 +1178,111 @@ internal static class SchemaErrorCollector
     }
 
     /// <summary>
+    /// Builds the actionable message for a <c>const</c> rejection (m4) —
+    /// e.g. <c>metadata.schemaVersion: v2</c>, previously surfacing raw
+    /// JsonSchema.Net library text with literal Unicode escape sequences
+    /// around the expected value rather than an actual quote mark: measured
+    /// verbatim (see <c>RootSchemaTests.Validate_MetadataSchemaVersionV2_IsRejected</c>)
+    /// as the six characters backslash-u-0-0-2-2 on each side of 'v1'.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The composed schema has exactly ONE user-facing <c>const</c> —
+    /// <c>metadata.schemaVersion</c> — named directly below, mirroring
+    /// <see cref="FormatForbiddenPropertyError"/>'s own fixed-rule-vs-generic-
+    /// fallback split (see that method's remarks for the same reasoning
+    /// applied to <c>image</c>/<c>project</c>): offering "omit the field" as
+    /// an alternative is safe ONLY because this schema's own definition
+    /// marks <c>schemaVersion</c> optional, a fact this method is told about
+    /// by name rather than inferred from the schema. Every OTHER
+    /// <c>const</c> in the composed schema belongs to a dependency-kind
+    /// discriminator clause ($defs/dependency's <c>allOf</c>/<c>if</c>/<c>then</c>
+    /// chain), which <see cref="IsIfDiscriminatorNoise"/> already filters out
+    /// before this method is ever reached (see the class remarks) — so no
+    /// other <c>const</c> currently reaches here at all. A future provider-
+    /// authored <c>const</c> falls through to the generic branch below
+    /// rather than borrowing <c>schemaVersion</c>'s specific,
+    /// optionality-dependent advice.
+    /// </para>
+    /// <para>
+    /// The expected value is still read from the LIVE composed schema via
+    /// <paramref name="schemaLocation"/> (see <see cref="TryReadConstValue"/>),
+    /// never hardcoded to <c>"v1"</c>, so this stays correct the day the
+    /// engine recognises a 'v2'. Degrades to a generic (but still
+    /// <c>[const]</c>-tagged) message when either the offending or the
+    /// expected value cannot be resolved — never a guess.
+    /// </para>
+    /// </remarks>
+    private static string FormatConstError(
+        string instanceLocation, JsonElement? instance, JsonElement? schema, Uri schemaLocation)
+    {
+        var offendingValue = instance is { } instanceRoot
+            ? TryReadScalarText(instanceLocation, instanceRoot)
+            : null;
+        var expectedValue = schema is { } schemaRoot
+            ? TryReadConstValue(schemaRoot, schemaLocation)
+            : null;
+
+        if (offendingValue is null || expectedValue is null)
+        {
+            return "[const] Value does not match the value expected here.";
+        }
+
+        if (LastPointerSegment(instanceLocation) == "schemaVersion")
+        {
+            return $"[const] '{TruncateForDisplay(offendingValue)}' is not a language schema version this " +
+                   $"engine recognises — write '{expectedValue}', or omit the field.";
+        }
+
+        return $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
+               $"'{expectedValue}'.";
+    }
+
+    /// <summary>
+    /// Builds the actionable message for a captureEntry <c>minProperties: 1</c>
+    /// rejection (m6, the empty-mapping case — <c>capture: {{ x: {{}} }}</c>).
+    /// Before this, the raw library default ("Value should have at least 1
+    /// properties") named neither the field nor the choice an author must
+    /// make. Names the accepted keys read from the LIVE schema's own
+    /// sibling <c>properties</c> (see <see cref="TryReadSiblingPropertyNames"/>,
+    /// generic, never hardcoded to 'jsonpath'/'xpath' specifically) —
+    /// bringing the empty-mapping shape up to the same standard as
+    /// <see cref="FormatForbiddenPropertyError"/>'s captureEntry branch (the
+    /// both-set shape) for the same container.
+    /// </summary>
+    /// <remarks>
+    /// <c>minProperties</c> appears exactly once in the composed root
+    /// schema today (captureEntry's own), but this still confirms the
+    /// pointer resolves to captureEntry's shape via
+    /// <see cref="TryResolveCaptureEntryContainer"/> before offering the
+    /// specific wording — degrading to the original library <paramref name="message"/>,
+    /// merely re-tagged, for any other <c>minProperties</c> a future schema
+    /// change might add elsewhere, exactly the no-fabrication discipline
+    /// every other formatter in this class follows.
+    /// </remarks>
+    private static string FormatMinPropertiesError(
+        string message, string instanceLocation, JsonElement? schema, Uri schemaLocation)
+    {
+        if (!TryResolveCaptureEntryContainer(instanceLocation, out var variableName))
+        {
+            return $"[minProperties] {message}";
+        }
+
+        var choices = schema is { } schemaRoot
+            ? TryReadSiblingPropertyNames(schemaRoot, schemaLocation, excludePropertyName: null)
+            : null;
+
+        if (choices is not { Count: > 0 })
+        {
+            return $"[minProperties] {message}";
+        }
+
+        var quotedChoices = string.Join(", ", choices.Select(c => $"'{c}'"));
+        return $"[minProperties] Capture entry '{variableName}' must set at least one of {quotedChoices} — " +
+               "none is present (DSL §6.1).";
+    }
+
+    /// <summary>
     /// Reads the <c>enum</c> array a failing node's own <c>SchemaLocation</c>
     /// points at, from a parsed copy of the composed schema's JSON text.
     /// </summary>
@@ -1103,6 +1327,96 @@ internal static class SchemaErrorCollector
         }
 
         return values.Count > 0 ? values : null;
+    }
+
+    /// <summary>
+    /// Reads the <c>const</c> value a failing node's own <c>SchemaLocation</c>
+    /// points at, from a parsed copy of the composed schema's JSON text — the
+    /// <c>const</c> analogue of <see cref="TryReadEnumArray"/>, same pointer
+    /// resolution, same schema-is-the-only-source-of-truth discipline (m4).
+    /// Only a string-typed <c>const</c> is read — the language's one
+    /// user-facing <c>const</c> today, <c>metadata.schemaVersion</c>,
+    /// constrains a string; a non-string <c>const</c> degrades to
+    /// <see langword="null"/> rather than guessing at a display form.
+    /// </summary>
+    private static string? TryReadConstValue(JsonElement schemaRoot, Uri schemaLocation)
+    {
+        var fragment = schemaLocation.Fragment;
+        if (fragment.Length == 0)
+        {
+            return null;
+        }
+
+        var pointer = Uri.UnescapeDataString(fragment.TrimStart('#'));
+
+        if (!TryResolvePointer(schemaRoot, pointer, out var schemaNode) ||
+            schemaNode.ValueKind != JsonValueKind.Object ||
+            !schemaNode.TryGetProperty("const", out var constNode) ||
+            constNode.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return constNode.GetString();
+    }
+
+    /// <summary>
+    /// Reads a container schema's own sibling <c>properties</c> names (m6),
+    /// optionally excluding one — used both by
+    /// <see cref="FormatForbiddenPropertyError"/>'s captureEntry branch
+    /// (exclude the offending property, name the other one that makes it
+    /// forbidden) and <see cref="FormatMinPropertiesError"/> (exclude
+    /// nothing, list every accepted choice).
+    /// </summary>
+    /// <remarks>
+    /// The failing node's own <c>SchemaLocation</c> points at different
+    /// places for the two callers: <see cref="FormatMinPropertiesError"/>'s
+    /// <c>minProperties</c> keyword is owned directly by the container
+    /// schema itself (e.g. <c>#/$defs/captureEntry</c>), while
+    /// <see cref="FormatForbiddenPropertyError"/>'s per-field <c>false</c>
+    /// subschema lives several segments DEEPER, inside the mutual-exclusion
+    /// <c>allOf/&lt;N&gt;/then/.../properties/&lt;name&gt;</c> branch (with a
+    /// JsonSchema.Net synthetic array index after <c>then</c> — see the
+    /// class remarks on <c>if</c>/<c>then</c>/<c>else</c>). Both are handled
+    /// uniformly by truncating the pointer at its FIRST <c>/allOf/</c>
+    /// segment when one is present (recovering the container definition the
+    /// <c>allOf</c> branch hangs off) and using the pointer as-is otherwise
+    /// — verified empirically against both real shapes (see
+    /// SchemaErrorCollectorTests' capture-entry diagnostics) rather than
+    /// assumed from the schema text alone.
+    /// </remarks>
+    private static List<string>? TryReadSiblingPropertyNames(
+        JsonElement schemaRoot, Uri schemaLocation, string? excludePropertyName)
+    {
+        var fragment = schemaLocation.Fragment;
+        if (fragment.Length == 0)
+        {
+            return null;
+        }
+
+        var pointer = Uri.UnescapeDataString(fragment.TrimStart('#'));
+        var allOfIndex = pointer.IndexOf("/allOf/", StringComparison.Ordinal);
+        var containerPointer = allOfIndex < 0 ? pointer : pointer[..allOfIndex];
+
+        if (!TryResolvePointer(schemaRoot, containerPointer, out var containerNode) ||
+            containerNode.ValueKind != JsonValueKind.Object ||
+            !containerNode.TryGetProperty("properties", out var propertiesNode) ||
+            propertiesNode.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        foreach (var property in propertiesNode.EnumerateObject())
+        {
+            if (excludePropertyName is null ||
+                !string.Equals(property.Name, excludePropertyName, StringComparison.Ordinal))
+            {
+                names.Add(property.Name);
+            }
+        }
+
+        return names.Count > 0 ? names : null;
     }
 
     /// <summary>
@@ -1280,6 +1594,34 @@ internal static class SchemaErrorCollector
 
         containerKind = string.Empty;
         containerName = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Recognises the pointer shape <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;</c>
+    /// — either the capture entry itself (the <c>minProperties</c> shape) or
+    /// with one trailing property segment, e.g.
+    /// <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/xpath</c> (the forbidden-
+    /// property shape) — and extracts the capture variable's own map key
+    /// (m6). Same pointer-only extraction principle as
+    /// <see cref="TryResolveEnvironmentContainer"/>: a capture entry's
+    /// variable name is the YAML map key an author wrote, directly present
+    /// in the pointer, never something read back out of the instance.
+    /// </summary>
+    private static bool TryResolveCaptureEntryContainer(string instanceLocation, out string variableName)
+    {
+        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length is 4 or 5 &&
+            segments[0] == "steps" &&
+            int.TryParse(segments[1], NumberStyles.None, CultureInfo.InvariantCulture, out _) &&
+            segments[2] == "capture")
+        {
+            variableName = DecodePointerSegment(segments[3]);
+            return true;
+        }
+
+        variableName = string.Empty;
         return false;
     }
 

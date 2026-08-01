@@ -41,6 +41,7 @@ to published pre-releases on 2026-07-14.
 ### Removed
 
 - **Breaking: the `publish` and `documents` `environment.seed` kinds** — both were wired-but-deferred stubs: the engine read the referenced fixture, content-hashed it, and recorded the intent through an injectable sink (`IBrokerWarmupSink` / `IDocumentSeedSink`), but never performed an actual broker publish or document-store write. Neither kind was used anywhere in this repository. A suite still writing `publish:` or `documents:` under a seed dependency now fails schema validation loudly, rather than silently doing nothing the way the removed seams did. Re-adding either kind, once genuinely implemented, is purely additive.
+- **Breaking (CLR surface): `Vouchfx.Engine.Authoring`'s `PublishSeed`/`DocumentSeed` records are gone, and `DependencySeed`'s constructor arity changed to a single `Sql` parameter** — the direct consequence, at the library level, of the seed-kind removal above. Stated explicitly because it is a genuine break for any code consuming the parsed AST directly, not merely authoring `.e2e.yaml`, even though `Vouchfx.Engine.Authoring` ships with the package description "TESTING SURFACE, NOT the frozen v1 provider contract" and carries no stability contract before v1.0 GA — intentional pre-GA narrowing, not an oversight.
 
 ### Fixed
 
