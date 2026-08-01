@@ -26,8 +26,14 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// Longer free-text explanation shown in test output.
 /// </param>
 /// <param name="SchemaVersion">
-/// Optional explicit schema version string; used by the validator to select the
-/// correct schema fragment when the document targets a specific engine release.
+/// Optional explicit language schema version string. Bound here verbatim, but
+/// read nowhere else in the engine — it is a future rejection hook, not a live
+/// version-selection mechanism. The root JSON Schema constrains it to the
+/// literal <c>"v1"</c> (the only language schema version that exists); a
+/// document declaring anything else fails schema validation before this
+/// binding is ever consulted, and an absent value remains valid (the field
+/// stays optional). There is exactly one schema fragment today, so there is
+/// nothing for this value to select between.
 /// </param>
 public sealed record MetadataSpec(
     string? Name,

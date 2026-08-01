@@ -1,0 +1,26 @@
+# expected-instance-location: /environment/seed/catalog-store/documents
+# expected-keyword: additionalProperties
+#
+# Pre-GA removal: the 'documents' seed kind (document-store fixture) never
+# performed an actual write — SeedApplier only read and content-hashed the
+# referenced fixture and recorded the intent through IDocumentSeedSink,
+# without writing to a store. Nothing in the repo used it. Removed from the
+# v1 language before general availability (see SeedSpec.cs's header remarks
+# and CHANGELOG.md): a suite still writing 'documents:' now fails schema
+# validation — loudly — instead of silently no-opping the way the removed
+# wired-but-deferred seam used to.
+metadata:
+  name: rejected-seed-documents-key-removed
+environment:
+  dependencies:
+    catalog-store:
+      type: mongodb
+  seed:
+    catalog-store:
+      documents:
+        - collection: products
+          from: "fixtures/products.json"
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

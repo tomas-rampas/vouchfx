@@ -177,19 +177,36 @@ public sealed class SeedSpecBindingTests
         Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
     }
 
-    // ── A-02: broker warm-up publish binding ─────────────────────────────────
+    // ── 'publish'/'documents' removed from the v1 language (see SeedSpec.cs) ──
+    //
+    // Both were wired-but-deferred seams that only read+hashed a referenced
+    // fixture and recorded the intent through a sink — never a real broker
+    // publish or document-store write — and were removed before general
+    // availability. The PARSER stays lenient about an unrecognised key under a
+    // seed dependency mapping (mirrors ParseServiceMap: no 'Extra' bucket,
+    // every unrecognised key silently vanishes at parse time), exactly as it
+    // already does for a typo'd key elsewhere; the JSON Schema is the strict
+    // gate that makes a suite still writing 'publish:'/'documents:' fail loudly
+    // (root-language-schema.json's $defs/seedDependency now closes with
+    // 'additionalProperties: false' recognising only 'sql' — see
+    // SeedSchemaTests in Vouchfx.Engine.Compilation.Tests, and
+    // Corpus/Rejected/seed-publish-key-removed.e2e.yaml).
 
     [Fact]
-    public void Parse_SeedWithPublish_BindsTopicAndPayloadFrom()
+    public void Parse_SeedWithPublishKey_PublishKeyIsSilentlyIgnored_SqlStillBinds()
     {
-        // Arrange — a broker dependency with a single warm-up publish.
+        // Arrange — 'publish' is no longer a recognised seed kind. The parser does
+        // not throw for it (division of responsibility: the schema is the strict
+        // gate — see the remarks above); it simply extracts nothing for that key,
+        // exactly as ParseServiceMap already does for its own unrecognised keys.
         const string yaml = """
             environment:
               dependencies:
-                events:
-                  type: kafka
+                orders-db:
+                  type: postgres
               seed:
-                events:
+                orders-db:
+                  sql: [ "fixtures/a.sql" ]
                   publish:
                     - topic: catalog.snapshot
                       payload: { from: "fixtures/catalog.json" }
@@ -202,186 +219,10 @@ public sealed class SeedSpecBindingTests
         // Act
         var doc = YamlDocumentParser.Parse(yaml);
 
-        // Assert — publish bound; sql/documents remain null.
-        var depSeed = doc.Environment!.Seed!.Dependencies["events"];
-        Assert.Null(depSeed.Sql);
-        Assert.Null(depSeed.Documents);
-        Assert.NotNull(depSeed.Publish);
-
-        var publish = Assert.Single(depSeed.Publish!);
-        Assert.Equal("catalog.snapshot", publish.Topic);
-        Assert.Equal("fixtures/catalog.json", publish.PayloadFrom);
-    }
-
-    [Fact]
-    public void Parse_SeedPublishMissingTopic_ThrowsParseError()
-    {
-        // Arrange — a publish item with no 'topic' scalar.
-        const string yaml = """
-            environment:
-              seed:
-                events:
-                  publish:
-                    - payload: { from: "fixtures/catalog.json" }
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act + Assert — names the dependency and the missing 'topic'.
-        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.Contains("events", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("topic", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Parse_SeedPublishMissingPayloadFrom_ThrowsParseError()
-    {
-        // Arrange — a publish item whose 'payload' mapping has no 'from'.
-        const string yaml = """
-            environment:
-              seed:
-                events:
-                  publish:
-                    - topic: catalog.snapshot
-                      payload: {}
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act + Assert — names the dependency and the missing 'from'.
-        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.Contains("events", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("from", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Parse_SeedPublishMissingPayloadMapping_ThrowsParseError()
-    {
-        // Arrange — a publish item with a 'topic' but no 'payload' mapping at all.
-        const string yaml = """
-            environment:
-              seed:
-                events:
-                  publish:
-                    - topic: catalog.snapshot
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act + Assert — names the dependency and the missing 'payload'.
-        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.Contains("events", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("payload", ex.Message, StringComparison.Ordinal);
-    }
-
-    // ── A-02: document fixture binding ───────────────────────────────────────
-
-    [Fact]
-    public void Parse_SeedWithDocuments_BindsCollectionAndFrom()
-    {
-        // Arrange — a document-store dependency with a single fixture (with collection).
-        const string yaml = """
-            environment:
-              dependencies:
-                catalog-store:
-                  type: mongodb
-              seed:
-                catalog-store:
-                  documents:
-                    - collection: products
-                      from: "fixtures/products.json"
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act
-        var doc = YamlDocumentParser.Parse(yaml);
-
-        // Assert — documents bound; sql/publish remain null.
-        var depSeed = doc.Environment!.Seed!.Dependencies["catalog-store"];
-        Assert.Null(depSeed.Sql);
-        Assert.Null(depSeed.Publish);
-        Assert.NotNull(depSeed.Documents);
-
-        var document = Assert.Single(depSeed.Documents!);
-        Assert.Equal("products", document.Collection);
-        Assert.Equal("fixtures/products.json", document.From);
-    }
-
-    [Fact]
-    public void Parse_SeedDocumentsWithoutCollection_CollectionIsNull()
-    {
-        // Arrange — 'collection' is optional.
-        const string yaml = """
-            environment:
-              seed:
-                catalog-store:
-                  documents:
-                    - from: "fixtures/products.json"
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act
-        var doc = YamlDocumentParser.Parse(yaml);
-
-        // Assert — bound with a null collection.
-        var document = Assert.Single(doc.Environment!.Seed!.Dependencies["catalog-store"].Documents!);
-        Assert.Null(document.Collection);
-        Assert.Equal("fixtures/products.json", document.From);
-    }
-
-    [Fact]
-    public void Parse_SeedDocumentsMissingFrom_ThrowsParseError()
-    {
-        // Arrange — a document item with no required 'from' file path.
-        const string yaml = """
-            environment:
-              seed:
-                catalog-store:
-                  documents:
-                    - collection: products
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act + Assert — names the dependency and the missing 'from'.
-        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.Contains("catalog-store", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("from", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Parse_SeedPublishNotASequence_ThrowsParseError()
-    {
-        // Arrange — 'publish' is a scalar, not a sequence (malformed shape).
-        const string yaml = """
-            environment:
-              seed:
-                events:
-                  publish: "not-a-sequence"
-            steps:
-              - id: s1
-                type: script.csharp
-                code: "// no-op"
-            """;
-
-        // Act + Assert
-        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.Contains("events", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("publish", ex.Message, StringComparison.Ordinal);
+        // Assert — 'sql' still binds; there is no 'Publish'/'Documents' member left
+        // on DependencySeed to bind 'publish' into at all.
+        var depSeed = doc.Environment!.Seed!.Dependencies["orders-db"];
+        Assert.Equal("fixtures/a.sql", Assert.Single(depSeed.Sql!));
     }
 
     // ── Malformed seed dependency KEY rejection (sibling of ParseCaptureMap) ──

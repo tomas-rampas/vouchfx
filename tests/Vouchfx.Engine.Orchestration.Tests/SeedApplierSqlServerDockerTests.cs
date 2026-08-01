@@ -118,8 +118,6 @@ public sealed class SeedApplierSqlServerDockerTests
                     discoveredServices: suite.DiscoveredServices,
                     dependencyTypes: new Dictionary<string, string>(StringComparer.Ordinal) { [DepName] = "sqlserver" },
                     seedBaseDirectory: baseDir,
-                    brokerSink: null,
-                    documentSink: null,
                     ct: CancellationToken.None));
 
             _output.WriteLine($"Kind: {ex.Info.Kind}, Resource: {ex.Info.ResourceName}, Detail: {ex.Info.Detail}");

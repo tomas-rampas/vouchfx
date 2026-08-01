@@ -202,24 +202,23 @@ Once declared with `schemaRegistry: true`, a `mq-publish.kafka` step can include
 
 #### 3.2.5 Seeding initial state
 
-Resetting a database between tests is only half of the data lifecycle; the other half is establishing the state a test needs **before** it runs. An optional `seed` block inside the environment section declares that work declaratively. It can apply reference SQL files to a relational dependency, load document fixtures into a document store, and publish warm-up messages to a broker. The engine applies the seed after the topology is healthy and before the first step executes, so a step never races the data it depends on.
+Resetting a database between tests is only half of the data lifecycle; the other half is establishing the state a test needs **before** it runs. An optional `seed` block inside the environment section declares that work declaratively. In the v1 language, `sql` — reference SQL files applied to a relational dependency — is the only recognised seed kind, and it now works on **postgres, sqlserver, and mysql** (the same three drivers `RespawnRelationalIsolation` already resets state with). The engine applies the seed after the topology is healthy and before the first step executes, so a step never races the data it depends on.
 
 ```yaml
 environment:
   dependencies:
     orders-db: { type: postgres }
-    events:    { type: kafka }
   seed:
     orders-db:
       sql: [ "fixtures/reference-currencies.sql",
              "fixtures/reference-products.sql" ]
-    events:
-      publish:
-        - topic: catalog.snapshot
-          payload: { from: "fixtures/catalog.json" }
 ```
 
 Declarative fixtures are the recommended default because they live in source control beside the test, are visible in review, and produce the same baseline on every machine. When data must be created through the system's own APIs rather than injected directly — because the creation path is itself part of what is under test — a `script` step early in the scenario is the right tool instead, constructing entities and capturing their identifiers for later steps. A seed that fails to apply produces an environment error, not an assertion failure, so a broken fixture is never mistaken for a broken system. The reproducibility envelope records the content hash of every applied fixture.
+
+**MySQL DDL caveat:** a MySQL seed fixture that mixes DDL (`CREATE TABLE`, `ALTER TABLE`, …) with DML in the same file loses the "whole file or nothing" transactional guarantee the other two drivers give. Postgres and SQL Server both support transactional DDL, so a failure anywhere in the file rolls back everything the file did, DDL included. MySQL does not: per its "statements that cause an implicit commit" rules, a DDL statement commits the transaction the moment it runs, and MySQL does not open a replacement — every later statement in the file then commits individually as it executes under autocommit. If a later statement fails, there is no open transaction left to roll back, so the DDL and any successful DML before the failure both persist. A MySQL fixture that mixes DDL and DML must therefore be idempotent throughout — `CREATE TABLE IF NOT EXISTS` and `INSERT … ON DUPLICATE KEY UPDATE` — not merely in its DDL, because a fixture that fails part-way leaves everything before the failure applied for the next scenario to run on top of.
+
+**Removed (breaking change):** earlier drafts of this specification also documented `publish` (broker warm-up messages) and `documents` (document-store fixtures) as seed kinds. Both were wired-but-deferred stubs: the engine read the referenced fixture, content-hashed it, and recorded the intent through an injectable sink, but never performed an actual broker publish or document-store write — a field that silently did nothing. Nothing in the repository used either kind. Both were removed from the v1 language before general availability; a suite still writing `publish:` or `documents:` under a seed dependency now fails schema validation rather than silently no-opping. Re-adding either kind, once genuinely implemented, is purely additive.
 
 > **State reset between sequential scenarios:** Between sequential scenarios that share a single topology, PostgreSQL, SQL Server, MySQL, MongoDB, Redis and Elasticsearch dependencies are automatically reset after each scenario completes. Each store type uses an appropriate data-clearing mechanism — relational tables are cleared via delete order (preserving structure), MongoDB collections are cleared per-collection (preserving indexes), Redis executes FLUSHDB against the designated database, and Elasticsearch executes a delete-by-query across open indices (preserving mappings and settings). Brokers (Kafka, RabbitMQ, NATS, Azure Service Bus) are not applicable — messages are consumed per step; DynamoDB and MinIO are not reset. A failed reset surfaces as an environment error naming the dependency — never as a test failure. Seed applies to the first scenario only; subsequent scenarios receive cleared data. Parallel scenarios (via `--parallel`) are unaffected — each receives its own topology and fresh containers, isolation by construction. The [common patterns guide](common-patterns.md) explains per-store reset mechanics.
 
@@ -1177,9 +1176,11 @@ Because the unified schema is composed at startup from installed provider fragme
 
 The platform addresses this with two version axes that compose explicitly. The first is the **language schema version** — the engine's contract for the four top-level sections, the common step fields, and the generic rules every provider's fragment must comply with. This version changes only when the engine changes those contracts and follows a deprecation window. A file may declare the language version it targets through a `schemaVersion: v1` field in its metadata block.
 
-The second is the set of **provider versions** currently registered, which any given suite's reproducibility envelope records (see Section 14.7 of the architecture blueprint). The engine treats minor and patch provider upgrades as backward-compatible additions to the unified schema; a major provider version may change the fragment in incompatible ways and is gated on the provider declaring a compatible `MinEngineVersion`. The combined effect: a file declaring `schemaVersion: v1` will validate against any v1-compatible engine, and the reproducibility envelope of every run identifies exactly which provider versions were active so a divergence is always explainable rather than mysterious.
+**Current state (v1 engine series):** `schemaVersion` is a rejection hook, not yet a live selection mechanism. The root JSON Schema constrains it to the literal `"v1"` — the only language schema version that exists — so a document declaring anything else fails schema validation outright; the field stays optional, and omitting it remains valid. Nothing in the engine reads the value back to choose between schema fragments, because there is exactly one fragment to choose between today. The paragraphs below describe the versioning model this field is the anchor for once a v2 language schema exists; until then, "declare `v1`, or declare nothing" is the whole of its behaviour.
 
-The VSCode extension maps each file to the correct language schema version, fetches the locally-installed provider fragments, and composes them as the engine does. An author working in an older repository against a newer engine still receives validation that matches the language their files were written for.
+The second axis is the set of **provider versions** currently registered, which any given suite's reproducibility envelope records (see Section 14.7 of the architecture blueprint). The engine treats minor and patch provider upgrades as backward-compatible additions to the unified schema; a major provider version may change the fragment in incompatible ways and is gated on the provider declaring a compatible `MinEngineVersion`. The combined effect, once a second language schema version exists: a file declaring `schemaVersion: v1` will validate against any v1-compatible engine, and the reproducibility envelope of every run identifies exactly which provider versions were active so a divergence is always explainable rather than mysterious.
+
+Once a second language schema version exists, the VSCode extension is intended to map each file to the correct language schema version, fetch the locally-installed provider fragments, and compose them as the engine does, so an author working in an older repository against a newer engine still receives validation that matches the language their files were written for.
 
 ## 9. The VSCode Extension: Overview
 

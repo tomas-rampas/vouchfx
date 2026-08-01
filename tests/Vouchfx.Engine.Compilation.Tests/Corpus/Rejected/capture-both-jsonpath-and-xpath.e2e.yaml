@@ -1,0 +1,16 @@
+# expected-instance-location: /steps/0/capture/ambiguous/xpath
+# expected-keyword: properties
+#
+# Pre-GA schema tightening (capture value shape): a capture entry declaring
+# BOTH 'jsonpath' and 'xpath' is ambiguous — YamlDocumentParser's
+# ParseCaptureEntry already throws on this shape; the schema now catches it
+# too, via the same anyOf + allOf/if/then "forbid the sibling once one is
+# set" idiom $defs/service uses for its image/project mutual exclusion.
+metadata:
+  name: rejected-capture-both-jsonpath-and-xpath
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
+    capture:
+      ambiguous: { jsonpath: "$.id", xpath: "//id" }

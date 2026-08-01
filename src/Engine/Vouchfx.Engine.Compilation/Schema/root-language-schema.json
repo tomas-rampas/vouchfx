@@ -14,8 +14,13 @@
       "$ref": "#/$defs/environment"
     },
     "variables": {
-      "description": "Constant values pre-loaded into the shared variable context before the first step runs.",
-      "type": "object"
+      "description": "Constant values pre-loaded into the shared variable context before the first step runs. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts:: (the same rule 'capture' entries carry).",
+      "$comment": "Mirrors AstBuilder.CheckReservedPrefix's 'variables' guard (see VarKeys, the authoritative prefix list) so the rejection is caught here, at authoring time, instead of only at AST-build time.",
+      "type": "object",
+      "propertyNames": {
+        "description": "Variable names must not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+        "pattern": "^(?!svc::)(?!conn::)(?!__outcome::)(?!__capture_status::)(?!__attempts::).*$"
+      }
     },
     "steps": {
       "description": "The ordered list of actions and assertions that constitute the test.",
@@ -52,8 +57,8 @@
           "type": "string"
         },
         "schemaVersion": {
-          "description": "The language schema version the file targets (e.g. v1).",
-          "type": "string"
+          "description": "The language schema version the file targets. Optional — an author who omits it is not opted out of anything; the field exists purely as a future rejection hook so a document that declares a version this engine does not understand fails fast at authoring time rather than being silently mis-validated against the wrong contract. Only 'v1' is recognised today (the only language schema version that exists); this is NOT a live version-selection mechanism — the engine does not branch on it, and there is exactly one schema fragment to select.",
+          "const": "v1"
         }
       }
     },
@@ -77,8 +82,11 @@
           }
         },
         "seed": {
-          "description": "Initial state applied after the topology is healthy and before the first step executes.",
-          "type": "object"
+          "description": "Initial state applied after the topology is healthy and before the first step executes (DSL §3.2.5). Each key is a logical dependency name (declared under environment.dependencies); 'sql' is the only recognised seed kind in v1 — an array of SQL file paths (relative to the suite) applied in order against a relational dependency (postgres, sqlserver, or mysql).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/seedDependency"
+          }
         },
         "imageRegistry": {
           "description": "An optional default OCI registry hostname that prefixes every un-prefixed image reference.",
@@ -88,6 +96,21 @@
           "description": "Controls when the container runtime pulls images: Always, Missing, or Never.",
           "type": "string",
           "enum": ["Always", "Missing", "Never"]
+        }
+      }
+    },
+    "seedDependency": {
+      "description": "The seed specification for a single managed dependency (DSL §3.2.5), keyed by its logical name under environment.seed. 'sql' is the only recognised seed kind in v1 (relational dependencies — postgres, sqlserver, and mysql); an empty mapping is a deliberate no-op, not an error. The 'publish' and 'documents' seed kinds documented in earlier drafts never performed the broker publish or document-store write they described (they read and content-hashed the referenced fixture and recorded the intent through a sink, nothing more) and were removed from the v1 language before general availability — a suite still writing either now fails schema validation instead of silently doing nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sql": {
+          "description": "Ordered list of SQL file paths (relative to the suite) executed as one batch each, in declared order, against a relational dependency (postgres, sqlserver, or mysql) before the first step runs. Each path may be written as a plain (unquoted) YAML scalar just as often as a quoted string — the engine reads every item back by its own raw text regardless of how it was written, so this schema accepts every scalar shape the engine does rather than rejecting on type alone (a numeric-looking bare path, e.g. '123.sql', still resolves as a YAML string; a purely-numeric stem written bare, e.g. '20240101', would not).",
+          "$comment": "ParseSeedSqlSequence (YamlDocumentParser) is the reader this description generalises: it retrieves every item's raw scalar text regardless of how it was written, so this field's type union mirrors the same env/httpPort scalar-shape divergence already closed elsewhere in this schema.",
+          "type": "array",
+          "items": {
+            "type": ["string", "integer", "number", "boolean"]
+          }
         }
       }
     },
@@ -115,21 +138,25 @@
           "type": "string"
         },
         "imagePullPolicy": {
-          "description": "Overrides the environment-level imagePullPolicy for this service only: Always, Missing, or Never (DSL §3.2.1). Matched case-sensitively here, exactly like the environment-level field of the same name (see its own description) — note that the engine's own parser (EnvironmentMapper.ParseImagePullPolicy) accepts these three values case-INSENSITIVELY, so a lower-cased 'always' is accepted at runtime yet rejected by this schema.",
+          "description": "Overrides the environment-level imagePullPolicy for this service only: Always, Missing, or Never (DSL §3.2.1). Matched case-sensitively here, exactly like the environment-level field of the same name (see its own description) — the engine's own runtime parsing ALSO matches case-sensitively, so a lower-cased 'always' is rejected consistently by both the schema and the runtime.",
+          "$comment": "Case-sensitivity mirrors EnvironmentMapper.ParseImagePullPolicy's own Enum.TryParse(ignoreCase: false) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
           "type": "string",
           "enum": ["Always", "Missing", "Never"]
         },
         "httpPort": {
-          "description": "The container port the service listens on, when it differs from the image's default (DSL §3.2). Must be a real TCP port number (1-65535): the parser silently treats a malformed value (anything int.TryParse cannot read as a plain non-negative integer) as absent and falls back to port 80, so bounding the type here closes that silent-wrong-port failure mode at authoring time instead of leaving it to surface as a mysterious runtime connection failure.",
-          "type": "integer",
+          "description": "The container port the service listens on, when it differs from the image's default (DSL §3.2). Must be a real TCP port number (1-65535), written as either a bare integer (e.g. '8080') or an equivalent quoted string (e.g. '\"8080\"') — the engine reads this field back by its own text regardless of which form was used, so this schema accepts both alike. Write a leading-zero port QUOTED, e.g. '\"08080\"': a BARE leading-zero value is read using YAML's own octal convention rather than decimal. A bare '0123' is checked here as 83 but used by the engine as 123 — the two layers disagree, so write a leading-zero port quoted. A bare value containing an 8 or 9 (not a valid octal digit — e.g. '08080') is rejected outright, before this schema's own port-range checking below even runs. The quoted form has neither problem: leading zeros are read as ordinary decimal digits, so '\"08080\"' is accepted and correctly means 8080. A value of zero is still rejected in every spelling: it parses, but port 0 is not a port a service can be reached on. Any other malformed value is silently treated as absent by the engine and falls back to port 80, so bounding both forms to the real port range here closes that silent-wrong-port failure mode at authoring time instead of leaving it to surface as a mysterious runtime connection failure.",
+          "$comment": "A SINGLE merged schema, not a two-branch 'oneOf', on purpose: 'minimum'/'maximum' are no-ops against a non-number instance and 'pattern' is a no-op against a non-string instance (JSON Schema draft 2020-12 §6.2/§6.3 — verified empirically against JsonSchema.Net 9.2.1), so one schema carrying all three keywords accepts exactly the same integer/string shapes a two-branch oneOf did, with zero branch-exploration noise on an otherwise-valid value and exactly one located error on an invalid one, instead of a spurious second '[type]' entry from whichever branch the value was never going to match. Separately (m5): YamlDocumentParser reads this field at RUNTIME via GetScalar (raw scalar text) and int.TryParse(value, NumberStyles.None, ...) — decimal-only, no octal semantics — so a bare '0123' that reaches THAT reader means 123, not the 83 the schema-validation YAML-to-JSON bridge above reads it as (SchemaResources.ConvertYamlToJsonDocument, via YamlDotNet's own DeserializerBuilder, resolves an untagged leading-zero plain scalar using YAML's octal convention before this schema ever evaluates it). Measured empirically against the pinned YamlDotNet 16.3.0: bare '0777' -> 511; bare '08080'/'0999' -> a raw System.FormatException ('Could not find any recognizable digits') surfacing as a generic 'Failed to parse YAML' error rather than a normal, located schema message. That divergence between the two YAML-consuming layers is pre-existing and out of scope for this schema change (filed separately) — the description's leading-zero guidance above is author-facing advice that works around it, not a fix to the underlying mismatch.",
+          "type": ["integer", "string"],
           "minimum": 1,
-          "maximum": 65535
+          "maximum": 65535,
+          "pattern": "^0*([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
         },
         "env": {
-          "description": "Environment variables passed to the service's container/project — the SUT configuration surface (DSL §3.2.6). Each value is a literal string that may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context; this schema does not itself validate reference syntax or confirm the named dependency exists — that cross-check is EnvironmentMapper's, which alone knows the declared dependency set.",
+          "description": "Environment variables passed to the service's container/project — the SUT configuration surface (DSL §3.2.6). Each value may be written as a quoted string, or as a bare (unquoted) numeric or boolean YAML scalar — the engine retains every value in its raw scalar form regardless of how it was written (a bare 8080 or true arrives as the literal text \"8080\"/\"true\", exactly what a container's environment variable needs), so this schema accepts every scalar shape the engine does. A string value may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context; this schema does not itself validate reference syntax or confirm the named dependency exists — that cross-check happens later, once every declared dependency is known. An explicit null ('FOO: ~') is rejected: with the pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value, so without this rejection the variable would silently be set to the literal string '~' — never what an author means by writing '~' — rather than a container environment variable that is actually absent. This rejection catches that mismatch at authoring time instead of leaving it to surface as a silently-wrong container environment variable.",
+          "$comment": "YamlDocumentParser.ParseEnvMap is the reader this description generalises: it retains every value in its raw scalar form regardless of how it was written, and would otherwise set an explicitly-null value to the literal string '~'. The dependency cross-check the description defers to 'later' is EnvironmentMapper's, which alone knows the declared dependency set.",
           "type": "object",
           "additionalProperties": {
-            "type": "string"
+            "type": ["string", "integer", "number", "boolean"]
           }
         }
       }
@@ -140,7 +167,8 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "The dependency's technology kind. Enumerated against EnvironmentMapper's own dependency-registration table (thirteen kinds: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio), so an unrecognised value is caught here, at authoring time, instead of surfacing later as an ArgumentException at suite-build time. Matched case-sensitively; the registry itself performs its own lookup case-INSENSITIVELY (StringComparer.OrdinalIgnoreCase), so a differently-cased but otherwise valid value (e.g. 'Postgres') is accepted by the engine yet rejected by this schema.",
+          "description": "The dependency's technology kind. Enumerated against EnvironmentMapper's own dependency-registration table (thirteen kinds: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio), so an unrecognised value is caught here, at authoring time, instead of surfacing later as an ArgumentException at suite-build time. Matched case-sensitively; the registry ALSO performs its own lookup case-sensitively, so a differently-cased value (e.g. 'Postgres') is rejected consistently by both the schema and the engine — the schema-level rejection names the correct lower-case spelling directly.",
+          "$comment": "Case-sensitivity mirrors EnvironmentMapper's own s_dependencyRegistry lookup (StringComparer.Ordinal) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
           "type": "string",
           "enum": [
             "postgres",
@@ -186,8 +214,9 @@
             "additionalProperties": false,
             "properties": {
               "name": {
-                "description": "The topic name to declare. ParseAsbTopics (EnvironmentMapper) silently drops a topic entry whose 'name' is absent entirely — 'required' here catches that at schema time instead of the entity quietly never reaching the emulator's Config.json, surfacing much later as an unrelated-looking Service Bus environment error. Note this still permits an explicit null value ('name: ~'), which the parser ALSO silently drops — narrowing the type union below to exclude null would close that residual gap too, but is deliberately left open here pending that decision.",
-                "type": ["string", "number", "integer", "null"]
+                "description": "The topic name to declare. The engine silently drops a topic entry whose 'name' is absent entirely — 'required' catches that case at schema time instead of the entity quietly never reaching the emulator's Config.json and surfacing much later as an unrelated-looking Service Bus environment error. An EXPLICIT null ('name: ~') is a different case, rejected for a different reason: with the pinned YamlDotNet 16.3.0 representation model, '~' is read back as the literal, one-character TEXT '~', not as a null value, so the engine does NOT drop it — it declares a topic literally named '~', which is never what an author means by writing '~'. Excluding 'null' from the type union below closes that gap at authoring time.",
+                "$comment": "ParseAsbTopics (EnvironmentMapper) is the reader this description generalises: it silently drops a topic entry whose 'name' is absent, and — since '~' arrives as the literal one-character text '~', never a null — does NOT drop an explicit 'name: ~' either; it declares a topic literally named '~'.",
+                "type": ["string", "number", "integer"]
               },
               "subscriptions": {
                 "description": "Subscription names to create under this topic.",
@@ -276,8 +305,16 @@
           "type": "string"
         },
         "capture": {
-          "description": "A map of variable names to extractor expressions that write values from this step's result into the shared context.",
-          "type": "object"
+          "description": "A map of variable names to extractor expressions that write values from this step's result into the shared context (DSL §6.1). Each value is either a bare scalar JSONPath expression (e.g. '\"$.id\"', back-compat default) or a single-key mapping selecting the format explicitly ('{ jsonpath: \"$.id\" }' or '{ xpath: \"//id\" }'); use the XPath form for XML response bodies. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+          "$comment": "Mirrors AstBuilder.CheckReservedPrefix's 'capture' guard (see VarKeys, the authoritative prefix list) so the rejection is caught here, at authoring time, instead of only at AST-build time. Kept out of 'description' (LanguageReferenceGenerator renders that verbatim into docs/language-reference.md, where an internal class name is noise to a YAML author) — $comment is a JSON Schema 2020-12 core keyword with no effect on validation and is never read by LanguageReferenceGenerator, verified against both.",
+          "type": "object",
+          "propertyNames": {
+            "description": "Capture variable names must not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+            "pattern": "^(?!svc::)(?!conn::)(?!__outcome::)(?!__capture_status::)(?!__attempts::).*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/captureEntry"
+          }
         },
         "verifyMode": {
           "description": "Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff.",
@@ -286,16 +323,37 @@
         },
         "timeout": {
           "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window.",
-          "oneOf": [
-            { "type": "string" },
-            { "type": "number" }
-          ]
+          "$comment": "A single 'type' union, not a two-branch 'oneOf', on purpose: the two shapes never overlap (a JSON value is never simultaneously a string and a number), so a union accepts exactly the same values a oneOf did, with no second branch left to leak a spurious '[type]' entry when the document is invalid elsewhere.",
+          "type": ["string", "number"]
         },
         "continueOnFailure": {
           "description": "When true, a failed assertion is recorded but does not abort the remaining steps. Defaults to false.",
           "type": "boolean"
         }
       }
+    },
+    "captureEntry": {
+      "description": "The value of a single 'capture' entry (DSL §6.1): either a bare scalar JSONPath expression (back-compat default — accepts ANY YamlDotNet scalar, not only a string, e.g. 'bad: 42', so this schema accepts every scalar shape the engine does, mirroring 'env'/'httpPort'/seed's 'sql' entries), or a single-key mapping naming the extractor format explicitly — '{ jsonpath: \"$.id\" }' or '{ xpath: \"//id\" }'. Exactly one of 'jsonpath'/'xpath' is required in the mapping form — neither, or both, is rejected.",
+      "$comment": "ParseCaptureEntry's bare-scalar branch is the reader the description above generalises from: it accepts ANY YamlDotNet scalar, not only a string. 'minProperties: 1' below rejects neither (safe: 'additionalProperties: false' already confines keys to 'jsonpath'/'xpath', and 'minProperties' is a no-op against the bare-scalar form — JSON Schema draft 2020-12 §6.5.1), and the 'allOf'/'if'/'then' clause rejects both (mirrors $defs/service's own image/project mutual-exclusion pattern — see that definition's remarks for why a per-field boolean 'false' subschema is used rather than a second discriminating branch). A single 'type' union plus 'minProperties', not a top-level 'anyOf' discriminating string-vs-object, on purpose: the previous 'anyOf: [{required:[jsonpath]},{required:[xpath]}]' produced the SAME composite-branch noise a 'oneOf' does elsewhere in this schema — JsonSchema.Net 9.2.1's List-format output surfaces a non-matching anyOf branch's own failing keyword even when the OTHER branch made the anyOf as a whole valid. 'minProperties'/'properties'/'additionalProperties' are all no-ops against a non-object instance (JSON Schema draft 2020-12 §6.3.3/§6.5.1/§6.5.3), so the object-only rules below apply cleanly to the bare-scalar form with zero spurious evaluation. Accepted trade (mirrors the identical widening for 'env'/'httpPort'/seed's 'sql'): a non-string, non-JSONPath-syntax bare scalar (e.g. 'bad: 42') is schema-valid here yet still fails at RUNTIME once JSONPath evaluation rejects '42' as a malformed expression — the parser-parity principle (this schema accepts exactly what YamlDocumentParser accepts) takes precedence over pre-empting every possible downstream runtime failure; no behaviour change from that principle already being applied elsewhere.",
+      "type": ["string", "integer", "number", "boolean", "object"],
+      "properties": {
+        "jsonpath": {
+          "description": "A JSONPath expression evaluated against the step's result as JSON.",
+          "type": "string"
+        },
+        "xpath": {
+          "description": "An XPath expression evaluated against the step's result as XML.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "allOf": [
+        {
+          "if": { "required": ["jsonpath"] },
+          "then": { "properties": { "xpath": false } }
+        }
+      ]
     }
   }
 }

@@ -1,0 +1,25 @@
+# Surface coverage: environment.services.*.env accepts a bare (unquoted)
+# numeric or boolean YAML scalar, not only a quoted string. Promoted out of
+# the scalar-coercion- group (feat/close-remaining-surfaces): this shape was
+# previously REJECTED by the schema (env additionalProperties was typed
+# strictly "string") even though YamlDocumentParser.ParseEnvMap already
+# accepted it at runtime — a bare 8080 or true arrives from YamlDotNet as the
+# scalar string "8080"/"true", exactly what a container's environment
+# variable needs, and no numeric/boolean coercion is applied. The schema now
+# widens env's value type union to match (string/integer/number/boolean), so
+# this fixture — formerly scalar-coercion-env-numeric-value.e2e.yaml, pinned
+# as a REJECTED case by SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche
+# — now belongs here instead.
+metadata:
+  name: surface-services-env-numeric-and-boolean-values
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+      env:
+        RETRY_COUNT: 3
+        FEATURE_FLAG: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the env numeric/boolean-value widening only."

@@ -200,6 +200,140 @@ public sealed class LanguageReferenceGoldenTests
         Assert.Contains("**Schema version:** `v1`", generated, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// MAJOR-2 / m1 (feat/close-remaining-surfaces, TWO rounds of the same
+    /// finding): <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
+    /// from a <c>oneOf</c> of typed alternatives (rendered as separate,
+    /// backtick-wrapped tokens joined OUTSIDE every span, e.g.
+    /// <c>`string` \| `number`</c>) onto a bare <c>"type": [...]</c> array,
+    /// which the generator originally joined as a RAW, unescaped pipe INSIDE
+    /// one shared span (<c>`string|number`</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Round 1 fixed that as an ESCAPED pipe still INSIDE the one shared span
+    /// (<c>`string\|number`</c>) — WRONG, per round 2's measurement: fed all
+    /// three forms through <c>markdown.markdown(...)</c> with this repo's
+    /// pinned <c>mkdocs-material==9.7.7</c> and its configured
+    /// <c>markdown_extensions</c> (MkDocs always adds the <c>tables</c>
+    /// builtin regardless of that list — confirmed from
+    /// <c>mkdocs.config.defaults</c>). Results: the ORIGINAL raw-pipe form
+    /// does NOT actually split the table row in Python-Markdown's own
+    /// <c>tables</c> extension (only GitHub's GFM renderer breaks on that
+    /// shape); round 1's escaped-INSIDE-span fix renders the LITERAL
+    /// BACKSLASH character visibly (code-span content is verbatim; escape
+    /// processing never reaches inside it) — the WORST of the three forms on
+    /// the deployed MkDocs Pages site. Round 1's "silently dropped the
+    /// description column on the live site" claim was therefore an
+    /// UNVERIFIED INFERENCE from the GFM-only defect, not a measurement of
+    /// the actual deployed renderer; corrected here. This test now pins the
+    /// OUTSIDE-span form, which measured clean on both renderers.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void GeneratedReference_TimeoutTypeCell_UsesAnEscapedPipeOutsideTheCodeSpans()
+    {
+        var generated = GenerateReference();
+        var timeoutLine = Array.Find(generated.Split('\n'), l => l.StartsWith("| `timeout` |", StringComparison.Ordinal));
+
+        Assert.NotNull(timeoutLine);
+        // timeout's schema is "type": ["string", "number"] (root-language-schema.json).
+        Assert.Contains("`string` \\| `number`", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("`string|number`", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\|number", timeoutLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("string\\|", timeoutLine, StringComparison.Ordinal);
+
+        // Structural confirmation: the row splits into exactly 4 columns.
+        Assert.Equal(4, CountUnescapedPipeDelimitedColumns(timeoutLine!));
+    }
+
+    /// <summary>
+    /// General guard (not merely the one field that happened to expose the
+    /// bug): NO backtick-delimited span anywhere in the generated reference
+    /// may contain a raw, unescaped <c>|</c> — the same anti-pattern could
+    /// recur for any future multi-type-array field (a provider's own
+    /// <c>"type": [...]</c> declaration), not only <c>timeout</c>.
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_NeverEmitsAnUnescapedPipeInsideABacktickSpan()
+    {
+        var generated = GenerateReference();
+        var offendingLines = new List<string>();
+
+        foreach (var line in generated.Split('\n'))
+        {
+            if (ContainsPipeInsideBackticks(line))
+            {
+                offendingLines.Add(line);
+            }
+        }
+
+        Assert.True(offendingLines.Count == 0,
+            "A backtick-delimited span contains a '|' (escaped or not). Neither in-span "
+            + "form is safe on BOTH renderers this file ships to: a RAW in-span pipe "
+            + "splits the table row on GitHub's GFM (dropping a column there, though "
+            + "python-markdown's tables extension renders it fine), while an ESCAPED "
+            + "in-span '\\|' renders a literal backslash on the python-markdown/MkDocs "
+            + "site (though GFM renders it fine). The only form correct on both is "
+            + "keeping pipes OUTSIDE code spans, escaped between them — "
+            + "`string` \\| `number` — which is what JoinAsBacktickedAlternatives "
+            + "emits. Found on:\n"
+            + string.Join("\n", offendingLines));
+    }
+
+    /// <summary>
+    /// True when some backtick-delimited span on <paramref name="line"/>
+    /// contains a <c>|</c>, escaped or not.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately flags the escaped form too. An earlier revision exempted
+    /// <c>\|</c> — which is exactly the in-span shape a prior round of this
+    /// work shipped and then had to fix (visible backslash on the MkDocs
+    /// site), so the exemption made this guard blind to the one regression it
+    /// exists to catch. Since both in-span forms are wrong on one renderer
+    /// each, any pipe inside a span is a defect and the guard says so.
+    /// </remarks>
+    private static bool ContainsPipeInsideBackticks(string line)
+    {
+        var inSpan = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            if (line[i] == '`')
+            {
+                inSpan = !inSpan;
+                continue;
+            }
+
+            if (inSpan && line[i] == '|')
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Counts the pipe-delimited columns a Markdown table ROW splits into,
+    /// treating a backslash-escaped <c>\|</c> as literal text rather than a
+    /// column delimiter (mirroring GFM table parsing).
+    /// </summary>
+    private static int CountUnescapedPipeDelimitedColumns(string line)
+    {
+        var columns = 0;
+        for (var i = 0; i < line.Length; i++)
+        {
+            if (line[i] == '|' && (i == 0 || line[i - 1] != '\\'))
+            {
+                columns++;
+            }
+        }
+
+        // N unescaped pipes delimit N-1 columns for a well-formed
+        // "| c1 | c2 | ... | cN |" row (leading/trailing pipes both count).
+        return columns - 1;
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private static string GenerateReference()

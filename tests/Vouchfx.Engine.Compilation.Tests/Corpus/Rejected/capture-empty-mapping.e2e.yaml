@@ -1,0 +1,20 @@
+# expected-instance-location: /steps/0/capture/neither
+# expected-keyword: minProperties
+#
+# Pre-GA schema tightening (capture value shape): a capture entry that is a
+# mapping declaring NEITHER 'jsonpath' nor 'xpath' is malformed —
+# ParseCaptureEntry already throws on this shape ("declares neither...").
+# The schema's 'minProperties: 1' requires at least one key, producing a
+# single, correctly-located '[minProperties]' error (feat/close-remaining-
+# surfaces, Part A1: replaced the original two-branch 'anyOf' — which
+# produced the SAME composite-branch noise a 'oneOf' does elsewhere in this
+# schema — with this single keyword; see $defs/captureEntry's own
+# description).
+metadata:
+  name: rejected-capture-empty-mapping
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
+    capture:
+      neither: {}

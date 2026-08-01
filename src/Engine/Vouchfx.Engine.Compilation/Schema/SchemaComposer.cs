@@ -223,7 +223,15 @@ public static class SchemaComposer
                 new SchemaValidationError(string.Empty, $"Failed to parse YAML: {ex.Message}"));
         }
 
-        var composedSchema = ComposeSchema(registry);
+        // Compose the schema JSON text once and build BOTH the evaluator
+        // (JsonSchema) and, only if validation actually fails, a parsed
+        // JsonElement copy of the SAME text for SchemaErrorCollector's enum
+        // enrichment (see its FormatEnumError / TryReadEnumArray) — avoids a
+        // second ComposeSchemaJson call (SchemaComposer.ComposeSchema would
+        // otherwise recompute this same text) and avoids the extra parse
+        // entirely on the common (valid) path.
+        var composedSchemaJson = ComposeSchemaJson(registry);
+        var composedSchema = JsonSchema.FromText(composedSchemaJson);
 
         using (doc)
         {
@@ -235,7 +243,8 @@ public static class SchemaComposer
             // Pass the instance through so an unevaluatedProperties violation
             // (the typo-closing change on $defs/step) can name the offending
             // step's own 'type' in its message — see SchemaErrorCollector.
-            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement);
+            using var schemaDoc = JsonDocument.Parse(composedSchemaJson);
+            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement, schemaDoc.RootElement);
             return new SchemaValidationResult(false, errors);
         }
     }

@@ -1,0 +1,18 @@
+# expected-instance-location: /metadata/schemaVersion
+# expected-keyword: const
+#
+# Pre-GA schema tightening: metadata.schemaVersion gains 'const: "v1"' — the
+# only language schema version that exists. Previously typed only
+# "type": "string" (any value validated, including this file's own name, and
+# the field was read nowhere in src/ despite its doc comment claiming it
+# selected a schema fragment). The field stays optional — omitting it remains
+# valid (see surface-metadata-schemaversion-v1.e2e.yaml and every other
+# fixture in this corpus, none of which declare it) — but a value other than
+# 'v1' is now a real rejection hook for a future v2 language schema.
+metadata:
+  name: rejected-metadata-schemaversion-unrecognised
+  schemaVersion: v2
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

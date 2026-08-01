@@ -148,17 +148,31 @@ public sealed class SchemaAcceptedCorpusTests
 
     /// <summary>
     /// Both <see cref="AcceptedFiles"/> and <see cref="ScalarCoercionFiles"/> must
-    /// discover at least one file — an empty result would make every downstream
-    /// <c>[Theory]</c> case silently vanish instead of failing loudly (mirrors
-    /// <c>ExamplesCompileTests.ExampleFiles_DiscoversAtLeastOneFile</c>).
+    /// discover AT LEAST a known-safe floor of files — a bare "at least one"
+    /// would still pass if a glob/path regression silently dropped all but a
+    /// single fixture (every OTHER downstream <c>[Theory]</c> case would then
+    /// just vanish instead of failing loudly, mirroring
+    /// <c>ExamplesCompileTests.ExampleFiles_DiscoversAtLeastOneFile</c>'s own
+    /// concern, but for a PARTIAL loss rather than a total one). The floors
+    /// are set comfortably below the current committed count (21 / 4) — safe
+    /// to raise as fixtures are added, a drop below either is worth
+    /// investigating (feat/close-remaining-surfaces, Part D).
     /// </summary>
     [Fact]
     public void AcceptedFiles_DiscoversAtLeastOneFile()
     {
-        Assert.True(AcceptedFiles().Any(),
-            $"No accepted regression/surface files were discovered under '{AcceptedCorpusDirectory}'.");
-        Assert.True(ScalarCoercionFiles().Any(),
-            $"No scalar-coercion files were discovered under '{AcceptedCorpusDirectory}'.");
+        const int minAcceptedFiles = 15;
+        const int minScalarCoercionFiles = 2;
+
+        var acceptedCount = AcceptedFiles().Count();
+        var scalarCoercionCount = ScalarCoercionFiles().Count();
+
+        Assert.True(acceptedCount >= minAcceptedFiles,
+            $"Expected at least {minAcceptedFiles} accepted regression/surface files under " +
+            $"'{AcceptedCorpusDirectory}', found {acceptedCount}.");
+        Assert.True(scalarCoercionCount >= minScalarCoercionFiles,
+            $"Expected at least {minScalarCoercionFiles} scalar-coercion files under " +
+            $"'{AcceptedCorpusDirectory}', found {scalarCoercionCount}.");
     }
 
     /// <summary>
@@ -501,10 +515,12 @@ public sealed class SchemaAcceptedCorpusTests
                 "script.csharp step uses the planner's generic 'target' convention (REQ-004/REQ-007), which " +
                 "script.csharp's own schema never declares (only 'code'/'file'); previously silently tolerated " +
                 "(additionalProperties: true), now correctly rejected as unevaluated. " +
-                "at /steps/0/target: (line 12) [unevaluatedProperties] Unknown property 'target' on step type 'script.csharp'; " +
-                "at /steps/0: (line 10) [required] Required properties [\"file\"] are not present " +
-                "(pre-existing oneOf-branch noise for the unexercised 'file' alternative, only surfaced once " +
-                "the document is invalid overall for the reason above — see SchemaErrorCollector). ALSO now fails " +
+                "at /steps/0/target: (line 12) [unevaluatedProperties] Unknown property 'target' on step type 'script.csharp'. " +
+                "UPDATE (feat/close-remaining-surfaces, Part A2): this fixture's own 'code:' is set, so " +
+                "script.csharp's frozen oneOf is SATISFIED — the 'required: [\"file\"]' branch noise this entry " +
+                "used to also document is now suppressed by SchemaErrorCollector's composite-branch-noise fix " +
+                "(a satisfied oneOf/anyOf's non-matching sibling branch is exploration noise, not a genuine " +
+                "defect); only the unevaluatedProperties finding above survives from this step. ALSO now fails " +
                 "independently (services/dependencies schema closure, branch feat/close-environment-surface): " +
                 "'legacy-cache' declares 'type: cassandra', not one of the thirteen kinds $defs/dependency's new " +
                 "'type' enum recognises (this fixture's own name — 'unknown-kind' — is exactly the shape that enum " +
@@ -535,17 +551,28 @@ public sealed class SchemaAcceptedCorpusTests
     }
 
     /// <summary>
-    /// <see cref="PlanningFixtureFiles"/> must discover at least one file —
-    /// otherwise a broken repo-root resolution would silently make this gate a
-    /// no-op instead of failing loudly.
+    /// <see cref="PlanningFixtureFiles"/> must discover at least its known-safe
+    /// floor of files — otherwise a broken repo-root resolution, or a
+    /// mass-exclusion regression, would silently make this gate a no-op (or a
+    /// near-no-op) instead of failing loudly. The floor matches the current
+    /// committed count exactly (2 of 41 fixtures survive exclusion — see the
+    /// class remarks above <see cref="ExcludedPlanningFixtures"/>): unlike
+    /// <see cref="AcceptedFiles_DiscoversAtLeastOneFile"/>'s more comfortable
+    /// margin, there is no room to spare below the true count here without
+    /// the floor becoming meaningless (feat/close-remaining-surfaces, Part D).
     /// </summary>
     [Fact]
     public void PlanningFixtureFiles_DiscoversAtLeastOneFile()
     {
-        Assert.True(PlanningFixtureFiles().Any(),
-            $"No Planning.Tests fixtures were discovered under '{PlanningFixturesDirectory}' " +
-            "(after exclusions). Either the repo-root resolution is wrong, the fixtures " +
-            "directory moved, or every fixture is now excluded.");
+        const int minPlanningFixtureFiles = 2;
+
+        var count = PlanningFixtureFiles().Count();
+
+        Assert.True(count >= minPlanningFixtureFiles,
+            $"Expected at least {minPlanningFixtureFiles} Planning.Tests fixtures under " +
+            $"'{PlanningFixturesDirectory}' (after exclusions), found {count}. Either the " +
+            "repo-root resolution is wrong, the fixtures directory moved, or too many " +
+            "fixtures are now excluded.");
     }
 
     /// <summary>

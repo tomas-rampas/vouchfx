@@ -400,21 +400,25 @@ internal static class LanguageReferenceGenerator
             var alternatives = new List<string>();
             foreach (var alt in oneOf.EnumerateArray())
             {
-                var t = ReadScalarOrArrayType(alt);
-                if (t is not null)
-                    alternatives.Add(t);
+                alternatives.AddRange(ReadScalarOrArrayTypes(alt));
             }
 
             if (alternatives.Count > 0)
             {
-                return string.Join(" \\| ", alternatives.Select(a => $"`{a}`"));
+                return JoinAsBacktickedAlternatives(alternatives);
             }
         }
 
-        var direct = ReadScalarOrArrayType(field);
-        if (direct is not null)
+        var types = ReadScalarOrArrayTypes(field);
+        if (types.Count > 0)
         {
-            return $"`{direct}`";
+            // A lone scalar type renders as its ORIGINAL single-code-span form
+            // (`string`); a genuine multi-type union (httpPort's post-A1
+            // "type": ["integer","string"], say) renders exactly like the
+            // oneOf branch above and for the SAME measured reason (m1,
+            // feat/close-remaining-surfaces second round) — see
+            // JoinAsBacktickedAlternatives.
+            return types.Count == 1 ? $"`{types[0]}`" : JoinAsBacktickedAlternatives(types);
         }
 
         // No declared type — the field accepts any JSON value (e.g. an inline body).
@@ -422,39 +426,81 @@ internal static class LanguageReferenceGenerator
     }
 
     /// <summary>
-    /// Reads a <c>type</c> keyword that is either a single string or an array of
-    /// strings, returning a compact textual form (e.g. <c>string</c> or
-    /// <c>string|null</c>), or null when no <c>type</c> is declared.
+    /// Renders 2+ JSON-Schema type names as one Markdown code span PER type,
+    /// joined OUTSIDE every span by an escaped pipe — e.g.
+    /// <c>`string` \| `number`</c> — never a pipe (escaped or not) INSIDE a
+    /// single shared span.
     /// </summary>
-    private static string? ReadScalarOrArrayType(JsonElement schemaObject)
+    /// <remarks>
+    /// Measured against the site's actual configured renderer (m1,
+    /// feat/close-remaining-surfaces second round — the m1 in THIS round
+    /// corrects the m1 in the PRECEDING round, whose own "description column
+    /// dropped on the live site" claim was itself an unverified inference;
+    /// see the commit message): fed all three forms through
+    /// <c>markdown.markdown(...)</c> with this repo's exact pinned
+    /// <c>mkdocs-material==9.7.7</c> and its <c>markdown_extensions</c> list
+    /// (MkDocs always adds the <c>tables</c> builtin regardless of that
+    /// list — confirmed from <c>mkdocs.config.defaults</c>'s own
+    /// <c>builtins=['toc','tables','fenced_code']</c> — so the deployed
+    /// renderer for docs/language-reference.md needs no extra extension to
+    /// reproduce here). Results: a RAW pipe inside one span
+    /// (<c>`string|number`</c>) does NOT split the table row in
+    /// Python-Markdown's <c>tables</c> extension (only GFM breaks on that
+    /// form); an ESCAPED pipe INSIDE one span (<c>`string\|number`</c> — this
+    /// method's PREVIOUS fix) renders the LITERAL BACKSLASH character
+    /// visibly, because code-span content is verbatim and backslash-escape
+    /// processing does not reach inside it — making that form the WORST of
+    /// the three on the deployed Pages site, worse than doing nothing; only
+    /// the OUTSIDE-span form (used here, and already used by
+    /// <see cref="DescribeType"/>'s oneOf-alternatives branch before this
+    /// change) renders cleanly with no stray backslash on BOTH Python-Markdown
+    /// and GFM.
+    /// </remarks>
+    private static string JoinAsBacktickedAlternatives(List<string> types) =>
+        string.Join(" \\| ", types.Select(t => $"`{t}`"));
+
+    /// <summary>
+    /// Reads a <c>type</c> keyword that is either a single string or an array
+    /// of strings, returning each type name as its OWN list entry — never
+    /// pre-joined — so every caller renders through the ONE shared,
+    /// measured-safe path (<see cref="JoinAsBacktickedAlternatives"/> for 2+
+    /// entries, a single backtick span for exactly 1). Returns an empty list,
+    /// never null, when no <c>type</c> is declared or none of its entries are
+    /// non-empty strings.
+    /// </summary>
+    private static List<string> ReadScalarOrArrayTypes(JsonElement schemaObject)
     {
+        var result = new List<string>();
+
         if (schemaObject.ValueKind != JsonValueKind.Object)
-            return null;
+            return result;
 
         if (!schemaObject.TryGetProperty("type", out var typeNode))
-            return null;
+            return result;
 
         if (typeNode.ValueKind == JsonValueKind.String)
-            return typeNode.GetString();
+        {
+            var value = typeNode.GetString();
+            if (!string.IsNullOrEmpty(value))
+                result.Add(value!);
+
+            return result;
+        }
 
         if (typeNode.ValueKind == JsonValueKind.Array)
         {
-            var parts = new List<string>();
             foreach (var item in typeNode.EnumerateArray())
             {
                 if (item.ValueKind == JsonValueKind.String)
                 {
                     var value = item.GetString();
                     if (!string.IsNullOrEmpty(value))
-                        parts.Add(value!);
+                        result.Add(value!);
                 }
             }
-
-            if (parts.Count > 0)
-                return string.Join("|", parts);
         }
 
-        return null;
+        return result;
     }
 
     // ── String helpers ─────────────────────────────────────────────────────────

@@ -299,16 +299,17 @@ public sealed class SuiteTopology : IAsyncDisposable
 
             // ----------------------------------------------------------------
             // Step 4½: Apply declarative seed data — AFTER discovery, BEFORE the
-            // fixture is returned, INSIDE this try/catch (§3.2.2, S05-A-01/A-02).
+            // fixture is returned, INSIDE this try/catch (§3.2.5, S05-A-01).
             // SeedApplier dispatches each seeded dependency on its declared type:
-            // a postgres dependency's sql seed is applied now (a sql seed on any
-            // OTHER dependency type is rejected as a type mismatch); document
-            // stores (mongodb, elasticsearch) and brokers → content-hash + record
-            // via deferred seams, no actual write in M2; redis has no seed path at
-            // all. Throws OrchestrationException (Provision kind) on any failure;
-            // the outer catch below disposes the topology so containers do not
-            // leak, and the failure surfaces as an Environment error (§12.1) —
-            // never a misattributed assertion Fail.
+            // 'sql' is the only seed kind in the v1 language (see SeedSpec.cs's
+            // header remarks) and is applied now against a relational dependency
+            // (postgres, sqlserver, or mysql) — a sql seed on any OTHER
+            // dependency type is rejected as a type mismatch; every other
+            // dependency type has no seed path at all. Throws
+            // OrchestrationException (Provision kind) on any failure; the outer
+            // catch below disposes the topology so containers do not leak, and
+            // the failure surfaces as an Environment error (§12.1) — never a
+            // misattributed assertion Fail.
             //
             // Multi-scenario note: this seeding runs ONCE at suite startup.  For
             // a SINGLE-scenario run the seeded rows are present for step 1.  For
@@ -351,8 +352,8 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// Postgres dependencies, each database's <c>public</c> schema is reset to empty, then
     /// the declarative <c>environment.seed</c> is re-applied — exactly reproducing the
     /// fresh-container-then-seed sequence a plain <c>vouchfx run</c> performs. Non-Postgres
-    /// stores are skipped: there is no row-applied non-Postgres seed to restore (document-store
-    /// and broker seeds are content-recorded via deferred seams; Redis has no seed path at all),
+    /// stores (including a seeded sqlserver/mysql dependency — 'sql' applies to all three
+    /// relational kinds, but this schema-reset step is currently Postgres-only) are skipped,
     /// and the caller's preceding isolation reset has already cleared their data.
     /// </summary>
     /// <param name="cancellationToken">Propagated to the schema reset and the seed applier.</param>
@@ -415,8 +416,11 @@ public sealed class SuiteTopology : IAsyncDisposable
                 !string.Equals(declaredType, "postgres", StringComparison.Ordinal))
             {
                 // Non-Postgres (or undeclared) seed dependency: SeedApplier validates/dispatches
-                // it; no SQL schema to reset here.  (Broker/document seeds are content-recorded,
-                // not row-applied, so they have no persisted state to clear on the kept topology.)
+                // it; no schema reset happens here. A seeded sqlserver/mysql dependency's rows
+                // are therefore NOT reset by this method before ApplySeedAsync below re-applies
+                // its (non-idempotent) seed SQL — this schema-reset step is currently
+                // Postgres-only, unlike SeedApplier's own 'sql' dispatch, which applies to all
+                // three relational kinds (pre-existing scope gap, not touched here).
                 continue;
             }
 
@@ -517,8 +521,6 @@ public sealed class SuiteTopology : IAsyncDisposable
             discoveredServices,
             dependencyTypes,
             seedBaseDirectory,
-            brokerSink: null,
-            documentSink: null,
             cancellationToken);
     }
 
