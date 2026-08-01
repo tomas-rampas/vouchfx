@@ -518,6 +518,55 @@ public sealed class SchemaAcceptedCorpusTests
     }
 
     /// <summary>
+    /// Every entry in <see cref="ExcludedPlanningFixtures"/> must still exist AND
+    /// still fail validation. Without this, the exclusion list rots silently in
+    /// two directions: a fixture that is deleted or renamed leaves a dead entry
+    /// behind, and one that becomes valid — because it was fixed, or because the
+    /// schema widened — stays excluded forever, quietly shrinking this gate's
+    /// coverage while looking untouched.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes the exclusions self-maintaining rather than a
+    /// write-once list: the day an exclusion becomes unnecessary, CI says so and
+    /// names the entry to delete. Burning the list down is tracked in #330.
+    /// </remarks>
+    [Fact]
+    public void ExcludedPlanningFixtures_AreAllStillPresentAndStillInvalid()
+    {
+        var dir = PlanningFixturesDirectory;
+        Assert.True(Directory.Exists(dir), $"Planning fixtures directory not found: {dir}");
+
+        var missing = new List<string>();
+        var nowValid = new List<string>();
+
+        foreach (var (relative, reason) in ExcludedPlanningFixtures)
+        {
+            var path = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path))
+            {
+                missing.Add($"  {relative} — excluded for: {reason}");
+                continue;
+            }
+
+            if (DocumentValidator.Validate(File.ReadAllText(path), Registry).IsValid)
+            {
+                nowValid.Add($"  {relative} — excluded for: {reason}");
+            }
+        }
+
+        Assert.True(
+            missing.Count == 0,
+            "These excluded Planning fixtures no longer exist — remove their entries from " +
+            $"ExcludedPlanningFixtures:{Environment.NewLine}{string.Join(Environment.NewLine, missing)}");
+
+        Assert.True(
+            nowValid.Count == 0,
+            "These excluded Planning fixtures now VALIDATE, so their exclusions are obsolete. " +
+            "Delete each entry from ExcludedPlanningFixtures so the fixture rejoins the gate " +
+            $"(see #330):{Environment.NewLine}{string.Join(Environment.NewLine, nowValid)}");
+    }
+
+    /// <summary>
     /// Every non-excluded Planning.Tests fixture must validate through
     /// <see cref="DocumentValidator"/> against the full Core registry — proof
     /// that a schema narrowing cannot silently break a real planner fixture.
