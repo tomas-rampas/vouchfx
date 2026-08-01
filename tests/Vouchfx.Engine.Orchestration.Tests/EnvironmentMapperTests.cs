@@ -3111,4 +3111,630 @@ public sealed class EnvironmentMapperTests
         Assert.Equal("myorg/mssql-mirror", image.Image);
         Assert.Equal("2022", image.Tag);
     }
+
+    // -----------------------------------------------------------------------
+    // C4 regression (gatekeeper CRITICAL, verified by execution) — a dangling 'image:' key on a
+    // dependency THREW at EnvironmentMapper.Map() time:
+    //   ArgumentException: Image reference must not be null, empty, or whitespace. Was: ''.
+    // Corpus/Accepted/regression-66aef95-dependency-image-null-key.e2e.yaml states the contract —
+    // a dangling 'image:' "must be accepted and treated identically to 'image' being absent
+    // altogether" — but that corpus only exercises JSON SCHEMA acceptance
+    // (SchemaAcceptedCorpusTests); nothing asserted the ENGINE half of the same contract, which is
+    // how this survived. Unlike the rest of this file (which hand-constructs DependencySpec
+    // records directly), the tests below parse REAL YAML text through the actual
+    // YamlDocumentParser, because the bug lives exactly in the gap between what an author writes
+    // and what YamlDocumentParser.GetScalar hands the mapper — a hand-constructed record would
+    // step straight over that gap and could not have caught the regression (GetScalar returns
+    // "", never null, for a dangling or explicit-empty scalar).
+    //
+    // A note on "red-first" in this region's provenance claims: red against the REVISION the
+    // test was written for, not necessarily against origin/main. The whitespace pins are red
+    // only against the (reverted) IsNullOrWhiteSpace intermediate; the !!str-tag pin only
+    // against the pre-tag-check intermediate. Where a test is red against main itself, its own
+    // comment says so.
+    //
+    // Root cause: the MN3 fix (above) normalised empty→absent for Version but not for the sibling
+    // Image field beside it — the old 'spec.Image is not null' guard let GetScalar's "" flow
+    // straight into ImageReferenceParser.Parse's own eager validation, which throws.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Parses <paramref name="yaml"/> via the real YamlDocumentParser and returns its
+    /// <c>environment</c> block. Every fixture used by the C4 tests below always declares one.
+    /// </summary>
+    private static EnvironmentSpec ParseEnvironment(string yaml)
+    {
+        var document = Vouchfx.Engine.Authoring.YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(document.Environment);
+        return document.Environment!;
+    }
+
+    /// <summary>
+    /// The absent-key baseline the C4 "matches absent" tests below compare against: no 'image:'
+    /// key at all on an 'orders-db' postgres dependency (same name/type as the corpus fixture).
+    /// Parsed via the same real-YAML path as the degenerate spellings, so every comparison is
+    /// document-vs-document rather than parsed-document-vs-hand-built-record.
+    /// </summary>
+    private const string AbsentImageKeyYaml = """
+        metadata:
+          name: c4-probe
+        environment:
+          dependencies:
+            orders-db:
+              type: postgres
+        steps:
+          - id: noop
+            type: script.csharp
+            code: "// Filler step."
+        """;
+
+    [Fact]
+    public void Map_DependencyImage_Dangling_MatchesAbsentKeyBaseline()
+    {
+        // Exact dependency/step shape of
+        // Corpus/Accepted/regression-66aef95-dependency-image-null-key.e2e.yaml.
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image:
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+
+        // Single-representation-of-absent (N-8): a dangling scalar now resolves to actual null,
+        // not "" — GetScalarOrPlainNull folds the empty-scalar case into the same one
+        // representation as the four explicit YAML-null tokens.
+        Assert.Null(env.Dependencies!["orders-db"].Image);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(AbsentImageKeyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8): both sides of the equality
+        // checks above are computed via the SAME EnvironmentMapper.Map() code path, so a
+        // common-mode failure (e.g. a future change that silently loses the default tag on BOTH
+        // sides) would still pass every Assert.Equal above. Confirms the baseline itself carries
+        // a real tag, not a degenerate empty one both sides coincidentally share.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+    }
+
+    [Fact]
+    public void Map_DependencyImage_ExplicitEmptyString_MatchesAbsentKeyBaseline()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: ""
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Equal(string.Empty, env.Dependencies!["orders-db"].Image);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(AbsentImageKeyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+    }
+
+    /// <summary>
+    /// The combination the C4 fix must not accidentally break: an EMPTY 'image:' alongside a real
+    /// 'version:' must behave as version-only — exactly like 'image' being entirely absent with
+    /// the same 'version:' — and must NOT trip the tag/digest-plus-version ambiguity check. That
+    /// check exists only for when 'image:' carries a REAL embedded tag/digest of its own (see the
+    /// feat/dependency-image-override precedence comment earlier in this file); an empty 'image:'
+    /// carries no tag or digest to be ambiguous with, so there is nothing to reject.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_EmptyImageWithVersion_BehavesAsVersionOnly()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: ""
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+        const string versionOnlyYaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(versionOnlyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+        Assert.Equal("16", image.Tag);
+    }
+
+    /// <summary>
+    /// The plain-null sibling of the test above: <c>image: ~</c> alongside a real
+    /// <c>version:</c> behaves exactly like a version-only dependency — the literal
+    /// <c>~</c> never becomes a repository name.
+    /// </summary>
+    /// <remarks>
+    /// Boundary pin (passes against the fixed code it was written for; the flagship
+    /// CHANGELOG scenario it guards was previously covered only transitively:
+    /// the parser theory proves <c>image: ~</c> → null field-independently, and the
+    /// empty-string sibling above proves absent-image + version mapping — but no
+    /// test drove THIS exact combination through the real parser→mapper boundary.
+    /// Suggested by review; a regression at that seam would otherwise surface in
+    /// neither test.)
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyImage_PlainNullImageWithVersion_BehavesAsVersionOnly()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: ~
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+        const string versionOnlyYaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(versionOnlyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+        Assert.Equal("16", image.Tag);
+        Assert.NotEqual("~", image.Image);
+    }
+
+    // -----------------------------------------------------------------------
+    // 66aef95-extension fix — YamlDocumentParser.GetScalarOrPlainNull resolves YAML 1.2's four
+    // PLAIN core-schema null tokens (~, null, Null, NULL) to actual null for the two dependency
+    // fields whose shipped schema descriptions promise the treated-as-absent contract for YAML's
+    // explicit null ('version'/'image'). Before this fix, an explicit 'image: ~' did NOT collapse
+    // to the absent-key baseline: YamlDocumentParser.GetScalar handed the mapper the literal
+    // one-character string "~" (confirmed empirically), which is neither empty nor whitespace, so
+    // it parsed as a syntactically legal repository named "~" and was rejected only by the
+    // pre-existing M3 rule (no tag/digest/version), not because "~" was recognised as degenerate
+    // input. The Theory below proves all four tokens now match the absent-key baseline; the two
+    // 'QuotedTildeString' facts that follow pin the DELIBERATE boundary that a quoted value stays
+    // literal rather than resolving to null. A sibling defect — 'version: ~' silently produced a
+    // literal "~" tag with NO error at Map() time, worse than C4 itself since it only failed once
+    // Docker tried to pull the garbage reference — is fixed and proven the same way for Version,
+    // below.
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("~")]
+    [InlineData("null")]
+    [InlineData("Null")]
+    [InlineData("NULL")]
+    public void Map_DependencyImage_PlainNullToken_MatchesAbsentKeyBaseline(string token)
+    {
+        var yaml = $"""
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: {token}
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+
+        // Pins the parser fix directly: a PLAIN null token resolves to actual null — exactly as
+        // if 'image:' were entirely absent — not the literal token text.
+        Assert.Null(env.Dependencies!["orders-db"].Image);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(AbsentImageKeyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+    }
+
+    /// <summary>
+    /// Hard requirement of the 66aef95-extension fix: a QUOTED 'image: "~"' is genuinely the
+    /// one-character string "~", not YAML's null — the author explicitly quoted it, so it stays
+    /// literal (<c>YamlScalarNode.Style</c> is never <c>Plain</c> for a quoted scalar). "~" still
+    /// parses as a syntactically legal repository name, so this dependency is still rejected by
+    /// the pre-existing M3 rule (no tag/digest, no sibling version) — proving the fix closes the
+    /// PLAIN gap (the Theory above) without touching the QUOTED boundary at all.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImage_QuotedTildeString_IsNotTreatedAsAbsent()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: "~"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Equal("~", env.Dependencies!["orders-db"].Image);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "must not be null, empty, or whitespace", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The sibling defect: 'version: ~' produced NO error at Map() time and silently set the
+    /// container tag to the literal one-character string "~" — a garbage pull reference (e.g.
+    /// 'postgres:~') that would only have failed once Docker actually tried to pull it, rather
+    /// than failing loudly at suite-build time the way every other malformed 'image:'/'version:'
+    /// shape in this file does. Verified red-first (temporarily reverting
+    /// GetScalarOrPlainNull's two call sites back to GetScalar) before applying the fix.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyVersion_ExplicitTildeNull_MatchesAbsentKeyBaseline()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: ~
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Null(env.Dependencies!["orders-db"].Version);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(AbsentImageKeyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
+
+        // Specifically not the garbage literal tag the pre-fix parser produced.
+        Assert.NotEqual("~", image.Tag);
+    }
+
+    /// <summary>
+    /// Symmetric hard requirement for Version: a QUOTED 'version: "~"' stays the literal
+    /// one-character string "~" and is used as the tag verbatim. Unlike Image, a bare version tag
+    /// has nothing that parses or rejects it — no repository/tag/digest splitting ever runs for
+    /// Version — so this SUCCEEDS, but with the garbage tag "~"; the point is proving the quoting
+    /// boundary holds symmetrically, not exercising a rejection path.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyVersion_QuotedTildeString_IsNotTreatedAsAbsent()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "~"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Equal("~", env.Dependencies!["orders-db"].Version);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("~", image.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // M-1 (gatekeeper BLOCKING — whitespace widening reverted): a whitespace-only 'image:'/
+    // 'version:' is NEITHER the dangling-key nor the YAML-null-token shape the 66aef95 contract
+    // covers, and must NOT be silently treated as absent. An earlier revision of this fix
+    // widened both guards to IsNullOrWhiteSpace on the reasoning "match what Parse itself
+    // rejects" — that rationale was itself the regression: pre-filtering exactly the inputs
+    // Parse rejects converts Parse's loud, author-visible rejection into a silent intent-
+    // discard, directly contradicting the MN5 design comment in ImageReference.cs, which
+    // rejects a whitespace-padded reference rather than trimming it FOR THE STATED REASON that
+    // trimming leaves "no author-visible signal". A realistic trigger: CI templating that
+    // expands an unset variable into a blank, quoted string (`image: "   "`) must still fail
+    // loudly, not silently fall back to the provider default. Both guards are back to
+    // IsNullOrEmpty; these two tests pin that a whitespace-only value behaves identically to
+    // origin/main for both fields (Image always rejected it via Parse; Version's pre-existing
+    // MN3 guard was already IsNullOrEmpty, so a whitespace-only version was always a real,
+    // literal — if useless — tag, and still is; not fixed here, out of this PR's contract).
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_DependencyImage_WhitespaceOnly_ThrowsLikeMain()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: "   "
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+
+        // The parser only resolves PLAIN null tokens (and the dangling/empty scalar) to absent;
+        // a quoted, whitespace-only value is neither, so it survives unchanged.
+        Assert.Equal("   ", env.Dependencies!["orders-db"].Image);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains(
+            "must not be null, empty, or whitespace", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Map_DependencyVersion_WhitespaceOnly_StillProducesLiteralTag_UnchangedFromMain()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "   "
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Equal("   ", env.Dependencies!["orders-db"].Version);
+
+        // Pre-existing, unaffected by this PR (explicitly out of the 66aef95 contract's scope):
+        // a whitespace-only version silently becomes a garbage container tag, exactly as on
+        // origin/main. Not fixed here; pinned only so a future change cannot silently re-widen
+        // this guard to IsNullOrWhiteSpace.
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("   ", image.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // peer-review-critic minor #5 — the plain-null Version fix changes which PRE-EXISTING
+    // ambiguity/M3 rule fires when 'image:' ALSO carries content, because 'version: ~' now makes
+    // hasVersion false rather than true (previously "~" was a real, non-empty string). Both
+    // shapes are user-visible behaviour changes that were previously untested.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// GENUINE FLIP (throw → success), verified red-first: on origin/main, 'image:
+    /// myorg/mongo:8.0' + 'version: ~' threw the tag/digest-plus-version ambiguity error —
+    /// spec.Version was the literal, non-empty string "~", so hasVersion was true, and the
+    /// image's own embedded tag "8.0" tripped the ambiguity check against it. After this fix,
+    /// 'version: ~' resolves to null, hasVersion is false, and there is nothing left to be
+    /// ambiguous with — the dependency maps cleanly using the image's own embedded tag.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageWithTag_AndPlainNullVersion_MapsCleanly_NoLongerAmbiguous()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: myorg/mongo:8.0
+                  version: ~
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Null(env.Dependencies!["orders-db"].Version);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/mongo", image.Image);
+        Assert.Equal("8.0", image.Tag);
+    }
+
+    /// <summary>
+    /// The other flip (silent garbage pull → correct rejection), also verified red-first: on
+    /// origin/main, 'image: myorg/mongo' (no embedded tag/digest) + 'version: ~' SUCCEEDED —
+    /// spec.Version was the literal "~", so hasVersion was true, which satisfied the M3 "has a
+    /// version" branch and let ApplyImageOverrides use the literal "~" itself as the tag,
+    /// producing a garbage 'myorg/mongo:~' pull reference with no error at suite-build time.
+    /// After this fix, 'version: ~' resolves to null, hasVersion is false, and the pre-existing
+    /// M3 rule (a tagless image with nothing pinning its version would float on ':latest') now
+    /// correctly fires instead — a success-to-failure change in outcome, but the CORRECT failure.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageNoTag_AndPlainNullVersion_ThrowsFloatingLatest_NoLongerGarbageTag()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: myorg/mongo
+                  version: ~
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Null(env.Dependencies!["orders-db"].Version);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -36,9 +36,22 @@
 // reporting) already strip a digest via `IndexOf('@', StringComparison.Ordinal)` and
 // decide "is the first path segment an explicit registry host?" via the same
 // contains-'.'-or-':'-or-equals-"localhost" heuristic. This class is deliberately
-// consistent with both — same digest-first ordering, same Ordinal comparisons — so a
-// later step can fold all three onto one shared helper without changing any
-// observable behaviour. Neither of those two files is modified here.
+// consistent with both — same digest-first ordering, same Ordinal comparisons.
+//
+// These are NOT interchangeable, and folding them onto one shared helper would change
+// observable behaviour: ResolveImage is a bare prefix check with no validation at all,
+// and silently passes through every shape this parser rejects outright — leading/
+// trailing whitespace, empty path segments ("myorg/", "/mongo", "a//b"), a second
+// colon inside a tag, and a missing or non-hex digest body. ResolveImage feeds
+// services' 'image:' (handed to AddContainer as a single opaque string); routing it
+// through this parser's strict validation would start THROWING on service images that
+// are malformed in exactly those ways and pass through untouched today — an
+// observable behaviour change for every existing suite that happens to author one.
+// Nor is "EnvironmentMapper.cs is not modified here" a safe assumption for that later
+// step: this class's own commit (feat/dependency-image-override) already modified
+// EnvironmentMapper.cs extensively (ApplyImageOverrides, the eager dependency-image
+// validation loop) — it left the ResolveImage FUNCTION specifically untouched, which
+// is the only claim that ever held.
 //
 // This class is a pure, dependency-free string parser — no Aspire, no Docker, no
 // I/O — so every branch is exhaustively unit-testable.

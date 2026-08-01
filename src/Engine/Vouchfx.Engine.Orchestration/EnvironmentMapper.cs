@@ -653,7 +653,43 @@ public static class EnvironmentMapper
             // hours chasing the wrong image. Runs after the type check above so the dependency is
             // already known-registered; ImageReferenceParser.Parse itself throws ArgumentException
             // on a malformed 'image:' string, which is left to surface unwrapped.
-            if (spec.Image is not null)
+            //
+            // C4 fix: a dangling 'image:' (no value) or an explicit 'image: ""' must be treated
+            // identically to 'image' being absent altogether — mirrors the MN3 fix for Version a
+            // few lines below (and ApplyImageOverrides' own mirror of this same guard). Before
+            // this fix the guard was 'spec.Image is not null'.
+            //
+            // This IsNullOrEmpty check is LOAD-BEARING, not merely defensive: YamlDocumentParser.
+            // GetScalarOrPlainNull (§66aef95-extension) only collapses PLAIN "no real content"
+            // spellings to null — a dangling key, and the four YAML-null tokens. A QUOTED
+            // 'image: ""' is a real, common AUTHORED shape (e.g. CI templating that renders an
+            // unset variable into a quoted string) that the parser deliberately leaves as the
+            // literal "" — quoting is the author's explicit opt-out from null-token resolution
+            // (see GetScalarOrPlainNull's own remarks). This guard is what actually catches THAT
+            // shape; do not simplify it to 'is not null' on the assumption "the parser already
+            // handles every empty case" — it does not, for a quoted empty string, and narrowing
+            // this guard would reintroduce the exact ArgumentException this fix closes for that
+            // authored input. (It also covers a hand-constructed DependencySpec carrying ""
+            // directly, as several tests in this area do, but that is the secondary reason.)
+            //
+            // Why "" is absorbed here while "   " (below) is rejected, though both can come from
+            // the same CI-templating accident: "" has a CONTRACT-level meaning — empty means
+            // absent, matching Version's MN3 guard and the schema's own dangling-key promise —
+            // whereas whitespace-only has none and is indistinguishable from a typo, so it gets
+            // the loud rejection.
+            //
+            // REJECTED (do not re-introduce): widening this guard to IsNullOrWhiteSpace, on the
+            // reasoning "match what ImageReferenceParser.Parse itself rejects, so spec.Image can
+            // never reach Parse in a state Parse would reject". That rationale IS the regression
+            // it looks like it prevents: pre-filtering exactly the inputs Parse rejects converts
+            // Parse's loud, author-visible rejection into a silent intent-discard. A realistic
+            // trigger — CI templating expanding an unset variable into 'image: "   "' — would
+            // silently fall back to the provider's default image, exactly the "no author-visible
+            // signal" failure mode the MN5 design comment in ImageReference.cs explicitly rejects
+            // trimming for. The 66aef95 contract covers a dangling key and YAML's explicit null
+            // only; whitespace-only text is neither, and must keep failing loudly via Parse's own
+            // IsNullOrWhiteSpace check below — which is exactly what IsNullOrEmpty here preserves.
+            if (!string.IsNullOrEmpty(spec.Image))
             {
                 var parsedImage = ImageReferenceParser.Parse(spec.Image);
 
@@ -687,6 +723,13 @@ public static class EnvironmentMapper
                 // MN3 fix: treat 'version: ""' the same as 'version:' absent everywhere this
                 // method reasons about it — the mutation site (ApplyImageOverrides) does the
                 // same normalisation, so both branches agree on what "no version" means.
+                // IsNullOrEmpty, deliberately NOT IsNullOrWhiteSpace: a whitespace-only
+                // 'version: "   "' is real, if useless, text the author actually wrote — it
+                // becomes a literal (garbage) container tag, unchanged from origin/main and
+                // outside the 66aef95 contract's scope (that contract covers a dangling key and
+                // YAML's explicit null only). A prior revision of this fix widened this guard to
+                // IsNullOrWhiteSpace "for symmetry with Image" — see the REJECTED note on the
+                // Image guard above for why that symmetry was itself a regression.
                 var hasVersion = !string.IsNullOrEmpty(spec.Version);
 
                 if ((parsedImage.Tag is not null || parsedImage.Digest is not null) && hasVersion)
@@ -1783,7 +1826,19 @@ public static class EnvironmentMapper
     {
         var imageHasExplicitRegistry = false;
 
-        if (spec.Image is not null)
+        // C4 fix: same empty-is-absent normalisation as Map()'s own eager validation loop above
+        // (see its comment for the full rationale, including why this is IsNullOrEmpty and NOT
+        // IsNullOrWhiteSpace) — both places must agree on what "no image" means, or a dependency
+        // could pass eager validation as "absent" and yet still reach WithImage/WithImageSHA256
+        // here with a degenerate ("") repository. A whitespace-only spec.Image can NEVER actually
+        // reach this method via the real Map()→Configure() pipeline: Map()'s own eager loop
+        // parses the same value first and throws for whitespace there (see its comment), so
+        // Configure — and therefore this method — never runs at all for that dependency
+        // (Map_DependencyImage_WhitespaceOnly_ThrowsLikeMain proves it). The Parse call below is
+        // defence-in-depth for any caller that reaches ApplyImageOverrides WITHOUT having gone
+        // through Map()'s eager validation first (e.g. a future direct unit test of this method,
+        // or a refactor that adds another call site) — not a live path within Map() itself.
+        if (!string.IsNullOrEmpty(spec.Image))
         {
             var parsedImage = ImageReferenceParser.Parse(spec.Image);
             imageHasExplicitRegistry = HasExplicitRegistryComponent(parsedImage.Repository);
@@ -1812,12 +1867,16 @@ public static class EnvironmentMapper
             }
             else
             {
-                // MN3 fix: normalise 'version: ""' to "no version" here too, matching the
-                // IsNullOrEmpty guard the Image-unset branch below has always used — previously
-                // this line used spec.Version raw, so 'image: myrepo/mongo' + 'version: ""' set
-                // Tag = "" (an empty-but-non-null tag) while the SAME image with 'version'
-                // entirely absent set Tag = null (→ WithImage(repository) → Aspire defaults it to
-                // "latest"). Both now resolve identically.
+                // MN3 fix: normalise 'version: ""' to "no version" here too, matching the guard
+                // the Image-unset branch below has always used — previously this line used
+                // spec.Version raw, so 'image: myrepo/mongo' + 'version: ""' set Tag = "" (an
+                // empty-but-non-null tag) while the SAME image with 'version' entirely absent set
+                // Tag = null (→ WithImage(repository) → Aspire defaults it to "latest"). Both now
+                // resolve identically. IsNullOrEmpty deliberately, not IsNullOrWhiteSpace — a
+                // whitespace-only 'version: "   "' is real text the author wrote and still
+                // becomes the literal tag, unchanged from origin/main (see the REJECTED note on
+                // the Image guard in Map()'s eager validation loop for why widening this was
+                // reverted).
                 var effectiveVersion = string.IsNullOrEmpty(spec.Version) ? null : spec.Version;
                 var tag = parsedImage.Tag ?? effectiveVersion;
                 builder = tag is not null
@@ -1841,7 +1900,9 @@ public static class EnvironmentMapper
         }
         else
         {
-            // MN3 fix: same empty-string normalisation as the Image-set branch above.
+            // MN3 fix: same empty-string normalisation as the Image-set branch above. IsNullOrEmpty
+            // deliberately, not IsNullOrWhiteSpace: a whitespace-only 'version:' is real text the
+            // author wrote and becomes the literal tag, unchanged from origin/main.
             if (!string.IsNullOrEmpty(spec.Version))
             {
                 builder = builder.WithImageTag(spec.Version);

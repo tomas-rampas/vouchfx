@@ -1,0 +1,18 @@
+# Regression seed — commit 66aef95. YAML's explicit null token '~' is the same
+# null value as an empty key ('image:' with nothing after it), so it must be
+# accepted identically — same root cause as the null-key case, deliberately
+# kept as its own fixture so the two shapes are each named individually on
+# failure rather than one masking the other. Mirrors
+# regression-66aef95-dependency-version-explicit-tilde-null.e2e.yaml for the
+# sibling 'image' field.
+metadata:
+  name: regression-66aef95-dependency-image-explicit-tilde-null
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+      image: ~
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises an explicit '~' null 'image' value."

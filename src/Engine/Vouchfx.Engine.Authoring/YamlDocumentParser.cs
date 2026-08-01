@@ -603,8 +603,14 @@ public static class YamlDocumentParser
                     depMapping.Start.Column);
             }
 
-            var version = GetScalar(depMapping, "version");
-            var image = GetScalar(depMapping, "image");
+            // 66aef95-extension fix: 'version' and 'image' are the two dependency fields whose
+            // shipped schema descriptions explicitly promise "YAML's explicit null (e.g. '~')
+            // parses as null and is treated identically to being absent" — GetScalarOrPlainNull
+            // (unlike plain GetScalar) honours that promise for the four YAML 1.2 core-schema
+            // PLAIN null tokens. See its doc comment for why this is scoped to a dedicated
+            // helper rather than changing GetScalar itself.
+            var version = GetScalarOrPlainNull(depMapping, "version");
+            var image = GetScalarOrPlainNull(depMapping, "image");
 
             // Collect any extra fields (everything except 'type', 'version', and
             // 'image') into a new mapping node so provider resource contributors
@@ -907,6 +913,106 @@ public static class YamlDocumentParser
 
         return null;
     }
+
+    /// <summary>
+    /// Like <see cref="GetScalar"/>, but additionally resolves a dependency <c>version</c>/
+    /// <c>image</c> scalar's PLAIN "no real content" spellings to <see langword="null"/>: a
+    /// dangling key (no value after the colon), an explicit empty PLAIN scalar, and the four
+    /// YAML 1.2 core-schema PLAIN null tokens (<c>~</c>, <c>null</c>, <c>Null</c>, <c>NULL</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every PLAIN "no real content" spelling now collapses to the SAME representation
+    /// (<see langword="null"/>) — before this helper existed, a dangling key round-tripped as ""
+    /// while a fully-absent key round-tripped as null: two spellings of "absent" for the one
+    /// typed field. That IS a claim about PLAIN spellings only, not a global guarantee: a QUOTED
+    /// empty scalar (<c>image: ""</c>) is a genuinely DIFFERENT, deliberately untouched case (see
+    /// the PLAIN-style discussion below) and still returns "" verbatim — so the typed model does
+    /// NOT have a single representation of "absent" for every possible authored value, only for
+    /// every PLAIN one. (EnvironmentMapper's own <c>IsNullOrEmpty</c> guard is what makes a
+    /// QUOTED "" behave as absent too, at the mapping layer — see its comment for why that guard
+    /// is load-bearing for real authored YAML, not merely a defensive fallback.) Two spellings of
+    /// "absent" is a trap regardless: a future consumer written as <c>spec.Image is not null</c>
+    /// would silently treat a PLAIN dangling key's "" as present — precisely the shape of bug
+    /// this file's history exists to close, which is why collapsing the PLAIN spellings matters
+    /// even though it does not reach the QUOTED one. Deliberately a dedicated helper rather than
+    /// a change to <see cref="GetScalar"/> itself: <see cref="GetScalar"/> feeds many callers
+    /// (metadata, seed fixtures, step fields, env values, …) whose behaviour for a dangling key
+    /// or a plain null-shaped value must NOT change here — this fix is scoped exactly to the two
+    /// dependency fields whose shipped schema descriptions promise the treated-as-absent contract
+    /// for YAML's explicit null.
+    /// </para>
+    /// <para>
+    /// PLAIN style only — <see cref="YamlScalarNode.Style"/> distinguishes a plain scalar from a
+    /// quoted one, and only plain style is ever collapsed to null. An author who explicitly
+    /// quotes the value (<c>version: "~"</c>, <c>image: '~'</c>, <c>image: ""</c>) means the
+    /// literal text, not YAML's null, and gets it back unchanged (confirmed empirically:
+    /// <see cref="YamlScalarNode.Style"/> is <c>DoubleQuoted</c>/<c>SingleQuoted</c> for every
+    /// quote style YamlDotNet's representation model produces, never <c>Plain</c>). This is the
+    /// FIRST place quoting changes a dependency scalar's meaning on this parser's surface — every
+    /// OTHER scalar it reads (e.g. a plain <c>version: 16</c>, which round-trips as text either
+    /// quoted or not) is read back as text regardless of quoting, because the engine always wants
+    /// a string there. There is no existing "quoting changes meaning" precedent being followed
+    /// here; this helper establishes the first one.
+    /// </para>
+    /// <para>
+    /// PLAIN style alone is not sufficient, though: a scalar can be Plain-styled yet carry an
+    /// EXPLICIT YAML tag overriding its type — e.g. <c>image: !!str null</c> (force this to be a
+    /// string) or <c>image: !!null y</c> (force this to be null, regardless of its text).
+    /// Confirmed empirically, <see cref="YamlNode.Tag"/>'s <c>IsEmpty</c> is <see langword=
+    /// "true"/> only when the author wrote no explicit tag at all; both <c>!!str null</c> and
+    /// <c>!!null y</c> report a specific, non-empty tag instead. This helper only collapses a
+    /// non-specifically-tagged (<c>Tag.IsEmpty</c>) plain scalar, so <c>!!str null</c> correctly
+    /// stays the literal text <c>"null"</c> — the author's explicit <c>!!str</c> is respected.
+    /// This is NOT full YAML 1.2 core-schema tag resolution, though: <c>!!null y</c> stays the
+    /// literal text <c>"y"</c> rather than resolving to null, correctly resolving which would
+    /// mean resolving the null tag independently of content — this helper does not attempt that.
+    /// This is a defensive parser-API detail, not an author-visible gap: confirmed empirically,
+    /// <c>SchemaResources.ConvertYamlToJsonDocument</c> (the YAML→JSON step schema validation
+    /// runs, BEFORE this parser ever sees the document) rejects <c>!!null y</c> outright —
+    /// <c>DocumentValidator.Validate</c> returns <c>IsValid: false</c> with "Encountered an
+    /// unresolved tag 'tag:yaml.org,2002:null'". A document containing <c>!!null y</c> therefore
+    /// never reaches this method in the shipped pipeline. <c>!!str null</c>, by contrast, DOES
+    /// validate and IS reachable, which is why only that case gets the fix above — with one
+    /// measured oddity worth recording: on the schema-validation path that same conversion
+    /// renders <c>!!str null</c> as JSON <c>null</c> (the tag is not honoured there), so the
+    /// document validates via the field's <c>["string","null"]</c> type union while this parser
+    /// keeps the literal text <c>"null"</c>. The two layers disagree about the value; the engine
+    /// then rejects the literal <c>"null"</c> loudly via the M3 tagless-image rule, so the
+    /// disagreement never produces silent behaviour.
+    /// </para>
+    /// </remarks>
+    private static string? GetScalarOrPlainNull(YamlMappingNode mapping, string key)
+    {
+        if (!TryGetNode(mapping, key, out var node) || node is not YamlScalarNode scalar)
+        {
+            return null;
+        }
+
+        if (scalar.Style == YamlDotNet.Core.ScalarStyle.Plain &&
+            scalar.Tag.IsEmpty &&
+            IsPlainNullToken(scalar.Value))
+        {
+            return null;
+        }
+
+        return scalar.Value;
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="value"/> is a PLAIN scalar's "no real
+    /// content" spelling: the empty string (a dangling key's value), or one of the four YAML 1.2
+    /// core-schema spellings of the null scalar — <c>~</c>, <c>null</c>, <c>Null</c>, or
+    /// <c>NULL</c>. The four explicit spellings are exact, case-SENSITIVE matches only, matching
+    /// the DSL's existing exact-case convention for other vocabulary terms (dependency
+    /// <c>type</c>, <c>imagePullPolicy</c>, <c>verifyMode</c>) — an author who types e.g.
+    /// <c>NuLL</c> gets that literal text back, not YAML's null. Only ever called on a scalar
+    /// already confirmed to be PLAIN style with no explicit tag (see
+    /// <see cref="GetScalarOrPlainNull"/>), so neither a quoted <c>"~"</c> nor an explicitly
+    /// tagged <c>!!str null</c> ever reaches this check.
+    /// </summary>
+    private static bool IsPlainNullToken(string? value) =>
+        value is "" or "~" or "null" or "Null" or "NULL";
 
     /// <summary>
     /// Returns the elements of a sequence of scalar strings, or

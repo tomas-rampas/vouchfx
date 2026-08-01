@@ -781,6 +781,232 @@ public sealed class YamlDocumentParserTests
     }
 
     // -------------------------------------------------------------------------
+    // Dependency 'version:'/'image:' plain YAML-null tokens (66aef95-extension fix).
+    //
+    // The shipped schema descriptions for both fields promise "YAML's explicit null ... parses
+    // as null and is treated identically to being absent". GetScalar alone only fulfilled that
+    // for a dangling/explicit-empty scalar (Value == ""); a PLAIN '~'/'null'/'Null'/'NULL' was
+    // handed through as its own literal text, so 'image: ~' threw deep inside EnvironmentMapper
+    // and 'version: ~' silently became a garbage container tag. GetScalarOrPlainNull closes that
+    // gap for exactly these two dependency fields, exactly for PLAIN style — a QUOTED value
+    // (author explicitly opted out of YAML's null) is always read back literally, unchanged.
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("~")]
+    [InlineData("null")]
+    [InlineData("Null")]
+    [InlineData("NULL")]
+    public void Parse_DependencyImage_PlainNullToken_ResolvesToNull(string token)
+    {
+        var yaml = $"""
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: {token}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Null(doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    [Theory]
+    [InlineData("~")]
+    [InlineData("null")]
+    [InlineData("Null")]
+    [InlineData("NULL")]
+    public void Parse_DependencyVersion_PlainNullToken_ResolvesToNull(string token)
+    {
+        var yaml = $"""
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: {token}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Null(doc.Environment!.Dependencies!["orders-db"].Version);
+    }
+
+    /// <summary>
+    /// Hard requirement: an author who explicitly QUOTES '~' means the literal one-character
+    /// string, not YAML's null — <see cref="YamlDotNet.RepresentationModel.YamlScalarNode.Style"/>
+    /// distinguishes plain from quoted, and only plain style is resolved to null. Covers both
+    /// double- and single-quote styles, since both are equally "not plain".
+    /// </summary>
+    [Theory]
+    [InlineData("\"~\"")]
+    [InlineData("'~'")]
+    public void Parse_DependencyImage_QuotedTildeString_StaysLiteral(string quotedToken)
+    {
+        var yaml = $"""
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: {quotedToken}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Equal("~", doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    /// <summary>Symmetric quoted-stays-literal requirement for 'version:'.</summary>
+    [Theory]
+    [InlineData("\"~\"")]
+    [InlineData("'~'")]
+    public void Parse_DependencyVersion_QuotedTildeString_StaysLiteral(string quotedToken)
+    {
+        var yaml = $"""
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: {quotedToken}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Equal("~", doc.Environment!.Dependencies!["orders-db"].Version);
+    }
+
+    /// <summary>
+    /// The four recognised tokens are exact, case-SENSITIVE spellings (YAML 1.2 core schema,
+    /// matching the DSL's existing exact-case convention for other vocabulary terms) — a
+    /// plausible near-miss like 'NuLL' is not one of them and must be read back as literal text,
+    /// not silently swallowed into null.
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyImage_MixedCaseNullToken_IsNotRecognised_StaysLiteral()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: NuLL
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Equal("NuLL", doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    /// <summary>
+    /// A Plain-styled scalar can still carry an EXPLICIT tag overriding its type.
+    /// 'image: !!str null' forces the value to be read as a string — the author's explicit
+    /// '!!str' must win over the fact that its text happens to spell a null token.
+    /// GetScalarOrPlainNull requires Tag.IsEmpty (no explicit tag at all) alongside Style and
+    /// text, precisely so an explicitly-tagged scalar is never collapsed to null regardless of
+    /// what its text says.
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyImage_ExplicitStrTagOnNullText_StaysLiteral()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: !!str null
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Equal("null", doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    /// <summary>
+    /// Defensive parser-API detail, not an author-visible gap — confirmed against the actual
+    /// schema-validation entry point (see GetScalarOrPlainNull's own remarks): 'image: !!null y'
+    /// explicitly tags non-null-looking text with YAML's null tag, which under full YAML 1.2
+    /// core-schema tag resolution means the node IS null regardless of its text. This helper does
+    /// not attempt that — it only recognises PLAIN, untagged scalars whose TEXT is one of the
+    /// five "no real content" spellings — so '!!null y' stays the literal text "y" both before
+    /// and after the N-5 tag check. This is pinned only as a parser-API boundary: a document
+    /// containing '!!null y' never reaches this method in the shipped pipeline at all —
+    /// DocumentValidator.Validate rejects it first with "Encountered an unresolved tag
+    /// 'tag:yaml.org,2002:null'" (confirmed empirically), so no real author-authored suite can
+    /// ever exercise this path.
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyImage_ExplicitNullTagOnNonNullText_StaysLiteral_KnownAsymmetry()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: !!null y
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Equal("y", doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    /// <summary>
+    /// Single-representation-of-absent contract: a dangling 'image:' (no value at all) resolves
+    /// to actual <see langword="null"/>, not "". Before this test's own fix, the typed model had
+    /// TWO spellings of "absent" for these two fields — "" from a dangling key, alongside null
+    /// from a fully-absent key — and a future consumer written as <c>is not null</c> against
+    /// that two-spelling shape would silently treat "" as present, which is the exact bug shape
+    /// this file's history exists to close. GetScalarOrPlainNull now folds the empty PLAIN scalar
+    /// into the same single null representation as the four explicit YAML-null tokens, so every
+    /// PLAIN "no real content" spelling collapses to one value — NOT every possible authored
+    /// value: a QUOTED 'image: ""' still returns "" verbatim (quoting is the author's deliberate
+    /// opt-out; see GetScalarOrPlainNull's own remarks), so this parser still hands out both ""
+    /// and null depending on how the author wrote it. EnvironmentMapper's own IsNullOrEmpty
+    /// guards are what actually catch that QUOTED "" shape for real authored YAML — they are
+    /// LOAD-BEARING, not a defensive fallback that merely covers a hand-constructed
+    /// DependencySpec bypassing this parser (see EnvironmentMapper's own guard comment).
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyImage_Dangling_ResolvesToNull_SingleAbsentRepresentation()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image:
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        Assert.Null(doc.Environment!.Dependencies!["orders-db"].Image);
+    }
+
+    // -------------------------------------------------------------------------
     // SUT configuration surface — service 'env:' mapping
     // -------------------------------------------------------------------------
 
