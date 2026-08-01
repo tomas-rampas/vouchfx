@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/dependencies/db
+# expected-keyword: required
+#
+# Pre-GA schema tightening (services/dependencies closure): $defs/dependency
+# now carries 'required: ["type"]' — applies to object instances only (JSON
+# Schema draft 2020-12 §6.5.3), so the deliberately-preserved bare-scalar
+# dependency shape (see $defs/dependency's own remarks) is untouched by this
+# addition. A mapping-shaped dependency missing 'type' is now rejected here
+# with a '[required]' message, instead of reaching
+# YamlDocumentParser.ParseDependencyMap's own "missing the required 'type'
+# field" line/column exception one stage later.
+metadata:
+  name: rejected-dependency-missing-type
+environment:
+  dependencies:
+    db:
+      version: "16"
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

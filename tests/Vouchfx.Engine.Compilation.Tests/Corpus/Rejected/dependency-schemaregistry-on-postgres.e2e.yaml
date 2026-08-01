@@ -1,0 +1,23 @@
+# expected-instance-location: /environment/dependencies/db/schemaRegistry
+# expected-keyword: properties
+#
+# Diagnostics follow-up to the services/dependencies closure: $defs/dependency
+# forbids 'schemaRegistry' on every kind but kafka via a per-field 'false'
+# subschema inside its per-kind 'allOf'/'if'/'then' chain, which used to
+# carry a BLANK keyword and the generic "All values fail against the false
+# schema" message. SchemaErrorCollector now reads the dependency's own
+# 'type' back off the instance (the same way it already does for a step's
+# 'type') and names the actual rule: "Property 'schemaRegistry' is not
+# valid on a 'postgres' dependency" — a genuinely non-empty 'properties'
+# keyword.
+metadata:
+  name: rejected-dependency-schemaregistry-on-postgres
+environment:
+  dependencies:
+    db:
+      type: postgres
+      schemaRegistry: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

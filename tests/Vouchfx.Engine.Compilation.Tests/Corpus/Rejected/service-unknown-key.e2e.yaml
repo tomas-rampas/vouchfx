@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/services/app/securty
+# expected-keyword: additionalProperties
+#
+# Diagnostics follow-up to the services/dependencies closure: a service's
+# 'additionalProperties: false' rejection used to carry a BLANK keyword and
+# the generic "All values fail against the false schema" message — no author
+# could act on it. SchemaErrorCollector now names the offending property and
+# its containing service, giving this a genuinely non-empty 'additionalProperties'
+# keyword, so (unlike when this shape was first introduced) it can live in
+# the corpus proper instead of only as a unit-level pin.
+metadata:
+  name: rejected-service-unknown-key
+environment:
+  services:
+    app:
+      image: myorg/app:1.0
+      securty: mtls
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

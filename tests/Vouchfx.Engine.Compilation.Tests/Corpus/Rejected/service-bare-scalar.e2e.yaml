@@ -1,0 +1,18 @@
+# expected-instance-location: /environment/services/app
+# expected-keyword: type
+#
+# Pre-GA schema tightening (services/dependencies closure): $defs/service
+# carries its own "type": "object" constraint (unlike $defs/dependency,
+# which deliberately omits one — see that definition's own remarks). A
+# bare-scalar service value is therefore rejected here, at schema time,
+# rather than deferred to YamlDocumentParser.ParseServiceMap's own
+# line/column diagnostic.
+metadata:
+  name: rejected-service-bare-scalar
+environment:
+  services:
+    app: traefik/whoami:latest
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

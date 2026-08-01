@@ -1,0 +1,25 @@
+# expected-instance-location: /environment/dependencies/asb/topics/0/description
+# expected-keyword: additionalProperties
+#
+# Diagnostics follow-up to the services/dependencies closure: a topics[]
+# item's 'additionalProperties: false' rejection used to carry a BLANK
+# keyword and the generic "All values fail against the false schema"
+# message. SchemaErrorCollector now at least names the offending property
+# (a topic entry sits two levels below its owning dependency, outside the
+# pointer shape it resolves a container name for — see the class remarks'
+# no-fabrication rule — so this degrades to the bare property name rather
+# than guessing which dependency the entry belongs to), giving this a
+# genuinely non-empty 'additionalProperties' keyword.
+metadata:
+  name: rejected-topics-item-unknown-key
+environment:
+  dependencies:
+    asb:
+      type: azureservicebus
+      topics:
+        - name: orders-topic
+          description: not a real field
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

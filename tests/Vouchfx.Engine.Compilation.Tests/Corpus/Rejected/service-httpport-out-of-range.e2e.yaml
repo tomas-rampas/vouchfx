@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/services/app/httpPort
+# expected-keyword: maximum
+#
+# Pre-GA schema tightening (services/dependencies closure): 'httpPort' is now
+# bounded to the real TCP port range (1-65535). Before this change,
+# YamlDocumentParser's int.TryParse(NumberStyles.None) accepted this value at
+# the PARSER level (it is a well-formed non-negative integer) but the ENGINE
+# would silently misconfigure the container's health check against a port
+# number no real service could ever listen on — a defect this fixture no
+# longer lets past authoring time.
+metadata:
+  name: rejected-service-httpport-out-of-range
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+      httpPort: 99999
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
