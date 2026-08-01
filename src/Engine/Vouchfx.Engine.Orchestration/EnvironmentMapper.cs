@@ -672,6 +672,12 @@ public static class EnvironmentMapper
             // authored input. (It also covers a hand-constructed DependencySpec carrying ""
             // directly, as several tests in this area do, but that is the secondary reason.)
             //
+            // Why "" is absorbed here while "   " (below) is rejected, though both can come from
+            // the same CI-templating accident: "" has a CONTRACT-level meaning — empty means
+            // absent, matching Version's MN3 guard and the schema's own dangling-key promise —
+            // whereas whitespace-only has none and is indistinguishable from a typo, so it gets
+            // the loud rejection.
+            //
             // REJECTED (do not re-introduce): widening this guard to IsNullOrWhiteSpace, on the
             // reasoning "match what ImageReferenceParser.Parse itself rejects, so spec.Image can
             // never reach Parse in a state Parse would reject". That rationale IS the regression

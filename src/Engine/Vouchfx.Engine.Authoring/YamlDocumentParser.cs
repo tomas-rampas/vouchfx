@@ -971,12 +971,15 @@ public static class YamlDocumentParser
     /// <c>SchemaResources.ConvertYamlToJsonDocument</c> (the YAML→JSON step schema validation
     /// runs, BEFORE this parser ever sees the document) rejects <c>!!null y</c> outright —
     /// <c>DocumentValidator.Validate</c> returns <c>IsValid: false</c> with "Encountered an
-    /// unresolved tag 'tag:yaml.org,2002:null'" — because YamlDotNet's object-graph deserialiser
-    /// has no registered mapping from an explicit <c>!!null</c> tag to a non-null-shaped .NET
-    /// value. A document containing <c>!!null y</c> therefore never passes schema validation and
-    /// never reaches this method in the shipped pipeline; <c>!!str null</c>, by contrast,
-    /// validates cleanly (<c>!!str</c> maps directly to <see cref="string"/>) and IS reachable,
-    /// which is why only that case gets the fix above.
+    /// unresolved tag 'tag:yaml.org,2002:null'". A document containing <c>!!null y</c> therefore
+    /// never reaches this method in the shipped pipeline. <c>!!str null</c>, by contrast, DOES
+    /// validate and IS reachable, which is why only that case gets the fix above — with one
+    /// measured oddity worth recording: on the schema-validation path that same conversion
+    /// renders <c>!!str null</c> as JSON <c>null</c> (the tag is not honoured there), so the
+    /// document validates via the field's <c>["string","null"]</c> type union while this parser
+    /// keeps the literal text <c>"null"</c>. The two layers disagree about the value; the engine
+    /// then rejects the literal <c>"null"</c> loudly via the M3 tagless-image rule, so the
+    /// disagreement never produces silent behaviour.
     /// </para>
     /// </remarks>
     private static string? GetScalarOrPlainNull(YamlMappingNode mapping, string key)

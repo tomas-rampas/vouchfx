@@ -3127,6 +3127,12 @@ public sealed class EnvironmentMapperTests
     // step straight over that gap and could not have caught the regression (GetScalar returns
     // "", never null, for a dangling or explicit-empty scalar).
     //
+    // A note on "red-first" in this region's provenance claims: red against the REVISION the
+    // test was written for, not necessarily against origin/main. The whitespace pins are red
+    // only against the (reverted) IsNullOrWhiteSpace intermediate; the !!str-tag pin only
+    // against the pre-tag-check intermediate. Where a test is red against main itself, its own
+    // comment says so.
+    //
     // Root cause: the MN3 fix (above) normalised empty→absent for Version but not for the sibling
     // Image field beside it — the old 'spec.Image is not null' guard let GetScalar's "" flow
     // straight into ImageReferenceParser.Parse's own eager validation, which throws.

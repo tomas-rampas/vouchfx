@@ -152,7 +152,7 @@ When `image:` is supplied, it bypasses the Aspire-provisioned default entirely. 
 
 An `image:` field that carries no tag or digest and no sibling `version:` is **rejected** with a clear error. A tagless reference without an explicit version would silently float on `:latest`, defeating the determinism invariant; authors must use `version:` to pin the tag, or include a tag in the `image:` itself.
 
-An `image:` or `version:` written with no value at all, or as an unquoted YAML null (`~`, `null`, `Null`, or `NULL`), is treated as absent — identical to omitting the field entirely. Quote the value (e.g. `version: "null"`) to keep it as literal text instead.
+An `image:` or `version:` written with no value at all, or as an unquoted YAML null (`~`, `null`, `Null`, or `NULL`), is treated as absent — identical to omitting the field entirely. Quote the value (e.g. `version: "null"`) to keep it as literal text instead; the one exception is a quoted empty string (`image: ""`), which is still treated as absent, since empty means absent on these two fields.
 
 The `ImageReferenceParser` also rejects other malformed inputs: leading or trailing whitespace; a tag (or digest) with a colon inside it (e.g., `mongodb:5:0` is invalid); a bare trailing `:` or `@` with no text after it; a digest whose hash is empty or not valid hexadecimal (e.g., `@sha256:`); a non-`sha256:` digest algorithm; an empty repository path segment (e.g., a leading or doubled `/`, or paths like `/mongo` or `myrepo/`); and an invalid combination of both `image:` with tag and `version:` (use one or the other to avoid ambiguity).
 
