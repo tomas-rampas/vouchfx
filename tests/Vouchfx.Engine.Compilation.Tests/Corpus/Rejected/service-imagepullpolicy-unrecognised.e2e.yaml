@@ -1,0 +1,18 @@
+# expected-instance-location: /environment/services/app/imagePullPolicy
+# expected-keyword: enum
+#
+# Pre-GA schema tightening (services/dependencies closure): the per-service
+# 'imagePullPolicy' override now carries the same closed enum (Always,
+# Missing, Never) as the pre-existing environment-level field of the same
+# name — previously a service's own value had no shape constraint at all.
+metadata:
+  name: rejected-service-imagepullpolicy-unrecognised
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+      imagePullPolicy: Sometimes
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

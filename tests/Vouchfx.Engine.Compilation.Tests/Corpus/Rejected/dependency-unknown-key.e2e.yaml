@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/dependencies/db/qeues
+# expected-keyword: additionalProperties
+#
+# Diagnostics follow-up to the services/dependencies closure: a dependency's
+# 'additionalProperties: false' rejection used to carry a BLANK keyword and
+# the generic "All values fail against the false schema" message. Schema-
+# ErrorCollector now names the offending property and its containing
+# dependency, giving this a genuinely non-empty 'additionalProperties'
+# keyword, so (unlike when this shape was first introduced) it can live in
+# the corpus proper instead of only as a unit-level pin.
+metadata:
+  name: rejected-dependency-unknown-key
+environment:
+  dependencies:
+    db:
+      type: postgres
+      qeues: [orders]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

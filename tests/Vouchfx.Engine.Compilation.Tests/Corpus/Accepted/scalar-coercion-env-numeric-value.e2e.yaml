@@ -1,0 +1,34 @@
+# REJECTED BY THE SCHEMA TODAY, ACCEPTED BY THE ENGINE — deliberately excluded
+# from the main accepted-corpus gate and exercised instead by
+# SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche.
+#
+# That theory RUNS (it is not skipped) and asserts the CURRENT, narrow
+# behaviour: this document must still be rejected. It is a pin, not a
+# known-failure — when the scalar-coercion widening tranche lands, the theory
+# starts FAILING, which is the signal to flip its assertion to Assert.True and
+# move these fixtures into the plain accepted set.
+#
+# environment.services.*.env additionalProperties is typed { "type": "string" }
+# (root-language-schema.json), but YamlDocumentParser.ParseEnvMap retains
+# every value in its RAW scalar form — a bare 8080 or true arrives from
+# YamlDotNet as the scalar string "8080"/"true", exactly the literal text a
+# container's environment variable needs, and no numeric/boolean coercion is
+# applied (see ParseEnvMap's own remarks) — so a bare numeric env value works
+# at runtime today and fails only at this schema gate, because the YAML→JSON
+# bridge used for schema validation (unlike the parser) DOES infer numeric
+# types for plain scalars.
+#
+# Do not move this file out of the scalar-coercion-* naming group until that
+# widening lands — the theory discovers its fixtures by that prefix.
+metadata:
+  name: scalar-coercion-env-numeric-value
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+      env:
+        RETRY_COUNT: 3
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the env numeric-value gap only."

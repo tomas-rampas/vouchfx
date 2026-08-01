@@ -1,0 +1,23 @@
+# expected-instance-location: /environment/dependencies/asb/topics/0
+# expected-keyword: required
+#
+# Pre-GA schema tightening (services/dependencies closure): each 'topics[]'
+# item now carries 'required: ["name"]'. Before this change, a topic entry
+# with no 'name' at all validated cleanly here; ParseAsbTopics
+# (EnvironmentMapper) silently drops such an entry via its
+# 'nameNode is not YamlScalarNode { Value: { } topicName } -> continue'
+# guard, so the topic was never declared in the emulator's Config.json — a
+# defect that surfaced only much later, as an unrelated-looking Service Bus
+# environment error when a step referenced it.
+metadata:
+  name: rejected-topics-item-missing-name
+environment:
+  dependencies:
+    asb:
+      type: azureservicebus
+      topics:
+        - subscriptions: [orders-sub]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

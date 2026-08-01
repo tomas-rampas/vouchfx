@@ -1,0 +1,19 @@
+# expected-instance-location: /environment/services/app
+# expected-keyword: required
+#
+# Pre-GA schema tightening (services/dependencies closure): $defs/service now
+# requires 'anyOf: [{required:[image]}, {required:[project]}]' — a service
+# with NEITHER field is rejected here with a plain '[required]' message
+# naming each missing field, rather than being accepted and later failing
+# with EnvironmentMapper's "has neither 'image' nor 'project' set" exception
+# at suite-build time.
+metadata:
+  name: rejected-service-neither-image-nor-project
+environment:
+  services:
+    app:
+      httpPort: 8080
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

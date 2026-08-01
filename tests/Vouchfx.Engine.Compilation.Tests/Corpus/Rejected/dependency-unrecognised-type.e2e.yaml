@@ -1,0 +1,19 @@
+# expected-instance-location: /environment/dependencies/db/type
+# expected-keyword: enum
+#
+# Pre-GA schema tightening (services/dependencies closure): 'type' now
+# carries a closed enum of the thirteen kinds EnvironmentMapper's own
+# s_dependencyRegistry recognises. Before this change, an unrecognised value
+# such as 'cassandra' validated cleanly here and only failed later, at
+# suite-build time, with EnvironmentMapper's "Unsupported dependency type"
+# ArgumentException.
+metadata:
+  name: rejected-dependency-unrecognised-type
+environment:
+  dependencies:
+    db:
+      type: cassandra
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

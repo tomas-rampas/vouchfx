@@ -65,7 +65,10 @@
       "properties": {
         "services": {
           "description": "The system-under-test services, each identified by a logical name and brought up via an image or csproj path.",
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/service"
+          }
         },
         "dependencies": {
           "description": "Managed Aspire resources (databases, brokers, caches) that the engine provisions.",
@@ -93,12 +96,94 @@
         }
       }
     },
+    "service": {
+      "description": "A single system-under-test service declared under environment.services (DSL §3.2), identified by its map key. Brought into the topology as either a container image or a csproj path. Unlike $defs/dependency (see that definition's own remarks), this definition DOES carry its own \"type\": \"object\" constraint: a bare-scalar service value (e.g. 'app: traefik/whoami:latest' with no mapping) is therefore rejected here, at schema time, rather than deferred to the parser's own line/column diagnostic — services have no equivalent 'division of responsibility' concern to preserve. Exactly one of 'image'/'project' is enforced by TWO separate keywords rather than a single 'oneOf': 'anyOf' below requires AT LEAST one (produces a plain, correctly-located '[required]' error naming each missing field when neither is set), and the 'allOf'/'if'/'then' clause forbids 'project' once 'image' is present via a boolean 'false' subschema (produces a correctly-located error naming 'project' when both are set). A plain 'oneOf: [{required:[image]},{required:[project]}]' was tried first and discarded: when BOTH fields are set, JsonSchema.Net 9.2.1's List-format output marks the failing 'oneOf' node itself invalid but attaches no error message to it at all — the document is correctly rejected overall, but with no diagnosable reason pointing at the service (verified empirically; see EnvironmentSchemaTests.cs).",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "image"
+          ]
+        },
+        {
+          "required": [
+            "project"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "image"
+            ]
+          },
+          "then": {
+            "properties": {
+              "project": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "image": {
+          "description": "An OCI image reference for the service's container (e.g. 'myorg/orders-api:1.2.3'), pulled from any registry the container runtime can already reach — the recommended default for speed and isolation. Mutually exclusive with 'project'; exactly one of the two must be supplied (DSL §3.2).",
+          "type": "string"
+        },
+        "project": {
+          "description": "A relative path to a .csproj file; the engine builds and runs this project as part of suite startup — the convenience form for a team iterating on a service locally. Mutually exclusive with 'image'; exactly one of the two must be supplied (DSL §3.2).",
+          "type": "string"
+        },
+        "imagePullPolicy": {
+          "description": "Overrides the environment-level imagePullPolicy for this service only: Always, Missing, or Never (DSL §3.2.1). Matched case-sensitively here, exactly like the environment-level field of the same name (see its own description) — note that the engine's own parser (EnvironmentMapper.ParseImagePullPolicy) accepts these three values case-INSENSITIVELY, so a lower-cased 'always' is accepted at runtime yet rejected by this schema.",
+          "type": "string",
+          "enum": [
+            "Always",
+            "Missing",
+            "Never"
+          ]
+        },
+        "httpPort": {
+          "description": "The container port the service listens on, when it differs from the image's default (DSL §3.2). Must be a real TCP port number (1-65535): the parser silently treats a malformed value (anything int.TryParse cannot read as a plain non-negative integer) as absent and falls back to port 80, so bounding the type here closes that silent-wrong-port failure mode at authoring time instead of leaving it to surface as a mysterious runtime connection failure.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "env": {
+          "description": "Environment variables passed to the service's container/project — the SUT configuration surface (DSL §3.2.6). Each value is a literal string that may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context; this schema does not itself validate reference syntax or confirm the named dependency exists — that cross-check is EnvironmentMapper's, which alone knows the declared dependency set.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "dependency": {
-      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Fields beyond those listed here are preserved and passed through to the dependency's own resource contributor. Deliberately carries no top-level 'type' (object) constraint of its own: on v1.0, a dependency's value was entirely unconstrained here, and a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic.",
+      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: on v1.0, a dependency's value was entirely unconstrained here, and a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the six fields below are recognised, and a misspelled or unsupported key — previously swept silently into the parser's Extra bucket and never reaching any provider — is now rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — by the allOf/if/then chain at the end of this definition, mirroring the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). That chain is authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field.",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "The dependency's technology kind, e.g. postgres, mysql, sqlserver, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus, mailpit, dynamodb, minio. No fixed list is enforced here — new kinds can be added without a schema change — but the engine rejects an unrecognised value at suite-build time.",
-          "type": "string"
+          "description": "The dependency's technology kind. Enumerated against EnvironmentMapper's own dependency-registration table (thirteen kinds: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio), so an unrecognised value is caught here, at authoring time, instead of surfacing later as an ArgumentException at suite-build time. Matched case-sensitively; the registry itself performs its own lookup case-INSENSITIVELY (StringComparer.OrdinalIgnoreCase), so a differently-cased but otherwise valid value (e.g. 'Postgres') is accepted by the engine yet rejected by this schema.",
+          "type": "string",
+          "enum": [
+            "postgres",
+            "sqlserver",
+            "mysql",
+            "mongodb",
+            "redis",
+            "elasticsearch",
+            "rabbitmq",
+            "nats",
+            "kafka",
+            "mailpit",
+            "azureservicebus",
+            "dynamodb",
+            "minio"
+          ]
         },
         "version": {
           "description": "An optional tag fragment (e.g. \"16\", \"8.0\") applied to the dependency's own built-in image repository. This is ONLY a tag on the provider's built-in repository — it cannot name a different repository or registry; use 'image' for that. Setting 'version' together with an 'image' that already carries its own tag or digest is rejected as ambiguous. Written as a plain (unquoted) YAML scalar this is commonly parsed as a number rather than a string, and the engine reads it back as text regardless — so both shapes are accepted. A key written with no value at all (or YAML's explicit null, e.g. '~') parses as null and is treated identically to 'version' being absent.",
@@ -147,9 +232,13 @@
           ],
           "items": {
             "type": "object",
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
             "properties": {
               "name": {
-                "description": "The topic name to declare.",
+                "description": "The topic name to declare. ParseAsbTopics (EnvironmentMapper) silently drops a topic entry whose 'name' is absent entirely — 'required' here catches that at schema time instead of the entity quietly never reaching the emulator's Config.json, surfacing much later as an unrelated-looking Service Bus environment error. Note this still permits an explicit null value ('name: ~'), which the parser ALSO silently drops — narrowing the type union below to exclude null would close that residual gap too, but is deliberately left open here pending that decision.",
                 "type": [
                   "string",
                   "number",
@@ -175,7 +264,266 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "postgres"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "sqlserver"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mysql"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mongodb"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "redis"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "elasticsearch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "rabbitmq"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "nats"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "kafka"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mailpit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "azureservicebus"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "dynamodb"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "minio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        }
+      ]
     },
     "step": {
       "description": "A single typed step in the test sequence.",

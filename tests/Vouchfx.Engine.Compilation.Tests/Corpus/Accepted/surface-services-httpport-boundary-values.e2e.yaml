@@ -1,0 +1,17 @@
+# Surface coverage: environment.services httpPort at both ends of the real
+# TCP port range (1-65535) now enforced on $defs/service — a future
+# off-by-one narrowing of the bound is caught here immediately.
+metadata:
+  name: surface-services-httpport-boundary-values
+environment:
+  services:
+    lowest-port:
+      image: traefik/whoami:latest
+      httpPort: 1
+    highest-port:
+      image: traefik/whoami:latest
+      httpPort: 65535
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the httpPort boundary values only."

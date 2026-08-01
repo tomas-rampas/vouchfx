@@ -30,6 +30,27 @@
 // SuppressUnevaluatedPropertiesCascade drops those: same class of problem as
 // IsIfDiscriminatorNoise (schema-machinery artefacts that are correct by the
 // evaluator's rules and wrong for a human), same treatment.
+//
+// Generalisation (environment.services / environment.dependencies closure):
+// the SAME blank-keyword shape recurs everywhere the schema rejects a value
+// via a bare boolean `false` subschema, not only at $defs/step's
+// unevaluatedProperties — namely `additionalProperties: false` (an unknown
+// key under $defs/service, $defs/dependency, $defs/metadata, the document
+// root, a topics[] item, or a provider's own nested block such as
+// db-assert.postgres's `expect`) and a per-field `"<name>": false` planted
+// inside an if/then `then` clause (the dependency-kind exclusions —
+// `schemaRegistry` on a non-kafka kind, `queues`/`topics` off
+// azureservicebus — and $defs/service's `image`/`project` mutual exclusion).
+// Verified empirically against the real composed schema: every one of these
+// shapes carries the identical blank keyword and generic "All values fail
+// against the false schema" message; only EvaluationPath's terminal
+// segment(s) distinguish which construct produced it. FormatError therefore
+// recognises THREE blank-keyword shapes, not one — unevaluatedProperties
+// (unchanged), additionalProperties (new), and the per-field `properties/
+// <name>: false` shape (new) — each substituting a message that names the
+// offending property and, wherever the InstanceLocation pointer or the
+// instance itself lets it be resolved without guessing, the property's
+// container. See FormatAdditionalPropertiesError / FormatForbiddenPropertyError.
 using System.Globalization;
 using System.Text.Json;
 using Json.Schema;
@@ -254,10 +275,12 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Formats a single keyword/message pair into the text an author sees,
-    /// substituting a named, actionable message for the otherwise-blank
-    /// <c>unevaluatedProperties</c> shape (see the class remarks) and falling
-    /// back to the original <c>[{keyword}] {message}</c> format for every
-    /// other keyword.
+    /// substituting a named, actionable message for each of the three
+    /// blank-keyword false-schema shapes (see the class remarks —
+    /// <c>unevaluatedProperties</c>, <c>additionalProperties</c>, and a
+    /// per-field <c>properties/&lt;name&gt;: false</c>) and falling back to
+    /// the original <c>[{keyword}] {message}</c> format for every other,
+    /// genuinely-named keyword.
     /// </summary>
     private static string FormatError(
         string keyword, string message, string evaluationPath, string instanceLocation, JsonElement? instance)
@@ -265,6 +288,16 @@ internal static class SchemaErrorCollector
         if (IsUnevaluatedPropertiesShape(keyword, evaluationPath))
         {
             return FormatUnevaluatedPropertiesError(instanceLocation, instance);
+        }
+
+        if (IsAdditionalPropertiesShape(keyword, evaluationPath))
+        {
+            return FormatAdditionalPropertiesError(instanceLocation);
+        }
+
+        if (IsForbiddenPropertyShape(keyword, evaluationPath))
+        {
+            return FormatForbiddenPropertyError(instanceLocation, instance);
         }
 
         return $"[{keyword}] {message}";
@@ -280,6 +313,46 @@ internal static class SchemaErrorCollector
     /// </summary>
     private static bool IsUnevaluatedPropertiesShape(string keyword, string evaluationPath) =>
         keyword.Length == 0 && EndsWithSegment(evaluationPath, "unevaluatedProperties");
+
+    /// <summary>
+    /// True for the blank-keyword <c>additionalProperties: false</c> shape —
+    /// an unknown key rejected by a plain object closure (<c>$defs/metadata</c>,
+    /// <c>$defs/service</c>, <c>$defs/dependency</c>, the document root, a
+    /// <c>topics[]</c> item, or a provider's own nested block such as
+    /// <c>db-assert.postgres</c>'s <c>expect</c>) rather than the step-level
+    /// <c>unevaluatedProperties</c> closure. Same generic underlying message
+    /// as <see cref="IsUnevaluatedPropertiesShape"/>, distinguished only by
+    /// EvaluationPath's terminal segment, exactly as that shape is.
+    /// </summary>
+    private static bool IsAdditionalPropertiesShape(string keyword, string evaluationPath) =>
+        keyword.Length == 0 && EndsWithSegment(evaluationPath, "additionalProperties");
+
+    /// <summary>
+    /// True for the blank-keyword per-field <c>"&lt;name&gt;": false</c>
+    /// shape used to forbid one specific, already-declared property —
+    /// $defs/dependency's per-kind exclusions (<c>schemaRegistry</c> off a
+    /// non-kafka kind, <c>queues</c>/<c>topics</c> off everything but
+    /// azureservicebus) and $defs/service's <c>image</c>/<c>project</c>
+    /// mutual exclusion. Recognised structurally: JsonSchema.Net only ever
+    /// produces a leaf node whose EvaluationPath terminates EXACTLY at
+    /// <c>properties/&lt;name&gt;</c> (nothing deeper) when the subschema
+    /// mapped to that property is a bare boolean — a normal (non-boolean)
+    /// subschema's own failing keywords always add at least one more path
+    /// segment beyond the property name. This holds for every
+    /// <c>properties/&lt;name&gt;: false</c> declaration in the current
+    /// schema (verified empirically); it is not, and does not need to be,
+    /// specific to the dependency/service definitions by name.
+    /// </summary>
+    private static bool IsForbiddenPropertyShape(string keyword, string evaluationPath)
+    {
+        if (keyword.Length != 0)
+        {
+            return false;
+        }
+
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 2 && segments[^2] == "properties";
+    }
 
     /// <summary>
     /// True when <paramref name="message"/> is one this class produced via
@@ -313,6 +386,128 @@ internal static class SchemaErrorCollector
         return stepType is null
             ? $"[unevaluatedProperties] Unknown property '{propertyName}'"
             : $"[unevaluatedProperties] Unknown property '{propertyName}' on step type '{stepType}'";
+    }
+
+    /// <summary>
+    /// Builds the actionable message for an <c>additionalProperties: false</c>
+    /// rejection: names the offending property and, when
+    /// <paramref name="instanceLocation"/> matches the pointer shape
+    /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>
+    /// (see <see cref="TryResolveEnvironmentContainer"/>), the container's own
+    /// kind and map key — e.g. <c>Unknown property 'imagePullPolcy' on
+    /// service 'orders-api'</c>. Every other unknown-key surface this shape
+    /// covers (<c>metadata</c>, the document root, a <c>topics[]</c> item, a
+    /// provider's own nested block) degrades to the bare property name rather
+    /// than guessing a container that cannot be reliably named from the
+    /// pointer alone — see the class remarks and
+    /// <see cref="FormatUnevaluatedPropertiesError"/>'s own no-fabrication
+    /// rule, which this mirrors.
+    /// </summary>
+    private static string FormatAdditionalPropertiesError(string instanceLocation)
+    {
+        var propertyName = LastPointerSegment(instanceLocation);
+
+        return TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName)
+            ? $"[additionalProperties] Unknown property '{propertyName}' on {containerKind} '{containerName}'"
+            : $"[additionalProperties] Unknown property '{propertyName}'";
+    }
+
+    /// <summary>
+    /// Builds the actionable message for the per-field
+    /// <c>"&lt;name&gt;": false</c> rejection: names the offending property
+    /// and the rule it broke.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On a <c>dependency</c> container (see
+    /// <see cref="TryResolveEnvironmentContainer"/>), reuses
+    /// <see cref="TryResolveContainerType"/> — exactly the helper
+    /// <see cref="FormatUnevaluatedPropertiesError"/> already uses to read a
+    /// step's own <c>type</c> — to read the dependency's own <c>type</c> and
+    /// name it: <c>Property 'schemaRegistry' is not valid on a 'postgres'
+    /// dependency</c>. When the kind cannot be resolved (no instance, or the
+    /// container's own <c>type</c> is missing/non-string — should not arise
+    /// in practice since <c>type</c> is required, but this is a best-effort
+    /// diagnostic, not a second validation pass) this degrades to naming the
+    /// dependency by its own map key instead, never a guessed kind.
+    /// </para>
+    /// <para>
+    /// On a <c>service</c> container, the only per-field exclusion the
+    /// schema declares is <c>project</c> forbidden once <c>image</c> is set
+    /// (see $defs/service's own description) — a single, fixed, frozen rule,
+    /// so it is named directly rather than generalised: the offending
+    /// <c>then</c> branch is reachable only via a sibling
+    /// <c>if: required:["image"]</c>, so 'image' being present is a schema
+    /// invariant of this branch, not an assumption this method makes about
+    /// the instance.
+    /// </para>
+    /// <para>
+    /// Any future <c>properties/&lt;name&gt;: false</c> declaration outside
+    /// both known containers (or a service-level exclusion other than
+    /// 'project') degrades to naming the property alone — never fabricating
+    /// a rule this method was not told about.
+    /// </para>
+    /// </remarks>
+    private static string FormatForbiddenPropertyError(string instanceLocation, JsonElement? instance)
+    {
+        var propertyName = LastPointerSegment(instanceLocation);
+
+        if (!TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName))
+        {
+            return $"[properties] Property '{propertyName}' is not valid here";
+        }
+
+        if (containerKind == DependencyContainerKind)
+        {
+            var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
+
+            return dependencyKind is null
+                ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
+                : $"[properties] Property '{propertyName}' is not valid on a '{dependencyKind}' dependency";
+        }
+
+        if (containerKind == ServiceContainerKind && propertyName == "project")
+        {
+            return $"[properties] Property 'project' cannot be combined with 'image' on service " +
+                   $"'{containerName}' — exactly one of the two is required (DSL §3.2)";
+        }
+
+        return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";
+    }
+
+    /// <summary>The container-kind label <see cref="FormatForbiddenPropertyError"/> and <see cref="FormatAdditionalPropertiesError"/> use for a service.</summary>
+    private const string ServiceContainerKind = "service";
+
+    /// <summary>The container-kind label <see cref="FormatForbiddenPropertyError"/> and <see cref="FormatAdditionalPropertiesError"/> use for a dependency.</summary>
+    private const string DependencyContainerKind = "dependency";
+
+    /// <summary>
+    /// Recognises the pointer shape
+    /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>
+    /// in <paramref name="instanceLocation"/> and extracts the container's
+    /// kind (<see cref="ServiceContainerKind"/> or
+    /// <see cref="DependencyContainerKind"/>) and its own map key — the two
+    /// blank-keyword-producing surfaces this class can name with confidence
+    /// (see the class remarks). Pointer-only, deliberately: a service or
+    /// dependency's own name is the YAML map key an author wrote, directly
+    /// present in the pointer, never something that needs reading back out
+    /// of the instance the way a dependency's <c>type</c> does.
+    /// </summary>
+    private static bool TryResolveEnvironmentContainer(string instanceLocation, out string containerKind, out string containerName)
+    {
+        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 4 && segments[0] == "environment" &&
+            (segments[1] == "services" || segments[1] == "dependencies"))
+        {
+            containerKind = segments[1] == "services" ? ServiceContainerKind : DependencyContainerKind;
+            containerName = DecodePointerSegment(segments[2]);
+            return true;
+        }
+
+        containerKind = string.Empty;
+        containerName = string.Empty;
+        return false;
     }
 
     /// <summary>

@@ -504,7 +504,12 @@ public sealed class SchemaAcceptedCorpusTests
                 "at /steps/0/target: (line 12) [unevaluatedProperties] Unknown property 'target' on step type 'script.csharp'; " +
                 "at /steps/0: (line 10) [required] Required properties [\"file\"] are not present " +
                 "(pre-existing oneOf-branch noise for the unexercised 'file' alternative, only surfaced once " +
-                "the document is invalid overall for the reason above — see SchemaErrorCollector).",
+                "the document is invalid overall for the reason above — see SchemaErrorCollector). ALSO now fails " +
+                "independently (services/dependencies schema closure, branch feat/close-environment-surface): " +
+                "'legacy-cache' declares 'type: cassandra', not one of the thirteen kinds $defs/dependency's new " +
+                "'type' enum recognises (this fixture's own name — 'unknown-kind' — is exactly the shape that enum " +
+                "now catches at schema time) — at /environment/dependencies/legacy-cache/type: [enum] 'cassandra' " +
+                "does not match one of the values in the enumeration.",
         };
 
     public static IEnumerable<object[]> PlanningFixtureFiles()

@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/services/app/project
+# expected-keyword: properties
+#
+# Diagnostics follow-up to the services/dependencies closure: $defs/service
+# forbids 'project' once 'image' is present via a per-field 'false'
+# subschema ('allOf'/'if'/'then'), which used to carry a BLANK keyword and
+# the generic "All values fail against the false schema" message.
+# SchemaErrorCollector now names the actual rule the author broke (two
+# mutually exclusive fields both set) rather than merely the offending
+# field, giving this a genuinely non-empty 'properties' keyword.
+metadata:
+  name: rejected-service-project-with-image
+environment:
+  services:
+    app:
+      image: myorg/app:1.0
+      project: ./src/App/App.csproj
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

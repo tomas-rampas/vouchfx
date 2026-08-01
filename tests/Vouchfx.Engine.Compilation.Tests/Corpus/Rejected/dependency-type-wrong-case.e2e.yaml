@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/dependencies/db/type
+# expected-keyword: enum
+#
+# Pre-GA schema tightening (services/dependencies closure): the 'type' enum
+# is case-sensitive (lower-case canonical form only). This is the
+# case-sensitivity finding reported alongside this change:
+# EnvironmentMapper's own s_dependencyRegistry looks 'type' up via
+# StringComparer.OrdinalIgnoreCase, so the ENGINE accepts 'Postgres' — but
+# this schema, deliberately narrow, rejects it. A real, correctly-spelled
+# technology name in the wrong case is therefore rejected identically to a
+# genuinely unrecognised one (see dependency-unrecognised-type.e2e.yaml).
+metadata:
+  name: rejected-dependency-type-wrong-case
+environment:
+  dependencies:
+    db:
+      type: Postgres
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
