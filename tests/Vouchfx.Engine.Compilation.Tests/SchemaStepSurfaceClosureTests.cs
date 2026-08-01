@@ -540,6 +540,106 @@ public sealed class SchemaStepSurfaceClosureTests
         }
     }
 
+    // ── Regression: a genuine defect must not cascade into false "unknown property" reports ──
+
+    /// <summary>
+    /// A step missing a required field, but otherwise carrying SEVERAL
+    /// perfectly valid fields, must report ONLY the missing-field violation —
+    /// not that violation plus one spurious "unknown property" per valid
+    /// field. Regression coverage for the cascade fixed in
+    /// <see cref="SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade"/>:
+    /// unevaluatedProperties only collects a subschema's annotations when
+    /// that subschema's application succeeds AS A WHOLE, so once http.rest's
+    /// own <c>then</c> branch fails outright (missing <c>path</c>), its
+    /// <c>properties</c> annotation for every OTHER field it declares —
+    /// <c>target</c>, <c>method</c>, plus the optional <c>expect</c> block —
+    /// would, without the fix, never propagate either, and each would
+    /// resurface as a false "unknown property" finding alongside the one
+    /// genuine defect.
+    /// </summary>
+    [Fact]
+    public void StepMissingRequiredField_WithSeveralOtherValidFields_ReportsOnlyTheMissingFieldError()
+    {
+        var registry = FullRegistry();
+
+        const string yaml = """
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                expect:
+                  status: 200
+            """;
+
+        var result = DocumentValidator.Validate(yaml, registry);
+
+        Assert.False(result.IsValid, "Expected invalid: http.rest requires 'path'.");
+
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Contains("required", onlyError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path", onlyError.Message, StringComparison.Ordinal);
+
+        // None of the valid fields (target, method, expect) may be reported
+        // as an unknown/unevaluated property.
+        Assert.DoesNotContain("unevaluatedProperties", onlyError.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// In a three-step document, step 1 (index 0) carries a genuine defect
+    /// (a missing required field) and step 3 (index 2) carries ONLY a typo.
+    /// Both must be reported, each against its own step — the suppression
+    /// is scoped per-step, not document-wide: a genuine defect on one step
+    /// must never hide an unrelated typo on a DIFFERENT step.
+    /// </summary>
+    [Fact]
+    public void StepWithRealError_AndUnrelatedStepWithSoleTypo_BothReported_EachAgainstTheRightStep()
+    {
+        var registry = FullRegistry();
+
+        const string yaml = """
+            steps:
+              - id: first-step
+                type: http.rest
+                target: orders-api
+                method: GET
+              - id: second-step
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+              - id: third-step
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+                taget: oops
+            """;
+
+        var result = DocumentValidator.Validate(yaml, registry);
+
+        Assert.False(result.IsValid);
+        Assert.Equal(2, result.Errors.Count);
+
+        // Step 1's genuine "missing required 'path'" violation — never
+        // suppressed, and not accompanied by any false-positive entry for
+        // its own valid 'target'/'method' fields.
+        var firstStepErrors = result.Errors.Where(e => e.InstanceLocation.StartsWith("/steps/0", StringComparison.Ordinal)).ToList();
+        var firstStepError = Assert.Single(firstStepErrors);
+        Assert.Contains("required", firstStepError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path", firstStepError.Message, StringComparison.Ordinal);
+
+        // Step 3's sole typo — untouched by step 1's unrelated defect.
+        var thirdStepErrors = result.Errors.Where(e => e.InstanceLocation.StartsWith("/steps/2", StringComparison.Ordinal)).ToList();
+        var thirdStepError = Assert.Single(thirdStepErrors);
+        Assert.Equal("/steps/2/taget", thirdStepError.InstanceLocation);
+        Assert.Contains("taget", thirdStepError.Message, StringComparison.Ordinal);
+        Assert.Contains("http.rest", thirdStepError.Message, StringComparison.Ordinal);
+
+        // Step 2 is fully valid: it must contribute nothing.
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation.StartsWith("/steps/1", StringComparison.Ordinal));
+    }
+
     // ── Boundary: unevaluatedProperties does NOT recurse into nested blocks ────
 
     /// <summary>

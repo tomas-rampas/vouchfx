@@ -137,34 +137,34 @@ public sealed class SchemaErrorCollectionAtScaleTests
     // ── Case A: invalid step, one provider matches ─────────────────────────────
 
     /// <summary>
-    /// An <c>http.rest</c> step missing ALL of its required <c>target</c>/
-    /// <c>method</c>/<c>path</c> fields must, at full 25-provider scale, yield
-    /// EXACTLY the one genuine "required" violation from the <c>http.rest</c>
-    /// fragment's own <c>then</c> branch — none of the 24 other providers'
-    /// non-matching discriminator clauses may leak an "Expected &lt;other
-    /// type&gt;" entry into the result.
+    /// An <c>http.rest</c> step missing its required <c>method</c>/<c>path</c>
+    /// fields, but carrying a perfectly valid <c>target</c>, must, at full
+    /// 25-provider scale, yield EXACTLY the one genuine "required" violation
+    /// from the <c>http.rest</c> fragment's own <c>then</c> branch — none of
+    /// the 24 other providers' non-matching discriminator clauses may leak an
+    /// "Expected &lt;other type&gt;" entry into the result, AND the valid
+    /// <c>target</c> must not be reported as an unevaluated property either.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Before the fix, this yields 25 errors (1 genuine + 24 "if"-discriminator
-    /// noise entries) — verified empirically against the raw
+    /// Before the "if"-discriminator noise fix, this yields 25 errors (1
+    /// genuine + 24 noise entries) — verified empirically against the raw
     /// <c>EvaluationResults</c> tree (see this file's header remarks).
     /// </para>
     /// <para>
-    /// The step deliberately omits EVERY http.rest-required field, not just
-    /// method/path: per JSON Schema 2020-12, a subschema's annotations are
-    /// only collected when that subschema application succeeds as a whole.
-    /// Since http.rest's own <c>then</c> branch already fails outright here
-    /// (missing required fields), its <c>properties</c> annotation never
-    /// propagates to $defs/step's <c>unevaluatedProperties</c> — so ANY OTHER
-    /// property present on this step (e.g. a lone <c>target</c>, present in
-    /// an earlier version of this fixture) would ALSO be reported as
-    /// unevaluated, alongside the genuine "required" violation, muddying
-    /// exactly the "exactly one genuine error" this test exists to pin. This
-    /// fixture avoids that entirely by carrying no properties beyond the
-    /// common <c>id</c>/<c>type</c> — see <c>SchemaErrorCollectorTests.NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineErrors</c>
-    /// for a fixture that deliberately DOES exercise (and pins) that
-    /// compounding behaviour.
+    /// This fixture deliberately KEEPS a valid <c>target</c> alongside the
+    /// missing <c>method</c>/<c>path</c>: per JSON Schema 2020-12, a
+    /// subschema's annotations are only collected when that subschema
+    /// application succeeds as a whole, so http.rest's own <c>then</c>
+    /// branch failing outright here (missing required fields) would, without
+    /// <c>SchemaErrorCollector</c>'s cascade suppression, ALSO cause
+    /// <c>target</c> to be reported as a spurious unevaluated property
+    /// alongside the genuine "required" violation. Proving that does NOT
+    /// happen — at the full 25-provider scale, alongside the discriminator-
+    /// noise proof this fixture already existed for — is exactly the point:
+    /// see <c>SchemaErrorCollector</c>'s class remarks and
+    /// <c>SchemaErrorCollectorTests.NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineNestedError</c>
+    /// for the equivalent nested-fragment proof.
     /// </para>
     /// </remarks>
     [Fact]
@@ -176,24 +176,25 @@ public sealed class SchemaErrorCollectionAtScaleTests
             steps:
               - id: bad-step
                 type: http.rest
+                target: orders-api
             """;
 
         var result = SchemaComposer.Validate(registry, yaml);
 
-        Assert.False(result.IsValid, "Expected invalid: 'target', 'method' and 'path' are required by http.rest.");
+        Assert.False(result.IsValid, "Expected invalid: 'method' and 'path' are required by http.rest.");
 
         AssertNoDiscriminatorNoise(result, registry, exceptTypeKey: "http.rest");
 
         // Exactly one genuine error survives: the missing-required-properties
         // violation from http.rest's own 'then' fragment — not "at least one",
-        // not "not empty": the 24 spurious discriminator entries must be gone.
+        // not "not empty": the 24 spurious discriminator entries AND the
+        // cascade-spurious 'target' unevaluatedProperties entry must be gone.
         Assert.True(result.Errors.Count == 1,
             $"Expected exactly 1 genuine error but got {result.Errors.Count}:{Environment.NewLine}{FormatErrors(result)}");
 
         var genuine = result.Errors[0];
         Assert.Equal("/steps/0", genuine.InstanceLocation);
         Assert.Contains("required", genuine.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("target", genuine.Message, StringComparison.Ordinal);
         Assert.Contains("method", genuine.Message, StringComparison.Ordinal);
         Assert.Contains("path", genuine.Message, StringComparison.Ordinal);
     }

@@ -75,33 +75,27 @@ public sealed class SchemaErrorCollectorTests
     /// string (the Theory above).
     /// </summary>
     /// <remarks>
-    /// <para>
     /// The step declares <c>mode: special</c>: this matches the fragment's
     /// nested first if/then pair (which then genuinely fails — the required
     /// <c>specialField</c> is absent) and mismatches its second nested if/then
     /// pair (whose <c>if</c> fails, contributing nested noise if unfiltered).
-    /// </para>
-    /// <para>
-    /// TWO genuine errors survive, not one — this is a real, separate
-    /// consequence of the typo-closing change ($defs/step's
-    /// <c>unevaluatedProperties: false</c>), not IsIfDiscriminatorNoise
-    /// regressing: per JSON Schema 2020-12, a subschema's annotations
-    /// (here, the outer fragment's own <c>properties: {"mode": ...}</c>,
-    /// which would otherwise mark <c>mode</c> as evaluated) are only
-    /// collected when that subschema application succeeds as a whole. Since
-    /// the outer fragment's nested <c>allOf</c> genuinely fails (the missing
-    /// <c>specialField</c>), the ENTIRE outer fragment counts as failed, so
-    /// its <c>properties</c> annotation for <c>mode</c> never propagates to
-    /// $defs/step's <c>unevaluatedProperties</c> — <c>mode</c> is
-    /// consequently ALSO reported as unevaluated, alongside the genuine
-    /// <c>specialField</c> violation. Both are asserted explicitly below so
-    /// this compounding is pinned, not silently tolerated; only the
-    /// mismatched clause's own discriminator noise ("other") must still never
-    /// leak.
-    /// </para>
+    /// Only the genuine nested failure may survive: the outer fragment's own
+    /// <c>properties: {"mode": ...}</c> annotation would, in isolation, never
+    /// propagate to $defs/step's <c>unevaluatedProperties</c> either (its
+    /// nested <c>allOf</c> genuinely fails, so the whole fragment counts as
+    /// failed — see <c>SchemaErrorCollector</c>'s class remarks), which would
+    /// otherwise ALSO report <c>mode</c> as a spurious unevaluated property
+    /// alongside the genuine <c>specialField</c> violation.
+    /// <see cref="SchemaErrorCollector"/>'s cascade suppression is what keeps
+    /// that spurious second error out: this step already has a genuine,
+    /// non-unevaluatedProperties defect (the nested "required" violation), so
+    /// its unevaluatedProperties entries are dropped — proving the
+    /// suppression end-to-end through the real evaluation pipeline, not
+    /// merely at the flat top-level discriminator shape
+    /// <c>SchemaErrorCollectionAtScaleTests</c> exercises.
     /// </remarks>
     [Fact]
-    public void NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineErrors()
+    public void NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineNestedError()
     {
         var registry = StepKindRegistry.BuildAndFreeze(
             new[] { typeof(NestedConditionalTestProvider).Assembly });
@@ -122,17 +116,13 @@ public sealed class SchemaErrorCollectorTests
         Assert.All(result.Errors, e =>
             Assert.DoesNotContain("other", e.Message, StringComparison.Ordinal));
 
-        Assert.True(result.Errors.Count == 2,
-            $"Expected exactly 2 genuine errors (the nested 'specialField' violation plus the " +
-            $"consequently-unevaluated 'mode' — see remarks) but got {result.Errors.Count}:{Environment.NewLine}" +
+        Assert.True(result.Errors.Count == 1,
+            $"Expected exactly 1 genuine (nested) error but got {result.Errors.Count}:{Environment.NewLine}" +
             string.Join(Environment.NewLine, result.Errors.Select(e => $"  loc='{e.InstanceLocation}' msg='{e.Message}'")));
 
-        var requiredError = Assert.Single(result.Errors, e => e.Message.Contains("required", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("specialField", requiredError.Message, StringComparison.Ordinal);
-
-        var unevaluatedError = Assert.Single(result.Errors, e => e.Message.Contains("unevaluatedProperties", StringComparison.Ordinal));
-        Assert.Equal("/steps/0/mode", unevaluatedError.InstanceLocation);
-        Assert.Contains("mode", unevaluatedError.Message, StringComparison.Ordinal);
+        var genuine = result.Errors[0];
+        Assert.Contains("required", genuine.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("specialField", genuine.Message, StringComparison.Ordinal);
     }
 
     // ── Test-only provider: nests its own conditional allOf inside 'then' ──────
