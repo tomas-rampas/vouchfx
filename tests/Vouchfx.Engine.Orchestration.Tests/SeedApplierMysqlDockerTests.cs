@@ -65,9 +65,16 @@ public sealed class SeedApplierMysqlDockerTests
     /// Combines the ordering guarantee and the implicit-commit divergence probe
     /// into ONE topology start, to minimise container overhead.
     /// </summary>
+    /// <remarks>
+    /// Pins the fact that MySQL's implicit commit voids per-file atomicity for the
+    /// WHOLE of a fixture containing DDL — not just for the DDL statement itself.
+    /// The identical fixture is asserted to roll back completely in
+    /// <c>SeedApplierSqlServerDockerTests</c>, so the pair is an apples-to-apples
+    /// record of where the two engines genuinely differ.
+    /// </remarks>
     [Fact]
     [Trait("requires", "docker")]
-    public async Task SqlSeed_OrderedFiles_ThenBrokenFixture_DdlSurvivesTheRollback()
+    public async Task SqlSeed_OrderedFiles_ThenBrokenFixture_NothingAfterTheDdlRollsBack()
     {
         var baseDir = Path.Combine(Path.GetTempPath(), "vouchfx-seed-mysql-" + Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(baseDir);
@@ -126,24 +133,38 @@ public sealed class SeedApplierMysqlDockerTests
             Assert.Equal("first", await ReadNoteAsync(connStr!));
             _output.WriteLine("Ordering proof: order_probe.note = 'first' — files 1+2 applied in declared order.");
 
-            // Assert — the MySQL divergence: unlike SQL Server, MySQL implicitly
-            // commits a DDL statement the moment it runs, so the CREATE TABLE in
-            // file 3 SURVIVES even though the file as a whole reports failure.
+            // Assert — the MySQL divergence, part 1: unlike SQL Server, MySQL
+            // implicitly commits a DDL statement the moment it runs, so the
+            // CREATE TABLE in file 3 SURVIVES even though the file as a whole
+            // reports failure.
             var divergenceTableExists = await TableExistsAsync(connStr!, "divergence_probe");
             _output.WriteLine($"Divergence probe: divergence_probe exists = {divergenceTableExists}");
             Assert.True(
                 divergenceTableExists,
-                "MySQL implicitly commits DDL statements (verified against the MySQL " +
-                "reference manual): CREATE TABLE cannot be rolled back, so it survives " +
-                "even though the file's later INSERT failed and the seed reports Provision.");
+                "MySQL implicitly commits DDL statements: CREATE TABLE cannot be " +
+                "rolled back, so it survives even though the file's later INSERT " +
+                "failed and the seed reports Provision.");
 
-            // The DML in the same file DOES roll back — MySQL implicitly starts a
-            // fresh transaction bracket after the DDL's implicit commit, and that
-            // fresh transaction (wrapping the successful first insert) is the one
-            // our rollback-on-dispose undoes.
+            // Assert — part 2, and the part that matters more: the successful DML
+            // that FOLLOWED the DDL survives too.
+            //
+            // This assertion originally expected 0, on the theory that MySQL opens a
+            // fresh transaction after the DDL's implicit commit and that our
+            // rollback-on-dispose would undo the first insert. CI proved otherwise:
+            // the row count is 1. The implicit commit ENDS the transaction opened by
+            // BeginTransactionAsync and MySQL does not open a replacement, so the
+            // session is back in autocommit and the first INSERT committed as it ran.
+            // By the time the duplicate-key INSERT failed there was no open
+            // transaction left to roll back.
+            //
+            // So the real divergence is broader than "DDL survives": once a MySQL
+            // fixture contains ANY DDL, per-file atomicity is void for the whole of
+            // that file. Pinned here because it is a genuine footgun — a half-failed
+            // MySQL seed leaves partial state that the next scenario inherits, where
+            // the identical fixture on Postgres or SQL Server leaves none.
             var rowCount = await CountDivergenceRowsAsync(connStr!);
             _output.WriteLine($"Divergence probe: divergence_probe row count = {rowCount}");
-            Assert.Equal(0, rowCount);
+            Assert.Equal(1, rowCount);
         }
         finally
         {

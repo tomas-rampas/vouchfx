@@ -478,20 +478,34 @@ internal static class SeedApplier
                 // honoured identically by NpgsqlTransaction, SqlTransaction and
                 // MySqlTransaction.
                 //
-                // KNOWN DIVERGENCE (verified, not papered over): Postgres and SQL
-                // Server both support fully transactional DDL — a CREATE TABLE
-                // inside this transaction is undone by the rollback above exactly
-                // like any DML statement.  MySQL does NOT: per MySQL's "statements
-                // that cause an implicit commit" rules, a DDL statement (CREATE
-                // TABLE, ALTER TABLE, …) commits the current transaction the moment
-                // it runs and cannot itself be rolled back, regardless of this
-                // transaction wrapper.  A MySQL fixture that mixes DDL and a LATER
-                // failing DML statement can therefore leave the DDL applied even
-                // though the file as a whole reports a Provision failure — the DML
-                // still rolls back (MySQL implicitly starts a fresh transaction
-                // after the DDL's implicit commit), but the schema change does not.
-                // Author guidance: prefer `CREATE TABLE IF NOT EXISTS` in MySQL
-                // fixtures so a retried seed is idempotent despite this.
+                // KNOWN DIVERGENCE — MySQL voids per-file atomicity entirely once a
+                // file contains DDL.  Postgres and SQL Server both support fully
+                // transactional DDL: a CREATE TABLE inside this transaction is undone
+                // by the rollback above exactly like any DML statement, so the
+                // "whole file or nothing" guarantee above holds for them.
+                //
+                // MySQL does not.  Per its "statements that cause an implicit commit"
+                // rules, a DDL statement (CREATE TABLE, ALTER TABLE, …) commits the
+                // current transaction the moment it runs.  Crucially that implicit
+                // commit ENDS the transaction opened just below and MySQL does not
+                // open a replacement — the session reverts to autocommit, so every
+                // statement AFTER the DDL commits individually as it executes.  When
+                // a later statement then fails there is no open transaction left for
+                // the rollback-on-dispose to undo, and nothing is reverted: not the
+                // DDL, and not the successful DML that followed it.
+                //
+                // Measured, not theorised.  An earlier revision of this comment
+                // claimed MySQL "implicitly starts a fresh transaction" so the DML
+                // would still roll back.  It does not.  SeedApplierMysqlDockerTests
+                // runs CREATE TABLE + INSERT + a duplicate-key INSERT against a real
+                // MySQL: the table survives AND so does the first row (row count 1,
+                // not 0).  The plausible half of that theory was wrong.
+                //
+                // Author guidance: a MySQL seed fixture must be idempotent
+                // THROUGHOUT, not merely in its DDL — CREATE TABLE IF NOT EXISTS and
+                // INSERT … ON DUPLICATE KEY UPDATE — because a fixture that fails
+                // part-way leaves everything before the failure applied, and the next
+                // scenario will run on top of it.
                 var tx = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
                 var command = connection.CreateCommand();
                 try
