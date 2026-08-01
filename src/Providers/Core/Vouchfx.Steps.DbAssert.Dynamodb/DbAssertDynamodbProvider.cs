@@ -132,8 +132,7 @@ public sealed class DbAssertDynamodbProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

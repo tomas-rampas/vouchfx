@@ -147,8 +147,7 @@ public sealed class CacheAssertRedisProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

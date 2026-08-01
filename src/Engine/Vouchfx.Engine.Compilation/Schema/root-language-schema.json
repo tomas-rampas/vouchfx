@@ -140,7 +140,7 @@
       "description": "A single typed step in the test sequence.",
       "type": "object",
       "required": ["id", "type"],
-      "additionalProperties": true,
+      "unevaluatedProperties": false,
       "properties": {
         "id": {
           "description": "A unique identifier for the step within the file; used in reporting and failure messages. Must start with a letter or underscore and contain only letters, digits, underscores, and hyphens.",

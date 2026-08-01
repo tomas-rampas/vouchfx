@@ -11,6 +11,7 @@
 // document.  When a pointer segment cannot be resolved (e.g. the document is
 // unparseable, the pointer targets the root, or a numeric index is out of
 // range) the prefix is omitted rather than throwing.
+using System.Linq;
 using Vouchfx.Sdk;
 using YamlDotNet.RepresentationModel;
 
@@ -65,6 +66,23 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// error at an instance location the schema pass already flagged, so a
 /// pattern-invalid value is reported exactly once, by the schema, not twice.
 /// </para>
+/// <para>
+/// <b>Unevaluated-properties cascade on an unregistered type.</b> A step
+/// whose <c>type</c> matches no registered provider never has any if/then
+/// fragment run for it (the vacuous-satisfaction case above), so — same as
+/// any other step failing for an unrelated reason, see
+/// <c>SchemaErrorCollector</c>'s class remarks — NONE of its other fields
+/// are ever claimed by a fragment's <c>properties</c> annotation, and each
+/// comes back a spurious <c>unevaluatedProperties</c> "unknown property"
+/// finding. <see cref="SchemaErrorCollector"/> cannot suppress this itself:
+/// "the type is unregistered" is a <see cref="StepKindRegistry"/> lookup, not
+/// a JSON Schema constraint, so it is invisible to a class that only ever
+/// sees an <c>EvaluationResults</c> tree. This method is where both facts
+/// are available at once, so it drops those raw schema errors for any step
+/// the cross-check above already flags — leaving the ONE genuine,
+/// actionable finding ("unknown step type") instead of that plus one spurious
+/// "unknown property" per other field on the step.
+/// </para>
 /// </remarks>
 public static class DocumentValidator
 {
@@ -113,18 +131,47 @@ public static class DocumentValidator
         if ((raw.IsValid || raw.Errors.Count == 0) && unknownTypeErrors.Count == 0)
             return raw;
 
-        // Aggregate every raw schema error AND every unknown-step-type error
-        // into one result: the cross-check must never mask or replace a genuine
-        // schema violation (on the same step or a different one), and a real
-        // schema violation must never suppress an unknown-type finding either.
-        // Schema errors are listed first, unknown-type errors appended after,
-        // so existing consumers that pick the FIRST matching error for a given
-        // instance location keep seeing the schema violation there.
-        var combined = new SchemaValidationError[raw.Errors.Count + unknownTypeErrors.Count];
-        for (var i = 0; i < raw.Errors.Count; i++)
-            combined[i] = raw.Errors[i];
+        // A step whose type matched no registered provider gets exactly the
+        // same spurious-unevaluatedProperties cascade SchemaErrorCollector
+        // suppresses for schema-detected defects (§ its class remarks) — no
+        // if/then fragment ever ran for it, so NONE of its other fields were
+        // ever claimed, and every one of them comes back "unevaluated". That
+        // defect is a registry lookup, not a JSON Schema constraint, so it is
+        // invisible to SchemaErrorCollector; this is the one place that knows
+        // both which step failed the cross-check AND which raw schema errors
+        // are the unevaluatedProperties shape, so it is suppressed here
+        // instead — same rationale, same "one real defect per round" trade,
+        // applied at the layer that actually has both facts in hand.
+        var schemaErrors = raw.Errors;
+        if (unknownTypeErrors.Count > 0)
+        {
+            var unknownTypeSteps = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var unknownTypeError in unknownTypeErrors)
+            {
+                if (SchemaErrorCollector.TryGetStepScope(unknownTypeError.InstanceLocation, out var scope))
+                    unknownTypeSteps.Add(scope);
+            }
+
+            schemaErrors = raw.Errors
+                .Where(e => !(SchemaErrorCollector.IsUnevaluatedPropertiesMessage(e.Message) &&
+                              SchemaErrorCollector.TryGetStepScope(e.InstanceLocation, out var scope) &&
+                              unknownTypeSteps.Contains(scope)))
+                .ToList();
+        }
+
+        // Aggregate every (post-suppression) schema error AND every
+        // unknown-step-type error into one result: the cross-check must never
+        // mask or replace a genuine schema violation (on the same step or a
+        // different one), and a real schema violation must never suppress an
+        // unknown-type finding either. Schema errors are listed first,
+        // unknown-type errors appended after, so existing consumers that pick
+        // the FIRST matching error for a given instance location keep seeing
+        // the schema violation there.
+        var combined = new SchemaValidationError[schemaErrors.Count + unknownTypeErrors.Count];
+        for (var i = 0; i < schemaErrors.Count; i++)
+            combined[i] = schemaErrors[i];
         for (var i = 0; i < unknownTypeErrors.Count; i++)
-            combined[raw.Errors.Count + i] = unknownTypeErrors[i];
+            combined[schemaErrors.Count + i] = unknownTypeErrors[i];
 
         var enriched = new SchemaValidationError[combined.Length];
         for (var i = 0; i < combined.Length; i++)

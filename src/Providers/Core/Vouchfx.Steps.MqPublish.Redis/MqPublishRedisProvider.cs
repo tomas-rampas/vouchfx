@@ -95,8 +95,7 @@ public sealed class MqPublishRedisProvider
               "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens.",
               "type": "string"
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

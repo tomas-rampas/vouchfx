@@ -217,17 +217,26 @@ public sealed class RootSchemaTests
     }
 
     // -------------------------------------------------------------------------
-    // Provider-specific extra fields are allowed
+    // Provider-specific extra fields (root-only schema, no provider clauses)
     // -------------------------------------------------------------------------
 
     /// <summary>
     /// A step with provider-specific fields (such as <c>method: GET</c> for an
-    /// <c>http.rest</c> step) must not be rejected, because the step schema sets
-    /// <c>additionalProperties: true</c>.  This protects the provider composition
-    /// task that narrows the schema in a future sprint.
+    /// <c>http.rest</c> step) is now REJECTED here — the typo-closing change
+    /// (see <c>SchemaStepSurfaceClosureTests</c>) replaced <c>$defs/step</c>'s
+    /// old <c>additionalProperties: true</c> with <c>unevaluatedProperties:
+    /// false</c>. <see cref="YamlSchemaValidator"/> evaluates the ROOT schema
+    /// alone — no provider <c>allOf</c>/<c>if</c>/<c>then</c> clauses are ever
+    /// spliced in here (that is <see cref="SchemaComposer"/>'s job, exercised
+    /// by <see cref="DocumentValidator"/>, the actual pre-compile gate an
+    /// author's suite hits — nothing under <c>src/</c> calls this validator in
+    /// the real pipeline). With no clause to annotate 'method'/'path'/'expect'
+    /// as evaluated, unevaluatedProperties correctly rejects them here: this
+    /// root-only path can only ever validate the COMMON step fields declared
+    /// directly on <c>$defs/step</c> itself.
     /// </summary>
     [Fact]
-    public void Validate_ProviderSpecificExtraFields_AreAllowed()
+    public void Validate_ProviderSpecificExtraFields_AreRejectedWithoutProviderClauses()
     {
         const string yaml = """
             steps:
@@ -241,9 +250,10 @@ public sealed class RootSchemaTests
 
         var result = YamlSchemaValidator.Validate(yaml);
 
-        Assert.True(result.IsValid,
-            $"Expected valid but got errors: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
-        Assert.Empty(result.Errors);
+        Assert.False(result.IsValid,
+            "Expected provider-specific fields to be rejected by the root-only schema " +
+            "(no provider allOf/if/then clauses to mark them evaluated).");
+        Assert.NotEmpty(result.Errors);
     }
 
     // -------------------------------------------------------------------------

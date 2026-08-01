@@ -127,8 +127,7 @@ public sealed class DbAssertMysqlProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

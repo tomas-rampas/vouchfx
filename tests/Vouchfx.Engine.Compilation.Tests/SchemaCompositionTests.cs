@@ -9,8 +9,11 @@
 //       (enum constraint from provider fragment fires).
 //
 //   3.  ComposedSchema_FragmentOriginatesFromProvider
-//       EMPTY registry → same bad-method step → IsValid (no http.rest constraints
-//       present), proving the constraint came from the provider, not a central file.
+//       EMPTY registry → same bad-method step → REJECTED, because 'target'/
+//       'method'/'path' aren't even recognised as step properties at all (no
+//       fragment to mark them evaluated — $defs/step's unevaluatedProperties,
+//       the typo-closing change) — proving http.rest's entire vocabulary,
+//       not merely its method enum, came from the provider, not a central file.
 //
 //   4.  HttpRestProvider_IsDiscoverableAndExposesSchemaFragment
 //       Assembly-level discovery finds http.rest; SchemaFragment is non-null and
@@ -96,9 +99,19 @@ public sealed class SchemaCompositionTests
 
     /// <summary>
     /// When the registry is EMPTY (no providers registered), the same bad-method
-    /// step must be accepted — because no provider contributed the enum constraint.
-    /// This proves the constraint originated from the provider fragment, not from
-    /// any central, hand-maintained file.
+    /// step must be REJECTED — not because of the bad method value (no provider
+    /// contributed that enum constraint), but because <c>target</c>/<c>method</c>/
+    /// <c>path</c> are not even recognised as step properties AT ALL. With no
+    /// provider fragment, the composer injects no <c>allOf</c> clause at all
+    /// (<see cref="SchemaComposer.BuildIfThenClauses"/> returns empty), so
+    /// $defs/step's own <c>unevaluatedProperties: false</c> (the typo-closing
+    /// change) has nothing marking those three properties as evaluated. This
+    /// proves the SAME underlying fact the original (additionalProperties-era)
+    /// version of this test proved — that http.rest's vocabulary and
+    /// constraints originate entirely from the provider fragment, never from
+    /// any central, hand-maintained file — now via a stronger signal: the
+    /// WHOLE vocabulary disappears with the provider, not merely its method
+    /// enum.
     /// </summary>
     [Fact]
     public void ComposedSchema_FragmentOriginatesFromProvider()
@@ -116,12 +129,21 @@ public sealed class SchemaCompositionTests
                 path: /warp
             """;
 
-        // Without the provider's fragment the step schema allows any additional
-        // properties, so the bad method value passes unhindered.
         var result = SchemaComposer.Validate(emptyRegistry, yaml);
 
-        Assert.True(result.IsValid,
-            $"Expected valid (no provider constraints) but got: {FormatErrors(result)}");
+        Assert.False(result.IsValid,
+            "Expected invalid: with no http.rest fragment registered, 'target'/'method'/'path' " +
+            "are unrecognised (unevaluated) step properties, not merely unconstrained ones.");
+
+        // Every one of the three provider-specific fields must be named as
+        // unevaluated — not just one — confirming the WHOLE vocabulary is
+        // provider-sourced, not only the method enum.
+        foreach (var property in new[] { "target", "method", "path" })
+        {
+            Assert.Contains(result.Errors, e =>
+                e.InstanceLocation == $"/steps/0/{property}" &&
+                e.Message.Contains(property, System.StringComparison.Ordinal));
+        }
     }
 
     /// <summary>

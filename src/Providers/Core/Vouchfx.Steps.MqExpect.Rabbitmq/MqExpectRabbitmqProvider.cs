@@ -79,8 +79,7 @@ public sealed class MqExpectRabbitmqProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

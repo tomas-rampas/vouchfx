@@ -109,8 +109,7 @@ public sealed class MqExpectNatsProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

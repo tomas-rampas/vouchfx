@@ -79,7 +79,20 @@ public sealed class SchemaErrorCollectorTests
     /// nested first if/then pair (which then genuinely fails — the required
     /// <c>specialField</c> is absent) and mismatches its second nested if/then
     /// pair (whose <c>if</c> fails, contributing nested noise if unfiltered).
-    /// Only the genuine nested failure may survive.
+    /// Only the genuine nested failure may survive: the outer fragment's own
+    /// <c>properties: {"mode": ...}</c> annotation would, in isolation, never
+    /// propagate to $defs/step's <c>unevaluatedProperties</c> either (its
+    /// nested <c>allOf</c> genuinely fails, so the whole fragment counts as
+    /// failed — see <c>SchemaErrorCollector</c>'s class remarks), which would
+    /// otherwise ALSO report <c>mode</c> as a spurious unevaluated property
+    /// alongside the genuine <c>specialField</c> violation.
+    /// <see cref="SchemaErrorCollector"/>'s cascade suppression is what keeps
+    /// that spurious second error out: this step already has a genuine,
+    /// non-unevaluatedProperties defect (the nested "required" violation), so
+    /// its unevaluatedProperties entries are dropped — proving the
+    /// suppression end-to-end through the real evaluation pipeline, not
+    /// merely at the flat top-level discriminator shape
+    /// <c>SchemaErrorCollectionAtScaleTests</c> exercises.
     /// </remarks>
     [Fact]
     public void NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineNestedError()

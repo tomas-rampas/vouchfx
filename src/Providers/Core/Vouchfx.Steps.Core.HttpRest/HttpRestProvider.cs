@@ -523,8 +523,7 @@ public sealed class HttpRestProvider
                 }
               }
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

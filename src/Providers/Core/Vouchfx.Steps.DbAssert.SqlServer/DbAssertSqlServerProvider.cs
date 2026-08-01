@@ -127,8 +127,7 @@ public sealed class DbAssertSqlServerProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

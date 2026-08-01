@@ -80,7 +80,11 @@ public static class YamlSchemaValidator
                 return SchemaValidationResult.Valid;
             }
 
-            var errors = SchemaErrorCollector.CollectErrors(results);
+            // Pass the instance through so an unevaluatedProperties violation
+            // can still name the offending step's own 'type' even though this
+            // root-only schema carries no provider allOf/if/then clauses —
+            // see SchemaErrorCollector.
+            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement);
             return new SchemaValidationResult(false, errors);
         }
     }

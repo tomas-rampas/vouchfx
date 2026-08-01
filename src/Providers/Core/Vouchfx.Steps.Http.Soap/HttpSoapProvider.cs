@@ -138,8 +138,7 @@ public sealed class HttpSoapProvider
                 }
               }
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

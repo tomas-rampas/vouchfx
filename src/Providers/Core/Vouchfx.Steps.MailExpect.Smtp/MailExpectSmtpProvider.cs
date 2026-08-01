@@ -189,8 +189,7 @@ public sealed class MailExpectSmtpProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

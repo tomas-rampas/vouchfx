@@ -94,8 +94,7 @@ public sealed class MqExpectAzureServiceBusProvider
               "type": "object",
               "additionalProperties": { "type": "string" }
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

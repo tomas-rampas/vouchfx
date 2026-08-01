@@ -138,15 +138,34 @@ public sealed class SchemaErrorCollectionAtScaleTests
 
     /// <summary>
     /// An <c>http.rest</c> step missing its required <c>method</c>/<c>path</c>
-    /// fields must, at full 25-provider scale, yield EXACTLY the one genuine
-    /// "required" violation from the <c>http.rest</c> fragment's own <c>then</c>
-    /// branch — none of the 24 other providers' non-matching discriminator
-    /// clauses may leak an "Expected &lt;other type&gt;" entry into the result.
+    /// fields, but carrying a perfectly valid <c>target</c>, must, at full
+    /// 25-provider scale, yield EXACTLY the one genuine "required" violation
+    /// from the <c>http.rest</c> fragment's own <c>then</c> branch — none of
+    /// the 24 other providers' non-matching discriminator clauses may leak an
+    /// "Expected &lt;other type&gt;" entry into the result, AND the valid
+    /// <c>target</c> must not be reported as an unevaluated property either.
     /// </summary>
     /// <remarks>
-    /// Before the fix, this yields 25 errors (1 genuine + 24 "if"-discriminator
-    /// noise entries) — verified empirically against the raw
+    /// <para>
+    /// Before the "if"-discriminator noise fix, this yields 25 errors (1
+    /// genuine + 24 noise entries) — verified empirically against the raw
     /// <c>EvaluationResults</c> tree (see this file's header remarks).
+    /// </para>
+    /// <para>
+    /// This fixture deliberately KEEPS a valid <c>target</c> alongside the
+    /// missing <c>method</c>/<c>path</c>: per JSON Schema 2020-12, a
+    /// subschema's annotations are only collected when that subschema
+    /// application succeeds as a whole, so http.rest's own <c>then</c>
+    /// branch failing outright here (missing required fields) would, without
+    /// <c>SchemaErrorCollector</c>'s cascade suppression, ALSO cause
+    /// <c>target</c> to be reported as a spurious unevaluated property
+    /// alongside the genuine "required" violation. Proving that does NOT
+    /// happen — at the full 25-provider scale, alongside the discriminator-
+    /// noise proof this fixture already existed for — is exactly the point:
+    /// see <c>SchemaErrorCollector</c>'s class remarks and
+    /// <c>SchemaErrorCollectorTests.NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineNestedError</c>
+    /// for the equivalent nested-fragment proof.
+    /// </para>
     /// </remarks>
     [Fact]
     public void InvalidHttpRestStep_AtFullProviderScale_YieldsOnlyTheGenuineRequiredError()
@@ -168,7 +187,8 @@ public sealed class SchemaErrorCollectionAtScaleTests
 
         // Exactly one genuine error survives: the missing-required-properties
         // violation from http.rest's own 'then' fragment — not "at least one",
-        // not "not empty": the 24 spurious discriminator entries must be gone.
+        // not "not empty": the 24 spurious discriminator entries AND the
+        // cascade-spurious 'target' unevaluatedProperties entry must be gone.
         Assert.True(result.Errors.Count == 1,
             $"Expected exactly 1 genuine error but got {result.Errors.Count}:{Environment.NewLine}{FormatErrors(result)}");
 

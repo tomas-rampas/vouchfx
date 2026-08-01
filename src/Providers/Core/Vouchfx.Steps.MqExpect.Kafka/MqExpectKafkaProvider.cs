@@ -169,8 +169,7 @@ public sealed class MqExpectKafkaProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

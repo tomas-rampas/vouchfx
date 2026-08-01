@@ -164,8 +164,7 @@ public sealed class ScriptCsharpProvider
               "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
               "type": "string"
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

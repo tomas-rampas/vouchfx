@@ -94,8 +94,7 @@ public sealed class DbAssertMongodbProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 
