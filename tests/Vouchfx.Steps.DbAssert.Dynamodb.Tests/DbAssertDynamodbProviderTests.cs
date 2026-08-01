@@ -217,6 +217,24 @@ public sealed class DbAssertDynamodbProviderTests
         Assert.Contains(result.Errors, e => e.Contains("target"));
     }
 
+    /// <summary>
+    /// Dependency type comparison is case-sensitive (pre-GA decision,
+    /// feat/case-sensitive-kinds): "Dynamodb" does not match the canonical "dynamodb" — treated
+    /// identically to a genuinely mismatched type.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetWrongCaseDependencyType_IsInvalid()
+    {
+        var model = new DbAssertDynamodbModel(
+            "orders", "Orders", "{\"orderId\":\"1001\"}", new DynamoExpectation(true, null));
+
+        var result = _provider.Validate(model, new StubProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["orders"] = "Dynamodb" }));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("target"));
+    }
+
     // ── 10. Registry: provider discoverable ───────────────────────────────────
 
     [Fact]

@@ -196,10 +196,10 @@ public sealed class MqPublishAzureServiceBusProviderTests
         Assert.True(result.IsValid);
     }
 
-    // ── 7. Validate: dep type case-insensitive ────────────────────────────────────
+    // ── 7. Validate: dep type case-sensitive (pre-GA decision, feat/case-sensitive-kinds) ──
 
     [Fact]
-    public void Validate_DepTypeCaseInsensitive_IsValid()
+    public void Validate_DepTypeWrongCase_IsInvalid()
     {
         var model = new MqPublishAzureServiceBusModel(
             Target: "asb",
@@ -215,7 +215,8 @@ public sealed class MqPublishAzureServiceBusProviderTests
 
         var result = _provider.Validate(model, ctx);
 
-        Assert.True(result.IsValid);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("asb", StringComparison.Ordinal));
     }
 
     // ── 8. Validate: empty target → invalid ──────────────────────────────────────

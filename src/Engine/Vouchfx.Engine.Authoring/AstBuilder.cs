@@ -295,22 +295,38 @@ public static class AstBuilder
             return VerifyMode.Immediate;
         }
 
-        // The wire token is the enum member name upper-cased (§2 DSL).
-        if (string.Equals(step.VerifyMode, "IMMEDIATE", StringComparison.OrdinalIgnoreCase))
+        // The wire token is the enum member name upper-cased (§2 DSL), matched
+        // ORDINALLY. The root schema's verifyMode enum is ["IMMEDIATE","RETRY"]
+        // and nothing else, so accepting 'retry' here would mean the schema
+        // rejected at authoring time what the engine happily ran — the same
+        // two-gates-disagree split being closed for dependency kinds and
+        // imagePullPolicy. One accepted spelling, and the editor's completion
+        // list is the whole truth.
+        if (string.Equals(step.VerifyMode, "IMMEDIATE", StringComparison.Ordinal))
         {
             return VerifyMode.Immediate;
         }
 
-        if (string.Equals(step.VerifyMode, "RETRY", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(step.VerifyMode, "RETRY", StringComparison.Ordinal))
         {
             return VerifyMode.Retry;
         }
+
+        // Name the correct spelling when the only fault is case: an author whose
+        // working suite has just broken should be told the fix, not merely that
+        // the value is unknown.
+        var caseOnlyMismatch =
+            string.Equals(step.VerifyMode, "IMMEDIATE", StringComparison.OrdinalIgnoreCase) ? "IMMEDIATE" :
+            string.Equals(step.VerifyMode, "RETRY", StringComparison.OrdinalIgnoreCase) ? "RETRY" :
+            null;
 
         throw new AstBuildException(
             step.Id,
             step.RawNode.Start.Line,
             step.RawNode.Start.Column,
-            $"unknown verifyMode '{step.VerifyMode}'; valid values are IMMEDIATE and RETRY");
+            caseOnlyMismatch is not null
+                ? $"unknown verifyMode '{step.VerifyMode}'; verifyMode is case-sensitive — write '{caseOnlyMismatch}'"
+                : $"unknown verifyMode '{step.VerifyMode}'; valid values are IMMEDIATE and RETRY");
     }
 
     // -------------------------------------------------------------------------

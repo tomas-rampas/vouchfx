@@ -220,7 +220,7 @@ public sealed class MqExpectRedisProvider
                     $"mq-expect.redis: 'target' '{model.Target}' is not a " +
                     "redis dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "redis", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "redis", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-expect.redis: 'target' '{model.Target}' is declared as a " +

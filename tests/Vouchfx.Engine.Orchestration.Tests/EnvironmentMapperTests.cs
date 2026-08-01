@@ -677,6 +677,88 @@ public sealed class EnvironmentMapperTests
     }
 
     // -----------------------------------------------------------------------
+    // Map_DependencyTypeWrongCase_Throws_NamingCorrectSpelling (feat/case-sensitive-kinds)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A dependency type spelled with the wrong case (e.g. <c>Postgres</c> instead of the
+    /// canonical <c>postgres</c>) is rejected exactly like a genuinely unrecognised type — the
+    /// schema and engine agree on exactly one spelling per kind (pre-GA decision). The message
+    /// must teach: it names the correct, exact-case spelling so an author whose suite just broke
+    /// knows precisely what to change.
+    /// </summary>
+    [Theory]
+    [InlineData("Postgres", "postgres")]
+    [InlineData("POSTGRES", "postgres")]
+    [InlineData("KAFKA", "kafka")]
+    [InlineData("MongoDB", "mongodb")]
+    [InlineData("SqlServer", "sqlserver")]
+    [InlineData("Redis", "redis")]
+    public void Map_DependencyTypeWrongCase_Throws_NamingCorrectSpelling(
+        string wrongCaseType, string canonicalType)
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["store"] = new DependencySpec(Type: wrongCaseType, Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains(wrongCaseType, ex.Message, StringComparison.Ordinal);
+        // The exact-case canonical spelling must appear — an OrdinalIgnoreCase check here would
+        // pass even if the message only ever echoed the author's own (wrong-case) input back.
+        Assert.Contains(canonicalType, ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Every one of the thirteen canonical, exact-case dependency kind spellings must keep
+    /// working — this change narrows accepted case, it must never narrow the accepted vocabulary.
+    /// </summary>
+    [Theory]
+    [InlineData("postgres")]
+    [InlineData("sqlserver")]
+    [InlineData("mysql")]
+    [InlineData("mongodb")]
+    [InlineData("redis")]
+    [InlineData("elasticsearch")]
+    [InlineData("rabbitmq")]
+    [InlineData("nats")]
+    [InlineData("kafka")]
+    [InlineData("mailpit")]
+    [InlineData("azureservicebus")]
+    [InlineData("dynamodb")]
+    [InlineData("minio")]
+    public void Map_AllThirteenCanonicalDependencyTypes_Succeed(string canonicalType)
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["dep"] = new DependencySpec(Type: canonicalType, Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        var exception = Record.Exception(() => mapped.Configure(builder));
+
+        // Assert — no exception for any canonical spelling, and the dependency contributed at
+        // least one health gate.
+        Assert.Null(exception);
+        Assert.NotEmpty(mapped.HealthGateResourceNames);
+    }
+
+    // -----------------------------------------------------------------------
     // Map_SqlServerDependency_AddsServerAndDatabase_GateOnDatabase
     // -----------------------------------------------------------------------
 
@@ -2535,6 +2617,107 @@ public sealed class EnvironmentMapperTests
         var workerPolicy = builder.Resources.Single(r => r.Name == "worker")
             .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
         Assert.Equal(ImagePullPolicy.Never, workerPolicy.ImagePullPolicy);
+    }
+
+    // -----------------------------------------------------------------------
+    // imagePullPolicy case-sensitivity (feat/case-sensitive-kinds)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// An env-level <c>imagePullPolicy</c> spelled with the wrong case (e.g. <c>always</c>
+    /// instead of the schema's exact-case <c>Always</c>) is rejected identically to a genuinely
+    /// unrecognised value — the accepted-values message must stay helpful either way.
+    /// </summary>
+    [Theory]
+    [InlineData("always")]
+    [InlineData("MISSING")]
+    [InlineData("never")]
+    public void Map_EnvImagePullPolicy_WrongCase_Throws(string wrongCasePolicy)
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: wrongCasePolicy);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains(wrongCasePolicy, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Always", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Never", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A service-level <c>imagePullPolicy</c> spelled with the wrong case is equally rejected.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceImagePullPolicy_WrongCase_Throws()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: "always",
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("web", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("always", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Always", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Every one of the three canonical, exact-case <c>imagePullPolicy</c> spellings must keep
+    /// working at both the environment level and the service level.
+    /// </summary>
+    [Theory]
+    [InlineData("Always", ImagePullPolicy.Always)]
+    [InlineData("Missing", ImagePullPolicy.Missing)]
+    [InlineData("Never", ImagePullPolicy.Never)]
+    public void Map_AllThreeCanonicalImagePullPolicies_Succeed_AtEnvAndServiceLevel(
+        string canonicalPolicy, ImagePullPolicy expected)
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: canonicalPolicy,
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["cache"] = new DependencySpec(Type: "redis", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: canonicalPolicy);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var webPolicy = builder.Resources.Single(r => r.Name == "web")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
+        Assert.Equal(expected, webPolicy.ImagePullPolicy);
+
+        var cachePolicy = builder.Resources.Single(r => r.Name == "cache")
+            .Annotations.OfType<ContainerImagePullPolicyAnnotation>().Single();
+        Assert.Equal(expected, cachePolicy.ImagePullPolicy);
     }
 
     /// <summary>

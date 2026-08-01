@@ -83,17 +83,21 @@ internal static class SeedApplier
     /// <summary>
     /// Dependency types treated as message brokers for seed dispatch (A-02).  Only
     /// <c>kafka</c> in M2; the broker provider (Sprint 6) is the future plug-in.
+    /// Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: a
+    /// <see cref="DependencySpec.Type"/> reaching this dispatcher has already passed
+    /// <c>EnvironmentMapper.Map</c>'s eager, case-sensitive validation, so it is always the
+    /// exact-case canonical spelling.
     /// </summary>
     private static readonly HashSet<string> BrokerTypes =
-        new(StringComparer.OrdinalIgnoreCase) { "kafka" };
+        new(StringComparer.Ordinal) { "kafka" };
 
     /// <summary>
     /// Dependency types treated as document stores for seed dispatch (A-02).  The
     /// concrete provider lands in a later sprint; listed here so a mismatch error
-    /// is precise.
+    /// is precise. Case-sensitive (Ordinal) — see <see cref="BrokerTypes"/>'s remarks.
     /// </summary>
     private static readonly HashSet<string> DocumentStoreTypes =
-        new(StringComparer.OrdinalIgnoreCase) { "mongodb", "mongo", "elasticsearch", "cosmos" };
+        new(StringComparer.Ordinal) { "mongodb", "mongo", "elasticsearch", "cosmos" };
 
     /// <summary>
     /// Applies <paramref name="seed"/> against the dependencies in

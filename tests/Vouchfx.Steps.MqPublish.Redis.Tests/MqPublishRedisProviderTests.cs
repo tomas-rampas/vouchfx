@@ -104,17 +104,18 @@ public sealed class MqPublishRedisProviderTests
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
-    // ── 4. Validate: dependency type comparison is case-insensitive ────────────
+    // ── 4. Validate: dependency type comparison is case-sensitive (feat/case-sensitive-kinds) ──
 
     [Fact]
-    public void Validate_DependencyTypeComparison_IsCaseInsensitive()
+    public void Validate_DependencyTypeComparison_WrongCaseIsInvalid()
     {
         var model = new MqPublishRedisModel("cache", "orders", "hello");
         var deps = new Dictionary<string, string>(StringComparer.Ordinal) { ["cache"] = "Redis" };
 
         var result = _provider.Validate(model, new StubProjectContext(deps));
 
-        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("cache", StringComparison.Ordinal));
     }
 
     // ── 5. Validate: empty target ──────────────────────────────────────────────

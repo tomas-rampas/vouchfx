@@ -226,6 +226,25 @@ public sealed class StorageAssertS3ProviderTests
         Assert.Contains(result.Errors, e => e.Contains("target"));
     }
 
+    /// <summary>
+    /// Dependency type comparison is case-sensitive (pre-GA decision,
+    /// feat/case-sensitive-kinds): "Minio" does not match the canonical "minio" — treated
+    /// identically to a genuinely mismatched type.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetWrongCaseDependencyType_IsInvalid()
+    {
+        var model = new StorageAssertS3Model(
+            "uploads", "reports", "exports/report.csv",
+            new StorageExpectation(true, null, null, null, null, null, null));
+
+        var result = _provider.Validate(model, new StubProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["uploads"] = "Minio" }));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("target"));
+    }
+
     // ── 9. Registry: provider discoverable ─────────────────────────────────────
 
     [Fact]

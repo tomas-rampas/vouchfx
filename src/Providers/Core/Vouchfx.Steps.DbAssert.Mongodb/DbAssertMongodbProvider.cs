@@ -222,7 +222,7 @@ public sealed class DbAssertMongodbProvider
                     $"db-assert.mongodb: 'target' '{model.Target}' is not a " +
                     "mongodb dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "mongodb", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "mongodb", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"db-assert.mongodb: 'target' '{model.Target}' is not a " +

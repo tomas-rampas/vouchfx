@@ -39,11 +39,13 @@ public static class DependencyKindStepMap
 {
     /// <summary>
     /// Dependency kind (a <c>KnownDependencyKinds</c> token, matched
-    /// <see cref="StringComparer.OrdinalIgnoreCase"/>) to the dotted step types that assert
-    /// or observe it, ordinal-sorted.
+    /// <see cref="StringComparer.Ordinal"/> — case-sensitive, pre-GA decision,
+    /// feat/case-sensitive-kinds: exactly one canonical spelling per kind, matching
+    /// <c>KnownDependencyKinds</c> and <c>EnvironmentMapper</c>'s own registry) to the dotted
+    /// step types that assert or observe it, ordinal-sorted.
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> CandidateStepTypes { get; } =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
             ["postgres"] = new[] { "db-assert.postgres" },
             ["sqlserver"] = new[] { "db-assert.sqlserver" },
@@ -82,7 +84,7 @@ public static class DependencyKindStepMap
     /// provider yet.
     /// </summary>
     public static IReadOnlySet<string> KindsWithoutAssertingProvider { get; } =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        new HashSet<string>(StringComparer.Ordinal);
 
     /// <summary>
     /// Attempts to look up the candidate step types for <paramref name="kind"/>.

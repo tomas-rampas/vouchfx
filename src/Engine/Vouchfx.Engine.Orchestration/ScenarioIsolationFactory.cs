@@ -6,7 +6,9 @@
 // IScenarioIsolation implementation. Pure over plain collections (no SuiteTopology
 // dependency) so it is unit-testable without a topology or Docker.
 //
-// Dispatch table (case-insensitive on the declared type string):
+// Dispatch table (case-sensitive on the declared type string — pre-GA decision,
+// feat/case-sensitive-kinds: exactly one canonical, lower-case spelling per kind, matching
+// EnvironmentMapper's own s_dependencyRegistry):
 //   postgres, sqlserver, mysql        → RespawnRelationalIsolation.
 //   mongodb                           → MongoScenarioIsolation.
 //   redis                             → RedisScenarioIsolation.
@@ -117,17 +119,17 @@ public static class ScenarioIsolationFactory
             return new RespawnRelationalIsolation(name, relationalKind.Value, connectionString);
         }
 
-        if (string.Equals(declaredType, "mongodb", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(declaredType, "mongodb", StringComparison.Ordinal))
         {
             return new MongoScenarioIsolation(name, connectionString);
         }
 
-        if (string.Equals(declaredType, "redis", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(declaredType, "redis", StringComparison.Ordinal))
         {
             return new RedisScenarioIsolation(name, connectionString);
         }
 
-        if (string.Equals(declaredType, "elasticsearch", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(declaredType, "elasticsearch", StringComparison.Ordinal))
         {
             return new ElasticsearchScenarioIsolation(name, connectionString);
         }
@@ -159,17 +161,23 @@ public static class ScenarioIsolationFactory
     /// </remarks>
     internal static RelationalStoreKind? MapRelationalKind(string declaredType)
     {
-        if (string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase))
+        // Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: exactly one
+        // canonical spelling per kind. A wrong-case type (e.g. "Postgres") is never rejected
+        // here — EnvironmentMapper.Map already rejects it at suite-build time before a topology
+        // exists — but returning null for it keeps this shared definition consistent for BOTH
+        // callers (ScenarioIsolationFactory's per-scenario reset and SeedApplier's `sql` seed
+        // dispatch) if either is ever reached with an unvalidated type, e.g. directly in tests.
+        if (string.Equals(declaredType, "postgres", StringComparison.Ordinal))
         {
             return RelationalStoreKind.Postgres;
         }
 
-        if (string.Equals(declaredType, "sqlserver", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(declaredType, "sqlserver", StringComparison.Ordinal))
         {
             return RelationalStoreKind.SqlServer;
         }
 
-        if (string.Equals(declaredType, "mysql", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(declaredType, "mysql", StringComparison.Ordinal))
         {
             return RelationalStoreKind.MySql;
         }

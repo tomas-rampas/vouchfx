@@ -85,7 +85,15 @@ public sealed class ScenarioIsolationFactoryTests
         Assert.IsType<RespawnRelationalIsolation>(result);
     }
 
-    /// <summary>Type matching is case-insensitive.</summary>
+    /// <summary>
+    /// Type matching is case-sensitive (pre-GA decision, feat/case-sensitive-kinds): only the
+    /// exact-case canonical spelling ("postgres", "sqlserver", "mysql") dispatches to
+    /// <see cref="RespawnRelationalIsolation"/>. A wrong-case spelling is treated identically to
+    /// a genuinely unrecognised type — skipped defensively, never reset — because
+    /// <c>EnvironmentMapper.Map</c> would already have rejected it before a topology exists;
+    /// this proves the shared dispatch logic agrees rather than silently falling back to the
+    /// old case-insensitive behaviour if ever reached with an unvalidated type.
+    /// </summary>
     [Theory]
     [InlineData("Postgres")]
     [InlineData("POSTGRES")]
@@ -93,14 +101,14 @@ public sealed class ScenarioIsolationFactoryTests
     [InlineData("SQLSERVER")]
     [InlineData("MySql")]
     [InlineData("MYSQL")]
-    public void TypeMatching_IsCaseInsensitive(string declaredType)
+    public void TypeMatching_IsCaseSensitive_WrongCaseIsNotResettable(string wrongCaseType)
     {
         var result = ScenarioIsolationFactory.Create(
             new List<string> { "dep" },
-            Types(("dep", declaredType)),
+            Types(("dep", wrongCaseType)),
             Services(("dep", "Host=localhost;Database=test")));
 
-        Assert.IsType<RespawnRelationalIsolation>(result);
+        Assert.IsType<NullScenarioIsolation>(result);
     }
 
     // ── Single resettable document/cache-store dependency (mongodb / redis / elasticsearch) ──
@@ -144,7 +152,12 @@ public sealed class ScenarioIsolationFactoryTests
         Assert.IsType<ElasticsearchScenarioIsolation>(result);
     }
 
-    /// <summary>Type matching for the document/cache stores is also case-insensitive.</summary>
+    /// <summary>
+    /// Type matching for the document/cache stores is also case-sensitive: a wrong-case
+    /// spelling is skipped defensively, exactly like an unrecognised type — the same rule
+    /// <see cref="TypeMatching_IsCaseSensitive_WrongCaseIsNotResettable"/> proves for the
+    /// relational kinds.
+    /// </summary>
     [Theory]
     [InlineData("MongoDB")]
     [InlineData("MONGODB")]
@@ -152,14 +165,15 @@ public sealed class ScenarioIsolationFactoryTests
     [InlineData("REDIS")]
     [InlineData("Elasticsearch")]
     [InlineData("ELASTICSEARCH")]
-    public void DocumentCacheStoreTypeMatching_IsCaseInsensitive(string declaredType)
+    public void DocumentCacheStoreTypeMatching_IsCaseSensitive_WrongCaseIsNotResettable(
+        string wrongCaseType)
     {
         var result = ScenarioIsolationFactory.Create(
             new List<string> { "dep" },
-            Types(("dep", declaredType)),
+            Types(("dep", wrongCaseType)),
             Services(("dep", "some-connection-value")));
 
-        Assert.False(result is NullScenarioIsolation);
+        Assert.IsType<NullScenarioIsolation>(result);
     }
 
     // ── Composite (more than one resettable dependency) ───────────────────────
@@ -349,5 +363,42 @@ public sealed class ScenarioIsolationFactoryTests
     {
         Assert.Throws<ArgumentNullException>(
             () => ScenarioIsolationFactory.Create(new List<string>(), Types(), null!));
+    }
+
+    // ── MapRelationalKind: the single shared definition (reset + seed agreement) ──────
+    //
+    // MapRelationalKind is the SINGLE definition of "which dependency types count as
+    // relational", shared by ScenarioIsolationFactory (per-scenario reset, exercised above via
+    // Create/BuildIsolation) and SeedApplier (the `sql` seed kind, exercised in
+    // SeedApplierDispatchTests). Testing it directly here pins the one place a case-sensitivity
+    // fix must land for BOTH callers to agree — see
+    // SeedApplierDispatchTests.ApplyAsync_SqlUnderWrongCaseRelationalType_ThrowsMismatchProvision
+    // for the companion proof on the seed side.
+
+    /// <summary>
+    /// A wrong-case relational type is not recognised as relational — <see langword="null"/>,
+    /// not the corresponding <see cref="RelationalStoreKind"/>.
+    /// </summary>
+    [Theory]
+    [InlineData("Postgres")]
+    [InlineData("POSTGRES")]
+    [InlineData("SqlServer")]
+    [InlineData("SQLSERVER")]
+    [InlineData("MySql")]
+    [InlineData("MYSQL")]
+    public void MapRelationalKind_WrongCase_ReturnsNull(string wrongCaseType)
+    {
+        Assert.Null(ScenarioIsolationFactory.MapRelationalKind(wrongCaseType));
+    }
+
+    /// <summary>The three canonical, exact-case relational spellings still map correctly.</summary>
+    [Theory]
+    [InlineData("postgres", RelationalStoreKind.Postgres)]
+    [InlineData("sqlserver", RelationalStoreKind.SqlServer)]
+    [InlineData("mysql", RelationalStoreKind.MySql)]
+    public void MapRelationalKind_CanonicalCase_ReturnsExpectedKind(
+        string canonicalType, RelationalStoreKind expected)
+    {
+        Assert.Equal(expected, ScenarioIsolationFactory.MapRelationalKind(canonicalType));
     }
 }

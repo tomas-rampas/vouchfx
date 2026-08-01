@@ -82,7 +82,7 @@ Set `type: cache-assert.redis` to use this step.
 | --- | --- | --- |
 | `expect` | `object` | Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard). |
 | `key` | `string` | The Redis key to inspect. May contain {placeholder} tokens resolved at step-execution time. |
-| `operation` | `string` | The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-insensitive. |
+| `operation` | `string` | The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-SENSITIVE: write them lower-case exactly as listed. |
 | `target` | `string` | Logical name of the redis dependency to inspect, as declared under environment.dependencies. |
 
 **Optional fields**

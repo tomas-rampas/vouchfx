@@ -224,7 +224,7 @@ public sealed class DbAssertPostgresProvider
                     $"db-assert.postgres: 'target' '{model.Target}' is not a " +
                     "postgres dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "postgres", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "postgres", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"db-assert.postgres: 'target' '{model.Target}' is not a " +

@@ -238,6 +238,40 @@ public sealed class SuiteScaffolderTests
     }
 
     /// <summary>
+    /// Lookup is case-sensitive (pre-GA decision, feat/case-sensitive-kinds): only the exact
+    /// canonical (lower-case) spelling is recognised — mirrors EnvironmentMapper's own
+    /// s_dependencyRegistry so the scaffolder and the engine agree on exactly one spelling.
+    /// </summary>
+    [Theory]
+    [InlineData("Postgres")]
+    [InlineData("POSTGRES")]
+    [InlineData("Minio")]
+    [InlineData("MailPit")]
+    public void KnownDependencyKinds_Contains_IsCaseSensitive(string wrongCaseKind)
+    {
+        Assert.False(KnownDependencyKinds.Contains(wrongCaseKind));
+    }
+
+    /// <summary>
+    /// A dependency type spelled with the wrong case is rejected exactly like an unrecognised
+    /// type, with a message naming the correct canonical spelling — the scaffolder must teach
+    /// the fix, not merely say "unsupported".
+    /// </summary>
+    [Fact]
+    public void Generate_DependencyTypeWrongCase_ThrowsNamingCorrectSpelling()
+    {
+        var ex = Assert.Throws<ScaffoldException>(() =>
+            SuiteScaffolder.Generate(
+                BuildHttpAndPostgresRegistry(),
+                new ScaffoldIntent(
+                    Steps: new[] { new ScaffoldStepIntent("a", "http.rest") },
+                    Dependencies: new[] { new ScaffoldDependencyIntent("db", "Postgres") })));
+
+        Assert.Contains("Postgres", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("postgres", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Minimal provider whose required field name is secret-shaped (for REQ-006).
     /// </summary>
     private sealed class SampleSecretFieldProvider : IStepProvider, IStepBinder<SampleSecretModel>

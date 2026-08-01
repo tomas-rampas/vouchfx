@@ -254,7 +254,7 @@ public sealed class DbAssertDynamodbProvider
                     $"db-assert.dynamodb: 'target' '{model.Target}' is not a " +
                     "dynamodb dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "dynamodb", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "dynamodb", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"db-assert.dynamodb: 'target' '{model.Target}' is not a " +

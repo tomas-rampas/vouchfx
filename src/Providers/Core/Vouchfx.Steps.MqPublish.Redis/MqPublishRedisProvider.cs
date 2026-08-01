@@ -144,7 +144,7 @@ public sealed class MqPublishRedisProvider
                     $"mq-publish.redis: 'target' '{model.Target}' is not a " +
                     "redis dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "redis", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "redis", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-publish.redis: 'target' '{model.Target}' is declared as a " +

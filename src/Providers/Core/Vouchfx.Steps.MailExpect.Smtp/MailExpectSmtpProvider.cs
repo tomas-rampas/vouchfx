@@ -267,7 +267,7 @@ public sealed class MailExpectSmtpProvider
                     $"mail-expect.smtp: dependency '{model.Target}' is not declared " +
                     "under environment.dependencies.");
             }
-            else if (!string.Equals(depType, "mailpit", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "mailpit", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mail-expect.smtp: dependency '{model.Target}' has type '{depType}', " +

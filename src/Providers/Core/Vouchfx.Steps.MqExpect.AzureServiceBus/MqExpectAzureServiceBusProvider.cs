@@ -186,7 +186,7 @@ public sealed class MqExpectAzureServiceBusProvider
                     $"mq-expect.azureservicebus: 'target' '{model.Target}' is not an " +
                     "azureservicebus dependency declared in environment.dependencies.");
             }
-            else if (!string.Equals(depType, "azureservicebus", StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(depType, "azureservicebus", StringComparison.Ordinal))
             {
                 errors.Add(
                     $"mq-expect.azureservicebus: 'target' '{model.Target}' is declared as a " +
