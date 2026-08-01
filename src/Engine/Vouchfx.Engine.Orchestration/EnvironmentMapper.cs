@@ -1832,7 +1832,7 @@ public static class EnvironmentMapper
         // could pass eager validation as "absent" and yet still reach WithImage/WithImageSHA256
         // here with a degenerate ("") repository. A whitespace-only spec.Image can NEVER actually
         // reach this method via the real Map()→Configure() pipeline: Map()'s own eager loop
-        // Parses the same value first and throws for whitespace there (see its comment), so
+        // parses the same value first and throws for whitespace there (see its comment), so
         // Configure — and therefore this method — never runs at all for that dependency
         // (Map_DependencyImage_WhitespaceOnly_ThrowsLikeMain proves it). The Parse call below is
         // defence-in-depth for any caller that reaches ApplyImageOverrides WITHOUT having gone

@@ -3321,6 +3321,72 @@ public sealed class EnvironmentMapperTests
         Assert.Equal("16", image.Tag);
     }
 
+    /// <summary>
+    /// The plain-null sibling of the test above: <c>image: ~</c> alongside a real
+    /// <c>version:</c> behaves exactly like a version-only dependency — the literal
+    /// <c>~</c> never becomes a repository name.
+    /// </summary>
+    /// <remarks>
+    /// Boundary pin (passes against the fixed code it was written for; the flagship
+    /// CHANGELOG scenario it guards was previously covered only transitively:
+    /// the parser theory proves <c>image: ~</c> → null field-independently, and the
+    /// empty-string sibling above proves absent-image + version mapping — but no
+    /// test drove THIS exact combination through the real parser→mapper boundary.
+    /// Suggested by review; a regression at that seam would otherwise surface in
+    /// neither test.)
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyImage_PlainNullImageWithVersion_BehavesAsVersionOnly()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: ~
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+        const string versionOnlyYaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var baselineMapped = EnvironmentMapper.Map(ParseEnvironment(versionOnlyYaml));
+        var baselineBuilder = CreateBuilder();
+        baselineMapped.Configure(baselineBuilder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var baselineImage = baselineBuilder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+
+        Assert.Equal(baselineImage.Image, image.Image);
+        Assert.Equal(baselineImage.Tag, image.Tag);
+        Assert.Equal(baselineImage.Registry, image.Registry);
+        Assert.Equal(baselineImage.SHA256, image.SHA256);
+        Assert.Equal("16", image.Tag);
+        Assert.NotEqual("~", image.Image);
+    }
+
     // -----------------------------------------------------------------------
     // 66aef95-extension fix — YamlDocumentParser.GetScalarOrPlainNull resolves YAML 1.2's four
     // PLAIN core-schema null tokens (~, null, Null, NULL) to actual null for the two dependency
