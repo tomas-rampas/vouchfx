@@ -6,9 +6,14 @@
 // try/catch, any failure is wrapped in OrchestrationException (Provision kind) and
 // surfaces as an Environment error (§12.1) — never a misattributed assertion Fail.
 //
-// Type-dispatch (A-02): each seeded dependency is dispatched on its declared
-// `type` (from environment.dependencies):
-//   • postgres + sql        → apply SQL now (A-01 behaviour, unchanged).
+// Type-dispatch (A-02; `sql` generalised beyond Postgres): each seeded dependency
+// is dispatched on its declared `type` (from environment.dependencies):
+//   • a relational store (postgres, sqlserver, mysql) + sql → apply SQL now via
+//                                   the matching ADO.NET driver (Npgsql / SqlClient
+//                                   / MySqlConnector) — the same three drivers
+//                                   RespawnRelationalIsolation already resets with,
+//                                   so the dispatch shape stays consistent between
+//                                   seeding and per-scenario reset.
 //   • a broker (kafka) + publish  → content-hash each payload fixture and record
 //                                   the warm-up intent via IBrokerWarmupSink
 //                                   (DEFERRED SEAM — no actual publish; Sprint 6).
@@ -17,8 +22,8 @@
 //                                    write; later sprint).
 //   • A seed KIND that does not match the dependency's declared TYPE (e.g. `sql`
 //     under a kafka dependency) → a clear Provision error naming the dependency,
-//     its type and the unsupported kind (NIT-1 fix from A-01: never dial Npgsql
-//     with a Kafka connection string).
+//     its type and the unsupported kind (NIT-1 fix from A-01: never dial a
+//     relational driver against a non-relational connection string).
 //   • An unknown/unsupported dependency type that carries any seed → Provision.
 //
 // Deferred-seam honesty (A-02): the broker-publish and document forms do NOT
@@ -47,6 +52,7 @@
 //   reference data across scenarios (Respawn TablesToIgnore, or re-seeding in
 //   BeginScenarioAsync) is a future enhancement and is OUT OF SCOPE for A-01.
 
+using System.Data.Common;
 using Vouchfx.Engine.Authoring.Model;
 
 namespace Vouchfx.Engine.Orchestration;
@@ -66,7 +72,7 @@ namespace Vouchfx.Engine.Orchestration;
 /// </para>
 /// <para>
 /// <strong>Failure mapping:</strong> every failure (missing SQL file, unknown
-/// dependency, Npgsql connection/execution error) is wrapped in an
+/// dependency, relational driver connection/execution error) is wrapped in an
 /// <see cref="OrchestrationException"/> with kind
 /// <see cref="OrchestrationErrorKind.Provision"/> — the same kind
 /// <c>RespawnRelationalIsolation</c> uses for state-reset failures.
@@ -101,8 +107,8 @@ internal static class SeedApplier
     /// </param>
     /// <param name="discoveredServices">
     /// The flat map of discovered service endpoints and managed-dependency
-    /// connection strings, keyed by logical dependency name (postgres entries hold
-    /// the ADO.NET connection string).
+    /// connection strings, keyed by logical dependency name (relational entries
+    /// hold the ADO.NET connection string).
     /// </param>
     /// <param name="dependencyTypes">
     /// Map from logical dependency name to its declared <c>type</c> (e.g.
@@ -131,7 +137,8 @@ internal static class SeedApplier
     /// dependency is absent from <paramref name="discoveredServices"/>, when a
     /// referenced fixture file does not exist, when a seed kind does not match the
     /// dependency's declared type, when the dependency type is unknown, or when
-    /// Npgsql reports an error while opening the connection or executing SQL.
+    /// the matching ADO.NET driver (Npgsql / SqlClient / MySqlConnector) reports an
+    /// error while opening the connection or executing SQL.
     /// Always an Environment error (§12.1) — never a test <c>Fail</c>.
     /// </exception>
     internal static async Task ApplyAsync(
@@ -206,15 +213,21 @@ internal static class SeedApplier
                         $"in environment.dependencies (no known type to dispatch its seed).");
         }
 
-        var isPostgres = string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase);
+        var relationalKind = ScenarioIsolationFactory.MapRelationalKind(declaredType);
+        var isRelational = relationalKind is not null;
         var isBroker = BrokerTypes.Contains(declaredType);
         var isDocumentStore = DocumentStoreTypes.Contains(declaredType);
 
         // NIT-1: a seed kind that does not match the dependency's declared type is a
-        // Provision error — never blindly dial Npgsql with (say) a Kafka conn string.
-        if (hasSql && !isPostgres)
+        // Provision error — never blindly dial a relational driver against (say) a
+        // Kafka conn string.
+        if (hasSql && !isRelational)
         {
-            throw MismatchError(dependencyName, declaredType, seedKind: "sql", expectedType: "postgres");
+            throw MismatchError(
+                dependencyName,
+                declaredType,
+                seedKind: "sql",
+                expectedType: "a relational store (postgres, sqlserver, or mysql)");
         }
 
         if (hasPublish && !isBroker)
@@ -228,17 +241,17 @@ internal static class SeedApplier
         }
 
         // The declared type must be one this version of the engine can seed.  (A
-        // postgres/broker/document-store dependency with NO matching seed kind has
-        // already returned above; reaching here with an unknown type means it
+        // relational/broker/document-store dependency with NO matching seed kind
+        // has already returned above; reaching here with an unknown type means it
         // carried a seed kind but the type is not seedable at all.)
         //
         // Defensive guard: this branch is provably unreachable given the mismatch
         // checks above.  Past the early empty-seed return at least one of hasSql /
         // hasPublish / hasDocuments is set, and each mismatch check above throws
-        // unless its matching type flag (isPostgres / isBroker / isDocumentStore) is
-        // true — so at least one flag is always true here.  Kept as a belt-and-braces
-        // safety net; do not mistake it for live-covered behaviour.
-        if (!isPostgres && !isBroker && !isDocumentStore)
+        // unless its matching type flag (isRelational / isBroker / isDocumentStore)
+        // is true — so at least one flag is always true here.  Kept as a
+        // belt-and-braces safety net; do not mistake it for live-covered behaviour.
+        if (!isRelational && !isBroker && !isDocumentStore)
         {
             throw ProvisionError(
                 resourceName: dependencyName,
@@ -248,7 +261,16 @@ internal static class SeedApplier
 
         if (hasSql)
         {
-            await ApplySqlSeedAsync(dependencyName, dependencySeed.Sql!, discoveredServices, seedBaseDirectory, ct)
+            // relationalKind is guaranteed non-null here: hasSql required isRelational
+            // (hence relationalKind is not null) above, or this line would have
+            // already thrown the NIT-1 mismatch.
+            await ApplySqlSeedAsync(
+                    dependencyName,
+                    dependencySeed.Sql!,
+                    relationalKind!.Value,
+                    discoveredServices,
+                    seedBaseDirectory,
+                    ct)
                 .ConfigureAwait(false);
         }
 
@@ -266,12 +288,14 @@ internal static class SeedApplier
     }
 
     /// <summary>
-    /// Applies the <c>sql</c> seed for a Postgres dependency (A-01 behaviour,
-    /// unchanged): resolve + verify each file, then execute each as one batch.
+    /// Applies the <c>sql</c> seed for a relational dependency (postgres, sqlserver,
+    /// or mysql — A-01 behaviour, generalised): resolve + verify each file, then
+    /// execute each as one batch against the matching ADO.NET driver.
     /// </summary>
     private static async Task ApplySqlSeedAsync(
         string dependencyName,
         IReadOnlyList<string> sqlFiles,
+        RelationalStoreKind relationalKind,
         IReadOnlyDictionary<string, object> discoveredServices,
         string seedBaseDirectory,
         CancellationToken ct)
@@ -304,7 +328,7 @@ internal static class SeedApplier
             resolvedPaths.Add(resolvedPath);
         }
 
-        await ApplyDependencyAsync(dependencyName, connectionString, resolvedPaths, ct)
+        await ApplyDependencyAsync(dependencyName, relationalKind, connectionString, resolvedPaths, ct)
             .ConfigureAwait(false);
     }
 
@@ -395,16 +419,26 @@ internal static class SeedApplier
     }
 
     /// <summary>
-    /// Opens one connection to the dependency and executes each resolved SQL
-    /// file's text as a single batch, in declared order.
+    /// Opens one connection to the dependency (via the ADO.NET driver matching
+    /// <paramref name="relationalKind"/>) and executes each resolved SQL file's
+    /// text as a single batch, in declared order.
     /// </summary>
+    /// <remarks>
+    /// The connection, transaction and command are all handled through the plain
+    /// <see cref="DbConnection"/>/<see cref="DbTransaction"/>/<see cref="DbCommand"/>
+    /// ADO.NET base types — the SAME code path now runs for Postgres, SQL Server and
+    /// MySQL, so the per-file transaction and error-surface semantics documented
+    /// below are, by construction, identical across all three drivers (never a
+    /// parallel Postgres-only implementation to drift out of step).
+    /// </remarks>
     private static async Task ApplyDependencyAsync(
         string dependencyName,
+        RelationalStoreKind relationalKind,
         string connectionString,
         IReadOnlyList<string> resolvedPaths,
         CancellationToken ct)
     {
-        var connection = new Npgsql.NpgsqlConnection(connectionString);
+        var connection = CreateRelationalConnection(relationalKind, connectionString);
         try
         {
             try
@@ -436,12 +470,42 @@ internal static class SeedApplier
                         inner: ex);
                 }
 
-                // Apply each file atomically: a multi-statement file is all-or-
-                // nothing, so a partial failure never leaves a half-seeded database
-                // (matters once a topology is reused).  Postgres DDL is transactional,
-                // so CREATE TABLE + INSERT reference files are safe inside a tx.  On
-                // any exception the `await using` dispose rolls the transaction back
-                // before the OrchestrationException is thrown.
+                // Apply each file atomically: wrap it in one transaction so a
+                // mid-file failure never leaves a half-seeded database (matters once
+                // a topology is reused).  On any exception the `finally` below
+                // disposes the transaction WITHOUT committing it, which rolls it
+                // back — the standard ADO.NET DbTransaction.Dispose contract,
+                // honoured identically by NpgsqlTransaction, SqlTransaction and
+                // MySqlTransaction.
+                //
+                // KNOWN DIVERGENCE — MySQL voids per-file atomicity entirely once a
+                // file contains DDL.  Postgres and SQL Server both support fully
+                // transactional DDL: a CREATE TABLE inside this transaction is undone
+                // by the rollback above exactly like any DML statement, so the
+                // "whole file or nothing" guarantee above holds for them.
+                //
+                // MySQL does not.  Per its "statements that cause an implicit commit"
+                // rules, a DDL statement (CREATE TABLE, ALTER TABLE, …) commits the
+                // current transaction the moment it runs.  Crucially that implicit
+                // commit ENDS the transaction opened just below and MySQL does not
+                // open a replacement — the session reverts to autocommit, so every
+                // statement AFTER the DDL commits individually as it executes.  When
+                // a later statement then fails there is no open transaction left for
+                // the rollback-on-dispose to undo, and nothing is reverted: not the
+                // DDL, and not the successful DML that followed it.
+                //
+                // Measured, not theorised.  An earlier revision of this comment
+                // claimed MySQL "implicitly starts a fresh transaction" so the DML
+                // would still roll back.  It does not.  SeedApplierMysqlDockerTests
+                // runs CREATE TABLE + INSERT + a duplicate-key INSERT against a real
+                // MySQL: the table survives AND so does the first row (row count 1,
+                // not 0).  The plausible half of that theory was wrong.
+                //
+                // Author guidance: a MySQL seed fixture must be idempotent
+                // THROUGHOUT, not merely in its DDL — CREATE TABLE IF NOT EXISTS and
+                // INSERT … ON DUPLICATE KEY UPDATE — because a fixture that fails
+                // part-way leaves everything before the failure applied, and the next
+                // scenario will run on top of it.
                 var tx = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
                 var command = connection.CreateCommand();
                 try
@@ -471,6 +535,23 @@ internal static class SeedApplier
             await connection.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// Creates the kind-specific <see cref="DbConnection"/> instance for
+    /// <paramref name="relationalKind"/>. Does not open it. Mirrors
+    /// <c>RespawnRelationalIsolation.CreateConnection</c> exactly (same three
+    /// drivers), so a dependency seeded here and reset between scenarios there is
+    /// always dialled the same way.
+    /// </summary>
+    private static DbConnection CreateRelationalConnection(RelationalStoreKind relationalKind, string connectionString) =>
+        relationalKind switch
+        {
+            RelationalStoreKind.Postgres => new Npgsql.NpgsqlConnection(connectionString),
+            RelationalStoreKind.SqlServer => new Microsoft.Data.SqlClient.SqlConnection(connectionString),
+            RelationalStoreKind.MySql => new MySqlConnector.MySqlConnection(connectionString),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(relationalKind), relationalKind, "Unsupported RelationalStoreKind."),
+        };
 
     /// <summary>
     /// Builds the NIT-1 mismatch <see cref="OrchestrationException"/>: a seed kind
