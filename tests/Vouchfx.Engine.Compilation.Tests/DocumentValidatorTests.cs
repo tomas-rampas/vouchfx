@@ -273,11 +273,15 @@ public sealed class DocumentValidatorTests
     [Fact]
     public void Validate_UnknownStepType_OnlyDefect_IsRejected_WithLineAndMessage()
     {
+        // No fields beyond the common id/type: an unregistered 'type' matches
+        // no if/then clause, so nothing marks any OTHER property as evaluated
+        // for $defs/step's unevaluatedProperties (the typo-closing change) —
+        // a 'target' field here would ALSO be (correctly) flagged, muddying
+        // "ONLY defect" as this test's name promises.
         const string yaml = """
             steps:
               - id: call-unknown
                 type: no-such.provider
-                target: orders-api
             """;
 
         var result = DocumentValidator.Validate(yaml, _registry);
@@ -427,11 +431,14 @@ public sealed class DocumentValidatorTests
     [Fact]
     public void Validate_BareFamilyTypeName_IsRejectedOnce_ByPatternOnly_NotDoubleReported()
     {
+        // No fields beyond the common id/type: a pattern-invalid 'type'
+        // matches no if/then clause either, so a 'target' field here would
+        // ALSO be (correctly) flagged as unevaluated by the typo-closing
+        // change — a second, unrelated error this test must not see.
         const string yaml = """
             steps:
               - id: call-api
                 type: http
-                target: orders-api
             """;
 
         var result = DocumentValidator.Validate(yaml, _registry);
@@ -456,11 +463,12 @@ public sealed class DocumentValidatorTests
     [Fact]
     public void Validate_WronglyCasedType_IsRejectedOnce_ByPatternOnly_NotDoubleReported()
     {
+        // No fields beyond the common id/type — see the identical rationale
+        // on Validate_BareFamilyTypeName_IsRejectedOnce_ByPatternOnly_NotDoubleReported.
         const string yaml = """
             steps:
               - id: call-api
                 type: HTTP.REST
-                target: orders-api
             """;
 
         var result = DocumentValidator.Validate(yaml, _registry);

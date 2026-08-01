@@ -162,8 +162,7 @@ public sealed class StorageAssertS3Provider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

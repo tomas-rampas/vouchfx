@@ -199,8 +199,7 @@ public sealed class CacheAssertElasticsearchProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

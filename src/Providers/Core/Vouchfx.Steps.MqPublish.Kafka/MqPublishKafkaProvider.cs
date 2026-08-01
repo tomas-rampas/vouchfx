@@ -147,8 +147,7 @@ public sealed class MqPublishKafkaProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

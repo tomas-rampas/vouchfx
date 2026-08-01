@@ -75,8 +75,7 @@ public sealed class MqPublishRabbitmqProvider
               "type": "object",
               "additionalProperties": { "type": "string" }
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

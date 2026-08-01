@@ -145,8 +145,7 @@ public sealed class MetricsAssertPrometheusProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

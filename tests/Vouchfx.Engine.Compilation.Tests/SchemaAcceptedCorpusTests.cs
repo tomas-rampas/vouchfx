@@ -234,7 +234,7 @@ public sealed class SchemaAcceptedCorpusTests
     // environment: blocks are NOT the problem — they validate cleanly
     // everywhere (environment.services/dependencies is barely constrained by
     // the schema, as established by the accepted-corpus surface fixtures
-    // above). The actual, and much larger, finding is that 38 of the 41
+    // above). The actual, and much larger, finding is that 39 of the 41
     // fixtures fail schema validation because their STEP bodies are
     // deliberately minimal: the planner inspects only a step's 'id', 'type',
     // 'target' and 'capture' (coverage/vocabulary graph shape), so these
@@ -244,14 +244,14 @@ public sealed class SchemaAcceptedCorpusTests
     // key/operation/expect, …) a real compilable document needs. Only the
     // three fixtures that happen to use script.csharp — the one Core
     // provider whose schema requires nothing beyond 'code' or 'file' — pass
-    // as-is. None of the 38 are edited here to make them pass, and none are
+    // as-is. None of the 39 are edited here to make them pass, and none are
     // silently dropped from discovery: every one is excluded below by exact
     // relative path, categorised by its real root cause, and paired with the
     // precise DocumentValidator finding that justifies the exclusion
     // (obtained by actually running the validator with zero exclusions —
     // never guessed).
     //
-    // Three categories, in order of how many fixtures they cover:
+    // Four categories, in order of how many fixtures they cover:
     //   (A) Deliberately minimal step bodies (31 fixtures) — the systemic
     //       case above: real steps present, but shaped for the planner's own
     //       purposes, never meant to be schema-complete documents.
@@ -266,6 +266,19 @@ public sealed class SchemaAcceptedCorpusTests
     //       MaxParseErrorMessageChars bound truncates it out of a reported
     //       error. Fails 'required'/'pattern', never a construct this gate's
     //       narrowing-detection purpose cares about.
+    //   (D) Planner-only cross-cutting field on a provider that doesn't
+    //       declare it (1 fixture) — added by the typo-closing change
+    //       (branch feat/close-step-surface, $defs/step's
+    //       'unevaluatedProperties: false'). The planner treats 'target' as a
+    //       generic dependency-reference convention available on ANY step
+    //       type for graph-shape purposes (REQ-004/REQ-007); script.csharp's
+    //       own schema never declared 'target' as one of its fields (only
+    //       'code'/'file'). Before this change that was silently tolerated
+    //       (additionalProperties: true); now it is correctly rejected as an
+    //       unevaluated property — a genuine, and genuinely interesting,
+    //       tension between the planner's cross-cutting convention and the
+    //       schema's per-provider vocabulary, surfaced here rather than
+    //       resolved unilaterally (flagged for maintainer attention).
 
     private static string RepoRoot => FindRepoRoot();
 
@@ -284,9 +297,10 @@ public sealed class SchemaAcceptedCorpusTests
     /// Every one of these is a genuine schema-validation failure (per the
     /// brief: "a fixture that fails schema validation is a genuine finding").
     /// None are edited to make them pass, and none are silently dropped from
-    /// discovery without a reason recorded here. Only 3 of the 41 discovered
-    /// fixtures are NOT excluded (all three use script.csharp exclusively —
-    /// see the section header above for why) and remain actively gated by
+    /// discovery without a reason recorded here. Only 2 of the 41 discovered
+    /// fixtures are NOT excluded (both use script.csharp exclusively, and
+    /// neither carries a planner-only 'target' field — see the section header
+    /// above for why) and remain actively gated by
     /// <see cref="PlanningFixture_IsValid"/>.
     /// </remarks>
     private static readonly Dictionary<string, string> ExcludedPlanningFixtures =
@@ -295,7 +309,7 @@ public sealed class SchemaAcceptedCorpusTests
             // ── (A) Deliberately minimal step bodies — planner tests coverage/
             //        vocabulary/determinism/history graph shape only; steps
             //        omit the provider-required fields a compilable document
-            //        needs. This is the dominant category (31 of 38).
+            //        needs. This is the dominant category (31 of 39).
             ["acceptance/determinism/two-collisions/collision-alpha-1.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture — only 'id'/'type'/'target' matter). " +
                 "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
@@ -440,7 +454,7 @@ public sealed class SchemaAcceptedCorpusTests
             // ── (B) Deliberately zero-step — a suite that exists only to
             //        declare an unreferenced dependency/service for a
             //        vocabulary or coverage-gap test. Violates 'steps'
-            //        minItems: 1 (3 of 38).
+            //        minItems: 1 (3 of 39).
             ["acceptance/loop-closure-dependency/suite.e2e.yaml"] =
                 "Deliberately zero-step: exercises a suite whose only dependency has no steps targeting it. " +
                 "at /steps: (line 6) [minItems] Value should have at least 1 items",
@@ -454,7 +468,7 @@ public sealed class SchemaAcceptedCorpusTests
                 "at /steps: (line 6) [minItems] Value should have at least 1 items",
 
             // ── (C) Deliberately malformed — exercises the planner's own
-            //        malformed-suite handling (4 of 38).
+            //        malformed-suite handling (4 of 39).
             ["ingest/all-malformed/bad-one.e2e.yaml"] =
                 "Deliberately malformed for PlanIngestTests' malformed-suite handling: the one step omits " +
                 "'id' AND the http.rest-required fields. " +
@@ -479,6 +493,18 @@ public sealed class SchemaAcceptedCorpusTests
                 "redaction test can prove the bound truncates it away. Fails the root schema's " +
                 "'^[a-z0-9-]+\\.[a-z0-9-]+$' type pattern. " +
                 "at /steps/0/type: (line 16) [pattern] The string value is not a match for the indicated regular expression",
+
+            // ── (D) Planner-only cross-cutting field on a provider that
+            //        doesn't declare it — added by the typo-closing change,
+            //        see the section header above (1 of 39).
+            ["vocabulary/unknown-kind-targeted/suite.e2e.yaml"] =
+                "script.csharp step uses the planner's generic 'target' convention (REQ-004/REQ-007), which " +
+                "script.csharp's own schema never declares (only 'code'/'file'); previously silently tolerated " +
+                "(additionalProperties: true), now correctly rejected as unevaluated. " +
+                "at /steps/0/target: (line 12) [unevaluatedProperties] Unknown property 'target' on step type 'script.csharp'; " +
+                "at /steps/0: (line 10) [required] Required properties [\"file\"] are not present " +
+                "(pre-existing oneOf-branch noise for the unexercised 'file' alternative, only surfaced once " +
+                "the document is invalid overall for the reason above — see SchemaErrorCollector).",
         };
 
     public static IEnumerable<object[]> PlanningFixtureFiles()

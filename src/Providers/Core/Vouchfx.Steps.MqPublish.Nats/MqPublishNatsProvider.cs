@@ -98,8 +98,7 @@ public sealed class MqPublishNatsProvider
               "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
               "type": "string"
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

@@ -142,8 +142,7 @@ public sealed class WebhookListenHttpProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

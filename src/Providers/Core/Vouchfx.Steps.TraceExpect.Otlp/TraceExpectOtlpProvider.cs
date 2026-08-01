@@ -156,8 +156,7 @@ public sealed class TraceExpectOtlpProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

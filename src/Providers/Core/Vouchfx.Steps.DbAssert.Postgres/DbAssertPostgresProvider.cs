@@ -127,8 +127,7 @@ public sealed class DbAssertPostgresProvider
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

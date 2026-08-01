@@ -118,8 +118,7 @@ public sealed class MqExpectRedisProvider
               },
               "additionalProperties": true
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 

@@ -137,16 +137,35 @@ public sealed class SchemaErrorCollectionAtScaleTests
     // ── Case A: invalid step, one provider matches ─────────────────────────────
 
     /// <summary>
-    /// An <c>http.rest</c> step missing its required <c>method</c>/<c>path</c>
-    /// fields must, at full 25-provider scale, yield EXACTLY the one genuine
-    /// "required" violation from the <c>http.rest</c> fragment's own <c>then</c>
-    /// branch — none of the 24 other providers' non-matching discriminator
-    /// clauses may leak an "Expected &lt;other type&gt;" entry into the result.
+    /// An <c>http.rest</c> step missing ALL of its required <c>target</c>/
+    /// <c>method</c>/<c>path</c> fields must, at full 25-provider scale, yield
+    /// EXACTLY the one genuine "required" violation from the <c>http.rest</c>
+    /// fragment's own <c>then</c> branch — none of the 24 other providers'
+    /// non-matching discriminator clauses may leak an "Expected &lt;other
+    /// type&gt;" entry into the result.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Before the fix, this yields 25 errors (1 genuine + 24 "if"-discriminator
     /// noise entries) — verified empirically against the raw
     /// <c>EvaluationResults</c> tree (see this file's header remarks).
+    /// </para>
+    /// <para>
+    /// The step deliberately omits EVERY http.rest-required field, not just
+    /// method/path: per JSON Schema 2020-12, a subschema's annotations are
+    /// only collected when that subschema application succeeds as a whole.
+    /// Since http.rest's own <c>then</c> branch already fails outright here
+    /// (missing required fields), its <c>properties</c> annotation never
+    /// propagates to $defs/step's <c>unevaluatedProperties</c> — so ANY OTHER
+    /// property present on this step (e.g. a lone <c>target</c>, present in
+    /// an earlier version of this fixture) would ALSO be reported as
+    /// unevaluated, alongside the genuine "required" violation, muddying
+    /// exactly the "exactly one genuine error" this test exists to pin. This
+    /// fixture avoids that entirely by carrying no properties beyond the
+    /// common <c>id</c>/<c>type</c> — see <c>SchemaErrorCollectorTests.NestedConditionalFragment_AtEndToEndScale_YieldsOnlyTheGenuineErrors</c>
+    /// for a fixture that deliberately DOES exercise (and pins) that
+    /// compounding behaviour.
+    /// </para>
     /// </remarks>
     [Fact]
     public void InvalidHttpRestStep_AtFullProviderScale_YieldsOnlyTheGenuineRequiredError()
@@ -157,12 +176,11 @@ public sealed class SchemaErrorCollectionAtScaleTests
             steps:
               - id: bad-step
                 type: http.rest
-                target: orders-api
             """;
 
         var result = SchemaComposer.Validate(registry, yaml);
 
-        Assert.False(result.IsValid, "Expected invalid: 'method' and 'path' are required by http.rest.");
+        Assert.False(result.IsValid, "Expected invalid: 'target', 'method' and 'path' are required by http.rest.");
 
         AssertNoDiscriminatorNoise(result, registry, exceptTypeKey: "http.rest");
 
@@ -175,6 +193,7 @@ public sealed class SchemaErrorCollectionAtScaleTests
         var genuine = result.Errors[0];
         Assert.Equal("/steps/0", genuine.InstanceLocation);
         Assert.Contains("required", genuine.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("target", genuine.Message, StringComparison.Ordinal);
         Assert.Contains("method", genuine.Message, StringComparison.Ordinal);
         Assert.Contains("path", genuine.Message, StringComparison.Ordinal);
     }

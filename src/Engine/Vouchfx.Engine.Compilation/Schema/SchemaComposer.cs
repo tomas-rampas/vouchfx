@@ -232,7 +232,10 @@ public static class SchemaComposer
             if (results.IsValid)
                 return SchemaValidationResult.Valid;
 
-            var errors = SchemaErrorCollector.CollectErrors(results);
+            // Pass the instance through so an unevaluatedProperties violation
+            // (the typo-closing change on $defs/step) can name the offending
+            // step's own 'type' in its message — see SchemaErrorCollector.
+            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement);
             return new SchemaValidationResult(false, errors);
         }
     }

@@ -99,8 +99,7 @@ public sealed class MqPublishAzureServiceBusProvider
               "type": "object",
               "additionalProperties": { "type": "string" }
             }
-          },
-          "additionalProperties": true
+          }
         }
         """);
 
