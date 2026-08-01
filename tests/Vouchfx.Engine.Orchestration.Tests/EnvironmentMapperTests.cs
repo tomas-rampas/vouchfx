@@ -3205,6 +3205,13 @@ public sealed class EnvironmentMapperTests
         Assert.Equal(baselineImage.Tag, image.Tag);
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8): both sides of the equality
+        // checks above are computed via the SAME EnvironmentMapper.Map() code path, so a
+        // common-mode failure (e.g. a future change that silently loses the default tag on BOTH
+        // sides) would still pass every Assert.Equal above. Confirms the baseline itself carries
+        // a real tag, not a degenerate empty one both sides coincidentally share.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
     }
 
     [Fact]
@@ -3244,6 +3251,9 @@ public sealed class EnvironmentMapperTests
         Assert.Equal(baselineImage.Tag, image.Tag);
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
     }
 
     /// <summary>
@@ -3366,6 +3376,9 @@ public sealed class EnvironmentMapperTests
         Assert.Equal(baselineImage.Tag, image.Tag);
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
     }
 
     /// <summary>
@@ -3448,6 +3461,9 @@ public sealed class EnvironmentMapperTests
         Assert.Equal(baselineImage.Tag, image.Tag);
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
+
+        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        Assert.False(string.IsNullOrEmpty(image.Tag));
 
         // Specifically not the garbage literal tag the pre-fix parser produced.
         Assert.NotEqual("~", image.Tag);
@@ -3566,5 +3582,87 @@ public sealed class EnvironmentMapperTests
         var image = builder.Resources.Single(r => r.Name == "orders-db")
             .Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("   ", image.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // peer-review-critic minor #5 — the plain-null Version fix changes which PRE-EXISTING
+    // ambiguity/M3 rule fires when 'image:' ALSO carries content, because 'version: ~' now makes
+    // hasVersion false rather than true (previously "~" was a real, non-empty string). Both
+    // shapes are user-visible behaviour changes that were previously untested.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// GENUINE FLIP (throw → success), verified red-first: on origin/main, 'image:
+    /// myorg/mongo:8.0' + 'version: ~' threw the tag/digest-plus-version ambiguity error —
+    /// spec.Version was the literal, non-empty string "~", so hasVersion was true, and the
+    /// image's own embedded tag "8.0" tripped the ambiguity check against it. After this fix,
+    /// 'version: ~' resolves to null, hasVersion is false, and there is nothing left to be
+    /// ambiguous with — the dependency maps cleanly using the image's own embedded tag.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageWithTag_AndPlainNullVersion_MapsCleanly_NoLongerAmbiguous()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: myorg/mongo:8.0
+                  version: ~
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Null(env.Dependencies!["orders-db"].Version);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("myorg/mongo", image.Image);
+        Assert.Equal("8.0", image.Tag);
+    }
+
+    /// <summary>
+    /// The other flip (silent garbage pull → correct rejection), also verified red-first: on
+    /// origin/main, 'image: myorg/mongo' (no embedded tag/digest) + 'version: ~' SUCCEEDED —
+    /// spec.Version was the literal "~", so hasVersion was true, which satisfied the M3 "has a
+    /// version" branch and let ApplyImageOverrides use the literal "~" itself as the tag,
+    /// producing a garbage 'myorg/mongo:~' pull reference with no error at suite-build time.
+    /// After this fix, 'version: ~' resolves to null, hasVersion is false, and the pre-existing
+    /// M3 rule (a tagless image with nothing pinning its version would float on ':latest') now
+    /// correctly fires instead — a success-to-failure change in outcome, but the CORRECT failure.
+    /// </summary>
+    [Fact]
+    public void Map_DependencyImageNoTag_AndPlainNullVersion_ThrowsFloatingLatest_NoLongerGarbageTag()
+    {
+        const string yaml = """
+            metadata:
+              name: c4-probe
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  image: myorg/mongo
+                  version: ~
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Null(env.Dependencies!["orders-db"].Version);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

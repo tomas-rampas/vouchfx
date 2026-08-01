@@ -916,18 +916,27 @@ public static class YamlDocumentParser
 
     /// <summary>
     /// Like <see cref="GetScalar"/>, but additionally resolves a dependency <c>version</c>/
-    /// <c>image</c> scalar's "no real content" spellings to <see langword="null"/>: a dangling
-    /// key (no value after the colon), an explicit empty scalar, and the four YAML 1.2
-    /// core-schema PLAIN null tokens (<c>~</c>, <c>null</c>, <c>Null</c>, <c>NULL</c>).
+    /// <c>image</c> scalar's PLAIN "no real content" spellings to <see langword="null"/>: a
+    /// dangling key (no value after the colon), an explicit empty PLAIN scalar, and the four
+    /// YAML 1.2 core-schema PLAIN null tokens (<c>~</c>, <c>null</c>, <c>Null</c>, <c>NULL</c>).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The typed model then carries exactly ONE representation of "absent" for these two fields
-    /// (<see langword="null"/>) instead of two (a dangling key's "" alongside a fully-absent
-    /// key's null). Two spellings of "absent" is a trap: a future consumer written as
-    /// <c>spec.Image is not null</c> would silently treat "" as present — precisely the shape of
-    /// bug this file's history exists to close. Deliberately a dedicated helper rather than a
-    /// change to <see cref="GetScalar"/> itself: <see cref="GetScalar"/> feeds many callers
+    /// Every PLAIN "no real content" spelling now collapses to the SAME representation
+    /// (<see langword="null"/>) — before this helper existed, a dangling key round-tripped as ""
+    /// while a fully-absent key round-tripped as null: two spellings of "absent" for the one
+    /// typed field. That IS a claim about PLAIN spellings only, not a global guarantee: a QUOTED
+    /// empty scalar (<c>image: ""</c>) is a genuinely DIFFERENT, deliberately untouched case (see
+    /// the PLAIN-style discussion below) and still returns "" verbatim — so the typed model does
+    /// NOT have a single representation of "absent" for every possible authored value, only for
+    /// every PLAIN one. (EnvironmentMapper's own <c>IsNullOrEmpty</c> guard is what makes a
+    /// QUOTED "" behave as absent too, at the mapping layer — see its comment for why that guard
+    /// is load-bearing for real authored YAML, not merely a defensive fallback.) Two spellings of
+    /// "absent" is a trap regardless: a future consumer written as <c>spec.Image is not null</c>
+    /// would silently treat a PLAIN dangling key's "" as present — precisely the shape of bug
+    /// this file's history exists to close, which is why collapsing the PLAIN spellings matters
+    /// even though it does not reach the QUOTED one. Deliberately a dedicated helper rather than
+    /// a change to <see cref="GetScalar"/> itself: <see cref="GetScalar"/> feeds many callers
     /// (metadata, seed fixtures, step fields, env values, …) whose behaviour for a dangling key
     /// or a plain null-shaped value must NOT change here — this fix is scoped exactly to the two
     /// dependency fields whose shipped schema descriptions promise the treated-as-absent contract
@@ -956,10 +965,18 @@ public static class YamlDocumentParser
     /// non-specifically-tagged (<c>Tag.IsEmpty</c>) plain scalar, so <c>!!str null</c> correctly
     /// stays the literal text <c>"null"</c> — the author's explicit <c>!!str</c> is respected.
     /// This is NOT full YAML 1.2 core-schema tag resolution, though: <c>!!null y</c> stays the
-    /// literal text <c>"y"</c> rather than resolving to null. That is a known, accepted
-    /// asymmetry — an explicit <c>!!null</c> tag on non-null-looking text is vanishingly rare
-    /// authored YAML, and correctly resolving it would mean resolving the null tag independently
-    /// of content, which this helper does not attempt.
+    /// literal text <c>"y"</c> rather than resolving to null, correctly resolving which would
+    /// mean resolving the null tag independently of content — this helper does not attempt that.
+    /// This is a defensive parser-API detail, not an author-visible gap: confirmed empirically,
+    /// <c>SchemaResources.ConvertYamlToJsonDocument</c> (the YAML→JSON step schema validation
+    /// runs, BEFORE this parser ever sees the document) rejects <c>!!null y</c> outright —
+    /// <c>DocumentValidator.Validate</c> returns <c>IsValid: false</c> with "Encountered an
+    /// unresolved tag 'tag:yaml.org,2002:null'" — because YamlDotNet's object-graph deserialiser
+    /// has no registered mapping from an explicit <c>!!null</c> tag to a non-null-shaped .NET
+    /// value. A document containing <c>!!null y</c> therefore never passes schema validation and
+    /// never reaches this method in the shipped pipeline; <c>!!str null</c>, by contrast,
+    /// validates cleanly (<c>!!str</c> maps directly to <see cref="string"/>) and IS reachable,
+    /// which is why only that case gets the fix above.
     /// </para>
     /// </remarks>
     private static string? GetScalarOrPlainNull(YamlMappingNode mapping, string key)

@@ -657,12 +657,20 @@ public static class EnvironmentMapper
             // C4 fix: a dangling 'image:' (no value) or an explicit 'image: ""' must be treated
             // identically to 'image' being absent altogether — mirrors the MN3 fix for Version a
             // few lines below (and ApplyImageOverrides' own mirror of this same guard). Before
-            // this fix the guard was 'spec.Image is not null': YamlDocumentParser.GetScalarOrPlainNull
-            // returns actual null for a dangling/explicit-empty/YAML-null scalar (§66aef95-
-            // extension — the parser itself now collapses every "no real content" spelling to one
-            // representation), but a hand-constructed DependencySpec (as several tests in this
-            // area still do) can still carry "" directly, so this guard checks both, belt and
-            // braces, exactly like Version's guard below.
+            // this fix the guard was 'spec.Image is not null'.
+            //
+            // This IsNullOrEmpty check is LOAD-BEARING, not merely defensive: YamlDocumentParser.
+            // GetScalarOrPlainNull (§66aef95-extension) only collapses PLAIN "no real content"
+            // spellings to null — a dangling key, and the four YAML-null tokens. A QUOTED
+            // 'image: ""' is a real, common AUTHORED shape (e.g. CI templating that renders an
+            // unset variable into a quoted string) that the parser deliberately leaves as the
+            // literal "" — quoting is the author's explicit opt-out from null-token resolution
+            // (see GetScalarOrPlainNull's own remarks). This guard is what actually catches THAT
+            // shape; do not simplify it to 'is not null' on the assumption "the parser already
+            // handles every empty case" — it does not, for a quoted empty string, and narrowing
+            // this guard would reintroduce the exact ArgumentException this fix closes for that
+            // authored input. (It also covers a hand-constructed DependencySpec carrying ""
+            // directly, as several tests in this area do, but that is the secondary reason.)
             //
             // REJECTED (do not re-introduce): widening this guard to IsNullOrWhiteSpace, on the
             // reasoning "match what ImageReferenceParser.Parse itself rejects, so spec.Image can
@@ -1816,9 +1824,14 @@ public static class EnvironmentMapper
         // (see its comment for the full rationale, including why this is IsNullOrEmpty and NOT
         // IsNullOrWhiteSpace) — both places must agree on what "no image" means, or a dependency
         // could pass eager validation as "absent" and yet still reach WithImage/WithImageSHA256
-        // here with a degenerate ("") repository. A whitespace-only spec.Image is NOT degenerate
-        // by this method's own contract — Map()'s eager loop already let it through to here on
-        // purpose, and ImageReferenceParser.Parse below rejects it loudly, exactly as intended.
+        // here with a degenerate ("") repository. A whitespace-only spec.Image can NEVER actually
+        // reach this method via the real Map()→Configure() pipeline: Map()'s own eager loop
+        // Parses the same value first and throws for whitespace there (see its comment), so
+        // Configure — and therefore this method — never runs at all for that dependency
+        // (Map_DependencyImage_WhitespaceOnly_ThrowsLikeMain proves it). The Parse call below is
+        // defence-in-depth for any caller that reaches ApplyImageOverrides WITHOUT having gone
+        // through Map()'s eager validation first (e.g. a future direct unit test of this method,
+        // or a refactor that adds another call site) — not a live path within Map() itself.
         if (!string.IsNullOrEmpty(spec.Image))
         {
             var parsedImage = ImageReferenceParser.Parse(spec.Image);

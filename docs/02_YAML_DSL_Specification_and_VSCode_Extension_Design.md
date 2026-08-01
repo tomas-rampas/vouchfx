@@ -152,6 +152,8 @@ When `image:` is supplied, it bypasses the Aspire-provisioned default entirely. 
 
 An `image:` field that carries no tag or digest and no sibling `version:` is **rejected** with a clear error. A tagless reference without an explicit version would silently float on `:latest`, defeating the determinism invariant; authors must use `version:` to pin the tag, or include a tag in the `image:` itself.
 
+An `image:` or `version:` written with no value at all, or as an unquoted YAML null (`~`, `null`, `Null`, or `NULL`), is treated as absent — identical to omitting the field entirely. Quote the value (e.g. `version: "null"`) to keep it as literal text instead.
+
 The `ImageReferenceParser` also rejects other malformed inputs: leading or trailing whitespace; a tag (or digest) with a colon inside it (e.g., `mongodb:5:0` is invalid); a bare trailing `:` or `@` with no text after it; a digest whose hash is empty or not valid hexadecimal (e.g., `@sha256:`); a non-`sha256:` digest algorithm; an empty repository path segment (e.g., a leading or doubled `/`, or paths like `/mongo` or `myrepo/`); and an invalid combination of both `image:` with tag and `version:` (use one or the other to avoid ambiguity).
 
 The `imageRegistry` environment-level override applies to every un-qualified image reference (those without a registry hostname). It does **not** apply to images whose reference already carries a registry hostname, or to any dependency whose built-in image is pre-embedded with a registry host. An un-qualified `image:` reference (e.g., `redis:7`) is still prefixed by `imageRegistry` if set, following the same rule as services.

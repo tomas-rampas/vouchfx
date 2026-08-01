@@ -940,14 +940,17 @@ public sealed class YamlDocumentParserTests
     }
 
     /// <summary>
-    /// Known, accepted asymmetry (documented rather than fixed — see GetScalarOrPlainNull's own
-    /// remarks): 'image: !!null y' explicitly tags non-null-looking text with YAML's null tag,
-    /// which under full YAML 1.2 core-schema tag resolution means the node IS null regardless of
-    /// its text. This helper does not attempt that — it only recognises PLAIN, untagged scalars
-    /// whose TEXT is one of the five "no real content" spellings — so '!!null y' stays the
-    /// literal text "y" both before and after the N-5 tag check (Tag.IsEmpty is false either
-    /// way, and "y" was never a recognised spelling regardless). Pinned so this stays a
-    /// deliberate, known boundary rather than an accidental one.
+    /// Defensive parser-API detail, not an author-visible gap — confirmed against the actual
+    /// schema-validation entry point (see GetScalarOrPlainNull's own remarks): 'image: !!null y'
+    /// explicitly tags non-null-looking text with YAML's null tag, which under full YAML 1.2
+    /// core-schema tag resolution means the node IS null regardless of its text. This helper does
+    /// not attempt that — it only recognises PLAIN, untagged scalars whose TEXT is one of the
+    /// five "no real content" spellings — so '!!null y' stays the literal text "y" both before
+    /// and after the N-5 tag check. This is pinned only as a parser-API boundary: a document
+    /// containing '!!null y' never reaches this method in the shipped pipeline at all —
+    /// DocumentValidator.Validate rejects it first with "Encountered an unresolved tag
+    /// 'tag:yaml.org,2002:null'" (confirmed empirically), so no real author-authored suite can
+    /// ever exercise this path.
     /// </summary>
     [Fact]
     public void Parse_DependencyImage_ExplicitNullTagOnNonNullText_StaysLiteral_KnownAsymmetry()
@@ -974,12 +977,15 @@ public sealed class YamlDocumentParserTests
     /// TWO spellings of "absent" for these two fields — "" from a dangling key, alongside null
     /// from a fully-absent key — and a future consumer written as <c>is not null</c> against
     /// that two-spelling shape would silently treat "" as present, which is the exact bug shape
-    /// this file's history exists to close. GetScalarOrPlainNull now folds the empty scalar into
-    /// the same single null representation as the four explicit YAML-null tokens, so every
-    /// "no real content" spelling collapses to one value. EnvironmentMapper's own guards still
-    /// check IsNullOrEmpty rather than relying solely on this invariant (belt and braces — a
-    /// hand-constructed DependencySpec in a test can still carry "" directly, bypassing this
-    /// parser entirely), but the parser itself now never hands out "" for a dangling key.
+    /// this file's history exists to close. GetScalarOrPlainNull now folds the empty PLAIN scalar
+    /// into the same single null representation as the four explicit YAML-null tokens, so every
+    /// PLAIN "no real content" spelling collapses to one value — NOT every possible authored
+    /// value: a QUOTED 'image: ""' still returns "" verbatim (quoting is the author's deliberate
+    /// opt-out; see GetScalarOrPlainNull's own remarks), so this parser still hands out both ""
+    /// and null depending on how the author wrote it. EnvironmentMapper's own IsNullOrEmpty
+    /// guards are what actually catch that QUOTED "" shape for real authored YAML — they are
+    /// LOAD-BEARING, not a defensive fallback that merely covers a hand-constructed
+    /// DependencySpec bypassing this parser (see EnvironmentMapper's own guard comment).
     /// </summary>
     [Fact]
     public void Parse_DependencyImage_Dangling_ResolvesToNull_SingleAbsentRepresentation()
