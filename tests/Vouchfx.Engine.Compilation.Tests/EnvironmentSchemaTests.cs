@@ -297,6 +297,73 @@ public sealed class EnvironmentSchemaTests
             e.InstanceLocation == "/environment/services/app/httpPort");
     }
 
+    /// <summary>
+    /// A quoted <c>httpPort</c> with leading zeros is accepted, because the parser
+    /// reads it as an ordinary integer.
+    /// </summary>
+    /// <remarks>
+    /// <c>YamlDocumentParser</c> reads this field with
+    /// <c>int.TryParse(..., NumberStyles.None, ...)</c>, for which leading zeros are
+    /// just digits — <c>"08080"</c> yields 8080 and the service is reached on that
+    /// port. The first bounded pattern written for this field required a non-zero
+    /// leading digit and so rejected it, putting the schema back out of step with the
+    /// parser: exactly the mismatch that bounding this field was meant to remove.
+    /// Pinned so a future tightening of the range regex cannot quietly reintroduce it.
+    /// </remarks>
+    [Theory]
+    [InlineData("08080")]
+    [InlineData("00001")]
+    [InlineData("065535")]
+    [InlineData("0000000008080")]
+    public void Service_QuotedHttpPortWithLeadingZeros_IsAccepted(string port)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: "{{port}}"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected quoted httpPort \"{port}\" to be accepted (int.TryParse reads it as an ordinary " +
+            $"integer) but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// Zero remains rejected in every spelling, leading zeros or not: it parses
+    /// cleanly, but port 0 is not a port a service can be reached on, so accepting it
+    /// would let a silently-unreachable service through.
+    /// </summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("00")]
+    [InlineData("0000000")]
+    public void Service_QuotedHttpPortZero_IsStillRejected(string port)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: "{{port}}"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, $"httpPort \"{port}\" is port zero and must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/app/httpPort");
+    }
+
     [Fact]
     public void Service_EnvStringValue_IsAccepted()
     {
