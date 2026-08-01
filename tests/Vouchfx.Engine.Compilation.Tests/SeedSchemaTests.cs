@@ -12,8 +12,12 @@
 // SeedSpec.cs's header remarks and CHANGELOG.md) rather than left silently
 // inert: a field that does nothing is worse than one that does not exist.
 // This class pins the closed shape that remains — 'sql' as an array of
-// strings — and proves a suite still writing 'publish:'/'documents:' now
-// fails schema validation instead of silently no-opping.
+// scalars (string/integer/number/boolean, deliberately WIDER than strings
+// alone: the parser reads every item back as raw scalar text, so the schema
+// accepting only strings would reject shapes the engine happily runs — the
+// same parser-parity rule applied to env values and httpPort) — and proves a
+// suite still writing 'publish:'/'documents:' now fails schema validation
+// instead of silently no-opping.
 //
 // These tests exercise the ROOT schema only (YamlSchemaValidator, no provider
 // fragments) — 'environment.seed' constraints live entirely in
@@ -35,8 +39,15 @@ public sealed class SeedSchemaTests
     // ── Accepted shapes ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Seed_SqlArrayOfStrings_IsAccepted()
+    public void Seed_SqlArrayOfScalars_IsAccepted()
     {
+        // The bare 20240101 item is deliberate, not a typo: seed.sql items are
+        // typed as the scalar union (string/integer/number/boolean) for parser
+        // parity — the parser reads every item back as raw scalar text, so a
+        // date-stamped fixture written unquoted works at runtime. Keeping a
+        // non-string item in the ACCEPTED fixture means a future "tidy-up"
+        // narrowing the union back to string-only fails here instead of
+        // shipping the schema-stricter-than-parser drift this series removed.
         const string yaml = """
             environment:
               dependencies:
@@ -44,7 +55,7 @@ public sealed class SeedSchemaTests
                   type: postgres
               seed:
                 orders-db:
-                  sql: [ "fixtures/a.sql", "fixtures/b.sql" ]
+                  sql: [ "fixtures/a.sql", 20240101, "fixtures/b.sql" ]
             steps:
               - id: noop
                 type: noop.echo

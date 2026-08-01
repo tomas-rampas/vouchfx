@@ -604,6 +604,48 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains(errors, e => e.Message.Contains("[oneOf]", StringComparison.Ordinal));
     }
 
+    private const string ThreeMixedShapesOneOfSchema = """
+        {
+          "type": "object",
+          "oneOf": [
+            { "required": ["a"] },
+            { "required": ["b", "c"] },
+            { "type": "object" }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// M1-r (fourth-round gatekeeper re-review): count-equality ALONE
+    /// (M1's guard) is necessary but not sufficient. Here branch 0
+    /// contributes ONE name ('a'), branch 1 contributes TWO ('b','c' — a
+    /// pair, one match), and branch 2 (a bare 'type: object') contributes
+    /// ZERO — but 1 + 2 + 0 = 3 happens to equal the branch count (3
+    /// matches), so the flat <c>ValidBranchFieldNames.Count ==
+    /// ValidBranchCount</c> check alone was satisfied by coincidence of
+    /// arithmetic. Pre-M1-r this fired "Exactly one of 'a', 'b', 'c' may be
+    /// set" — advice that can NEVER be satisfied, because branch 2 matches
+    /// every object unconditionally regardless of a/b/c: even with only
+    /// 'a' set (removing 'b'/'c'), branch 2 still matches alongside branch
+    /// 0, still "too many". <see cref="SchemaErrorCollector"/>'s
+    /// <c>HasUnattributableBranch</c> tracks each branch's own contribution
+    /// in isolation, not merely the running total, and closes this gap.
+    /// </summary>
+    [Fact]
+    public void ThreeMixedShapesOneOf_CoincidentalCountMatch_FallsBackToHonestCountMessage_NeverUnachievableAdvice()
+    {
+        var results = Evaluate(ThreeMixedShapesOneOfSchema, """{"a": 1, "b": 2, "c": 3}""");
+
+        Assert.False(results.IsValid, "All three branches match (a; b+c; the bare type:object) — oneOf's 'exactly one' rule is violated.");
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(ThreeMixedShapesOneOfSchema));
+
+        Assert.DoesNotContain(errors, e =>
+            e.Message.Contains("Exactly one of 'a', 'b', 'c' may be set", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Message.Contains("[oneOf]", StringComparison.Ordinal));
+    }
+
     // ── [enum] enrichment through a PROVIDER fragment (Part C) ──────────────────
     //
     // Proves the SAME generic SchemaErrorCollector mechanism that enriches
@@ -985,5 +1027,37 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains("'xpath'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'neither'", onlyError.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("at least 1 properties", onlyError.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// n-b (fourth-round gatekeeper re-review): the third captureEntry
+    /// failure shape — an unrecognised key, e.g. 'badkey' typo'd for
+    /// 'jsonpath' — is an <c>additionalProperties: false</c> rejection, not
+    /// a forbidden-property or minProperties one, so it went through
+    /// <see cref="SchemaErrorCollector"/>'s OTHER blank-keyword formatter
+    /// (<c>FormatAdditionalPropertiesError</c>) — previously bare ("Unknown
+    /// property 'badkey'" with no container at all), even though
+    /// <c>TryResolveCaptureEntryContainer</c> already existed for the sibling
+    /// m6 formatters. Now named exactly like a service/dependency container
+    /// already is.
+    /// </summary>
+    [Fact]
+    public void Capture_UnknownKey_MessageNamesTheCaptureEntry()
+    {
+        const string yaml = """
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  orderId: { badkey: "y" }
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "A capture entry with an unrecognised key must be rejected.");
+        var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/orderId/badkey");
+        Assert.Contains("[additionalProperties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("'badkey'", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("capture entry 'orderId'", onlyError.Message, StringComparison.Ordinal);
     }
 }

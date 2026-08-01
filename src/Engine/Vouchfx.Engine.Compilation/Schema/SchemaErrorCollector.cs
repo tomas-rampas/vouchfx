@@ -135,12 +135,11 @@
 //   accusation when a type-only sibling's silence coincidentally leaves
 //   exactly one name behind (MixedRequiredAndTypeOnlyOneOf_*) or advice to
 //   remove individual fields from what is actually a two-branch,
-//   paired-field choice (MultiRequiredPairOneOf_*). Fixed by gating the
-//   named synthesis on `ValidBranchFieldNames.Count == ValidBranchCount` —
-//   true if and only if every matching branch contributed exactly one name
-//   — and falling back to an honest, field-name-free count message
-//   (FormatUnnamedTooManyOneOfMatchesError) otherwise. This guard is
-//   unconditional for every oneOf in the language, Core or Community:
+//   paired-field choice (MultiRequiredPairOneOf_*). Fixed (at the time) by
+//   gating the named synthesis on `ValidBranchFieldNames.Count ==
+//   ValidBranchCount` and falling back to an honest, field-name-free count
+//   message (FormatUnnamedTooManyOneOfMatchesError) otherwise. This guard
+//   is unconditional for every oneOf in the language, Core or Community:
 //   oneOf/anyOf are public extension points a provider fragment can shape
 //   however it needs, so the generic path must be correct on its own
 //   rather than merely correct for the SDK surfaces reviewed so far — the
@@ -148,6 +147,27 @@
 //   SchemaErrorCollectorTests' TypeShapedOneOf_*,
 //   MixedRequiredAndTypeOnlyOneOf_*, and MultiRequiredPairOneOf_* for the
 //   three measured failure modes this closes.
+//
+//   M1-r (fourth-round re-review, same finding) — count-equality ALONE is
+//   necessary but was claimed above as sufficient ("if and only if"),
+//   which is FALSE: measured counter-example `oneOf
+//   [{required:["a"]},{required:["b","c"]},{type:"object"}]` against
+//   `{a,b,c}` — three branches all match (required:["a"]; required:["b","c"]
+//   with both present; the bare type:object, which matches any object
+//   unconditionally), contributing 1 + 2 + 0 = 3 names for 3 matches. The
+//   flat count coincidentally equals the branch count, so the old guard
+//   passed and fired "Exactly one of 'a', 'b', 'c' may be set" — advice
+//   that can never be satisfied, since the third branch matches every
+//   object regardless of a/b/c. Fixed by judging each branch's OWN
+//   contribution in isolation during the walk, not merely the running
+//   total afterwards: CompositeGroupState.HasUnattributableBranch is set
+//   the instant any single matching branch contributes anything other than
+//   exactly one name, and the synthesis gates on `!HasUnattributableBranch
+//   && Count == ValidBranchCount` — NOW a true "if and only if" (see
+//   FormatTooManyOneOfMatchesError's own remarks for the two-directions
+//   argument). See SchemaErrorCollectorTests'
+//   ThreeMixedShapesOneOf_CoincidentalCountMatch_* for the counter-example
+//   pinned as a regression test.
 //
 // [enum] enrichment (same change): a wrong-case or misspelled enum value
 // (dependency `type`, `imagePullPolicy`, `verifyMode`, cache-assert.redis's
@@ -263,13 +283,15 @@ internal static class SchemaErrorCollector
         // drop the two misleading unevaluatedProperties entries once this
         // genuine error registers the step as having "another error".
         //
-        // M1 guard: only NAME the matched branches' fields when every
-        // matching branch contributed exactly one name each
-        // (ValidBranchFieldNames.Count == ValidBranchCount) — see the class
-        // remarks' "Third-round gatekeeper findings" for the three shapes
-        // that break the naive 1:1 assumption. Any other shape falls back to
-        // FormatUnnamedTooManyOneOfMatchesError's honest count-only message:
-        // never silent, never a fabricated field name.
+        // M1/M1-r guard: only NAME the matched branches' fields when EVERY
+        // matching branch individually contributed exactly one name
+        // (!HasUnattributableBranch) AND the running total still equals the
+        // branch count (ValidBranchFieldNames.Count == ValidBranchCount) —
+        // see the class remarks' "Third-round gatekeeper findings" and
+        // HasUnattributableBranch's own remarks for why count-equality
+        // alone is necessary but not sufficient. Any other shape falls back
+        // to FormatUnnamedTooManyOneOfMatchesError's honest count-only
+        // message: never silent, never a fabricated or unachievable claim.
         List<CollectedError>? synthesisedOneOfErrors = null;
         foreach (var state in groupStates.Values)
         {
@@ -279,7 +301,8 @@ internal static class SchemaErrorCollector
             }
 
             var fieldNames = state.ValidBranchFieldNames;
-            var message = fieldNames is { Count: > 0 } && fieldNames.Count == state.ValidBranchCount
+            var message = !state.HasUnattributableBranch &&
+                          fieldNames is { Count: > 0 } && fieldNames.Count == state.ValidBranchCount
                 ? FormatTooManyOneOfMatchesError(fieldNames)
                 : FormatUnnamedTooManyOneOfMatchesError(state.ValidBranchCount);
 
@@ -366,13 +389,36 @@ internal static class SchemaErrorCollector
         /// <see cref="ValidBranchCount"/> ends up >= 2 (JsonSchema.Net
         /// attaches no message of its own to that "too many matches" case —
         /// see the class remarks — so this is the only source for one). Not,
-        /// by itself, a safe 1:1 map of names to matching branches — a
-        /// branch can contribute zero names (no <c>required</c> member) or
-        /// several (a paired <c>required</c>) — so a caller must additionally
-        /// check <c>Count == ValidBranchCount</c> before trusting it as one
-        /// (M1; see <see cref="FormatTooManyOneOfMatchesError"/>'s remarks).
+        /// by itself, a safe 1:1 map of names to matching branches even when
+        /// its own <c>Count</c> happens to equal <see cref="ValidBranchCount"/>
+        /// — see <see cref="HasUnattributableBranch"/> for why count equality
+        /// alone (M1) is necessary but not sufficient (M1-r), and
+        /// <see cref="FormatTooManyOneOfMatchesError"/>'s remarks for the
+        /// caller's full guard.
         /// </summary>
         public List<string>? ValidBranchFieldNames { get; set; }
+
+        /// <summary>
+        /// Set once any matching <c>oneOf</c> branch's own
+        /// <c>TryReadRequiredFieldNames</c> call yields anything other than
+        /// EXACTLY one name — zero (no <c>required</c> member at all, e.g. a
+        /// bare <c>type</c> constraint) or two-or-more (a paired
+        /// <c>required</c>, one match contributing several names at once)
+        /// (M1-r, third-round gatekeeper re-review).
+        /// </summary>
+        /// <remarks>
+        /// M1's own count-equality check (<c>ValidBranchFieldNames.Count ==
+        /// ValidBranchCount</c>) is necessary but NOT sufficient on its own:
+        /// a group with one single-name branch plus one two-name branch plus
+        /// one zero-name branch can coincidentally sum to the same count as
+        /// the branch total (1 + 2 + 0 = 3 matches, 3 names) while the
+        /// per-branch correspondence the named message relies on is still
+        /// broken — see the class remarks' M1-r addendum for the measured
+        /// counter-example. This flag is set the instant ANY branch breaks
+        /// the correspondence, independent of what the running total
+        /// happens to add up to afterwards, closing exactly that gap.
+        /// </remarks>
+        public bool HasUnattributableBranch { get; set; }
 
         public bool IsSatisfied => IsOneOf ? ValidBranchCount == 1 : ValidBranchCount >= 1;
 
@@ -414,10 +460,22 @@ internal static class SchemaErrorCollector
             if (branchIsOneOf && schema is { } schemaRootForFieldNames)
             {
                 var fieldNames = TryReadRequiredFieldNames(schemaRootForFieldNames, node.SchemaLocation);
-                if (fieldNames is { Count: > 0 })
+
+                // M1-r: judge THIS branch's own contribution in isolation —
+                // exactly one name is attributable to exactly one branch;
+                // zero or two-or-more breaks that correspondence for the
+                // WHOLE group, permanently, regardless of what the running
+                // total happens to add up to once every branch has been
+                // seen (see HasUnattributableBranch's remarks for the
+                // measured counter-example this closes).
+                if (fieldNames is { Count: 1 })
                 {
                     state.ValidBranchFieldNames ??= new List<string>();
                     state.ValidBranchFieldNames.AddRange(fieldNames);
+                }
+                else
+                {
+                    state.HasUnattributableBranch = true;
                 }
             }
         }
@@ -883,9 +941,13 @@ internal static class SchemaErrorCollector
     /// rejection: names the offending property and, when
     /// <paramref name="instanceLocation"/> matches the pointer shape
     /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>
-    /// (see <see cref="TryResolveEnvironmentContainer"/>), the container's own
+    /// (see <see cref="TryResolveEnvironmentContainer"/>) or a captureEntry's
+    /// own <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/&lt;property&gt;</c>
+    /// (n-b, fourth-round gatekeeper re-review — see
+    /// <see cref="TryResolveCaptureEntryContainer"/>), the container's own
     /// kind and map key — e.g. <c>Unknown property 'imagePullPolcy' on
-    /// service 'orders-api'</c>. Every other unknown-key surface this shape
+    /// service 'orders-api'</c> or <c>Unknown property 'badkey' on capture
+    /// entry 'orderId'</c>. Every other unknown-key surface this shape
     /// covers (<c>metadata</c>, the document root, a <c>topics[]</c> item, a
     /// provider's own nested block) degrades to the bare property name rather
     /// than guessing a container that cannot be reliably named from the
@@ -897,9 +959,17 @@ internal static class SchemaErrorCollector
     {
         var propertyName = LastPointerSegment(instanceLocation);
 
-        return TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName)
-            ? $"[additionalProperties] Unknown property '{propertyName}' on {containerKind} '{containerName}'"
-            : $"[additionalProperties] Unknown property '{propertyName}'";
+        if (TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName))
+        {
+            return $"[additionalProperties] Unknown property '{propertyName}' on {containerKind} '{containerName}'";
+        }
+
+        if (TryResolveCaptureEntryContainer(instanceLocation, out var variableName))
+        {
+            return $"[additionalProperties] Unknown property '{propertyName}' on capture entry '{variableName}'";
+        }
+
+        return $"[additionalProperties] Unknown property '{propertyName}'";
     }
 
     /// <summary>
@@ -938,8 +1008,24 @@ internal static class SchemaErrorCollector
     /// forbidden, the latter read from the LIVE schema's own sibling
     /// <c>properties</c> (see <see cref="TryReadSiblingPropertyNames"/>) —
     /// unlike the service case above, never hardcoded to 'jsonpath'/'xpath'
-    /// specifically, so this stays correct if a provider-independent
-    /// extractor format is ever added to captureEntry.
+    /// specifically.
+    /// </para>
+    /// <para>
+    /// n-a (fourth-round gatekeeper re-review): that name-lookup genericity
+    /// does NOT make this branch correct for an arbitrary number of
+    /// extractor formats — only for TODAY's exactly two (both declared in
+    /// this engine-owned <c>$defs/captureEntry</c> definition, not a
+    /// provider extension point the way step types are). The message
+    /// template's own grammar ("cannot be combined with {otherNames} …
+    /// exactly one of the two is required") assumes exactly one OTHER name;
+    /// a hypothetical third extractor would leave
+    /// <see cref="TryReadSiblingPropertyNames"/> returning TWO remaining
+    /// names for a two-of-three violation, rendering both the cardinality
+    /// ("the two") and the implied "already present" reading of
+    /// <c>otherNames</c> wrong (it would name a sibling property merely
+    /// DECLARED in the schema, not necessarily one the author actually set).
+    /// Revisit this branch's wording, not merely its tests, if a third
+    /// extractor format is ever added.
     /// </para>
     /// <para>
     /// Any future <c>properties/&lt;name&gt;: false</c> declaration outside
@@ -1018,14 +1104,22 @@ internal static class SchemaErrorCollector
     /// </summary>
     /// <remarks>
     /// Callers MUST only reach this when <paramref name="matchedFieldNames"/>
-    /// holds exactly one name per matching branch (M1 —
-    /// <c>ValidBranchFieldNames.Count == ValidBranchCount</c>, checked once in
-    /// <see cref="CollectErrors"/>, not re-verified here). A branch with no
+    /// holds exactly one name per matching branch — true if and only if
+    /// <c>!HasUnattributableBranch &amp;&amp; ValidBranchFieldNames.Count ==
+    /// ValidBranchCount</c> (M1/M1-r), checked once in
+    /// <see cref="CollectErrors"/>, not re-verified here. Count-equality
+    /// ALONE (M1) is necessary but not sufficient: a branch with no
     /// <c>required</c> member, or one whose <c>required</c> lists more than
-    /// one name, breaks that correspondence and must instead use
+    /// one name, can still leave the running total coincidentally equal to
+    /// the branch count (M1-r's measured counter-example: a one-name branch
+    /// + a two-name branch + a zero-name branch summing to the same total
+    /// as three matches) while the per-branch correspondence this method
+    /// depends on is broken. <see cref="CompositeGroupState.HasUnattributableBranch"/>
+    /// is set the instant any branch breaks that correspondence, closing
+    /// the gap; a caller whose group sets it must instead use
     /// <see cref="FormatUnnamedTooManyOneOfMatchesError"/> — see the class
-    /// remarks' "Third-round gatekeeper findings" for the three measured
-    /// shapes this guard exists to catch.
+    /// remarks' "Third-round gatekeeper findings" for the measured shapes
+    /// this guard exists to catch.
     /// </remarks>
     private static string FormatTooManyOneOfMatchesError(List<string> matchedFieldNames)
     {
