@@ -1,6 +1,11 @@
-// SPIKE — de-risking a proposed 26-file change to the v1 language schema. NOT a
-// permanent test. Delete this file (or fold its findings into a permanent fixture)
-// once the question below is answered and acted on.
+// CHARACTERISATION TEST — records how JsonSchema.Net behaves on the step surface,
+// and why the schema-closing change that follows is shaped the way it is. These
+// tests run in CI deliberately: the change they justify rests on an assumption
+// about a third-party library, and a version bump could invalidate it silently.
+//
+// The findings below were gathered before the change was made, by mutating the
+// composed schema IN MEMORY. That is still how they are asserted here, so this
+// file stands on its own against the schema as it exists at this commit.
 //
 // THE QUESTION being answered here (nothing else): today, all 25 provider
 // JsonSchemaFragments end with an explicit "additionalProperties": true, and
@@ -88,10 +93,12 @@ using Xunit;
 namespace Vouchfx.Engine.Compilation.Tests;
 
 /// <summary>
-/// SPIKE (throwaway): proves whether <c>unevaluatedProperties: false</c> on
-/// <c>$defs/step</c> closes the step surface through the composer's
-/// <c>allOf</c>/<c>if</c>/<c>then</c> discriminator chain in JsonSchema.Net 9.2.1.
-/// See the file header for the full brief. Delete or fold in once answered.
+/// Characterises whether <c>unevaluatedProperties: false</c> on <c>$defs/step</c>
+/// closes the step surface through the composer's <c>allOf</c>/<c>if</c>/<c>then</c>
+/// discriminator chain in JsonSchema.Net 9.2.1 — the assumption the step-surface
+/// closure depends on. Kept in CI so a library upgrade that changes annotation
+/// propagation fails here, loudly, rather than reopening the surface in silence.
+/// See the file header for the full findings.
 /// </summary>
 public sealed class UnevaluatedPropertiesSpikeTests
 {
@@ -106,8 +113,8 @@ public sealed class UnevaluatedPropertiesSpikeTests
     /// The Core provider assemblies that compose the full v1 schema — a deliberate,
     /// independent duplicate of <c>SchemaFreezeTests.CoreProviderAssemblies()</c>
     /// (itself mirroring <c>Vouchfx.Cli.ProviderRegistryFactory</c>), kept as its own
-    /// copy so this throwaway file has zero compile-time coupling to the frozen
-    /// golden-file gate — deleting this file later cannot touch that gate.
+    /// copy so this file has zero compile-time coupling to the frozen golden-file
+    /// gate — changing or removing it later cannot perturb that gate.
     /// </summary>
     private static Assembly[] CoreProviderAssemblies() => new[]
     {

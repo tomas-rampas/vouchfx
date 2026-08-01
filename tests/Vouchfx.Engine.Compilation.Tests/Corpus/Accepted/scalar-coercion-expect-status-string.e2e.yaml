@@ -1,4 +1,5 @@
-# KNOWN-FAILING today — see scalar-coercion-headers-numeric-value.e2e.yaml for
+# REJECTED BY THE SCHEMA TODAY, ACCEPTED BY THE ENGINE — see
+# scalar-coercion-headers-numeric-value.e2e.yaml for
 # the full explanation. http.rest's 'expect.status' is typed { "type":
 # "integer" }, but a quoted string status code is a plausible authoring habit
 # (copied from a curl transcript, a log line, or another tool's config) and

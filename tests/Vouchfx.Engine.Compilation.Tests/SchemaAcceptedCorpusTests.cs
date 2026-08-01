@@ -180,8 +180,8 @@ public sealed class SchemaAcceptedCorpusTests
     }
 
     /// <summary>
-    /// KNOWN-FAILING today, by design — kept SKIPPED rather than deleted or
-    /// weakened. <c>headers</c>/<c>parameters</c> <c>additionalProperties</c>,
+    /// Pins the shapes the ENGINE accepts but the schema currently rejects.
+    /// <c>headers</c>/<c>parameters</c> <c>additionalProperties</c>,
     /// <c>expect.status</c>, and <c>payload</c> are all typed narrowly (string
     /// or integer only) across the Core providers that declare them, even
     /// though every one of those providers reads the field back via raw
@@ -209,14 +209,14 @@ public sealed class SchemaAcceptedCorpusTests
         var result = DocumentValidator.Validate(yaml, Registry);
 
         // Deliberately asserting the CURRENT (narrow) behaviour: this documents
-        // what breaks today, so the day it starts passing unexpectedly (schema
-        // widened without updating this test) is caught as a FAILURE here,
-        // forcing a conscious unskip rather than a silent behaviour change.
+        // what the schema rejects today, so the day it starts accepting these
+        // (schema widened without updating this test) is caught as a FAILURE
+        // here, forcing a conscious decision rather than a silent change.
         Assert.False(result.IsValid,
-            $"{Path.GetFileName(path)}: expected this KNOWN-FAILING scalar-coercion " +
-            "case to still be rejected by the current schema. If it now validates, " +
-            "the schema has been widened — unskip this theory and move the fixture " +
-            "into the plain accepted set instead of leaving it here.");
+            $"{Path.GetFileName(path)}: expected this scalar-coercion case to still " +
+            "be REJECTED by the current schema. If it now validates, the widening " +
+            "tranche has landed — flip this assertion to Assert.True and move the " +
+            "fixture into the plain accepted set instead of leaving it here.");
     }
 
     // ── Planning.Tests fixtures: real environment: blocks, never schema-checked ──
@@ -583,9 +583,15 @@ public sealed class SchemaAcceptedCorpusTests
     /// </summary>
     internal static string DescribeUnexpectedInvalid(string path, SchemaValidationResult result)
     {
+        // Both call sites pass this as the message of an Assert.True(result.IsValid, …),
+        // so a reader only ever sees it when validation FAILED. The guard therefore
+        // cannot be reached through the assertion path; it exists so that a future
+        // caller (or a debugger stepping in) gets a truthful sentence instead of the
+        // nonsensical "expected VALID but … reported 0 error(s)" the main path would
+        // produce with an empty error list.
         if (result.IsValid)
         {
-            return $"{Path.GetFileName(path)}: expected invalid, but validation passed.";
+            return $"{Path.GetFileName(path)}: validation passed.";
         }
 
         var lines = result.Errors.Select(e => $"  at {e.InstanceLocation}: {e.Message}");
