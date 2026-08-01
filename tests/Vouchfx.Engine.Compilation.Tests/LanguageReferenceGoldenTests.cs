@@ -262,24 +262,38 @@ public sealed class LanguageReferenceGoldenTests
 
         foreach (var line in generated.Split('\n'))
         {
-            if (ContainsUnescapedPipeInsideBackticks(line))
+            if (ContainsPipeInsideBackticks(line))
             {
                 offendingLines.Add(line);
             }
         }
 
         Assert.True(offendingLines.Count == 0,
-            "A backtick-delimited span contains a raw (unescaped) '|' — GFM/python-markdown "
-            + "table-row splitting cuts cells on ANY pipe character, even inside a code span, "
-            + "silently dropping a table column. Found on:\n"
+            "A backtick-delimited span contains a '|' (escaped or not). Neither in-span "
+            + "form is safe on BOTH renderers this file ships to: a RAW in-span pipe "
+            + "splits the table row on GitHub's GFM (dropping a column there, though "
+            + "python-markdown's tables extension renders it fine), while an ESCAPED "
+            + "in-span '\\|' renders a literal backslash on the python-markdown/MkDocs "
+            + "site (though GFM renders it fine). The only form correct on both is "
+            + "keeping pipes OUTSIDE code spans, escaped between them — "
+            + "`string` \\| `number` — which is what JoinAsBacktickedAlternatives "
+            + "emits. Found on:\n"
             + string.Join("\n", offendingLines));
     }
 
     /// <summary>
     /// True when some backtick-delimited span on <paramref name="line"/>
-    /// contains a <c>|</c> not immediately preceded by <c>\</c>.
+    /// contains a <c>|</c>, escaped or not.
     /// </summary>
-    private static bool ContainsUnescapedPipeInsideBackticks(string line)
+    /// <remarks>
+    /// Deliberately flags the escaped form too. An earlier revision exempted
+    /// <c>\|</c> — which is exactly the in-span shape a prior round of this
+    /// work shipped and then had to fix (visible backslash on the MkDocs
+    /// site), so the exemption made this guard blind to the one regression it
+    /// exists to catch. Since both in-span forms are wrong on one renderer
+    /// each, any pipe inside a span is a defect and the guard says so.
+    /// </remarks>
+    private static bool ContainsPipeInsideBackticks(string line)
     {
         var inSpan = false;
         for (var i = 0; i < line.Length; i++)
@@ -290,7 +304,7 @@ public sealed class LanguageReferenceGoldenTests
                 continue;
             }
 
-            if (inSpan && line[i] == '|' && (i == 0 || line[i - 1] != '\\'))
+            if (inSpan && line[i] == '|')
             {
                 return true;
             }
