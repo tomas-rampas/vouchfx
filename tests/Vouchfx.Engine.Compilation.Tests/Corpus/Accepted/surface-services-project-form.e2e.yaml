@@ -1,0 +1,12 @@
+# Surface coverage: environment.services project form (YamlDocumentParser
+# reads 'project'; DSL §3.2 — the engine builds the csproj at suite start).
+metadata:
+  name: surface-services-project-form
+environment:
+  services:
+    orders-api:
+      project: ./src/Orders.Api/Orders.Api.csproj
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the services project form only."

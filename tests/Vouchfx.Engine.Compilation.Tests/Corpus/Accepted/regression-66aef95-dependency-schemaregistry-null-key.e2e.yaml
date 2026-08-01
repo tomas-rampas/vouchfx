@@ -1,0 +1,14 @@
+# Regression seed — commit 66aef95. A null-valued 'schemaRegistry:' key (no
+# value) must be accepted and treated identically to the field being absent
+# (i.e. not "true").
+metadata:
+  name: regression-66aef95-dependency-schemaregistry-null-key
+environment:
+  dependencies:
+    events:
+      type: kafka
+      schemaRegistry:
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises a null-valued 'schemaRegistry:' key."

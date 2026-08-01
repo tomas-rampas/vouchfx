@@ -1,0 +1,31 @@
+# REJECTED BY THE SCHEMA TODAY, ACCEPTED BY THE ENGINE — deliberately excluded
+# from the main accepted-corpus gate and exercised instead by
+# SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche.
+#
+# That theory RUNS (it is not skipped) and asserts the CURRENT, narrow
+# behaviour: this document must still be rejected. It is a pin, not a
+# known-failure — when the scalar-coercion widening tranche lands, the theory
+# starts FAILING, which is the signal to flip its assertion to Assert.True and
+# move these fixtures into the plain accepted set.
+#
+# http.rest's 'headers' additionalProperties is typed { "type": "string" }, but
+# HttpRestProvider.Bind reads header values via GetScalar (raw scalar text)
+# regardless of their YAML type, so a numeric header value works at runtime
+# today and fails only at this schema gate.
+#
+# Do not move this file out of the scalar-coercion-* naming group until that
+# widening lands — the theory discovers its fixtures by that prefix.
+metadata:
+  name: scalar-coercion-headers-numeric-value
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: call-app
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    headers:
+      X-Retry-Count: 3

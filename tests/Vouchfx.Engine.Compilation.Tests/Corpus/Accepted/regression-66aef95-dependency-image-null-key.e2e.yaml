@@ -1,0 +1,13 @@
+# Regression seed — commit 66aef95. A null-valued 'image:' key (no value) must
+# be accepted and treated identically to 'image' being absent altogether.
+metadata:
+  name: regression-66aef95-dependency-image-null-key
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+      image:
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises a null-valued 'image:' key."

@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/dependencies/asb/topics/0/subscriptions
+# expected-keyword: type
+#
+# Rejected seed — commit 66aef95 names this shape as deliberately KEPT
+# rejected: a topic's 'subscriptions' must be a sequence, never a bare
+# scalar. ParseAsbTopics silently returns an empty list for this shape, so it
+# was already broken at runtime — rejecting it at schema time is a net
+# improvement, not a narrowing to undo.
+metadata:
+  name: rejected-subscriptions-scalar-not-sequence
+environment:
+  dependencies:
+    asb:
+      type: azureservicebus
+      topics:
+        - name: orders-topic
+          subscriptions: sub1
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

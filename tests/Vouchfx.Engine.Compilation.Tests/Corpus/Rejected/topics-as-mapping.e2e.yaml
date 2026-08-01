@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/dependencies/asb/topics
+# expected-keyword: type
+#
+# Rejected seed — commit 66aef95 names this shape as deliberately KEPT
+# rejected: 'topics' must be a sequence of { name, subscriptions } objects,
+# never a mapping keyed by topic name. ParseAsbTopics silently returns an
+# empty list for this shape, so it was already broken at runtime — rejecting
+# it at schema time is a net improvement, not a narrowing to undo.
+metadata:
+  name: rejected-topics-as-mapping
+environment:
+  dependencies:
+    asb:
+      type: azureservicebus
+      topics:
+        orders-topic:
+          subscriptions: [sub1]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

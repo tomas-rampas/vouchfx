@@ -1,0 +1,19 @@
+# expected-instance-location: /environment/dependencies/asb/topics/0
+# expected-keyword: type
+#
+# Rejected seed — commit 66aef95 names this shape as deliberately KEPT
+# rejected: each 'topics' entry must be an object ({ name, subscriptions }),
+# never a bare scalar; ParseAsbTopics silently returns an empty list for this
+# shape, so it was already broken at runtime — rejecting it at schema time is
+# a net improvement, not a narrowing to undo.
+metadata:
+  name: rejected-topics-scalar-items
+environment:
+  dependencies:
+    asb:
+      type: azureservicebus
+      topics: [orders]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

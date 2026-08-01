@@ -1,0 +1,36 @@
+# Surface coverage: every legal 'timeout' form DurationParser accepts
+# (src/Engine/Vouchfx.Engine.Authoring/DurationParser.cs) — <n>ms, <n>s, <n>m,
+# and a bare integer treated as seconds. The root schema's 'timeout' is
+# oneOf [string, number], so a bare integer parses as a JSON number and the
+# suffixed forms parse as JSON strings; both branches must stay accepted.
+metadata:
+  name: surface-timeout-duration-forms
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: milliseconds-form
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    timeout: 500ms
+  - id: seconds-form
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    timeout: 30s
+  - id: minutes-form
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    timeout: 2m
+  - id: bare-integer-form
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    timeout: 45

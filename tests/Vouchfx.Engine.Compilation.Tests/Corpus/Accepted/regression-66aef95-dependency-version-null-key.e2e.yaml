@@ -1,0 +1,18 @@
+# Regression seed — commit 66aef95 ("fix(schema): accept null-valued dependency
+# keys, and reject a bad digest eagerly"). The earlier 29f910b widening only
+# covered non-empty scalars; a YAML key written with no value at all (as here)
+# produces null, and null was in none of the widened unions, so this shape
+# still failed at HEAD even though it is valid on main (a dangling 'version:'
+# deserialises to an empty Version and the mapper treats it as absent — the
+# MN3 normalisation exists precisely for this).
+metadata:
+  name: regression-66aef95-dependency-version-null-key
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+      version:
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises a null-valued 'version:' key."
