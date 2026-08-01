@@ -139,10 +139,25 @@ public static class ScenarioIsolationFactory
 
     /// <summary>
     /// Maps a declared dependency <c>type</c> string to the <see cref="RelationalStoreKind"/>
-    /// <see cref="RespawnRelationalIsolation"/> resets it with, or <see langword="null"/>
-    /// when the type is not a relational store.
+    /// it is reset and seeded as, or <see langword="null"/> when the type is not a relational
+    /// store.
     /// </summary>
-    private static RelationalStoreKind? MapRelationalKind(string declaredType)
+    /// <remarks>
+    /// <para>
+    /// The SINGLE definition of "which dependency types count as relational", shared by
+    /// <see cref="RespawnRelationalIsolation"/> (per-scenario reset) and <c>SeedApplier</c>
+    /// (the <c>sql</c> seed kind). Both once carried their own copy of this three-way match,
+    /// each documented as "deliberately the same mapping" — a guarantee stated in prose and
+    /// enforced by nothing, so the two could drift the moment one was edited alone.
+    /// </para>
+    /// <para>
+    /// That is not hypothetical: seeding a store the runner cannot reset between scenarios,
+    /// or resetting one it will not seed, both produce a suite that passes in isolation and
+    /// fails when run alongside its neighbours — the hardest class of failure to diagnose.
+    /// Sharing the method makes the invariant structural.
+    /// </para>
+    /// </remarks>
+    internal static RelationalStoreKind? MapRelationalKind(string declaredType)
     {
         if (string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase))
         {

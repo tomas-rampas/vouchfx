@@ -213,7 +213,7 @@ internal static class SeedApplier
                         $"in environment.dependencies (no known type to dispatch its seed).");
         }
 
-        var relationalKind = MapRelationalStoreKind(declaredType);
+        var relationalKind = ScenarioIsolationFactory.MapRelationalKind(declaredType);
         var isRelational = relationalKind is not null;
         var isBroker = BrokerTypes.Contains(declaredType);
         var isDocumentStore = DocumentStoreTypes.Contains(declaredType);
@@ -534,34 +534,6 @@ internal static class SeedApplier
         {
             await connection.DisposeAsync().ConfigureAwait(false);
         }
-    }
-
-    /// <summary>
-    /// Maps a declared dependency <c>type</c> string to the <see cref="RelationalStoreKind"/>
-    /// the <c>sql</c> seed kind can dispatch to, or <see langword="null"/> when the type is
-    /// not a relational store.  Deliberately the same three-way mapping (case-insensitive
-    /// on postgres/sqlserver/mysql) that <c>ScenarioIsolationFactory</c> uses to pick a
-    /// per-scenario reset adapter, so seeding and reset agree on which dependency types
-    /// count as "relational".
-    /// </summary>
-    private static RelationalStoreKind? MapRelationalStoreKind(string declaredType)
-    {
-        if (string.Equals(declaredType, "postgres", StringComparison.OrdinalIgnoreCase))
-        {
-            return RelationalStoreKind.Postgres;
-        }
-
-        if (string.Equals(declaredType, "sqlserver", StringComparison.OrdinalIgnoreCase))
-        {
-            return RelationalStoreKind.SqlServer;
-        }
-
-        if (string.Equals(declaredType, "mysql", StringComparison.OrdinalIgnoreCase))
-        {
-            return RelationalStoreKind.MySql;
-        }
-
-        return null;
     }
 
     /// <summary>

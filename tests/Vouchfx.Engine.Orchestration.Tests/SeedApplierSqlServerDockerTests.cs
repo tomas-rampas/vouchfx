@@ -84,7 +84,11 @@ public sealed class SeedApplierSqlServerDockerTests
             // file's transaction.
             await File.WriteAllTextAsync(
                 Path.Combine(baseDir, "01-create.sql"),
-                "CREATE TABLE order_probe (id INT PRIMARY KEY, note NVARCHAR(50) NOT NULL);");
+                // VARCHAR, not NVARCHAR: this fixture must be byte-identical to the one in
+                // SeedApplierMysqlDockerTests so the ONLY variable between the two runs is
+                // the engine. SQL Server accepts VARCHAR, and the probe stores ASCII only,
+                // so nothing is lost by choosing the spelling both dialects share.
+                "CREATE TABLE order_probe (id INT PRIMARY KEY, note VARCHAR(50) NOT NULL);");
             await File.WriteAllTextAsync(
                 Path.Combine(baseDir, "02-insert.sql"),
                 "INSERT INTO order_probe (id, note) VALUES (1, 'first');");
