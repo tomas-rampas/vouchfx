@@ -38,6 +38,72 @@ public sealed class RootSchemaTests
     }
 
     // -------------------------------------------------------------------------
+    // metadata.schemaVersion: const "v1" — a rejection hook for a future v2
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The field remains optional: a document that omits it entirely must
+    /// still be valid.
+    /// </summary>
+    [Fact]
+    public void Validate_MetadataSchemaVersionOmitted_IsAccepted()
+    {
+        const string yaml = """
+            metadata:
+              name: "no schemaVersion declared"
+            steps:
+              - id: s1
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Validate_MetadataSchemaVersionV1_IsAccepted()
+    {
+        const string yaml = """
+            metadata:
+              schemaVersion: v1
+            steps:
+              - id: s1
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// Any value other than the literal 'v1' is rejected — the field is now a
+    /// real rejection hook for a future v2 language schema, not decoration.
+    /// </summary>
+    [Fact]
+    public void Validate_MetadataSchemaVersionV2_IsRejected()
+    {
+        const string yaml = """
+            metadata:
+              schemaVersion: v2
+            steps:
+              - id: s1
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "A schemaVersion other than 'v1' must be rejected by the const constraint.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/metadata/schemaVersion" &&
+            e.Message.Contains("[const]", System.StringComparison.Ordinal));
+    }
+
+    // -------------------------------------------------------------------------
     // Missing required 'steps' section
     // -------------------------------------------------------------------------
 

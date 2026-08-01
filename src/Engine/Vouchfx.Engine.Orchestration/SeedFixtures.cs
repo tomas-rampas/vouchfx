@@ -3,7 +3,7 @@
 // Pure helper for the seed pipeline: resolve a fixture file path against the seed
 // base directory and compute its content hash.  Shared so that S05-B-03 (the
 // reproducibility envelope) can reuse the SAME hashing routine to "record the
-// content hash of every applied fixture" (docs/02 §3.2.2, line 149) — the seed
+// content hash of every applied fixture" (docs/02 §3.2.5) — the seed
 // applier and the envelope MUST agree on what a fixture's hash is, so the routine
 // lives in one place rather than being duplicated.
 //
@@ -29,9 +29,9 @@ namespace Vouchfx.Engine.Orchestration;
 /// <remarks>
 /// <para>
 /// <see cref="ComputeContentHash"/> is the single source of truth for a fixture's
-/// content hash.  The seed applier calls it for broker-publish payloads and
-/// document fixtures (A-02), and S05-B-03 reuses it to record the content hash of
-/// every applied fixture in the reproducibility envelope (docs/02 §3.2.2) — both
+/// content hash.  The seed applier calls it for <c>sql</c> files — the only seed
+/// kind in the v1 language — and S05-B-03 reuses it to record the content hash of
+/// every applied fixture in the reproducibility envelope (docs/02 §3.2.5) — both
 /// must produce identical hashes, hence one shared routine.
 /// </para>
 /// </remarks>

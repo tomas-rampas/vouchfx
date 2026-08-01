@@ -1,0 +1,18 @@
+# expected-instance-location: /steps/0/capture/conn::orders-db
+# expected-keyword: pattern
+#
+# Pre-GA schema tightening (capture value shape): a capture variable name
+# beginning with an engine-reserved bookkeeping prefix (here 'conn::', see
+# VarKeys) is rejected by AstBuilder.CheckReservedPrefix at AST-build time —
+# an author-controlled response value could otherwise overwrite a connection
+# string a later db-assert step reads (M-A security fix). The schema's
+# 'propertyNames' pattern now catches the same rule at authoring time,
+# before compilation.
+metadata:
+  name: rejected-capture-reserved-prefix-key
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
+    capture:
+      conn::orders-db: "$.id"

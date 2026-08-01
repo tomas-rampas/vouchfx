@@ -1190,10 +1190,10 @@ public static class ScenarioRunner
         //   2. topology.ReseedAsync — for SEEDED Postgres dependencies, drops and recreates the
         //      public schema then re-applies the seed, so the author's (non-idempotent) seed SQL
         //      re-runs cleanly and the seeded baseline is restored. Non-Postgres stores are
-        //      skipped: there is no row-applied non-Postgres seed to restore (document-store and
-        //      broker seeds are content-recorded via deferred seams; Redis has no seed path), and
-        //      the isolation reset in step 1 already cleared them. A no-op when the scenario
-        //      declares no seed.
+        //      skipped: there is no row-applied non-Postgres seed to restore, and the isolation
+        //      reset in step 1 already cleared them ('sql' is the only seed kind in the v1
+        //      language — see SeedSpec.cs's header remarks — so there is no broker/document seed
+        //      to reconcile here either). A no-op when the scenario declares no seed.
         // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
         // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
         // relational reset throws on a schema-via-script.csharp DB that has no user tables yet —
@@ -2462,9 +2462,9 @@ public static class ScenarioRunner
 
     /// <summary>
     /// Enumerates every seed fixture file referenced by <paramref name="seed"/> —
-    /// SQL files, broker-publish payload <c>from</c> files, and document <c>from</c>
-    /// files — and computes each one's content hash via
-    /// <c>SeedFixtures.ComputeContentHash</c> (S05-A-02), in declared order.
+    /// the <c>sql</c> files of each seeded dependency, the only seed kind in the
+    /// v1 language — and computes each one's content hash via
+    /// <c>SeedFixtures.ComputeContentHash</c>, in declared order.
     /// </summary>
     /// <param name="seed">
     /// The scenario's seed block, or <see langword="null"/> when no seed is declared
@@ -2493,30 +2493,13 @@ public static class ScenarioRunner
 
         foreach (var dependency in seed.Dependencies.Values)
         {
-            // SQL fixtures (postgres) — A-01.
+            // SQL fixtures (postgres, sqlserver, mysql) — the only seed kind in
+            // the v1 language.
             if (dependency.Sql is not null)
             {
                 foreach (var sqlPath in dependency.Sql)
                 {
                     digests.Add(HashFixtureOrNull(baseDir, sqlPath));
-                }
-            }
-
-            // Broker-publish payload fixtures — A-02 (wired-but-deferred seam).
-            if (dependency.Publish is not null)
-            {
-                foreach (var publish in dependency.Publish)
-                {
-                    digests.Add(HashFixtureOrNull(baseDir, publish.PayloadFrom));
-                }
-            }
-
-            // Document-store fixtures — A-02 (wired-but-deferred seam).
-            if (dependency.Documents is not null)
-            {
-                foreach (var document in dependency.Documents)
-                {
-                    digests.Add(HashFixtureOrNull(baseDir, document.From));
                 }
             }
         }

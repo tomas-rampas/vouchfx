@@ -1,0 +1,23 @@
+# Surface coverage: environment.services.*.httpPort accepts a quoted string
+# ("8080") identically to a bare integer (8080). Promoted out of the
+# scalar-coercion- group (feat/close-remaining-surfaces): this shape was
+# previously REJECTED by the schema (httpPort was typed strictly "integer")
+# even though YamlDocumentParser reads it via GetScalar (raw scalar text) and
+# int.TryParse, indifferent to whether the YAML value arrived quoted or bare —
+# so a quoted "8080" parsed identically to a bare 8080 at runtime and failed
+# only at this schema gate. The schema now accepts both forms (bounded to the
+# same real TCP port range, 1-65535, either way), so this fixture — formerly
+# scalar-coercion-httpport-quoted-string.e2e.yaml, pinned as a REJECTED case
+# by SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche
+# — now belongs here instead.
+metadata:
+  name: surface-services-httpport-quoted-string
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+      httpPort: "8080"
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the httpPort quoted-string widening only."

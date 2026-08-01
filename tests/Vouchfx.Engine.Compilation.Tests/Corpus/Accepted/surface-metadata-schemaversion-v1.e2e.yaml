@@ -1,0 +1,12 @@
+# Surface coverage: metadata.schemaVersion accepts the literal 'v1' — the
+# only value the 'const' constraint (feat/close-remaining-surfaces) permits.
+# Every other accepted-corpus fixture omits the field entirely, which must
+# also remain valid (it stays optional); this one exercises the one
+# recognised explicit value.
+metadata:
+  name: surface-metadata-schemaversion-v1
+  schemaVersion: v1
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises metadata.schemaVersion: v1 only."

@@ -320,6 +320,135 @@ public sealed class EnvironmentSchemaTests
             $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
     }
 
+    // ── Part 4b: scalar-coercion widening — env values / httpPort ──────────
+    //
+    // YamlDocumentParser.ParseEnvMap retains every 'env' value in its raw
+    // scalar form regardless of how it was written — a bare 8080 or true
+    // arrives as the literal text "8080"/"true" — so a bare numeric or
+    // boolean env value already works at runtime; only the schema (typed
+    // strictly "string") rejected it. Likewise 'httpPort' is read via
+    // GetScalar + int.TryParse, indifferent to whether the YAML value arrived
+    // quoted or bare. These pin the widening promised by
+    // SchemaAcceptedCorpusTests.ScalarCoercionCase_WillBeAcceptedInFutureTranche's
+    // own remarks once scalar-coercion-env-numeric-value.e2e.yaml and
+    // scalar-coercion-httpport-quoted-string.e2e.yaml were promoted out of the
+    // scalar-coercion- group.
+
+    [Fact]
+    public void Service_EnvBareNumericValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  env:
+                    RETRY_COUNT: 3
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Service_EnvBareBooleanValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  env:
+                    FEATURE_FLAG: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// ParseEnvMap throws on a value that is not a non-null scalar; an explicit
+    /// YAML null must therefore remain rejected even after the type-union
+    /// widening above — the widening adds sibling scalar shapes, it does not
+    /// drop the non-null requirement.
+    /// </summary>
+    [Fact]
+    public void Service_EnvExplicitNullValue_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  env:
+                    FOO: ~
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An explicit null env value must be rejected — ParseEnvMap requires a non-null scalar.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/app/env/FOO" &&
+            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Service_HttpPortQuotedString_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: "8080"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Theory]
+    [InlineData("\"0\"")]
+    [InlineData("\"65536\"")]
+    [InlineData("\"999999\"")]
+    public void Service_HttpPortQuotedStringOutOfRealPortRange_IsRejected(string quotedPort)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  httpPort: {{quotedPort}}
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, $"Quoted httpPort {quotedPort} is out of the real TCP port range and must be rejected, exactly like its bare-integer equivalent.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/app/httpPort");
+    }
+
     // ── Part 2: environment.dependencies ────────────────────────────────────
 
     [Fact]
@@ -687,5 +816,40 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/asb/topics/0/description" &&
             e.Message.Contains("[additionalProperties] Unknown property 'description'", System.StringComparison.Ordinal));
+    }
+
+    // ── Part 4a: topics[].name explicit null (alignment fix) ────────────────
+
+    /// <summary>
+    /// An explicit null 'name' ('name: ~') previously validated (the type union
+    /// included 'null'), yet ParseAsbTopics (EnvironmentMapper) silently drops
+    /// such a topic entry exactly as it does an absent 'name' — the same defect
+    /// <see cref="Topics_ItemMissingName_IsRejected"/> already closes for the
+    /// absent case. Narrowing the type union to exclude 'null' closes this
+    /// residual gap: both shapes ParseAsbTopics drops are now rejected at
+    /// schema time instead of surfacing later as an unrelated-looking Service
+    /// Bus environment error.
+    /// </summary>
+    [Fact]
+    public void Topics_ItemNameExplicitNull_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                asb:
+                  type: azureservicebus
+                  topics:
+                    - name: ~
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "A topics[] item with an explicit null 'name' must be rejected — ParseAsbTopics silently drops it otherwise.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/asb/topics/0/name" &&
+            e.Message.Contains("[type]", System.StringComparison.Ordinal));
     }
 }

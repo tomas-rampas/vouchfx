@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Orchestration — SeedApplier (S05-A-01 + S05-A-02).
+// Vouchfx.Engine.Orchestration — SeedApplier (S05-A-01).
 //
 // Applies declarative `environment.seed` data AFTER the topology is healthy and
 // BEFORE the first step runs, inside the same health-gated orchestration lifecycle
@@ -6,39 +6,36 @@
 // try/catch, any failure is wrapped in OrchestrationException (Provision kind) and
 // surfaces as an Environment error (§12.1) — never a misattributed assertion Fail.
 //
-// Type-dispatch (A-02; `sql` generalised beyond Postgres): each seeded dependency
-// is dispatched on its declared `type` (from environment.dependencies):
+// Type-dispatch (`sql` generalised beyond Postgres to sqlserver and mysql, #332):
+// each seeded dependency is dispatched on its declared `type` (from
+// environment.dependencies):
 //   • a relational store (postgres, sqlserver, mysql) + sql → apply SQL now via
 //                                   the matching ADO.NET driver (Npgsql / SqlClient
 //                                   / MySqlConnector) — the same three drivers
 //                                   RespawnRelationalIsolation already resets with,
 //                                   so the dispatch shape stays consistent between
 //                                   seeding and per-scenario reset.
-//   • a broker (kafka) + publish  → content-hash each payload fixture and record
-//                                   the warm-up intent via IBrokerWarmupSink
-//                                   (DEFERRED SEAM — no actual publish; Sprint 6).
-//   • a document store + documents → content-hash each fixture and record via
-//                                    IDocumentSeedSink (DEFERRED SEAM — no actual
-//                                    write; later sprint).
 //   • A seed KIND that does not match the dependency's declared TYPE (e.g. `sql`
 //     under a kafka dependency) → a clear Provision error naming the dependency,
-//     its type and the unsupported kind (NIT-1 fix from A-01: never dial a
-//     relational driver against a non-relational connection string).
+//     its type and the unsupported kind (NIT-1: never dial a relational driver
+//     against a non-relational connection string).
 //   • An unknown/unsupported dependency type that carries any seed → Provision.
 //
-// Deferred-seam honesty (A-02): the broker-publish and document forms do NOT
-// publish or write in M2.  "Seeds successfully" means the fixture was read,
-// content-hashed (the hash the reproducibility envelope, S05-B-03, will record per
-// docs/02 §3.2.2) and recorded through the sink — proving the path is wired.  The
-// real broker publish lands with the Kafka provider (Sprint 6); the real
-// document write with the document-store provider (later).
+// `sql` is the only seed kind in the v1 language. The `publish` (broker warm-up)
+// and `documents` (document-store fixture) wired-but-deferred seams introduced
+// alongside this dispatcher never performed an actual broker publish or
+// document-store write (they only read and content-hashed the referenced
+// fixture and recorded the intent through IBrokerWarmupSink/IDocumentSeedSink)
+// and were REMOVED before general availability — see SeedSpec.cs's header
+// remarks. A suite still writing `publish:`/`documents:` under a seed dependency
+// now fails schema validation instead of silently no-opping.
 //
 // Design notes:
 //   • This is ordinary engine code (NOT a Roslyn script body): `await using` is
 //     fine here.  The CSX `using var` prohibition (CLAUDE.md §CsxFragment) does
 //     NOT apply.
-//   • The file-existence check precedes any connection open / sink call, so a
-//     missing fixture fails fast without standing up a database — the no-docker
+//   • The file-existence check precedes any connection open, so a missing
+//     fixture fails fast without standing up a database — the no-docker
 //     tests rely on this ordering.
 //   • Dependencies are applied in declared order; within a dependency, files are
 //     applied in declared order.  Each SQL file's text is executed as one batch.
@@ -81,25 +78,6 @@ namespace Vouchfx.Engine.Orchestration;
 internal static class SeedApplier
 {
     /// <summary>
-    /// Dependency types treated as message brokers for seed dispatch (A-02).  Only
-    /// <c>kafka</c> in M2; the broker provider (Sprint 6) is the future plug-in.
-    /// Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: a
-    /// <see cref="DependencySpec.Type"/> reaching this dispatcher has already passed
-    /// <c>EnvironmentMapper.Map</c>'s eager, case-sensitive validation, so it is always the
-    /// exact-case canonical spelling.
-    /// </summary>
-    private static readonly HashSet<string> BrokerTypes =
-        new(StringComparer.Ordinal) { "kafka" };
-
-    /// <summary>
-    /// Dependency types treated as document stores for seed dispatch (A-02).  The
-    /// concrete provider lands in a later sprint; listed here so a mismatch error
-    /// is precise. Case-sensitive (Ordinal) — see <see cref="BrokerTypes"/>'s remarks.
-    /// </summary>
-    private static readonly HashSet<string> DocumentStoreTypes =
-        new(StringComparer.Ordinal) { "mongodb", "mongo", "elasticsearch", "cosmos" };
-
-    /// <summary>
     /// Applies <paramref name="seed"/> against the dependencies in
     /// <paramref name="discoveredServices"/>, dispatching each by its declared
     /// <paramref name="dependencyTypes"/> entry.  A no-op when
@@ -123,16 +101,6 @@ internal static class SeedApplier
     /// <param name="seedBaseDirectory">
     /// The base directory against which relative fixture file paths are resolved.
     /// </param>
-    /// <param name="brokerSink">
-    /// The deferred seam that records broker warm-up publishes (A-02).  When
-    /// <see langword="null"/>, a default <see cref="RecordingBrokerWarmupSink"/> is
-    /// used — the Sprint-6 Kafka provider supplies a publishing implementation.
-    /// </param>
-    /// <param name="documentSink">
-    /// The deferred seam that records document fixtures (A-02).  When
-    /// <see langword="null"/>, a default <see cref="RecordingDocumentSeedSink"/> is
-    /// used — a later document-store provider supplies a writing implementation.
-    /// </param>
     /// <param name="ct">
     /// Propagated to all async I/O.  Must be the last parameter (CA1068).
     /// </param>
@@ -150,8 +118,6 @@ internal static class SeedApplier
         IReadOnlyDictionary<string, object> discoveredServices,
         IReadOnlyDictionary<string, string> dependencyTypes,
         string seedBaseDirectory,
-        IBrokerWarmupSink? brokerSink,
-        IDocumentSeedSink? documentSink,
         CancellationToken ct)
     {
         if (seed is null || seed.Dependencies.Count == 0)
@@ -163,9 +129,6 @@ internal static class SeedApplier
         ArgumentNullException.ThrowIfNull(dependencyTypes);
         ArgumentException.ThrowIfNullOrEmpty(seedBaseDirectory);
 
-        var broker = brokerSink ?? new RecordingBrokerWarmupSink();
-        var documents = documentSink ?? new RecordingDocumentSeedSink();
-
         // Apply dependencies in declared order.
         foreach (var (dependencyName, dependencySeed) in seed.Dependencies)
         {
@@ -175,8 +138,6 @@ internal static class SeedApplier
                     discoveredServices,
                     dependencyTypes,
                     seedBaseDirectory,
-                    broker,
-                    documents,
                     ct)
                 .ConfigureAwait(false);
         }
@@ -192,16 +153,12 @@ internal static class SeedApplier
         IReadOnlyDictionary<string, object> discoveredServices,
         IReadOnlyDictionary<string, string> dependencyTypes,
         string seedBaseDirectory,
-        IBrokerWarmupSink broker,
-        IDocumentSeedSink documents,
         CancellationToken ct)
     {
         var hasSql = dependencySeed.Sql is { Count: > 0 };
-        var hasPublish = dependencySeed.Publish is { Count: > 0 };
-        var hasDocuments = dependencySeed.Documents is { Count: > 0 };
 
         // A dependency with no seed data at all is a no-op (e.g. an empty mapping).
-        if (!hasSql && !hasPublish && !hasDocuments)
+        if (!hasSql)
         {
             return;
         }
@@ -218,14 +175,11 @@ internal static class SeedApplier
         }
 
         var relationalKind = ScenarioIsolationFactory.MapRelationalKind(declaredType);
-        var isRelational = relationalKind is not null;
-        var isBroker = BrokerTypes.Contains(declaredType);
-        var isDocumentStore = DocumentStoreTypes.Contains(declaredType);
 
         // NIT-1: a seed kind that does not match the dependency's declared type is a
         // Provision error — never blindly dial a relational driver against (say) a
         // Kafka conn string.
-        if (hasSql && !isRelational)
+        if (relationalKind is null)
         {
             throw MismatchError(
                 dependencyName,
@@ -234,61 +188,14 @@ internal static class SeedApplier
                 expectedType: "a relational store (postgres, sqlserver, or mysql)");
         }
 
-        if (hasPublish && !isBroker)
-        {
-            throw MismatchError(dependencyName, declaredType, seedKind: "publish", expectedType: "a broker (e.g. kafka)");
-        }
-
-        if (hasDocuments && !isDocumentStore)
-        {
-            throw MismatchError(dependencyName, declaredType, seedKind: "documents", expectedType: "a document store");
-        }
-
-        // The declared type must be one this version of the engine can seed.  (A
-        // relational/broker/document-store dependency with NO matching seed kind
-        // has already returned above; reaching here with an unknown type means it
-        // carried a seed kind but the type is not seedable at all.)
-        //
-        // Defensive guard: this branch is provably unreachable given the mismatch
-        // checks above.  Past the early empty-seed return at least one of hasSql /
-        // hasPublish / hasDocuments is set, and each mismatch check above throws
-        // unless its matching type flag (isRelational / isBroker / isDocumentStore)
-        // is true — so at least one flag is always true here.  Kept as a
-        // belt-and-braces safety net; do not mistake it for live-covered behaviour.
-        if (!isRelational && !isBroker && !isDocumentStore)
-        {
-            throw ProvisionError(
-                resourceName: dependencyName,
-                detail: $"seed for dependency '{dependencyName}' has an unsupported dependency " +
-                        $"type '{declaredType}'; no seed provider handles it.");
-        }
-
-        if (hasSql)
-        {
-            // relationalKind is guaranteed non-null here: hasSql required isRelational
-            // (hence relationalKind is not null) above, or this line would have
-            // already thrown the NIT-1 mismatch.
-            await ApplySqlSeedAsync(
-                    dependencyName,
-                    dependencySeed.Sql!,
-                    relationalKind!.Value,
-                    discoveredServices,
-                    seedBaseDirectory,
-                    ct)
-                .ConfigureAwait(false);
-        }
-
-        if (hasPublish)
-        {
-            await ApplyPublishSeedAsync(dependencyName, dependencySeed.Publish!, seedBaseDirectory, broker, ct)
-                .ConfigureAwait(false);
-        }
-
-        if (hasDocuments)
-        {
-            await ApplyDocumentSeedAsync(dependencyName, dependencySeed.Documents!, seedBaseDirectory, documents, ct)
-                .ConfigureAwait(false);
-        }
+        await ApplySqlSeedAsync(
+                dependencyName,
+                dependencySeed.Sql!,
+                relationalKind.Value,
+                discoveredServices,
+                seedBaseDirectory,
+                ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -334,92 +241,6 @@ internal static class SeedApplier
 
         await ApplyDependencyAsync(dependencyName, relationalKind, connectionString, resolvedPaths, ct)
             .ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Processes a broker dependency's <c>publish</c> seed through the deferred
-    /// warm-up seam (A-02): content-hash each payload fixture (validating it exists
-    /// and is readable) and record the intent — does NOT publish.  The real publish
-    /// lands with the Kafka provider in Sprint 6.
-    /// </summary>
-    private static async Task ApplyPublishSeedAsync(
-        string dependencyName,
-        IReadOnlyList<PublishSeed> publishes,
-        string seedBaseDirectory,
-        IBrokerWarmupSink broker,
-        CancellationToken ct)
-    {
-        foreach (var publish in publishes)
-        {
-            var resolvedPath = Path.GetFullPath(Path.Combine(seedBaseDirectory, publish.PayloadFrom));
-            string contentHash;
-            try
-            {
-                // Content-hashing reads the file's bytes, so this also validates the
-                // fixture exists and is readable (the deferred-but-wired guarantee).
-                contentHash = SeedFixtures.ComputeContentHash(seedBaseDirectory, publish.PayloadFrom);
-            }
-            catch (FileNotFoundException ex)
-            {
-                throw ProvisionError(
-                    resourceName: dependencyName,
-                    detail: $"seed publish payload file not found: '{resolvedPath}'.",
-                    inner: ex);
-            }
-            catch (Exception ex)
-            {
-                throw ProvisionError(
-                    resourceName: dependencyName,
-                    detail: $"seed could not read publish payload file '{resolvedPath}': " +
-                            $"{TrimDetail(ex.Message)}",
-                    inner: ex);
-            }
-
-            var recorded = new RecordedPublish(dependencyName, publish.Topic, resolvedPath, contentHash);
-            await broker.PublishAsync(recorded, ct).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Processes a document-store dependency's <c>documents</c> seed through the
-    /// deferred document seam (A-02): content-hash each fixture (validating it
-    /// exists and is readable) and record the intent — does NOT write to a store.
-    /// The real write lands with the document-store provider in a later sprint.
-    /// </summary>
-    private static async Task ApplyDocumentSeedAsync(
-        string dependencyName,
-        IReadOnlyList<DocumentSeed> seedDocuments,
-        string seedBaseDirectory,
-        IDocumentSeedSink documents,
-        CancellationToken ct)
-    {
-        foreach (var document in seedDocuments)
-        {
-            var resolvedPath = Path.GetFullPath(Path.Combine(seedBaseDirectory, document.From));
-            string contentHash;
-            try
-            {
-                contentHash = SeedFixtures.ComputeContentHash(seedBaseDirectory, document.From);
-            }
-            catch (FileNotFoundException ex)
-            {
-                throw ProvisionError(
-                    resourceName: dependencyName,
-                    detail: $"seed document file not found: '{resolvedPath}'.",
-                    inner: ex);
-            }
-            catch (Exception ex)
-            {
-                throw ProvisionError(
-                    resourceName: dependencyName,
-                    detail: $"seed could not read document file '{resolvedPath}': " +
-                            $"{TrimDetail(ex.Message)}",
-                    inner: ex);
-            }
-
-            var recorded = new RecordedDocument(dependencyName, document.Collection, resolvedPath, contentHash);
-            await documents.WriteAsync(recorded, ct).ConfigureAwait(false);
-        }
     }
 
     /// <summary>

@@ -49,9 +49,8 @@ public sealed class SeedApplierTests
             [depName] = new DependencySeed(sqlFiles),
         });
 
-    // Thin wrapper over the A-02 ApplyAsync signature so the A-01 tests below stay
-    // focused on behaviour, not the new sink/type-map parameters.  Uses recording
-    // sinks (the M2 deferred-seam default).
+    // Thin wrapper over the ApplyAsync signature so the tests below stay focused
+    // on behaviour, not the type-map parameter.
     private static Task Apply(
         SeedSpec? seed,
         IReadOnlyDictionary<string, object> discovered,
@@ -62,8 +61,6 @@ public sealed class SeedApplierTests
             discovered,
             types,
             baseDir,
-            brokerSink: null,
-            documentSink: null,
             ct: CancellationToken.None);
 
     // ── Null / empty seed is a no-op ──────────────────────────────────────────
@@ -199,7 +196,7 @@ public sealed class SeedApplierTests
     [Fact]
     public async Task ApplyAsync_DependencyWithNullSql_IsSkipped()
     {
-        // Arrange — a seed entry with no seed data (null sql/publish/documents) is a
+        // Arrange — a seed entry with no seed data (null sql, the only seed kind) is a
         // no-op for that dep, even when the dependency is unknown AND has no declared
         // type: the empty-seed guard returns before any type lookup.
         var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)

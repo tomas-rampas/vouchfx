@@ -1,0 +1,17 @@
+# Surface coverage: environment.seed closure (feat/close-remaining-surfaces)
+# — 'sql' as an array of file paths against a relational dependency is the
+# only seed kind the v1 language recognises. A future narrowing of
+# $defs/seedDependency is caught here immediately.
+metadata:
+  name: surface-seed-sql-array
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+  seed:
+    orders-db:
+      sql: [ "fixtures/reference-currencies.sql", "fixtures/reference-products.sql" ]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the seed.sql array form only."

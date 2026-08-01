@@ -1,0 +1,15 @@
+# expected-instance-location: /steps/0/capture/typo/jsonpat
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (capture value shape): a capture mapping with an
+# unrecognised key (here, a 'jsonpath' typo) is malformed — ParseCaptureEntry
+# already throws ("has an unknown key"). The schema's
+# 'additionalProperties: false' now catches it too, at authoring time.
+metadata:
+  name: rejected-capture-unknown-key
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
+    capture:
+      typo: { jsonpat: "$.id" }

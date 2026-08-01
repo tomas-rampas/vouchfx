@@ -1,0 +1,17 @@
+# expected-instance-location: /steps/0/capture/neither
+# expected-keyword: required
+#
+# Pre-GA schema tightening (capture value shape): a capture entry that is a
+# mapping declaring NEITHER 'jsonpath' nor 'xpath' is malformed —
+# ParseCaptureEntry already throws on this shape ("declares neither...").
+# The schema's anyOf requires at least one, producing a plain, correctly-
+# located '[required]' error naming each missing field, mirroring
+# $defs/service's own 'neither image nor project' case.
+metadata:
+  name: rejected-capture-empty-mapping
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
+    capture:
+      neither: {}
