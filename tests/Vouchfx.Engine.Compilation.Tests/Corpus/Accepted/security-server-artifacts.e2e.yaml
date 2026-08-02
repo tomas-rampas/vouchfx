@@ -1,0 +1,22 @@
+# Surface coverage: security.serverArtifacts — a { source, target } pair copying a host
+# file (e.g. a Java keystore for a broker's own TLS listener) into the container.
+# REQ-016's authoring surface (schema + model) only; the actual container-file-copy
+# orchestration is a later PR.
+metadata:
+  name: security-server-artifacts
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      security:
+        mode: mtls
+        endpoint: 9093
+        clientCert: ./certs/client.pem
+        clientKey: ./certs/client-key.pem
+        serverArtifacts:
+          - source: ./certs/kafka.server.keystore.jks
+            target: /etc/kafka/secrets/kafka.server.keystore.jks
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/dependencies/orders-mq/security
+# expected-keyword: required
+#
+# REQ-001: 'clientCert' and 'clientKey' are required TOGETHER for mode 'mtls'. A
+# security block declaring 'clientKey' but omitting 'clientCert' is rejected here —
+# the mirror image of security-mtls-missing-clientkey.e2e.yaml.
+metadata:
+  name: rejected-security-mtls-missing-clientcert
+environment:
+  dependencies:
+    orders-mq:
+      type: rabbitmq
+      security:
+        mode: mtls
+        endpoint: 5671
+        clientKey: ./certs/client-key.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

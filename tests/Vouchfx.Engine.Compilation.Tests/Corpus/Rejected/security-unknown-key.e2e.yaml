@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/dependencies/cache/security/bogus
+# expected-keyword: additionalProperties
+#
+# $defs/security carries 'additionalProperties: false' — an unrecognised key inside a
+# 'security' block is rejected here with a correctly-located error, exactly like every
+# other closed object in this schema (services, dependencies, steps).
+metadata:
+  name: rejected-security-unknown-key
+environment:
+  dependencies:
+    cache:
+      type: redis
+      security:
+        mode: tls
+        endpoint: 6380
+        bogus: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

@@ -70,7 +70,32 @@ internal sealed record HostResourcePlanEntry(
 /// A human-readable description of the validation failure, suitable for inclusion in
 /// the event stream and rendered output.
 /// </param>
-internal sealed record ValidationFailure(string Message);
+internal sealed record ValidationFailure(string Message)
+{
+    /// <summary>
+    /// <see langword="true"/> only for a failure raised by
+    /// <see cref="EnvironmentSecurityValidator"/>'s pre-topology security preflight
+    /// (path containment/existence for a declared <c>security</c> artefact);
+    /// <see langword="false"/> for every other <see cref="ValidationFailure"/> in this
+    /// pipeline (a step's own bind/validate failure, the registry-lookup internal
+    /// error, a host-resource collision, …). Init-only rather than a constructor
+    /// parameter so every existing <c>new ValidationFailure(message)</c> call site
+    /// keeps compiling unchanged and defaults to <see langword="false"/>; only
+    /// <see cref="EnvironmentSecurityValidator"/>'s own failure sites set it
+    /// <see langword="true"/> via an object initializer.
+    /// </summary>
+    /// <remarks>
+    /// A narrow, distinguishable signal that survives untouched through
+    /// <see cref="PipelineResult.Failure"/> (this record IS that field's value, so no
+    /// separate plumbing is needed) to the exit-code decision in a LATER slice: PR D
+    /// keys the REQ-018 unconditional non-zero exit on this marker; REQ-018's own
+    /// mechanism list (§REQ-005/REQ-018) is illustrative, not exhaustive — this marker
+    /// is the pipeline-path signal that distinguishes a security-preflight rejection
+    /// from an ordinary authoring-error Inconclusive. This PR does not itself change
+    /// any verdict mapping, exit code, or <c>ScenarioRunner</c> flow.
+    /// </remarks>
+    public bool IsSecurityPreflight { get; init; }
+}
 
 /// <summary>
 /// The result of running <see cref="ProviderPipeline.Compile"/> over a
@@ -178,6 +203,24 @@ internal static class ProviderPipeline
         // This is derived from environment.dependencies (name → Type) and is
         // empty when the scenario omits the environment section (Sprint-4).
         var projectCtx = BuildProjectContext(ast, resolvedSuiteDirectory);
+
+        // Environment-level security-artefact validation (authenticated-infrastructure-
+        // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
+        // every DECLARED path-valued field under environment.services/dependencies'
+        // 'security' blocks. Runs once, before any step's own bind/validate/emit, so a
+        // suite with an escaping or missing security artefact fails here — at
+        // `vouchfx validate` / pre-topology `vouchfx run` time — rather than surfacing
+        // later as an opaque container-startup or TLS-handshake failure.
+        var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
+        if (environmentSecurityFailure is not null)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: environmentSecurityFailure);
+        }
 
         foreach (var node in ast.Steps)
         {
