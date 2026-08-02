@@ -130,7 +130,7 @@ public sealed class DbAssertDynamodbProvider
                   "default": true
                 },
                 "item": {
-                  "description": "Map of flat (top-level) attribute name to expected string value, compared against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\"). Nested attributes are not supported in v1.",
+                  "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") — a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

@@ -96,7 +96,7 @@ public sealed class DbAssertMongodbProvider
                   "pattern": "^[0-9]+$"
                 },
                 "document": {
-                  "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
+                  "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document — a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

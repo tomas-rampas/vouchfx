@@ -152,7 +152,7 @@ public sealed class TraceExpectOtlpProvider
                   "type": "string"
                 },
                 "attributes": {
-                  "description": "Optional map of expected span-attribute key to expected string value (subset match — the real span may carry additional attributes not mentioned here). Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                  "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match — the real span may carry additional attributes not mentioned here) — a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

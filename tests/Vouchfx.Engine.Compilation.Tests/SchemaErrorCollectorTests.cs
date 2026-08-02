@@ -1126,6 +1126,50 @@ public sealed class SchemaErrorCollectorTests
         Assert.DoesNotContain("when 'mode'", forbidden.Message, StringComparison.Ordinal);
     }
 
+    private const string ExtraKeywordConstIfClauseSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "block": {
+              "type": "object",
+              "allOf": [
+                {
+                  "if": {
+                    "title": "extra keyword outside the contract shape",
+                    "required": ["mode"],
+                    "properties": { "mode": { "const": "strict" } }
+                  },
+                  "then": { "properties": { "extra": false } }
+                }
+              ]
+            }
+          }
+        }
+        """;
+
+    /// <summary>
+    /// An if-clause carrying ANY member beyond the exact
+    /// <c>required</c>+<c>properties</c> pair degrades to the generic message
+    /// — the strict-shape doctrine the guard's remarks invoke is enforced,
+    /// not aspirational (review n10: the first version tolerated extra
+    /// keywords while claiming the doctrine, surviving only because the
+    /// named-container branches intercept the shipped extra-keyword clauses
+    /// first — an ordering accident, not a guarantee).
+    /// </summary>
+    [Fact]
+    public void ForbiddenProperty_ExtraKeywordOnIfClause_DegradesToGenericMessage()
+    {
+        var results = Evaluate(ExtraKeywordConstIfClauseSchema, """{"block": {"mode": "strict", "extra": 1}}""");
+        Assert.False(results.IsValid);
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(ExtraKeywordConstIfClauseSchema));
+
+        var forbidden = Assert.Single(errors, e => e.Message.Contains("'extra'", StringComparison.Ordinal));
+        Assert.Contains("is not valid here", forbidden.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("when 'mode'", forbidden.Message, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// The positive control: with the required pair present — the exact shape
     /// the shipped dynamodb/s3 clauses use — the conditional form still fires.

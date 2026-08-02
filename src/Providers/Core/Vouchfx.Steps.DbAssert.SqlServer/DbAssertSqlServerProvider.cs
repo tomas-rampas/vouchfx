@@ -128,7 +128,7 @@ public sealed class DbAssertSqlServerProvider
                   "pattern": "^[0-9]+$"
                 },
                 "row": {
-                  "description": "Map of column name to expected string value, asserted against the first row.",
+                  "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

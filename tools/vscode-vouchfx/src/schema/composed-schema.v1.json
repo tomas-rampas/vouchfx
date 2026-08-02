@@ -1008,7 +1008,7 @@
                     "default": true
                   },
                   "item": {
-                    "description": "Map of flat (top-level) attribute name to expected string value, compared against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\"). Nested attributes are not supported in v1.",
+                    "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") — a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [
@@ -1105,7 +1105,7 @@
                     "pattern": "^[0-9]+$"
                   },
                   "document": {
-                    "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
+                    "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document — a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [
@@ -1189,7 +1189,7 @@
                     "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [
@@ -1273,7 +1273,7 @@
                     "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [
@@ -1357,7 +1357,7 @@
                     "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [
@@ -2646,7 +2646,7 @@
                     "type": "string"
                   },
                   "attributes": {
-                    "description": "Optional map of expected span-attribute key to expected string value (subset match — the real span may carry additional attributes not mentioned here). Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                    "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match — the real span may carry additional attributes not mentioned here) — a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "object",
                     "additionalProperties": {
                       "type": [

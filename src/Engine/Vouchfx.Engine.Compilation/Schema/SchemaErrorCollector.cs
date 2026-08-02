@@ -1202,23 +1202,49 @@ internal static class SchemaErrorCollector
         fieldName = string.Empty;
         constDisplay = string.Empty;
 
+        // Exact-shape check, part one: the if-clause itself carries EXACTLY the
+        // two members the doc contract names — 'required' and 'properties' —
+        // and nothing else. A review of the first version of this guard found
+        // its comment invoking the strict-shape doctrine while the code
+        // tolerated arbitrary extra keywords (the dependency-kind clauses pass
+        // through here only because the named-container branch intercepts them
+        // first — an ordering accident this check no longer relies on).
+        var memberCount = 0;
+        foreach (var member in ifClause.EnumerateObject())
+        {
+            memberCount++;
+            if (memberCount > 2 ||
+                (!string.Equals(member.Name, "required", StringComparison.Ordinal) &&
+                 !string.Equals(member.Name, "properties", StringComparison.Ordinal)))
+            {
+                return false;
+            }
+        }
+
+        if (memberCount != 2)
+        {
+            return false;
+        }
+
         if (!ifClause.TryGetProperty("properties", out var properties) ||
             properties.ValueKind != JsonValueKind.Object)
         {
             return false;
         }
 
+        // Part two: 'properties' holds exactly one member, and it bears the
+        // const. A second property — const-bearing or not — is outside the
+        // contract shape and degrades.
         JsonProperty? conditionProperty = null;
         foreach (var property in properties.EnumerateObject())
         {
-            if (property.Value.ValueKind != JsonValueKind.Object || !property.Value.TryGetProperty("const", out _))
-            {
-                continue;
-            }
-
             if (conditionProperty is not null)
             {
-                // Two-or-more const-bearing properties: ambiguous, degrade.
+                return false;
+            }
+
+            if (property.Value.ValueKind != JsonValueKind.Object || !property.Value.TryGetProperty("const", out _))
+            {
                 return false;
             }
 
