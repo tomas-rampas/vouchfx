@@ -165,10 +165,10 @@ public sealed class MailExpectSmtpProvider
               "required": ["match"],
               "properties": {
                 "count": {
-                  "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be a positive integer with no leading zero (e.g. \"1\"); \"0\" is rejected here too, matching the numeric branch's own minimum of 1 — a zero count is never a meaningful expectation for this field, since the value is never {placeholder}-substituted.",
                   "type": ["integer", "string"],
                   "minimum": 1,
-                  "pattern": "^[0-9]+$"
+                  "pattern": "^[1-9][0-9]*$"
                 },
                 "match": {
                   "description": "Criteria a message must satisfy.  At least one criterion must be declared.",

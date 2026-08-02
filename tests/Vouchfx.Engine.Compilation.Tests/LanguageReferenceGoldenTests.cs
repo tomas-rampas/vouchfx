@@ -217,7 +217,7 @@ public sealed class LanguageReferenceGoldenTests
         var generated = GenerateReference();
         var section = ExtractStepTypeSection(generated, "script.csharp");
 
-        Assert.Contains("**Required — exactly one of:**", section, StringComparison.Ordinal);
+        Assert.Contains("**Required — exactly one of**", section, StringComparison.Ordinal);
         Assert.Contains("| `code` |", section, StringComparison.Ordinal);
         Assert.Contains("| `file` |", section, StringComparison.Ordinal);
         Assert.DoesNotContain("**Optional fields**", section, StringComparison.Ordinal);
@@ -233,7 +233,7 @@ public sealed class LanguageReferenceGoldenTests
         var generated = GenerateReference();
         var section = ExtractStepTypeSection(generated, "mq-publish.azureservicebus");
 
-        Assert.Contains("**Required — exactly one of:**", section, StringComparison.Ordinal);
+        Assert.Contains("**Required — exactly one of**", section, StringComparison.Ordinal);
         Assert.Contains("| `queue` |", section, StringComparison.Ordinal);
         Assert.Contains("| `topic` |", section, StringComparison.Ordinal);
     }
@@ -249,13 +249,13 @@ public sealed class LanguageReferenceGoldenTests
         var generated = GenerateReference();
         var section = ExtractStepTypeSection(generated, "mq-expect.azureservicebus");
 
-        Assert.Contains("**Required — at least one of:**", section, StringComparison.Ordinal);
+        Assert.Contains("**Required — at least one of**", section, StringComparison.Ordinal);
         Assert.Contains("| `expectPayloadContains` |", section, StringComparison.Ordinal);
         Assert.Contains("| `expectProperties` |", section, StringComparison.Ordinal);
         // mq-expect.azureservicebus's OWN queue-XOR-(topic+subscription) oneOf has a
         // two-name branch — degrade-don't-fabricate means NO "exactly one of" table
         // for THIS type; queue/topic/subscription fall back to the plain Optional table.
-        Assert.DoesNotContain("**Required — exactly one of:**", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("**Required — exactly one of**", section, StringComparison.Ordinal);
         Assert.Contains("| `queue` |", section, StringComparison.Ordinal);
     }
 

@@ -934,6 +934,65 @@ public sealed class SchemaValidateConstraintsTests
         AssertRejectedAt(yaml, "/steps/0/expect/match", "minProperties");
     }
 
+    // ── m3 (gatekeeper, third round): mail-expect.smtp's expect.count is the only
+    // widened integer field with a non-zero `minimum` — its string branch needed its own,
+    // narrower pattern (^[1-9][0-9]*$, not the shared ^[0-9]+$) so the two branches agree:
+    // `minimum: 1` already rejects a bare 0, but was always a no-op against a JSON string
+    // instance, so a quoted "0" slipped through the general digit pattern with nothing else
+    // to catch it — the two gates (schema, pipeline) disagreeing on the identical value.
+
+    [Fact]
+    public void MailExpectSmtp_ExpectCount_QuotedZero_IsRejectedByPattern()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: mail-expect.smtp
+                target: mailpit
+                expect:
+                  count: "0"
+                  match:
+                    to: a@b.com
+            """;
+        AssertRejectedAt(yaml, "/steps/0/expect/count", "pattern");
+    }
+
+    [Fact]
+    public void MailExpectSmtp_ExpectCount_QuotedTen_IsAccepted()
+    {
+        const string yaml = """
+            steps:
+              - id: s1
+                type: mail-expect.smtp
+                target: mailpit
+                expect:
+                  count: "10"
+                  match:
+                    to: a@b.com
+            """;
+        AssertAccepted(yaml);
+    }
+
+    [Fact]
+    public void MailExpectSmtp_ExpectCount_BareZero_IsRejectedByMinimum()
+    {
+        // Unaffected by the pattern narrowing — a bare YAML 0 matches the "integer" branch,
+        // where `minimum: 1` genuinely applies (unlike against a string instance) and was
+        // already rejecting this before m3. Pinned here so a future change to the pattern
+        // can't accidentally weaken this side too without a visible failure.
+        const string yaml = """
+            steps:
+              - id: s1
+                type: mail-expect.smtp
+                target: mailpit
+                expect:
+                  count: 0
+                  match:
+                    to: a@b.com
+            """;
+        AssertRejectedAt(yaml, "/steps/0/expect/count", "minimum");
+    }
+
     [Theory]
     [InlineData("mq-expect.kafka", "topic: orders")]
     [InlineData("mq-expect.rabbitmq", "queue: orders")]

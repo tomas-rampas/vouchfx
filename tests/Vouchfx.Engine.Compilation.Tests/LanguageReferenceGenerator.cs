@@ -318,7 +318,9 @@ internal static class LanguageReferenceGenerator
     private static void WriteFieldGroupTable(
         StringBuilder sb, string heading, List<string> group, Dictionary<string, Field> fieldsByName)
     {
-        sb.Append("**").Append(heading).Append(":**\n\n");
+        // n3 (gatekeeper, third round): no trailing colon inside the bold — matches this
+        // file's existing "**Required fields**" / "**Optional fields**" convention exactly.
+        sb.Append("**").Append(heading).Append("**\n\n");
         sb.Append("| Field | Type | Description |\n");
         sb.Append("| --- | --- | --- |\n");
         foreach (var name in group)

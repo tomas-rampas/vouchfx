@@ -268,7 +268,7 @@ Non-destructively peeks an Azure Service Bus queue or topic subscription and ver
 
 Set `type: mq-expect.azureservicebus` to use this step.
 
-**Required — at least one of:**
+**Required — at least one of**
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -363,7 +363,7 @@ Publishes one UTF-8 message to an Azure Service Bus queue or topic. A Pass verdi
 
 Set `type: mq-publish.azureservicebus` to use this step.
 
-**Required — exactly one of:**
+**Required — exactly one of**
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -466,7 +466,7 @@ Runs an author-supplied C# snippet — given inline or as a path to an external 
 
 Set `type: script.csharp` to use this step.
 
-**Required — exactly one of:**
+**Required — exactly one of**
 
 | Field | Type | Description |
 | --- | --- | --- |
