@@ -73,7 +73,29 @@ internal static class EnvironmentSecurityValidator
     /// </returns>
     internal static ValidationFailure? Validate(ScenarioAst ast, string suiteDirectory)
     {
-        var resolvedSuiteDirectory = Path.GetFullPath(suiteDirectory);
+        string resolvedSuiteDirectory;
+        try
+        {
+            resolvedSuiteDirectory = Path.GetFullPath(suiteDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Copilot review finding (PR #345, thread 3698546487): every DECLARED
+            // artefact path already fails closed via ValidatePath's own try/catch below
+            // (see its Path.Combine call), but the suite directory itself — the base
+            // every artefact resolves against — reached Path.GetFullPath with no guard
+            // of its own, so a malformed suiteDirectory (e.g. one embedding a NUL) would
+            // throw straight out through this unguarded caller: Stage 3a of
+            // ScenarioValidator.ValidateScenario calls ProviderPipeline.Compile (which
+            // calls this validator) with no try/catch of its own around it. No field
+            // path is named here, deliberately — unlike a per-artefact ValidationFailure,
+            // this failure is about the base directory itself, not any one declared field.
+            return new ValidationFailure(
+                $"suite directory '{suiteDirectory}' is not a valid path ({ex.Message})")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
 
         var services = ast.Environment?.Services;
         if (services is not null)
@@ -177,7 +199,39 @@ internal static class EnvironmentSecurityValidator
         // direct engine embedding that bypasses the schema layer entirely.
         if (string.IsNullOrWhiteSpace(declaredPath))
         {
-            return new ValidationFailure($"{fieldPath}: declared value '{declaredPath}' is blank.");
+            return new ValidationFailure($"{fieldPath}: declared value '{declaredPath}' is blank.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        // REQ-003's own wording: every path-valued security field "MUST be resolved
+        // relative to the directory containing the .e2e.yaml file". Reject a ROOTED
+        // declaredPath here, BEFORE Path.Combine, rather than let it reach Path.Combine
+        // and rely on containment to catch it (critic MAJOR-2). Path.Combine DISCARDS
+        // its first argument outright when the second is rooted (documented .NET
+        // behaviour) — so a rooted declaredPath was never actually resolved "relative to
+        // the suite directory" at all, regardless of what IsContainedWithin went on to
+        // decide about the result. Checking containment on that result papered over two
+        // distinct defects instead of preventing them: (a) a rooted path that HAPPENED to
+        // land inside the suite directory validated successfully, even though REQ-003
+        // requires a relative path, not merely a contained one; and (b) a rooted path
+        // that landed outside was still rejected, but via IsContainedWithin's Ordinal
+        // comparison, which reports the confusing "resolves outside the suite directory"
+        // message for a path whose only real defect versus the suite directory is
+        // drive-letter casing (e.g. declared 'c:\suite\...' against suite directory
+        // 'C:\suite\...') — the rooted path's own casing never had anything to do with
+        // the suite directory's casing, since Path.Combine had already discarded it.
+        // Rejecting every rooted path here closes both, by removing the cause rather than
+        // patching either symptom.
+        if (Path.IsPathRooted(declaredPath))
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{declaredPath}' must be a path relative to the suite directory, " +
+                "not an absolute path.")
+            {
+                IsSecurityPreflight = true,
+            };
         }
 
         string resolvedPath;
@@ -191,24 +245,35 @@ internal static class EnvironmentSecurityValidator
             // (e.g. one embedding a NUL) throw out through the unguarded caller: Stage 3a
             // of ScenarioValidator.ValidateScenario calls ProviderPipeline.Compile (which
             // calls this validator) with no try/catch of its own around it.
-            return new ValidationFailure($"{fieldPath}: '{declaredPath}' is not a valid path ({ex.Message})");
+            return new ValidationFailure($"{fieldPath}: '{declaredPath}' is not a valid path ({ex.Message})")
+            {
+                IsSecurityPreflight = true,
+            };
         }
 
         // Containment BEFORE existence (REQ-003, EDGE-006): a traversal attempt that
         // happens to point at a real file elsewhere on the host must still fail with the
-        // containment error, never a "found"/"not found" one.
+        // containment error, never a "found"/"not found" one. declaredPath is guaranteed
+        // relative at this point (the rooted check above already returned otherwise), so
+        // this is a genuine '..'-escape, not the rooted-path case.
         if (!IsContainedWithin(resolvedPath, resolvedSuiteDirectory))
         {
             return new ValidationFailure(
                 $"{fieldPath}: '{declaredPath}' resolves outside the suite directory " +
                 $"(resolved to '{resolvedPath}', which is not contained within " +
-                $"'{resolvedSuiteDirectory}').");
+                $"'{resolvedSuiteDirectory}').")
+            {
+                IsSecurityPreflight = true,
+            };
         }
 
         if (!File.Exists(resolvedPath))
         {
             return new ValidationFailure(
-                $"{fieldPath}: file '{declaredPath}' not found (resolved to '{resolvedPath}').");
+                $"{fieldPath}: file '{declaredPath}' not found (resolved to '{resolvedPath}').")
+            {
+                IsSecurityPreflight = true,
+            };
         }
 
         return null;
@@ -223,19 +288,25 @@ internal static class EnvironmentSecurityValidator
     /// <para>
     /// <see cref="StringComparison.Ordinal"/> comparison, deliberately — NOT
     /// <see cref="StringComparison.OrdinalIgnoreCase"/>. The prefix compared against here
-    /// is always a byte-for-byte copy of <paramref name="resolvedSuiteDirectory"/>
-    /// itself: <see cref="ValidatePath"/> passes the SAME <paramref name="resolvedSuiteDirectory"/>
-    /// both as the <see cref="Path.Combine(string, string)"/> base it resolved
-    /// <paramref name="resolvedPath"/> against and as this method's own compare target, so
-    /// the two can never differ from each other in casing — an ordinal comparison is
-    /// therefore exactly as permissive as a case-insensitive one for every legitimately-
-    /// contained path. A case-INSENSITIVE comparison, on the other hand, would wrongly
-    /// ACCEPT a '..'-escape into a sibling directory that differs from the suite directory
-    /// only in case (e.g. a resolved path under '...\suite' against suite directory
-    /// '...\Suite') — two DISTINCT directories on the case-sensitive filesystems CI runs
-    /// on, which a case-insensitive prefix check cannot tell apart. (There is no
-    /// drive-letter-casing concern to trade off against this: see above, the prefix can
-    /// never differ in casing from itself.)
+    /// is always a byte-for-byte copy of <paramref name="resolvedSuiteDirectory"/> itself
+    /// — UNCONDITIONALLY true, not merely true for the paths this method happens to be
+    /// called with: <see cref="ValidatePath"/> rejects a ROOTED <c>declaredPath</c>
+    /// outright, before <see cref="Path.Combine(string, string)"/> is ever called (see
+    /// that method's own remarks), so every <paramref name="resolvedPath"/> that reaches
+    /// this comparison was necessarily built by appending a RELATIVE segment to the SAME
+    /// <paramref name="resolvedSuiteDirectory"/> this method also receives as its own
+    /// compare target. The two can therefore never differ from each other in casing — an
+    /// ordinal comparison is exactly as permissive as a case-insensitive one for every
+    /// legitimately-contained path. A case-INSENSITIVE comparison, on the other hand,
+    /// would wrongly ACCEPT a '..'-escape into a sibling directory that differs from the
+    /// suite directory only in case (e.g. a resolved path under '...\suite' against suite
+    /// directory '...\Suite') — two DISTINCT directories on the case-sensitive
+    /// filesystems CI runs on, which a case-insensitive prefix check cannot tell apart.
+    /// (There is no drive-letter-casing concern to trade off against this either: a
+    /// rooted, differently-cased-drive-letter path such as <c>'c:\suite\...'</c> against
+    /// suite directory <c>'C:\suite\...'</c> never reaches this method at all — it is
+    /// rejected by <see cref="ValidatePath"/>'s own rooted-path guard first, which is
+    /// precisely the confusing-message case that guard exists to close; see its remarks.)
     /// </para>
     /// <para>
     /// <strong>Not a hardened sandbox boundary:</strong> <see cref="Path.GetFullPath(string)"/>

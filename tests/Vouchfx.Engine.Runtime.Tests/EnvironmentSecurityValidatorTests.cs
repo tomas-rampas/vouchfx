@@ -246,6 +246,98 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Contains("resolves outside the suite directory", result!.Message, StringComparison.Ordinal);
     }
 
+    // ── 4b. REQ-003: a ROOTED declared path is rejected outright (critic MAJOR-2) ──
+    //
+    // REQ-003's own wording requires every path-valued security field to be "resolved
+    // relative to the directory containing the .e2e.yaml file". Before this fix, a
+    // ROOTED declaredPath reached Path.Combine(resolvedSuiteDirectory, declaredPath) —
+    // and Path.Combine DISCARDS its first argument outright when the second is rooted
+    // (documented .NET behaviour), so the suite directory played no part at all in the
+    // resolution. Two consequences that must both be closed by rejecting a rooted path
+    // BEFORE Path.Combine is ever called, not merely by chance containment failure:
+    //   (a) a rooted path that HAPPENS to resolve inside the suite directory was
+    //       silently accepted — REQ-003 says "relative", not "relative, or absolute-
+    //       but-it-worked-out"; and
+    //   (b) a rooted path that resolves outside was already rejected, but only via
+    //       IsContainedWithin's Ordinal comparison — which produces a confusing
+    //       "resolves outside" message for a drive-letter-only-casing mismatch (e.g.
+    //       declared 'c:\suite\...' against suite directory 'C:\suite'), since the
+    //       rooted path's own casing bypasses the suite directory's casing entirely.
+    //       Rejecting every rooted path up front closes this whole class, not merely
+    //       the one message.
+
+    /// <summary>
+    /// The "untested absolute-inside acceptance" the critic flagged: a rooted path that
+    /// happens to resolve inside the suite directory must still be rejected — REQ-003
+    /// requires a RELATIVE path, not merely a contained one.
+    /// </summary>
+    [Fact]
+    public void Validate_ClientCertIsRootedButResolvesInsideSuiteDirectory_IsRejectedAsNotRelative()
+    {
+        var insideAbsolutePath = WriteSuiteFile("certs/client.pem");
+        WriteSuiteFile("certs/client-key.pem");
+        var security = new SecuritySpec(
+            "mtls", "9093", null, insideAbsolutePath, "./certs/client-key.pem", null);
+        var ast = BuildAst(dependencies: OneDependency("mq", security));
+
+        var result = EnvironmentSecurityValidator.Validate(ast, _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains("environment.dependencies.mq.security.clientCert", result!.Message, StringComparison.Ordinal);
+        Assert.Contains("must be a path relative to the suite directory", result.Message, StringComparison.Ordinal);
+        // Must be rejected by the NEW rooted-path guard, never accidentally accepted.
+        Assert.DoesNotContain("resolves outside", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("not found", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A rooted path resolving OUTSIDE the suite directory must fail with the SAME
+    /// "must be relative" message as the inside case above — not the pre-existing
+    /// containment message, which (before this fix) could read as the absurd
+    /// "resolves outside the suite directory" for a path whose only defect versus the
+    /// suite directory was drive-letter casing (see the section header remarks).
+    /// </summary>
+    [Fact]
+    public void Validate_ClientCertIsRootedAndResolvesOutsideSuiteDirectory_IsRejectedAsNotRelative()
+    {
+        var outsideAbsolutePath = WriteOutsideFile("client.pem");
+        var security = new SecuritySpec(
+            "mtls", "9093", null, outsideAbsolutePath, "./certs/client-key.pem", null);
+        var ast = BuildAst(dependencies: OneDependency("mq", security));
+
+        var result = EnvironmentSecurityValidator.Validate(ast, _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains("environment.dependencies.mq.security.clientCert", result!.Message, StringComparison.Ordinal);
+        Assert.Contains("must be a path relative to the suite directory", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("resolves outside", result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The 'serverArtifacts[].source' counterpart: a rooted source path is rejected the
+    /// same way, naming the indexed field.
+    /// </summary>
+    [Fact]
+    public void Validate_ServerArtifactSourceIsRooted_IsRejectedAsNotRelative()
+    {
+        var outsideAbsolutePath = WriteOutsideFile("kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new(outsideAbsolutePath, "/etc/kafka/secrets/kafka.server.keystore.jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+        var ast = BuildAst(dependencies: OneDependency("events-kafka", security));
+
+        var result = EnvironmentSecurityValidator.Validate(ast, _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains(
+            "environment.dependencies.events-kafka.security.serverArtifacts[0].source",
+            result!.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("must be a path relative to the suite directory", result.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Validate_ContainedPath_DoesNotTriggerContainmentError()
     {
@@ -604,5 +696,61 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.NotNull(result);
         Assert.Contains("environment.services.app.security.clientCert", result!.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("environment.dependencies", result.Message, StringComparison.Ordinal);
+    }
+
+    // ── 14. IsSecurityPreflight marker (critic MAJOR-3) ───────────────────────
+    //
+    // Gives the security preflight's failures a narrow, distinguishable signal that a
+    // LATER slice (PR D, REQ-018) keys the unconditional non-zero exit on. Every failure
+    // EnvironmentSecurityValidator itself raises must carry it; ProviderPipelineTests'
+    // own ordinary-pipeline-failure test asserts the negative (an unrelated step
+    // validation failure does NOT carry it) — see
+    // Compile_StepValidationFails_ReturnsFailureNonNull_AssembledNull.
+
+    /// <summary>
+    /// Every failure <see cref="EnvironmentSecurityValidator.Validate"/> itself raises —
+    /// here, a declared-but-blank <c>caCert</c> — carries
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/> set. This is the ONLY producer
+    /// of that marker in the pipeline (see <see cref="ValidationFailure.IsSecurityPreflight"/>'s
+    /// own remarks).
+    /// </summary>
+    [Fact]
+    public void Validate_Failure_CarriesSecurityPreflightMarker()
+    {
+        var security = new SecuritySpec("tls", "6380", "   ", null, null, null);
+        var ast = BuildAst(dependencies: OneDependency("cache", security));
+
+        var result = EnvironmentSecurityValidator.Validate(ast, _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.True(result!.IsSecurityPreflight,
+            "A failure raised by EnvironmentSecurityValidator itself must carry IsSecurityPreflight.");
+    }
+
+    // ── 15. Copilot inline (thread 3698546487): unguarded suiteDirectory resolve ──
+
+    /// <summary>
+    /// <see cref="EnvironmentSecurityValidator.Validate"/>'s own
+    /// <see cref="Path.GetFullPath(string)"/> call on <c>suiteDirectory</c> — the base
+    /// every declared artefact resolves against — must fail cleanly with a
+    /// <see cref="ValidationFailure"/> naming the suite directory as invalid, never let
+    /// the exception escape uncaught (Copilot review finding, PR #345, thread
+    /// 3698546487). Mirrors <see cref="Validate_DeclaredCaCertContainsEmbeddedNul_FailsCleanly_NeverThrows"/>'s
+    /// own NUL-embedding technique, applied to the base directory itself this time —
+    /// note this test calls <see cref="EnvironmentSecurityValidator.Validate"/> DIRECTLY
+    /// with the malformed suiteDirectory (there is no AST/security-block prerequisite:
+    /// the guard fires before any service/dependency is even inspected).
+    /// </summary>
+    [Fact]
+    public void Validate_SuiteDirectoryContainsEmbeddedNul_FailsCleanly_NeverThrows()
+    {
+        var ast = BuildAst();
+        var malformedSuiteDirectory = _suiteDir + "\0evil";
+
+        var result = EnvironmentSecurityValidator.Validate(ast, malformedSuiteDirectory);
+
+        Assert.NotNull(result);
+        Assert.Contains(malformedSuiteDirectory, result!.Message, StringComparison.Ordinal);
+        Assert.True(result.IsSecurityPreflight);
     }
 }

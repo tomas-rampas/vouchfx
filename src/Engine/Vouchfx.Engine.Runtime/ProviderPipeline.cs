@@ -70,7 +70,32 @@ internal sealed record HostResourcePlanEntry(
 /// A human-readable description of the validation failure, suitable for inclusion in
 /// the event stream and rendered output.
 /// </param>
-internal sealed record ValidationFailure(string Message);
+internal sealed record ValidationFailure(string Message)
+{
+    /// <summary>
+    /// <see langword="true"/> only for a failure raised by
+    /// <see cref="EnvironmentSecurityValidator"/>'s pre-topology security preflight
+    /// (path containment/existence for a declared <c>security</c> artefact);
+    /// <see langword="false"/> for every other <see cref="ValidationFailure"/> in this
+    /// pipeline (a step's own bind/validate failure, the registry-lookup internal
+    /// error, a host-resource collision, …). Init-only rather than a constructor
+    /// parameter so every existing <c>new ValidationFailure(message)</c> call site
+    /// keeps compiling unchanged and defaults to <see langword="false"/>; only
+    /// <see cref="EnvironmentSecurityValidator"/>'s own failure sites set it
+    /// <see langword="true"/> via an object initializer.
+    /// </summary>
+    /// <remarks>
+    /// A narrow, distinguishable signal that survives untouched through
+    /// <see cref="PipelineResult.Failure"/> (this record IS that field's value, so no
+    /// separate plumbing is needed) to the exit-code decision in a LATER slice: PR D
+    /// keys the REQ-018 unconditional non-zero exit on this marker; REQ-018's own
+    /// mechanism list (§REQ-005/REQ-018) is illustrative, not exhaustive — this marker
+    /// is the pipeline-path signal that distinguishes a security-preflight rejection
+    /// from an ordinary authoring-error Inconclusive. This PR does not itself change
+    /// any verdict mapping, exit code, or <c>ScenarioRunner</c> flow.
+    /// </remarks>
+    public bool IsSecurityPreflight { get; init; }
+}
 
 /// <summary>
 /// The result of running <see cref="ProviderPipeline.Compile"/> over a

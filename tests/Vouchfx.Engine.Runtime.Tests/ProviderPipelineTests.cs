@@ -365,6 +365,14 @@ public sealed class ProviderPipelineTests
         Assert.Contains("will-fail", result.Failure.Message,
             StringComparison.Ordinal);
         Assert.Null(result.Assembled);
+
+        // Critic MAJOR-3: an ORDINARY pipeline failure (a step's own model-validation
+        // failure, as here) must NOT carry IsSecurityPreflight — only a failure raised by
+        // EnvironmentSecurityValidator itself does (see
+        // Vouchfx.Engine.Runtime.Tests.EnvironmentSecurityValidatorTests.Validate_Failure_CarriesSecurityPreflightMarker
+        // for the positive case).
+        Assert.False(result.Failure.IsSecurityPreflight,
+            "An ordinary step-validation failure must not carry the security-preflight marker.");
     }
 
     // ── Test: empty AST produces empty assembled script ───────────────────────

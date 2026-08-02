@@ -6,10 +6,10 @@ metadata:
 environment:
   dependencies:
     search:
-      type: elasticsearch
+      type: redis
       security:
         mode: tls
-        endpoint: 9243
+        endpoint: 6380
         caCert: ./certs/ca.pem
 steps:
   - id: noop

@@ -26,6 +26,15 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// which runs pre-topology (the same stage the provider pipeline's bind/validate
 /// pass runs in).
 /// </para>
+/// <para>
+/// Future additions to this shape MUST be init-only properties, never new positional
+/// constructor parameters: <c>Vouchfx.Engine.Authoring</c> is a packable assembly, and
+/// inserting a new positional parameter would change this record's primary
+/// constructor's parameter order/arity and its compiler-generated <c>Deconstruct</c> —
+/// a binary-breaking change for any already-compiled caller. This is the same
+/// binary-compatibility precedent <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec.Image"/>
+/// already established for its own record; an init-only property is purely additive.
+/// </para>
 /// </remarks>
 /// <param name="Mode">
 /// The transport security mode as authored: <c>"tls"</c> or <c>"mtls"</c>. Retained
