@@ -116,15 +116,18 @@ public sealed class StorageAssertS3Provider
           "properties": {
             "target": {
               "description": "Logical name of the minio dependency to query, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "bucket": {
               "description": "The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "key": {
               "description": "The S3 object key. May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expect": {
               "description": "The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive.",
@@ -132,7 +135,8 @@ public sealed class StorageAssertS3Provider
               "properties": {
                 "exists": {
                   "description": "Whether the object is expected to exist. Defaults to true when omitted.",
-                  "type": "boolean"
+                  "type": "boolean",
+                  "default": true
                 },
                 "size": {
                   "description": "Exact expected object size in bytes. Mutually exclusive with minSize. May contain {placeholder} / ${secret:...} tokens.",
@@ -147,8 +151,8 @@ public sealed class StorageAssertS3Provider
                   "type": "string"
                 },
                 "contentContains": {
-                  "description": "A substring the object body (decoded as UTF-8) must contain. Never echoed into the observation.",
-                  "type": "string"
+                  "description": "A substring the object body (decoded as UTF-8) must contain. Never echoed into the observation. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "contentType": {
                   "description": "Expected Content-Type, compared against the HEAD response.",
@@ -157,10 +161,29 @@ public sealed class StorageAssertS3Provider
                 "metadata": {
                   "description": "Map of user-metadata key to expected value, compared against the HEAD response's object metadata.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": { "required": ["size"] },
+                  "then": { "properties": { "minSize": false } }
+                },
+                {
+                  "if": { "required": ["exists"], "properties": { "exists": { "const": false } } },
+                  "then": {
+                    "properties": {
+                      "size": false,
+                      "minSize": false,
+                      "sha256": false,
+                      "contentContains": false,
+                      "contentType": false,
+                      "metadata": false
+                    }
+                  }
+                }
+              ]
             }
           }
         }

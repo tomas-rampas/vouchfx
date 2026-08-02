@@ -111,16 +111,19 @@ public sealed class WebhookListenHttpProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Asserts that a captured inbound HTTP request against a host-owned webhook listener matches the declared criteria (method, path, headers, and/or body substring).",
           "type": "object",
           "required": ["listener", "match"],
           "properties": {
             "listener": {
               "description": "Logical name of the host-owned webhook listener whose captured inbound requests this step asserts against.  The engine stands the listener up and stages its URL at svc::<listener> (and at the plain <listener> Vars key so an earlier step can interpolate {<listener>}).",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "match": {
               "description": "The criteria a captured inbound request must satisfy.  At least one criterion (method, path, headers, or bodyContains) must be declared.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "method": {
                   "description": "Optional expected HTTP method (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
@@ -133,14 +136,14 @@ public sealed class WebhookListenHttpProvider
                 "headers": {
                   "description": "Optional map of expected header names to their expected string values.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },
                 "bodyContains": {
-                  "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

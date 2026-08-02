@@ -59,6 +59,33 @@ public sealed record StepCatalogueDocument(
 /// A short human-readable one-liner describing the family's purpose, sufficient for
 /// an agent or editor to choose a family.
 /// </param>
+/// <param name="ExactlyOneOfGroups">
+/// Additive (T1 follow-up, feat/fragment-completeness — gatekeeper B1). Each entry
+/// is a group of field names of which EXACTLY ONE must be set — a root-level
+/// <c>oneOf</c> whose every branch names exactly one required field (e.g.
+/// <c>script.csharp</c>'s <c>[["code","file"]]</c>). Never <see langword="null"/>
+/// for a catalogue entry built by <see cref="EngineExport.BuildCatalogue"/> (an
+/// empty list when the type has no such shape); nullable only so a hand-built
+/// fixture predating this field still compiles. Deliberately NOT folded into
+/// <see cref="RequiredFields"/> as prose: that vehicle is consumed by
+/// <c>SuiteScaffolder</c> as bare field NAMES emitted verbatim as YAML keys — a
+/// prose string there is not a field name and breaks generated YAML. A field named
+/// here is excluded from both <see cref="RequiredFields"/> and
+/// <see cref="OptionalFields"/> (would otherwise silently contradict this group's
+/// "exactly one" constraint). Degrades to an empty list — never a fabricated group
+/// — when a <c>oneOf</c> branch's own <c>required</c> does not name EXACTLY one
+/// field and nothing else (e.g. <c>mq-expect.azureservicebus</c>'s <c>queue</c> OR
+/// (<c>topic</c> + <c>subscription</c>) shape has a two-name branch).
+/// </param>
+/// <param name="AtLeastOneOfGroups">
+/// Additive (same follow-up as <see cref="ExactlyOneOfGroups"/>). Each entry is a
+/// group of field names of which AT LEAST ONE must be set — the identical
+/// single-required-per-branch detection applied to a root-level <c>anyOf</c>
+/// instead of <c>oneOf</c> (e.g. <c>mq-expect.azureservicebus</c>'s
+/// <c>[["expectPayloadContains","expectProperties"]]</c>). Same exclusion from
+/// <see cref="RequiredFields"/>/<see cref="OptionalFields"/>, same
+/// degrade-don't-fabricate guard, same nullable-for-old-fixtures-only contract.
+/// </param>
 public sealed record StepCatalogueEntry(
     [property: JsonPropertyOrder(0)] string Type,
     [property: JsonPropertyOrder(1)] string Family,
@@ -66,4 +93,6 @@ public sealed record StepCatalogueEntry(
     [property: JsonPropertyOrder(3)] IReadOnlyList<string> RequiredFields,
     [property: JsonPropertyOrder(4)] IReadOnlyList<string> OptionalFields,
     [property: JsonPropertyOrder(5)] bool CaptureSupported,
-    [property: JsonPropertyOrder(6)] string FamilyIntent);
+    [property: JsonPropertyOrder(6)] string FamilyIntent,
+    [property: JsonPropertyOrder(7)] IReadOnlyList<IReadOnlyList<string>>? ExactlyOneOfGroups = null,
+    [property: JsonPropertyOrder(8)] IReadOnlyList<IReadOnlyList<string>>? AtLeastOneOfGroups = null);

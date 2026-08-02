@@ -101,20 +101,24 @@ public sealed class DbAssertDynamodbProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Fetches a single item from a DynamoDB table by primary key (GetItem) and asserts on its existence and/or attribute values.",
           "type": "object",
           "required": ["target", "table", "key", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the dynamodb dependency to query, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "table": {
               "description": "Name of the DynamoDB table to query. May contain {placeholder} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "key": {
               "description": "A flat JSON object template naming the primary key (partition key, optionally plus a sort key) for a GetItem call, e.g. {\"orderId\":\"{orderId}\"}. Each top-level value becomes an S/N/BOOL DynamoDB attribute; nested objects/arrays/null are not supported. May contain {placeholder} tokens inside JSON string values.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expect": {
               "description": "Assertion block declaring the expected GetItem outcome.",
@@ -122,15 +126,22 @@ public sealed class DbAssertDynamodbProvider
               "properties": {
                 "exists": {
                   "description": "Whether the item is expected to exist. Defaults to true when omitted.",
-                  "type": "boolean"
+                  "type": "boolean",
+                  "default": true
                 },
                 "item": {
                   "description": "Map of flat (top-level) attribute name to expected string value, compared against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\"). Nested attributes are not supported in v1.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": { "required": ["exists"], "properties": { "exists": { "const": false } } },
+                  "then": { "properties": { "item": false } }
+                }
+              ]
             }
           }
         }

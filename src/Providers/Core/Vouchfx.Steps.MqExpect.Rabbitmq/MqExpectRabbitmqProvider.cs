@@ -47,37 +47,41 @@ public sealed class MqExpectRabbitmqProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).",
           "type": "object",
           "required": ["target", "queue", "match"],
           "properties": {
             "target": {
               "description": "Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "queue": {
               "description": "The AMQP queue to consume messages from.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "match": {
               "description": "The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "payloadContains": {
-                  "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "headers": {
                   "description": "Optional map of expected AMQP header names to their expected string values.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },
                 "json": {
                   "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message body parsed as JSON.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

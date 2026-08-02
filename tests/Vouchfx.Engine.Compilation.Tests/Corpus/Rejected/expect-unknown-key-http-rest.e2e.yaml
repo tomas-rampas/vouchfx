@@ -1,0 +1,19 @@
+# expected-instance-location: /steps/0/expect/statuss
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): http.rest's 'expect'
+# block used to declare NO additionalProperties keyword at all (neither true
+# nor false), so an unknown key inside it (here, 'status' typo'd as
+# 'statuss') was silently accepted. additionalProperties: false now catches
+# it at authoring time, exactly like the step-level unevaluatedProperties
+# closure already does for the step's own top-level keys.
+metadata:
+  name: rejected-expect-unknown-key-http-rest
+steps:
+  - id: call-api
+    type: http.rest
+    target: orders-api
+    method: GET
+    path: /health
+    expect:
+      statuss: 200

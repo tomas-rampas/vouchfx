@@ -1,0 +1,21 @@
+# expected-instance-location: /steps/0/match/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): mq-expect.nats's
+# 'match' block used to declare its own "additionalProperties": true, so an
+# unknown key alongside a real criterion (here, 'payloadContains') was
+# silently accepted. additionalProperties is now false.
+metadata:
+  name: rejected-match-unknown-key-mq-expect-nats
+environment:
+  dependencies:
+    orders-nats:
+      type: nats
+steps:
+  - id: expect-order
+    type: mq-expect.nats
+    target: orders-nats
+    subject: orders
+    match:
+      payloadContains: id
+      extra: oops

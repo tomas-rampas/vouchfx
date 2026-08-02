@@ -56,7 +56,8 @@ public sealed class MqPublishRabbitmqProvider
           "properties": {
             "target": {
               "description": "Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "exchange": {
               "description": "Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens.",
@@ -64,16 +65,19 @@ public sealed class MqPublishRabbitmqProvider
             },
             "routingKey": {
               "description": "The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "payload": {
-              "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+              "type": ["string", "integer", "number", "boolean"],
+              "minLength": 1
             },
             "headers": {
               "description": "Optional map of AMQP message header names to their string values.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             }
           }
         }

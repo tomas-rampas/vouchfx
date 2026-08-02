@@ -1,0 +1,16 @@
+# expected-instance-location: /steps/0/match/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): trace-expect.otlp's
+# 'match' block used to declare its own "additionalProperties": true, so an
+# unknown key alongside the required 'traceId' was silently accepted.
+# additionalProperties is now false.
+metadata:
+  name: rejected-match-unknown-key-trace-expect-otlp
+steps:
+  - id: expect-span
+    type: trace-expect.otlp
+    receiver: orders-otlp
+    match:
+      traceId: "0af7651916cd43dd8448eb211c80319c"
+      extra: oops

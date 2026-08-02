@@ -147,16 +147,20 @@ public sealed class CacheAssertElasticsearchProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Queries an Elasticsearch index and asserts on the resulting hit count and/or selected _source field values.",
           "type": "object",
           "required": ["target", "index", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "index": {
-              "description": "Elasticsearch index to query.",
-              "type": "string"
+              "description": "Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\s?#\\x00-\\x1F\\x7F-\\x9F]*$"
             },
             "query": {
               "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
@@ -167,14 +171,16 @@ public sealed class CacheAssertElasticsearchProvider
               "type": "object",
               "properties": {
                 "count": {
-                  "description": "Exact number of hits expected.  When set, overrides min-count.",
-                  "type": "integer",
-                  "minimum": 0
+                  "description": "Exact number of hits expected.  When set, overrides min-count. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
+                  "minimum": 0,
+                  "pattern": "^[0-9]+$"
                 },
                 "min-count": {
-                  "description": "Minimum number of hits expected (default 1).  Ignored when count is set.",
-                  "type": "integer",
+                  "description": "Minimum number of hits expected (default 1).  Ignored when count is set. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
                   "minimum": 0,
+                  "pattern": "^[0-9]+$",
                   "default": 1
                 },
                 "fields": {
@@ -186,7 +192,9 @@ public sealed class CacheAssertElasticsearchProvider
                     "properties": {
                       "field": {
                         "description": "Top-level _source field name.  Dot-notation is not supported.",
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^.]*$"
                       },
                       "value": {
                         "description": "Expected string value.  May contain {placeholder} and ${secret:source/path} tokens.",

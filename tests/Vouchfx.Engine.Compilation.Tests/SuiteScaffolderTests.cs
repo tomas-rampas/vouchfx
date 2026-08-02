@@ -1,11 +1,35 @@
 // Spec B — SuiteScaffolder public library (mcp-generator-scaffold-and-run).
 // Docker-free unit tests covering REQ-001..006 and EDGE-001/002/004/005 for the library.
 
+using System.Reflection;
 using Vouchfx.Engine.Compilation.Scaffold;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
+using Vouchfx.Steps.CacheAssert.Elasticsearch;
+using Vouchfx.Steps.CacheAssert.Redis;
+using Vouchfx.Steps.DbAssert.Dynamodb;
+using Vouchfx.Steps.DbAssert.Mongodb;
+using Vouchfx.Steps.DbAssert.Mysql;
 using Vouchfx.Steps.DbAssert.Postgres;
+using Vouchfx.Steps.DbAssert.SqlServer;
+using Vouchfx.Steps.Http.Soap;
 using Vouchfx.Steps.HttpRest;
+using Vouchfx.Steps.MailExpect.Smtp;
+using Vouchfx.Steps.MetricsAssert.Prometheus;
+using Vouchfx.Steps.MqExpect.AzureServiceBus;
+using Vouchfx.Steps.MqExpect.Kafka;
+using Vouchfx.Steps.MqExpect.Nats;
+using Vouchfx.Steps.MqExpect.Rabbitmq;
+using Vouchfx.Steps.MqExpect.Redis;
+using Vouchfx.Steps.MqPublish.AzureServiceBus;
+using Vouchfx.Steps.MqPublish.Kafka;
+using Vouchfx.Steps.MqPublish.Nats;
+using Vouchfx.Steps.MqPublish.Rabbitmq;
+using Vouchfx.Steps.MqPublish.Redis;
+using Vouchfx.Steps.Script.Csharp;
+using Vouchfx.Steps.StorageAssert.S3;
+using Vouchfx.Steps.TraceExpect.Otlp;
+using Vouchfx.Steps.WebhookListen.Http;
 using Xunit;
 
 namespace Vouchfx.Engine.Compilation.Tests;
@@ -18,6 +42,84 @@ public sealed class SuiteScaffolderTests
             new HttpRestProvider(),
             new DbAssertPostgresProvider(),
         });
+
+    // ── B1 crown deliverable (gatekeeper): all-25-registered-types scaffold round-trip ──
+    //
+    // The reason B1 (prose synthesised into RequiredFields breaking SuiteScaffolder's
+    // YAML emission) could never recur: for EVERY type in the full Core registry,
+    // scaffold a minimal document from nothing but the catalogue-driven intent, then
+    // run it through DocumentValidator against the SAME composed schema — the actual
+    // production path an author's suite hits (mirrors SchemaStepSurfaceClosureTests'
+    // own registry-parity discipline). A provider whose catalogue entry under- or
+    // over-specifies what SuiteScaffolder needs to emit a valid skeleton fails here
+    // immediately, by type, rather than surfacing later as a broken MCP scaffold call.
+    private static Assembly[] CoreProviderAssemblies() => new[]
+    {
+        typeof(HttpRestProvider).Assembly,
+        typeof(DbAssertPostgresProvider).Assembly,
+        typeof(DbAssertSqlServerProvider).Assembly,
+        typeof(DbAssertMongodbProvider).Assembly,
+        typeof(DbAssertMysqlProvider).Assembly,
+        typeof(ScriptCsharpProvider).Assembly,
+        typeof(MqPublishKafkaProvider).Assembly,
+        typeof(MqExpectKafkaProvider).Assembly,
+        typeof(WebhookListenHttpProvider).Assembly,
+        typeof(MailExpectSmtpProvider).Assembly,
+        typeof(CacheAssertRedisProvider).Assembly,
+        typeof(MqPublishRabbitmqProvider).Assembly,
+        typeof(MqExpectRabbitmqProvider).Assembly,
+        typeof(MqPublishNatsProvider).Assembly,
+        typeof(MqExpectNatsProvider).Assembly,
+        typeof(CacheAssertElasticsearchProvider).Assembly,
+        typeof(MqPublishAzureServiceBusProvider).Assembly,
+        typeof(MqExpectAzureServiceBusProvider).Assembly,
+        typeof(MqPublishRedisProvider).Assembly,
+        typeof(MqExpectRedisProvider).Assembly,
+        typeof(MetricsAssertPrometheusProvider).Assembly,
+        typeof(DbAssertDynamodbProvider).Assembly,
+        typeof(StorageAssertS3Provider).Assembly,
+        typeof(TraceExpectOtlpProvider).Assembly,
+        typeof(HttpSoapProvider).Assembly,
+    };
+
+    private static StepKindRegistry FullCoreRegistry() =>
+        StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
+
+    public static IEnumerable<object[]> AllCoreProviderTypes() =>
+        FullCoreRegistry().All.Select(p => new object[] { $"{p.Kind.Family}.{p.Kind.Provider}" });
+
+    /// <summary>
+    /// Guards the exhaustiveness of the theory itself (mirrors
+    /// <c>SchemaStepSurfaceClosureTests.MinimalValidStepDocuments_CoversExactlyTheRegisteredCoreProviders</c>):
+    /// without this, a provider silently absent from discovery would just never
+    /// run its case, rather than failing loudly.
+    /// </summary>
+    [Fact]
+    public void AllCoreProviderTypes_DiscoversExactlyTwentyFive()
+    {
+        Assert.Equal(25, AllCoreProviderTypes().Count());
+    }
+
+    [Theory]
+    [MemberData(nameof(AllCoreProviderTypes))]
+    public void Generate_ForEveryRegisteredCoreType_ProducesSchemaValidDocument(string typeKey)
+    {
+        var registry = FullCoreRegistry();
+        var stepId = "s_" + typeKey.Replace('.', '_').Replace('-', '_');
+
+        var yaml = SuiteScaffolder.Generate(
+            registry,
+            new ScaffoldIntent(Steps: new[] { new ScaffoldStepIntent(stepId, typeKey) }),
+            engineVersion: "round-trip-test");
+
+        var result = DocumentValidator.Validate(yaml, registry);
+
+        Assert.True(
+            result.IsValid,
+            $"{typeKey}: scaffolded document failed schema validation. Errors: "
+            + string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))
+            + $"{Environment.NewLine}--- YAML ---{Environment.NewLine}{yaml}");
+    }
 
     private static ScaffoldIntent MultiTypeIntent() => new(
         Steps: new[]

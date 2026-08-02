@@ -14,7 +14,9 @@
         "expect"
       ],
       "captureSupported": true,
-      "familyIntent": "Query a data store and assert properties of the result set or document."
+      "familyIntent": "Query a data store and assert properties of the result set or document.",
+      "exactlyOneOfGroups": null,
+      "atLeastOneOfGroups": null
     },
     {
       "type": "http.rest",
@@ -31,7 +33,9 @@
         "headers"
       ],
       "captureSupported": true,
-      "familyIntent": "Call HTTP endpoints (REST or SOAP) on services under test and assert responses."
+      "familyIntent": "Call HTTP endpoints (REST or SOAP) on services under test and assert responses.",
+      "exactlyOneOfGroups": null,
+      "atLeastOneOfGroups": null
     },
     {
       "type": "mq-publish.kafka",
@@ -46,7 +50,9 @@
         "payload"
       ],
       "captureSupported": true,
-      "familyIntent": "Publish a message onto a broker to drive the system under test."
+      "familyIntent": "Publish a message onto a broker to drive the system under test.",
+      "exactlyOneOfGroups": null,
+      "atLeastOneOfGroups": null
     }
   ]
 }

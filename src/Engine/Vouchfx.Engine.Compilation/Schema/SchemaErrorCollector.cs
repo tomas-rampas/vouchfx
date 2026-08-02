@@ -1028,10 +1028,43 @@ internal static class SchemaErrorCollector
     /// extractor format is ever added.
     /// </para>
     /// <para>
-    /// Any future <c>properties/&lt;name&gt;: false</c> declaration outside
-    /// all three known containers (or a service-level exclusion other than
-    /// 'project') degrades to naming the property alone — never fabricating
-    /// a rule this method was not told about.
+    /// M5 (gatekeeper, feat/fragment-completeness — gatekeeper dissent
+    /// accepted over the original "measured, degrade-don't-fabricate is
+    /// enough" call): a FOURTH, fully generic branch covers every
+    /// <c>allOf</c>/<c>if</c>/<c>then</c>-declared per-field exclusion
+    /// OUTSIDE the three named containers above — storage-assert.s3's
+    /// <c>size</c>/<c>minSize</c> mutual exclusion and its (and
+    /// db-assert.dynamodb's) <c>exists: false</c>-forbids-content-fields
+    /// shapes, and any future provider using either pattern. Reads the
+    /// offending node's OWN sibling <c>if</c> clause from the live schema
+    /// (<see cref="TryReadSiblingIfClause"/>) and classifies its shape:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>if: {required:[x], properties:{x:{const:v}}}</c> (a CONDITION —
+    ///     storage-assert.s3's and db-assert.dynamodb's <c>exists: false</c>
+    ///     shapes) → <c>Property 'item' is not valid when 'exists' is
+    ///     false</c> (<see cref="TryReadSingleConstCondition"/>).
+    ///   </item>
+    ///   <item>
+    ///     <c>if: {required:[x]}</c> and NOTHING else (a plain co-presence
+    ///     exclusion — storage-assert.s3's <c>size</c>/<c>minSize</c> shape)
+    ///     → <c>Property 'minSize' cannot be combined with 'size' — exactly
+    ///     one of the two may be set</c>
+    ///     (<see cref="TryReadSoleRequiredNoOtherContent"/>).
+    ///   </item>
+    /// </list>
+    /// Both helpers mirror <see cref="EngineExport.TryReadSingleRequiredGroupNames"/>'s
+    /// OWN "exactly one property, no other content" strictness (independently
+    /// implemented — this class has no dependency on
+    /// <c>Vouchfx.Engine.Compilation.Schema.EngineExport</c>'s internals) —
+    /// never widened to guess at a more complex condition.
+    /// </para>
+    /// <para>
+    /// Any future <c>properties/&lt;name&gt;: false</c> declaration whose
+    /// sibling <c>if</c> matches NEITHER shape above (outside all three named
+    /// containers, plus this fourth generic case) degrades to naming the
+    /// property alone — never fabricating a rule this method was not told
+    /// about.
     /// </para>
     /// </remarks>
     private static string FormatForbiddenPropertyError(
@@ -1075,7 +1108,180 @@ internal static class SchemaErrorCollector
             return $"[properties] Property '{propertyName}' is not valid on capture entry '{variableName}'";
         }
 
+        // M5: the generic allOf/if/then exclusion case (storage-assert.s3's
+        // size/minSize and exists:false shapes; db-assert.dynamodb's exists:false
+        // shape) — read the sibling 'if' condition directly from the live schema.
+        if (schema is { } schemaRootForIf)
+        {
+            var ifClause = TryReadSiblingIfClause(schemaRootForIf, schemaLocation);
+            if (ifClause is { } ifElement)
+            {
+                if (TryReadSingleConstCondition(ifElement, out var conditionField, out var conditionValueDisplay))
+                {
+                    return $"[properties] Property '{propertyName}' is not valid when " +
+                           $"'{conditionField}' is {conditionValueDisplay}";
+                }
+
+                if (TryReadSoleRequiredNoOtherContent(ifElement, out var otherField))
+                {
+                    return $"[properties] Property '{propertyName}' cannot be combined with " +
+                           $"'{otherField}' — exactly one of the two may be set";
+                }
+            }
+        }
+
         return $"[properties] Property '{propertyName}' is not valid here";
+    }
+
+    /// <summary>
+    /// Resolves the sibling <c>if</c> clause of the <c>allOf/&lt;N&gt;/then</c>
+    /// branch a forbidden-property node's own <paramref name="schemaLocation"/>
+    /// sits inside — the SAME <c>allOf</c> index, navigated to <c>/if</c>
+    /// instead of <c>/then/...</c>. Returns <see langword="null"/> when the
+    /// pointer carries no <c>/allOf/&lt;N&gt;/</c> segment, or the resolved
+    /// node is not an object (never guessed).
+    /// </summary>
+    /// <remarks>
+    /// Uses the LAST <c>/allOf/</c> occurrence in the pointer, not the first:
+    /// a nested provider field (e.g. db-assert.dynamodb's <c>expect.item</c>)
+    /// sits inside BOTH the step-level <c>$defs/step/allOf/&lt;N&gt;</c>
+    /// type-discriminator (matching <c>type: db-assert.dynamodb</c>) AND the
+    /// provider's own NESTED <c>expect.allOf/0</c> — the first (outer)
+    /// occurrence resolves to the type discriminator's <c>if</c>
+    /// (<c>{"required":["type"],"properties":{"type":{"const":"db-assert.dynamodb"}}}</c>),
+    /// producing the wrong, misleading condition ("is not valid when 'type'
+    /// is 'db-assert.dynamodb'" — true of every field on the type, not the
+    /// actual <c>exists: false</c> rule). Verified empirically (this exact
+    /// wrong output was observed before the fix — see
+    /// <c>DbAssertDynamodb_ExistsFalse_WithItem_IsRejected</c> /
+    /// <c>StorageAssertS3_*</c> in <c>SchemaValidateConstraintsTests</c>); the
+    /// LAST occurrence is always the innermost, most-specific <c>allOf</c> —
+    /// the one that actually produced this forbidden-property node.
+    /// </remarks>
+    private static JsonElement? TryReadSiblingIfClause(JsonElement schemaRoot, Uri schemaLocation)
+    {
+        var fragment = schemaLocation.Fragment;
+        if (fragment.Length == 0)
+        {
+            return null;
+        }
+
+        var pointer = Uri.UnescapeDataString(fragment.TrimStart('#'));
+        const string allOfMarker = "/allOf/";
+        var allOfIndex = pointer.LastIndexOf(allOfMarker, StringComparison.Ordinal);
+        if (allOfIndex < 0)
+        {
+            return null;
+        }
+
+        var afterAllOf = pointer[(allOfIndex + allOfMarker.Length)..];
+        var slashIndex = afterAllOf.IndexOf('/');
+        var indexSegment = slashIndex < 0 ? afterAllOf : afterAllOf[..slashIndex];
+        var ifPointer = pointer[..allOfIndex] + allOfMarker + indexSegment + "/if";
+
+        return TryResolvePointer(schemaRoot, ifPointer, out var ifNode) && ifNode.ValueKind == JsonValueKind.Object
+            ? ifNode
+            : null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="ifClause"/> is shaped EXACTLY
+    /// <c>{"required": ["field"], "properties": {"field": {"const": value}}}</c>
+    /// — a condition on ONE field's exact value (storage-assert.s3's and
+    /// db-assert.dynamodb's <c>exists: false</c> shapes) — and, when so,
+    /// outputs the condition field's name and a display-ready rendering of
+    /// its <c>const</c> value (<c>true</c>/<c>false</c> bare, a string
+    /// single-quoted, a number verbatim). Requires EXACTLY one
+    /// <c>const</c>-bearing property under <c>properties</c> — two or more
+    /// is ambiguous and degrades (returns <see langword="false"/>) rather
+    /// than guessing which one is "the" condition.
+    /// </summary>
+    private static bool TryReadSingleConstCondition(
+        JsonElement ifClause, out string fieldName, out string constDisplay)
+    {
+        fieldName = string.Empty;
+        constDisplay = string.Empty;
+
+        if (!ifClause.TryGetProperty("properties", out var properties) ||
+            properties.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        JsonProperty? conditionProperty = null;
+        foreach (var property in properties.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Object || !property.Value.TryGetProperty("const", out _))
+            {
+                continue;
+            }
+
+            if (conditionProperty is not null)
+            {
+                // Two-or-more const-bearing properties: ambiguous, degrade.
+                return false;
+            }
+
+            conditionProperty = property;
+        }
+
+        if (conditionProperty is not { } found)
+        {
+            return false;
+        }
+
+        var constElement = found.Value.GetProperty("const");
+        fieldName = found.Name;
+        constDisplay = constElement.ValueKind switch
+        {
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.String => $"'{constElement.GetString()}'",
+            JsonValueKind.Number => constElement.GetRawText(),
+            _ => constElement.GetRawText(),
+        };
+
+        return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="ifClause"/> is shaped EXACTLY
+    /// <c>{"required": ["field"]}</c> — a plain co-presence exclusion with NO
+    /// other content (storage-assert.s3's <c>size</c>/<c>minSize</c> shape) —
+    /// mirrors <c>EngineExport.TryReadSingleRequiredGroupNames</c>'s own
+    /// "exactly one property, no other content" strictness (M1-style
+    /// tightening applied here too, not only in the catalogue exporter).
+    /// </summary>
+    private static bool TryReadSoleRequiredNoOtherContent(JsonElement ifClause, out string fieldName)
+    {
+        fieldName = string.Empty;
+
+        var propertyCount = 0;
+        JsonElement? requiredArray = null;
+        foreach (var property in ifClause.EnumerateObject())
+        {
+            propertyCount++;
+            if (propertyCount > 1 || !string.Equals(property.Name, "required", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            requiredArray = property.Value;
+        }
+
+        if (requiredArray is not { ValueKind: JsonValueKind.Array } array || array.GetArrayLength() != 1)
+        {
+            return false;
+        }
+
+        var only = array[0];
+        if (only.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(only.GetString()))
+        {
+            return false;
+        }
+
+        fieldName = only.GetString()!;
+        return true;
     }
 
     /// <summary>

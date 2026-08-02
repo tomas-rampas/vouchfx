@@ -1,0 +1,16 @@
+# expected-instance-location: /steps/0/match/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): webhook-listen.http's
+# 'match' block used to declare its own "additionalProperties": true, so an
+# unknown key alongside a real criterion (here, 'method') was silently
+# accepted. additionalProperties is now false.
+metadata:
+  name: rejected-match-unknown-key-webhook-listen-http
+steps:
+  - id: expect-webhook
+    type: webhook-listen.http
+    listener: orders-webhook
+    match:
+      method: POST
+      extra: oops

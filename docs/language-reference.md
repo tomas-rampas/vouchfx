@@ -56,6 +56,8 @@ Registered step types (25):
 
 ### `cache-assert.elasticsearch`
 
+Queries an Elasticsearch index and asserts on the resulting hit count and/or selected _source field values.
+
 Set `type: cache-assert.elasticsearch` to use this step.
 
 **Required fields**
@@ -63,7 +65,7 @@ Set `type: cache-assert.elasticsearch` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `expect` | `object` | Expected result-set characteristics. |
-| `index` | `string` | Elasticsearch index to query. |
+| `index` | `string` | Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed. |
 | `target` | `string` | Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries. |
 
 **Optional fields**
@@ -73,6 +75,8 @@ Set `type: cache-assert.elasticsearch` to use this step.
 | `query` | `string` | Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{"query":{"match":{"status":"active"}}}'). When absent a match_all query is used. May contain {placeholder} tokens resolved at execution time. |
 
 ### `cache-assert.redis`
+
+Inspects a Redis key (GET/EXISTS/TTL/HGET/HLEN/LLEN/SCARD) and asserts on the result.
 
 Set `type: cache-assert.redis` to use this step.
 
@@ -93,6 +97,8 @@ Set `type: cache-assert.redis` to use this step.
 
 ### `db-assert.dynamodb`
 
+Fetches a single item from a DynamoDB table by primary key (GetItem) and asserts on its existence and/or attribute values.
+
 Set `type: db-assert.dynamodb` to use this step.
 
 **Required fields**
@@ -106,6 +112,8 @@ Set `type: db-assert.dynamodb` to use this step.
 
 ### `db-assert.mongodb`
 
+Runs a filter query against a MongoDB collection and asserts on the matched document count and/or the first matched document's field values.
+
 Set `type: db-assert.mongodb` to use this step.
 
 **Required fields**
@@ -118,6 +126,8 @@ Set `type: db-assert.mongodb` to use this step.
 | `target` | `string` | Logical name of the mongodb dependency to query, as declared under environment.dependencies. |
 
 ### `db-assert.mysql`
+
+Runs a parameterised SQL query against a MySQL dependency and asserts on the returned row count and/or first row's column values.
 
 Set `type: db-assert.mysql` to use this step.
 
@@ -137,6 +147,8 @@ Set `type: db-assert.mysql` to use this step.
 
 ### `db-assert.postgres`
 
+Runs a parameterised SQL query against a Postgres dependency and asserts on the returned row count and/or first row's column values.
+
 Set `type: db-assert.postgres` to use this step.
 
 **Required fields**
@@ -154,6 +166,8 @@ Set `type: db-assert.postgres` to use this step.
 | `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
 
 ### `db-assert.sqlserver`
+
+Runs a parameterised SQL query against a SQL Server dependency and asserts on the returned row count and/or first row's column values.
 
 Set `type: db-assert.sqlserver` to use this step.
 
@@ -173,6 +187,8 @@ Set `type: db-assert.sqlserver` to use this step.
 
 ### `http.rest`
 
+Issues an HTTP request to a logically-named service and optionally asserts on the response status.
+
 Set `type: http.rest` to use this step.
 
 **Required fields**
@@ -180,7 +196,7 @@ Set `type: http.rest` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `method` | `string` | The HTTP verb. |
-| `path` | `string` | The request path; may contain variable placeholders. |
+| `path` | `string` | The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
 | `target` | `string` | Logical name of the service to call, as declared under environment.services. |
 
 **Optional fields**
@@ -193,6 +209,8 @@ Set `type: http.rest` to use this step.
 
 ### `http.soap`
 
+Issues a SOAP request (a raw, author-supplied envelope) to a logically-named service and optionally asserts on the response status, fault presence, and XPath-selected values.
+
 Set `type: http.soap` to use this step.
 
 **Required fields**
@@ -200,7 +218,7 @@ Set `type: http.soap` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `envelope` | `string` | The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens. |
-| `path` | `string` | The request path; may contain {placeholder} and ${secret:...} tokens. |
+| `path` | `string` | The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
 | `target` | `string` | Logical name of the service to call, as declared under environment.services. |
 
 **Optional fields**
@@ -211,6 +229,8 @@ Set `type: http.soap` to use this step.
 | `expect` | `object` | Optional assertion block applied to the SOAP response. |
 
 ### `mail-expect.smtp`
+
+Queries a Mailpit inbox and asserts that at least one (or a declared count of) captured message matches the declared criteria.
 
 Set `type: mail-expect.smtp` to use this step.
 
@@ -240,13 +260,20 @@ Set `type: metrics-assert.prometheus` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `labels` | `object` | Optional map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels). Values may contain {placeholder} and ${secret:source/path} tokens. |
-| `path` | `string` | The scrape path. May contain {placeholder} and ${secret:source/path} tokens. Defaults to '/metrics' when omitted. |
+| `path` | `string` | The scrape path. May contain {placeholder} and ${secret:source/path} tokens. Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
 
 ### `mq-expect.azureservicebus`
 
 Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations. Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached. Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.
 
 Set `type: mq-expect.azureservicebus` to use this step.
+
+**Required — at least one of:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `expectPayloadContains` | `string` \| `integer` \| `number` \| `boolean` | Optional substring the message body must contain for a match. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way. |
+| `expectProperties` | `object` | Optional application-property key=value pairs all of which must be present on the matched message. Values may contain {placeholder} and ${secret:source/path} tokens. |
 
 **Required fields**
 
@@ -258,13 +285,13 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `expectPayloadContains` | `string` | Optional substring the message body must contain for a match. May contain {placeholder} and ${secret:source/path} tokens. |
-| `expectProperties` | `object` | Optional application-property key=value pairs all of which must be present on the matched message. Values may contain {placeholder} and ${secret:source/path} tokens. |
 | `queue` | `string` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. |
 | `subscription` | `string` | The subscription on the topic to peek. Required when 'topic' is set. May contain {placeholder} substitution tokens. |
 | `topic` | `string` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. |
 
 ### `mq-expect.kafka`
+
+Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.
 
 Set `type: mq-expect.kafka` to use this step.
 
@@ -304,6 +331,8 @@ Set `type: mq-expect.nats` to use this step.
 
 ### `mq-expect.rabbitmq`
 
+Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).
+
 Set `type: mq-expect.rabbitmq` to use this step.
 
 **Required fields**
@@ -334,11 +363,18 @@ Publishes one UTF-8 message to an Azure Service Bus queue or topic. A Pass verdi
 
 Set `type: mq-publish.azureservicebus` to use this step.
 
+**Required — exactly one of:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `queue` | `string` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
+| `topic` | `string` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
+
 **Required fields**
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `payload` | `string` | The message body sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. |
+| `payload` | `string` \| `integer` \| `number` \| `boolean` | The message body sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `target` | `string` | Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies. |
 
 **Optional fields**
@@ -346,10 +382,10 @@ Set `type: mq-publish.azureservicebus` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `properties` | `object` | Optional application properties to attach to the message (string key=value pairs). Values may contain {placeholder} and ${secret:source/path} tokens. |
-| `queue` | `string` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
-| `topic` | `string` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
 
 ### `mq-publish.kafka`
+
+Publishes one UTF-8 message to a Kafka topic, either as a plain string value or as an Avro-encoded value via a schema registry. A Pass verdict confirms hand-off to the broker; verify delivery with a following mq-expect.kafka step.
 
 Set `type: mq-publish.kafka` to use this step.
 
@@ -357,7 +393,7 @@ Set `type: mq-publish.kafka` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `payload` | `string` | The message payload sent as the Kafka message value. A UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:source/path} tokens. |
+| `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as the Kafka message value. A UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `target` | `string` | Logical name of the kafka dependency to publish to, as declared under environment.dependencies. |
 | `topic` | `string` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. |
 
@@ -367,7 +403,7 @@ Set `type: mq-publish.kafka` to use this step.
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
 | `headers` | `object` | Optional map of message header names to their string values. |
-| `key` | `string` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. |
+| `key` | `string` \| `integer` \| `number` \| `boolean` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 
 ### `mq-publish.nats`
 
@@ -379,7 +415,7 @@ Set `type: mq-publish.nats` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `payload` | `string` | The message payload sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. |
+| `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as UTF-8 bytes. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `subject` | `string` | The NATS JetStream subject to publish to. May contain {placeholder} and ${secret:source/path} tokens. |
 | `target` | `string` | Logical name of the nats dependency to publish to, as declared under environment.dependencies. |
 
@@ -399,7 +435,7 @@ Set `type: mq-publish.rabbitmq` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `payload` | `string` | The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. |
+| `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `routingKey` | `string` | The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens. |
 | `target` | `string` | Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies. |
 
@@ -420,19 +456,21 @@ Set `type: mq-publish.redis` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `payload` | `string` | The message payload, written as the UTF-8 string value of the canonical 'payload' stream field. May contain {placeholder} and ${secret:source/path} tokens. |
+| `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload, written as the UTF-8 string value of the canonical 'payload' stream field. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `stream` | `string` | The Redis Stream key to XADD to. May contain {placeholder} and ${secret:source/path} tokens. XADD creates the stream automatically when it does not yet exist. |
 | `target` | `string` | Logical name of the redis dependency to publish to, as declared under environment.dependencies. |
 
 ### `script.csharp`
 
+Runs an author-supplied C# snippet — given inline or as a path to an external .csx file — against the shared step context. Exactly one of 'code' or 'file' must be set.
+
 Set `type: script.csharp` to use this step.
 
-**Optional fields**
+**Required — exactly one of:**
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `code` | `string` | Inline C# code block executed inside the compiled CSX submission. Has access to the shared Vars dictionary. Mutually exclusive with 'file'. |
+| `code` | `string` | Inline C# code block executed inside the compiled CSX submission. Has access to the shared Vars dictionary. Mutually exclusive with 'file'. Capped at 64 KiB (a plain resource bound, not a security control). |
 | `file` | `string` | Path to an external .csx file, resolved relative to the .e2e.yaml file's directory. Read once at compile time and spliced verbatim, exactly like 'code'. Mutually exclusive with 'code'. |
 
 ### `storage-assert.s3`
@@ -452,6 +490,8 @@ Set `type: storage-assert.s3` to use this step.
 
 ### `trace-expect.otlp`
 
+Asserts that a captured OTLP span from a specific trace matches the declared criteria (service name, span name, and/or attributes).
+
 Set `type: trace-expect.otlp` to use this step.
 
 **Required fields**
@@ -462,6 +502,8 @@ Set `type: trace-expect.otlp` to use this step.
 | `receiver` | `string` | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::<receiver>}"). |
 
 ### `webhook-listen.http`
+
+Asserts that a captured inbound HTTP request against a host-owned webhook listener matches the declared criteria (method, path, headers, and/or body substring).
 
 Set `type: webhook-listen.http` to use this step.
 

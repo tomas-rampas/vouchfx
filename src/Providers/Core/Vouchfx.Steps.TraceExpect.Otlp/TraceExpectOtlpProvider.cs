@@ -124,12 +124,14 @@ public sealed class TraceExpectOtlpProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Asserts that a captured OTLP span from a specific trace matches the declared criteria (service name, span name, and/or attributes).",
           "type": "object",
           "required": ["receiver", "match"],
           "properties": {
             "receiver": {
               "description": "Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: \"{svc::<receiver>}\").",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "match": {
               "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
@@ -138,7 +140,8 @@ public sealed class TraceExpectOtlpProvider
               "properties": {
                 "traceId": {
                   "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "service": {
                   "description": "Optional expected exporting-resource service name (the span's resource-level service.name attribute). May contain {placeholder} and ${secret:source/path} tokens.",
@@ -151,10 +154,10 @@ public sealed class TraceExpectOtlpProvider
                 "attributes": {
                   "description": "Optional map of expected span-attribute key to expected string value (subset match — the real span may carry additional attributes not mentioned here). Each value may contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

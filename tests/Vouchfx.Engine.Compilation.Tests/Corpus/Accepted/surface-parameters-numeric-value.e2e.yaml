@@ -1,0 +1,23 @@
+# Scalar-coercion widening (T2a, feat/fragment-completeness): db-assert.postgres's
+# 'parameters' additionalProperties now accepts ["string","integer","number","boolean"]
+# — schema ≡ parser. The binder reads parameter values via a raw YamlScalarNode
+# cast regardless of the YAML value's declared type, so a numeric parameter
+# value already worked at runtime; it previously failed only at this schema gate.
+# Formerly scalar-coercion-parameters-numeric-value.e2e.yaml (pinned as a
+# still-rejected case by SchemaAcceptedCorpusTests); promoted into the plain
+# accepted set now that the widening has landed.
+metadata:
+  name: surface-parameters-numeric-value
+environment:
+  dependencies:
+    orders-db:
+      type: postgres
+steps:
+  - id: assert-order
+    type: db-assert.postgres
+    target: orders-db
+    query: "SELECT * FROM orders WHERE id = @id"
+    parameters:
+      id: 42
+    expect:
+      rowCount: 1

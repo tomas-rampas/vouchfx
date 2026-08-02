@@ -83,11 +83,13 @@ public sealed class MqExpectNatsProvider
           "properties": {
             "target": {
               "description": "Logical name of the nats dependency to consume from, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "subject": {
               "description": "The NATS JetStream subject to filter messages on.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "stream": {
               "description": "Optional JetStream stream name.  When absent, derived from 'subject' (same rule as mq-publish.nats).",
@@ -96,18 +98,19 @@ public sealed class MqExpectNatsProvider
             "match": {
               "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "payloadContains": {
-                  "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
                   "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

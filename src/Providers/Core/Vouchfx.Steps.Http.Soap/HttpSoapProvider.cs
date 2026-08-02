@@ -93,16 +93,19 @@ public sealed class HttpSoapProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Issues a SOAP request (a raw, author-supplied envelope) to a logically-named service and optionally asserts on the response status, fault presence, and XPath-selected values.",
           "type": "object",
           "required": ["target", "path", "envelope"],
           "properties": {
             "target": {
               "description": "Logical name of the service to call, as declared under environment.services.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "path": {
-              "description": "The request path; may contain {placeholder} and ${secret:...} tokens.",
-              "type": "string"
+              "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "type": "string",
+              "pattern": "^/(?!/)[^\\\\]*$"
             },
             "action": {
               "description": "Optional SOAPAction header value (SOAP 1.1 convention), sent quoted per spec. May contain {placeholder} and ${secret:source/path} tokens.",
@@ -110,19 +113,23 @@ public sealed class HttpSoapProvider
             },
             "envelope": {
               "description": "The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expect": {
               "description": "Optional assertion block applied to the SOAP response.",
               "type": "object",
               "properties": {
                 "status": {
-                  "description": "Expected HTTP status code. Defaults to 200 when omitted.",
-                  "type": "integer"
+                  "description": "Expected HTTP status code. Defaults to 200 when omitted. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
+                  "pattern": "^[0-9]+$",
+                  "default": 200
                 },
                 "fault": {
                   "description": "Whether the response is expected to contain a SOAP Fault element. Defaults to false.",
-                  "type": "boolean"
+                  "type": "boolean",
+                  "default": false
                 },
                 "xpath": {
                   "description": "List of {path, value} assertions evaluated against the response envelope, after the status and fault-expectation checks both pass.",
@@ -131,12 +138,21 @@ public sealed class HttpSoapProvider
                     "type": "object",
                     "required": ["path", "value"],
                     "properties": {
-                      "path": { "type": "string" },
-                      "value": { "type": "string" }
-                    }
+                      "path": {
+                        "description": "An XPath expression evaluated against the response envelope.",
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "value": {
+                        "description": "The expected value at 'path' (compared as text). May be written as a bare number/boolean scalar; it is matched as text either way.",
+                        "type": ["string", "integer", "number", "boolean"]
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 }
-              }
+              },
+              "additionalProperties": false
             }
           }
         }

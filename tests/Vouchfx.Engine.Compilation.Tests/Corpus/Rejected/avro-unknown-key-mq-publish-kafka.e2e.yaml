@@ -1,0 +1,26 @@
+# expected-instance-location: /steps/0/avro/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): mq-publish.kafka's
+# 'avro' block used to declare its own "additionalProperties": true, so an
+# unknown key alongside the required schemaRegistry/subject/schema/record set
+# was silently accepted. additionalProperties is now false.
+metadata:
+  name: rejected-avro-unknown-key-mq-publish-kafka
+environment:
+  dependencies:
+    orders-kafka:
+      type: kafka
+steps:
+  - id: publish-order
+    type: mq-publish.kafka
+    target: orders-kafka
+    topic: orders
+    payload: "{\"id\":1}"
+    avro:
+      schemaRegistry: orders-kafka
+      subject: orders-value
+      schema: "{\"type\":\"record\",\"name\":\"Order\",\"fields\":[]}"
+      record:
+        id: "1"
+      extra: oops
