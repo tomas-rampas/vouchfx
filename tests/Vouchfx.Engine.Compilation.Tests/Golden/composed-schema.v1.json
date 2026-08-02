@@ -196,11 +196,14 @@
               "boolean"
             ]
           }
+        },
+        "security": {
+          "$ref": "#/$defs/security"
         }
       }
     },
     "dependency": {
-      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the six fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind.",
+      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind.",
       "$comment": "Mirrors the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). Authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. A misspelled/unsupported key was previously swept silently into the parser's Extra bucket and never reached any provider; it is now rejected here. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field.",
       "required": [
         "type"
@@ -305,6 +308,9 @@
               }
             }
           }
+        },
+        "security": {
+          "$ref": "#/$defs/security"
         }
       },
       "allOf": [
@@ -566,6 +572,119 @@
           }
         }
       ]
+    },
+    "security": {
+      "description": "Declares transport security (TLS or mutual TLS) for this dependency's or service's endpoint. Optional; omitting this block preserves today's unauthenticated-by-default behaviour unchanged. The set of fields required or forbidden is fixed per 'mode', so an author can tell, without running anything, which combination validates: 'mode' and 'endpoint' are required whenever this block is present, for both modes; 'caCert' is always optional, for both modes; 'clientCert' and 'clientKey' are required together for mode 'mtls' and forbidden for mode 'tls'. Declaring 'security' does not, by itself, cause the engine to secure an engine-provisioned dependency's own listener — it declares the CLIENT-side expectation for infrastructure whose server side is already secured, such as a custom 'image'/'project' the author has configured for TLS themselves. The engine does not provision server-side TLS for any managed dependency kind, so 'security' on such a kind states an expectation the engine will confirm at run time, never one it creates.",
+      "$comment": "The mtls-requires/tls-forbids clauses below mirror the same per-field boolean 'false' subschema idiom used by db-assert.dynamodb's and storage-assert.s3's own 'expect.exists: false' forbidden-property clauses (see those providers' SchemaFragment) and by $defs/dependency's own per-kind allOf above — a boolean 'false' subschema reliably attaches one correctly-located error exactly at the offending field, where a 'not'/'oneOf' negation would not (see SchemaErrorCollector's own remarks). Declared as its own $def (rather than inlined separately into $defs/service and $defs/dependency) so both containers share exactly one copy of the mode-conditional logic, and so SchemaErrorCollector's TryReadSiblingIfClause (which reads the LAST '/allOf/' segment of the failing node's own schema pointer) resolves unambiguously to THIS def's own allOf, never an outer container's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "endpoint"
+      ],
+      "properties": {
+        "mode": {
+          "description": "The transport security mode: 'tls' for server-side TLS only, or 'mtls' for mutual TLS, which additionally presents a client certificate. Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "type": "string",
+          "enum": [
+            "tls",
+            "mtls"
+          ]
+        },
+        "endpoint": {
+          "description": "The secured endpoint to connect to: either a port number, or the name of a declared endpoint. Required whenever this security block is present, for both modes — there is no implicit default endpoint, since an infrastructure's plaintext listener may remain reachable alongside its secured one, and silently resolving to it would authenticate nothing. Write a port as a BARE decimal integer with NO leading zeros, e.g. '8080' — quoting does NOT fix a leading-zero port, it only changes what the value MEANS (see below). A bare leading-zero value is read using YAML's own octal convention rather than decimal, so a bare '0123' is checked here as 83 while the engine reads the raw text '0123' — the two layers disagree. A bare leading-zero value containing an 8 or 9 (not a valid octal digit, e.g. '08080') fails YAML deserialisation outright, before this schema's own range checking below even runs — but a bare leading-zero value using only octal digits does NOT fail: '070000' is silently checked here as octal 28672, which PASSES the range check below even though the decimal port an author most likely meant (70000) would not. Quoting never fixes any of this, because it does not make the value decimal — it makes the value a NAME: a quoted value is checked against the string branch below, which carries no digit pattern and so applies NO port-range checking at all. '\"70000\"' and '\"08080\"' both validate as endpoint names, indistinguishable here from an unambiguous name such as '\"kafka-ssl\"' — never as the ports their digits suggest — while the equivalent bare '70000' is correctly rejected by the range below. This deliberately differs from the service-level 'httpPort' field, whose digit pattern keeps a quoted numeric value a PORT — here, quoting always produces a NAME.",
+          "$comment": "A SINGLE merged schema, not a two-branch 'oneOf', mirroring $defs/service's own 'httpPort' idiom (see that field's remarks): 'minimum'/'maximum' are no-ops against a non-number instance and 'minLength' is a no-op against a non-string instance (JSON Schema draft 2020-12 §6.2/§6.3), so one schema carrying all three keywords accepts exactly the same integer/string shapes a two-branch oneOf did, with no spurious second error. Unlike 'httpPort', deliberately carries NO digit 'pattern' on the string branch: an endpoint NAME (e.g. 'kafka-ssl') is just as legal as a numeric-looking string, so a pattern restricting the string branch to digits would wrongly reject it.",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "maximum": 65535,
+          "minLength": 1
+        },
+        "caCert": {
+          "description": "Path to a CA certificate file (trust anchor) presented by the peer, resolved relative to the directory containing this suite's .e2e.yaml file. Optional for both 'tls' and 'mtls': omitting it is a normal, valid configuration, not an incomplete one — the relevant CA may already be inside a declared truststore/keystore, or already trusted by the platform's own default trust store. When omitted, no path is synthesised, defaulted, or checked; the consuming client simply falls back to whatever trust material is already available.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clientCert": {
+          "description": "Path to the client certificate file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientKey', and only for mode 'mtls' — mutual TLS's whole point is presenting a client identity. Not applicable to mode 'tls', where declaring it is rejected outright: a field that does nothing must not silently validate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clientKey": {
+          "description": "Path to the client private key file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientCert', and only for mode 'mtls'. Not applicable to mode 'tls', where declaring it is rejected outright.",
+          "type": "string",
+          "minLength": 1
+        },
+        "serverArtifacts": {
+          "description": "Host files copied into the container at topology-build time — for example a Java keystore backing a broker's own TLS listener — each identified by a host source path and an in-container target path. A binary artefact (such as a JKS keystore) cannot be declared inline as YAML text; only a host file path is accepted.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/securityServerArtifact"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "mtls"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "clientCert",
+              "clientKey"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "tls"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "clientCert": false,
+              "clientKey": false
+            }
+          }
+        }
+      ]
+    },
+    "securityServerArtifact": {
+      "description": "A single host-file-to-container-path copy declared under security.serverArtifacts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ],
+      "properties": {
+        "source": {
+          "description": "Host path of the file to copy, resolved relative to the directory containing this suite's .e2e.yaml file. Must resolve to a path inside that directory.",
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "description": "The absolute path inside the container that the file is copied to.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/"
+        }
+      }
     },
     "step": {
       "description": "A single typed step in the test sequence.",

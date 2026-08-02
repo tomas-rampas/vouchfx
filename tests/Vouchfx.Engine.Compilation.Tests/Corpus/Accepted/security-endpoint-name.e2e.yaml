@@ -1,0 +1,17 @@
+# Surface coverage: security.endpoint as a NON-NUMERIC endpoint NAME rather than a port
+# number — $defs/security's own 'endpoint' description states it may be "either a port
+# number, or the name of a declared endpoint"; a named endpoint (e.g. a broker's own
+# SSL-listener name) is exactly as legal here as a numeric port.
+metadata:
+  name: security-endpoint-name
+environment:
+  dependencies:
+    events:
+      type: kafka
+      security:
+        mode: tls
+        endpoint: kafka-ssl
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

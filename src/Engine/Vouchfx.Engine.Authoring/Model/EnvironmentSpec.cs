@@ -79,7 +79,24 @@ public sealed record ServiceSpec(
     string? Project,
     string? ImagePullPolicy,
     int? HttpPort,
-    IReadOnlyDictionary<string, string>? Env);
+    IReadOnlyDictionary<string, string>? Env)
+{
+    /// <summary>
+    /// Optional transport security declaration (TLS/mTLS) for this service's endpoint
+    /// (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/> when
+    /// the service declares no <c>security:</c> block — today's unauthenticated-by-default
+    /// behaviour is unchanged.
+    /// </summary>
+    /// <remarks>
+    /// Declared as an init-only property rather than a positional record parameter,
+    /// mirroring <see cref="DependencySpec.Image"/>'s own remarks: this record lives in a
+    /// packable assembly, and inserting a new positional parameter would change the
+    /// primary constructor's parameter order/arity and the compiler-generated
+    /// <c>Deconstruct</c> — a binary-breaking change for any already-compiled caller. An
+    /// init-only property is purely additive.
+    /// </remarks>
+    public SecuritySpec? Security { get; init; }
+}
 
 /// <summary>
 /// Specification for a managed Aspire dependency (§3.2).
@@ -137,4 +154,18 @@ public sealed record DependencySpec(
     /// caller. An init-only property is purely additive.
     /// </remarks>
     public string? Image { get; init; }
+
+    /// <summary>
+    /// Optional transport security declaration (TLS/mTLS) for this dependency's
+    /// endpoint (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/>
+    /// when the dependency declares no <c>security:</c> block — today's
+    /// unauthenticated-by-default behaviour is unchanged. Kind-generic: every one of
+    /// the thirteen dependency kinds accepts this field, unlike <see cref="Extra"/>'s
+    /// per-kind-restricted siblings (<c>schemaRegistry</c>, <c>queues</c>, <c>topics</c>).
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Image"/> — see its own remarks.
+    /// </remarks>
+    public SecuritySpec? Security { get; init; }
 }

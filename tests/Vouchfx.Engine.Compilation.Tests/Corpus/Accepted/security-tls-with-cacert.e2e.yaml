@@ -1,0 +1,17 @@
+# Surface coverage: security.mode: tls WITH an explicit caCert declared — the
+# complementary shape to security-dependency-tls-no-cacert.e2e.yaml (caCert is legal
+# under tls whether present or absent; only its presence differs between the two).
+metadata:
+  name: security-tls-with-cacert
+environment:
+  dependencies:
+    search:
+      type: redis
+      security:
+        mode: tls
+        endpoint: 6380
+        caCert: ./certs/ca.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

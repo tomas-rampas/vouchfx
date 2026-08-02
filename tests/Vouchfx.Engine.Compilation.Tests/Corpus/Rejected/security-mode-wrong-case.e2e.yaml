@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/services/app/security/mode
+# expected-keyword: enum
+#
+# 'mode' is matched case-sensitively, like every other DSL vocabulary term (dependency
+# type, imagePullPolicy, verifyMode) since the pre-GA schema tightening series. 'TLS'
+# (upper-case) is not one of the two recognised values ('tls', 'mtls') and is rejected
+# here rather than silently normalised.
+metadata:
+  name: rejected-security-mode-wrong-case
+environment:
+  services:
+    app:
+      image: myorg/app:1.0
+      security:
+        mode: TLS
+        endpoint: 8443
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

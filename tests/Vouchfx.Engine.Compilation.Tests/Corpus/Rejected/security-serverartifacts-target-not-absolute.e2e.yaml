@@ -1,0 +1,22 @@
+# expected-instance-location: /environment/dependencies/events-kafka/security/serverArtifacts/0/target
+# expected-keyword: pattern
+#
+# $defs/securityServerArtifact's 'target' is a path INSIDE the container, which is always
+# absolute (POSIX, so a leading '/') — 'pattern: ^/' enforces this at schema time. A
+# relative target (no leading '/') is rejected here.
+metadata:
+  name: rejected-security-serverartifacts-target-not-absolute
+environment:
+  dependencies:
+    events-kafka:
+      type: kafka
+      security:
+        mode: tls
+        endpoint: 9093
+        serverArtifacts:
+          - source: ./certs/kafka.server.keystore.jks
+            target: relative/path.jks
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."
