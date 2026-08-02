@@ -197,8 +197,10 @@ public sealed class SuiteTopology : IAsyncDisposable
 
         // ----------------------------------------------------------------
         // Step 1: Map the EnvironmentSpec → Configure callback + gate list + resolver.
-        // EnvironmentMapper.Map is pure (no I/O) so exceptions here are ArgumentExceptions,
-        // not OrchestrationExceptions — let them propagate as-is to the caller.
+        // EnvironmentMapper.Map reads the process environment for ${env:...} references
+        // (REQ-006) but performs no container/network I/O, so exceptions here are still
+        // ArgumentExceptions, not OrchestrationExceptions — let them propagate as-is to
+        // the caller.
         // ----------------------------------------------------------------
         var mapped = EnvironmentMapper.Map(environment);
 

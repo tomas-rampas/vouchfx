@@ -241,7 +241,20 @@ public sealed class HttpSoapProvider
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(model.Target))
+        {
             errors.Add("http.soap: 'target' must not be empty.");
+        }
+        else if (!ctx.DeclaredServices.ContainsKey(model.Target) &&
+                 !ctx.DeclaredDependencies.ContainsKey(model.Target))
+        {
+            // REQ-012/EDGE-009 (services-generalisation spec): close the previously
+            // unvalidated-target hole — mirrors HttpRestProvider.Validate's own identical
+            // fix and rationale.
+            errors.Add(
+                $"http.soap: 'target' '{model.Target}' names neither a declared service in " +
+                "environment.services nor a declared dependency in environment.dependencies. " +
+                DescribeDeclaredSurfaces(ctx));
+        }
 
         if (string.IsNullOrWhiteSpace(model.Path))
         {
@@ -290,6 +303,23 @@ public sealed class HttpSoapProvider
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
+    }
+
+    /// <summary>
+    /// Formats the "Declared dependencies: ...; declared services: ..." tail appended to an
+    /// unresolved-target message (REQ-011/REQ-012 message-shape alignment) — mirrors
+    /// <c>HttpRestProvider</c>'s own identical helper.
+    /// </summary>
+    private static string DescribeDeclaredSurfaces(IProjectContext ctx)
+    {
+        var deps = ctx.DeclaredDependencies.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredDependencies.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        var services = ctx.DeclaredServices.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        return $"Declared dependencies: {deps}. Declared services: {services}.";
     }
 
     /// <summary>

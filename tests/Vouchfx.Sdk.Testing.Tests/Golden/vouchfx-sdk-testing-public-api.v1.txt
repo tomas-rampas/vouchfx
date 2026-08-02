@@ -14,6 +14,8 @@ class Vouchfx.Sdk.Testing.Contexts.TestCompileContext : Vouchfx.Sdk.ICompileCont
 
 class Vouchfx.Sdk.Testing.Contexts.TestProjectContext : Vouchfx.Sdk.IProjectContext
   .ctor(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> declaredDependencies, System.String suiteDirectory)
+  .ctor(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> declaredDependencies, System.String suiteDirectory, System.Collections.Generic.IReadOnlyDictionary<System.String,System.Collections.Generic.IReadOnlyList<System.String>> declaredServices)
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,System.Collections.Generic.IReadOnlyList<System.String>> DeclaredServices { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
   property System.String SuiteDirectory { get }
 

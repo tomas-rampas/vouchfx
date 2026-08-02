@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/services/kafka-broker/healthCheck/type
+# expected-keyword: const
+#
+# services-generalisation spec REQ-008/REQ-009 (gatekeeper G4): declaring 'ports' with no
+# sibling 'httpPort' exposes no HTTP endpoint at all, so 'healthCheck: { type: http }' has
+# nothing to probe — only 'tcp' is valid in that shape. Declaring 'httpPort' alongside 'ports'
+# (the opt-in hybrid) would make 'type: http' valid again.
+metadata:
+  name: rejected-service-healthcheck-http-without-http-endpoint
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093]
+      healthCheck:
+        type: http
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

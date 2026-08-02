@@ -817,17 +817,39 @@ internal static class SchemaErrorCollector
         // 'events-kafka' (at security.serverArtifacts[0])". A 'required' violation
         // anywhere ELSE (a step's own missing fields, a missing dependency 'type', …) is
         // untouched: TryResolveEnvironmentContainer only resolves outside a security
-        // context at exactly depth 4 (any field directly on the dependency/service),
-        // which no OTHER 'required' clause in this schema currently reaches.
-        if (keyword == "required" &&
-            TryResolveEnvironmentContainer(
+        // context at exactly depth 4 (any field directly on the dependency/service).
+        //
+        // CORRECTION (G1, gatekeeper MAJOR-1): the paragraph above used to end "…which no
+        // OTHER 'required' clause in this schema currently reaches" — FALSE once
+        // $defs/serviceHealthCheck shipped. Its own 'required: ["type"]', and its
+        // conditional 'required: ["port"]' for a 'type: tcp' healthCheck, ALSO instantiate
+        // at exactly depth 4 (/environment/services/<name>/healthCheck — a 'required'
+        // violation always reports the CONTAINER missing the property, never the property
+        // itself, so this is depth 4 regardless of which of the two clauses fired). Left to
+        // TryResolveEnvironmentContainer alone this produced the misleading "Required
+        // properties [\"type\"] are not present on service '<name>'" — naming the SERVICE
+        // itself when the healthCheck BLOCK is what is actually incomplete, and inviting
+        // confusion with a DEPENDENCY's own required 'type' field (an unrelated, sibling
+        // concept). TryResolveHealthCheckContainer, checked FIRST below, now intercepts
+        // exactly this shape and renders the honest nested form instead — "in service
+        // '<name>' (at healthCheck)" — mirroring the serverArtifacts nested form above
+        // rather than reusing the security block's "on" form.
+        if (keyword == "required")
+        {
+            if (TryResolveHealthCheckContainer(instanceLocation, out var healthCheckContainerName))
+            {
+                return $"[required] {message} in service '{healthCheckContainerName}' (at healthCheck)";
+            }
+
+            if (TryResolveEnvironmentContainer(
                 instanceLocation, out var requiredContainerKind, out var requiredContainerName,
                 out var requiredIsNestedBelowSecurity, allowNestedSecurity: true))
-        {
-            return requiredIsNestedBelowSecurity
-                ? $"[required] {message} in {requiredContainerKind} '{requiredContainerName}' " +
-                  $"(at {BuildSecuritySubPath(instanceLocation)})"
-                : $"[required] {message} on {requiredContainerKind} '{requiredContainerName}'";
+            {
+                return requiredIsNestedBelowSecurity
+                    ? $"[required] {message} in {requiredContainerKind} '{requiredContainerName}' " +
+                      $"(at {BuildSecuritySubPath(instanceLocation)})"
+                    : $"[required] {message} on {requiredContainerKind} '{requiredContainerName}'";
+            }
         }
 
         if (keyword == "enum")
@@ -2045,6 +2067,51 @@ internal static class SchemaErrorCollector
         containerKind = string.Empty;
         containerName = string.Empty;
         isNestedBelowSecurity = false;
+        return false;
+    }
+
+    /// <summary>
+    /// Recognises the pointer shape <c>/environment/services/&lt;name&gt;/healthCheck</c> —
+    /// exactly depth 4, SERVICE-only (see the Authoring model's own <c>HealthCheckSpec</c>
+    /// remarks: a dependency's health gate is the engine's own concern, never
+    /// author-declarable, so <c>healthCheck</c> never appears under
+    /// <c>environment.dependencies</c>) — and extracts the owning service's own map key
+    /// (G1, gatekeeper MAJOR-1).
+    /// </summary>
+    /// <remarks>
+    /// Checked BEFORE <see cref="TryResolveEnvironmentContainer"/> in <see cref="FormatError"/>'s
+    /// own <c>required</c> branch. Without this, a healthCheck-level <c>required</c> violation
+    /// (a missing <c>type</c>, or a <c>type: tcp</c> healthCheck missing its conditionally
+    /// required <c>port</c>) is INDISTINGUISHABLE, by depth alone, from the service's OWN
+    /// <c>security</c> block reaching the identical depth 4 — producing the misleading
+    /// "Required properties [&quot;type&quot;] are not present on service '&lt;name&gt;'",
+    /// which both names the wrong object (the healthCheck block, not the service itself) and
+    /// invites confusion with a DEPENDENCY's own required <c>type</c> field (an entirely
+    /// different, sibling concept). <c>required</c> is the only keyword this needs to cover:
+    /// every OTHER healthCheck rejection (an unrecognised key, a forbidden <c>port</c>/<c>path</c>,
+    /// a bad <c>type</c> enum value) already lands one segment deeper
+    /// (<c>.../healthCheck/&lt;field&gt;</c>) where the existing additionalProperties/properties/
+    /// enum formatters resolve correctly without needing this helper at all.
+    /// </remarks>
+    /// <param name="instanceLocation">The failing node's own instance-location pointer.</param>
+    /// <param name="containerName">
+    /// Set to the resolved service's own map key on a successful resolve;
+    /// <see cref="string.Empty"/> otherwise.
+    /// </param>
+    private static bool TryResolveHealthCheckContainer(string instanceLocation, out string containerName)
+    {
+        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 4 &&
+            segments[0] == "environment" &&
+            segments[1] == "services" &&
+            segments[3] == "healthCheck")
+        {
+            containerName = DecodePointerSegment(segments[2]);
+            return true;
+        }
+
+        containerName = string.Empty;
         return false;
     }
 

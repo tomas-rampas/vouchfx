@@ -158,6 +158,132 @@ file sealed class StubFailingProvider
         throw new InvalidOperationException("Should not reach Emit after Validate fails.");
 }
 
+// Throwing Bind — verifies the pre-pass swallow-catch inside
+// ProviderPipeline.BuildProjectContext (S2, security MINOR-1). Also the "throwing-stub
+// pattern" G6(b)'s HostResources-throws stub below reuses, per the review's own note.
+[StepProvider]
+file sealed class StubThrowingBindProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "throwing-bind");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        throw new InvalidOperationException("stub: Bind always throws.");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* throwing-bind step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+}
+
+// Throwing HostResources — G6 (gatekeeper MAJOR-6b): the LAZY-ITERATOR variant of the
+// same swallow-catch proof. Bind succeeds; HostResources() is a real C# iterator (yield
+// return) whose body — and so HostResourceRequirement's own ctor validation — does not
+// run until the caller's foreach starts enumerating it, exactly the shape that used to
+// sit OUTSIDE BuildProjectContext's try/catch.
+[StepProvider]
+file sealed class StubThrowingHostResourceProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "throwing-hostresource");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "throwing-hostresource-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* throwing-hostresource step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model)
+    {
+        // Lazy iterator: nothing below runs until MoveNext() is called on the enumerator
+        // this method returns — HostResourceRequirement's own ctor validation
+        // (ArgumentException.ThrowIfNullOrEmpty on Kind/VarName) throws right here,
+        // mid-enumeration, on an unvalidated model — reachable by a community provider
+        // whose Bind() legitimately produces a "safe empty" model with an absent field.
+        yield return new HostResourceRequirement(Kind: string.Empty, VarName: string.Empty);
+    }
+}
+
+// Host resource named identically to a DECLARED SERVICE — G5 (gatekeeper MAJOR-5):
+// proves the service/listener name-collision guard in BuildProjectContext/Compile.
+[StepProvider]
+file sealed class StubListenerProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "listener");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "listener-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* listener step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    // Fixed VarName "cb" regardless of the model — this stub exists solely to prove the
+    // collision guard, mirroring the other stubs' own hardcoded-Tag minimalism.
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model) =>
+        new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "cb") };
+}
+
 // ── Test class ────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -434,6 +560,209 @@ public sealed class ProviderPipelineTests
         Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
 
         Assert.Empty(ctx.DeclaredDependencies);
+    }
+
+    // ── Test: RunProjectContext.DeclaredServices (services-generalisation, REQ-010) ──
+
+    /// <summary>
+    /// <see cref="RunProjectContext"/> constructed with a services map exposes it via
+    /// <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> — mirrors
+    /// <see cref="RunProjectContext_WithDependencies_ExposesMapViaInterface"/> exactly,
+    /// for the new sibling member.
+    /// </summary>
+    [Fact]
+    public void RunProjectContext_WithServices_ExposesMapViaInterface()
+    {
+        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["kafka-broker"] = new List<string> { "tcp-9093" },
+            ["api"] = new List<string> { "http" },
+        };
+
+        Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            Directory.GetCurrentDirectory(),
+            services);
+
+        Assert.Equal(2, ctx.DeclaredServices.Count);
+        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"]));
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["api"]));
+    }
+
+    /// <summary>
+    /// <see cref="RunProjectContext.Empty"/> exposes an empty
+    /// <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> map too.
+    /// </summary>
+    [Fact]
+    public void RunProjectContext_Empty_HasNoDeclaredServices()
+    {
+        Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
+
+        Assert.Empty(ctx.DeclaredServices);
+    }
+
+    /// <summary>
+    /// REQ-010 acceptance criterion: <see cref="ProviderPipeline.BuildProjectContext"/> —
+    /// the SAME wiring <see cref="ProviderPipeline.Compile"/> uses internally — derives
+    /// <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> directly from the parsed
+    /// AST's <c>environment.services</c> section, for a suite with one declared service.
+    /// Exercised through the REAL <c>YamlDocumentParser</c> → <c>AstBuilder</c> pipeline, not
+    /// a hand-built <see cref="Vouchfx.Engine.Authoring.Model.EnvironmentSpec"/>.
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_SuiteWithOneDeclaredService_DeclaredServicesContainsItsName()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), s_registry, out _);
+
+        Assert.True(ctx.DeclaredServices.ContainsKey("kafka-broker"));
+        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"]));
+    }
+
+    /// <summary>
+    /// The sibling default-HTTP-shape case: a service declared with no <c>ports:</c> gets
+    /// the implicit <c>["http"]</c> endpoint name — the SAME name
+    /// <c>EnvironmentMapper</c> builds the actual Aspire endpoint under (see
+    /// <c>ServiceEndpointNaming</c>'s own remarks on why the two share one convention).
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_HttpOnlyService_DeclaredServicesListsHttpEndpoint()
+    {
+        const string yaml = """
+            environment:
+              services:
+                web:
+                  image: traefik/whoami
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), s_registry, out _);
+
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"]));
+    }
+
+    // ── Test: pre-pass swallow-catch resilience (S2, G6) ─────────────────────
+
+    /// <summary>
+    /// S2 (security MINOR-1): a step whose provider's <c>Bind</c> ALWAYS throws must not
+    /// abort <see cref="ProviderPipeline.BuildProjectContext"/>'s pre-pass for every other
+    /// step — the pre-pass swallow-catch omits just that one step's own contribution and
+    /// continues; the declared service (collected before the pre-pass even starts) still
+    /// surfaces.
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_StepBindThrows_CompletesAndOmitsThatStepsContribution()
+    {
+        const string yaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
+            steps:
+              - id: will-throw
+                type: stub.throwing-bind
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), s_registry, out var collision);
+
+        Assert.Null(collision);
+        Assert.True(ctx.DeclaredServices.ContainsKey("svc"));
+    }
+
+    /// <summary>
+    /// G6 (gatekeeper MAJOR-6b): the LAZY-ITERATOR variant of
+    /// <see cref="BuildProjectContext_StepBindThrows_CompletesAndOmitsThatStepsContribution"/> —
+    /// a step whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c> enumerator throws
+    /// (from <c>HostResourceRequirement</c>'s own ctor validation) must be caught too, now
+    /// that the enumeration moved inside the pre-pass's <c>try</c>. Before the fix this
+    /// exception propagated OUTSIDE the try (the enumeration sat after it) and aborted
+    /// <see cref="ProviderPipeline.BuildProjectContext"/> entirely, uncaught.
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_StepHostResourcesThrows_CompletesAndOmitsThatStepsContribution()
+    {
+        const string yaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
+            steps:
+              - id: will-throw
+                type: stub.throwing-hostresource
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), s_registry, out var collision);
+
+        Assert.Null(collision);
+        Assert.True(ctx.DeclaredServices.ContainsKey("svc"));
+    }
+
+    // ── Test: service/listener name-collision guard (G5) ─────────────────────
+
+    /// <summary>
+    /// G5 (gatekeeper MAJOR-5): a webhook-listen-shaped host resource named identically to
+    /// a DECLARED SERVICE must be rejected at compile time, not silently allowed to shadow
+    /// it. <c>ScenarioRunner</c> stages every host resource under
+    /// <c>svc::&lt;VarName&gt;</c> — the SAME Vars key a declared service's endpoint is
+    /// staged under — so an undetected collision means an <c>http.rest</c> step targeting
+    /// <c>cb</c> could silently talk to the listener instead of the service it thinks it
+    /// declared, and Pass having exercised nothing but the engine's own listener. Before the
+    /// fix, <see cref="ProviderPipeline.BuildProjectContext"/>'s unconditional
+    /// <c>serviceMap[hostReq.VarName] = ...</c> silently overwrote the declared service's
+    /// endpoint names with the listener's, and <see cref="ProviderPipeline.Compile"/> never
+    /// surfaced any failure at all.
+    /// </summary>
+    [Fact]
+    public void Compile_HostResourceNameCollidesWithDeclaredService_FailsNamingBothSurfaces()
+    {
+        const string yaml = """
+            environment:
+              services:
+                cb:
+                  image: myorg/callback-target:1.0
+            steps:
+              - id: listen-step
+                type: stub.listener
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains("cb", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("service", result.Failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("listen-step", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
     }
 
     // ── Private helper ────────────────────────────────────────────────────────

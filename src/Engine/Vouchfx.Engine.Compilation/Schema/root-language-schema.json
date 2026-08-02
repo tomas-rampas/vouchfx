@@ -116,6 +116,7 @@
     },
     "service": {
       "description": "A single system-under-test service declared under environment.services (DSL §3.2), identified by its map key. Brought into the topology as either a container image or a csproj path. Unlike $defs/dependency (see that definition's own remarks), this definition DOES carry its own \"type\": \"object\" constraint: a bare-scalar service value (e.g. 'app: traefik/whoami:latest' with no mapping) is therefore rejected here, at schema time, rather than deferred to the parser's own line/column diagnostic — services have no equivalent 'division of responsibility' concern to preserve. Exactly one of 'image'/'project' is enforced by TWO separate keywords rather than a single 'oneOf': 'anyOf' below requires AT LEAST one (produces a plain, correctly-located '[required]' error naming each missing field when neither is set), and the 'allOf'/'if'/'then' clause forbids 'project' once 'image' is present via a boolean 'false' subschema (produces a correctly-located error naming 'project' when both are set). A plain 'oneOf: [{required:[image]},{required:[project]}]' was tried first and discarded: when BOTH fields are set, JsonSchema.Net 9.2.1's List-format output marks the failing 'oneOf' node itself invalid but attaches no error message to it at all — the document is correctly rejected overall, but with no diagnosable reason pointing at the service (verified empirically; see EnvironmentSchemaTests.cs).",
+      "$comment": "Two further allOf/if/then clauses beyond the image/project exclusion below (services-generalisation follow-up, gatekeeper G4/G-M2): (1) 'ports' declared with no sibling 'httpPort' exposes no HTTP endpoint at all (REQ-008's opt-in hybrid — see 'ports's own description below), so 'healthCheck.type' is constrained to the 'tcp' const in that shape — a 'type: http' healthCheck would have nothing to probe. This is the first 'not' in this schema; it is safe here specifically because it sits inside an 'if' CONDITION, never a 'then' enforcement clause — contrast $defs/dependency's own $comment, which explains why 'not' is avoided as an ENFORCEMENT mechanism (a failing 'not' node attaches no message of its own, verified against JsonSchema.Net 9.2.1's List-format output). An 'if' clause's own failure is UNCONDITIONALLY dropped as discriminator noise by SchemaErrorCollector.IsIfDiscriminatorNoise regardless of which keyword inside it failed (that method scans the full EvaluationPath for an 'allOf/<N>/if' segment pair at ANY depth, deliberately depth-independent), so the 'if' itself never needs a diagnosable message; only the 'const' mismatch the 'then' branch produces needs one, and FormatConstError already supplies it. (2) 'ports'/'healthCheck' have NO EFFECT on a 'project:'-form service — EnvironmentMapper's Configure() only ever reads either field for an 'image:'-form service; Aspire's own AddProject auto-discovers the project's launch-profile endpoints instead — so both are forbidden outright once 'project' is set, via the same per-field 'false' subschema idiom as the image/project exclusion below.",
       "type": "object",
       "additionalProperties": false,
       "anyOf": [
@@ -126,6 +127,25 @@
         {
           "if": { "required": ["image"] },
           "then": { "properties": { "project": false } }
+        },
+        {
+          "if": {
+            "required": ["ports"],
+            "not": { "required": ["httpPort"] }
+          },
+          "then": {
+            "properties": {
+              "healthCheck": {
+                "properties": {
+                  "type": { "const": "tcp" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "required": ["project"] },
+          "then": { "properties": { "ports": false, "healthCheck": false } }
         }
       ],
       "properties": {
@@ -152,8 +172,8 @@
           "pattern": "^0*([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
         },
         "env": {
-          "description": "Environment variables passed to the service's container/project — the SUT configuration surface (DSL §3.2.6). Each value may be written as a quoted string, or as a bare (unquoted) numeric or boolean YAML scalar — the engine retains every value in its raw scalar form regardless of how it was written (a bare 8080 or true arrives as the literal text \"8080\"/\"true\", exactly what a container's environment variable needs), so this schema accepts every scalar shape the engine does. A string value may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context; this schema does not itself validate reference syntax or confirm the named dependency exists — that cross-check happens later, once every declared dependency is known. An explicit null ('FOO: ~') is rejected: with the pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value, so without this rejection the variable would silently be set to the literal string '~' — never what an author means by writing '~' — rather than a container environment variable that is actually absent. This rejection catches that mismatch at authoring time instead of leaving it to surface as a silently-wrong container environment variable.",
-          "$comment": "YamlDocumentParser.ParseEnvMap is the reader this description generalises: it retains every value in its raw scalar form regardless of how it was written, and would otherwise set an explicitly-null value to the literal string '~'. The dependency cross-check the description defers to 'later' is EnvironmentMapper's, which alone knows the declared dependency set.",
+          "description": "Environment variables passed to the service's container/project — the SUT configuration surface (DSL §3.2.6). Each value may be written as a quoted string, or as a bare (unquoted) numeric or boolean YAML scalar — the engine retains every value in its raw scalar form regardless of how it was written (a bare 8080 or true arrives as the literal text \"8080\"/\"true\", exactly what a container's environment variable needs), so this schema accepts every scalar shape the engine does. A string value may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context, or a ${env:NAME} reference passing through a value from the ENGINE PROCESS's own environment at topology-build time (distinct from ${secret:source/path}, which is barred here and resolves at step-execution time instead — see REQ-007). A ${env:NAME} reference to a variable the engine process does not have set fails the suite before the container starts, naming the missing variable; an explicitly-set empty value is honoured as-is. A container's environment configured this way is visible via 'docker inspect', the same as any other container environment variable — this is inherent to configuring a container's environment, not a defect. This schema does not itself validate reference syntax or confirm the named dependency/variable exists — that cross-check happens later, in EnvironmentMapper. An explicit null ('FOO: ~') is rejected: with the pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value, so without this rejection the variable would silently be set to the literal string '~' — never what an author means by writing '~' — rather than a container environment variable that is actually absent. This rejection catches that mismatch at authoring time instead of leaving it to surface as a silently-wrong container environment variable.",
+          "$comment": "YamlDocumentParser.ParseEnvMap is the reader this description generalises: it retains every value in its raw scalar form regardless of how it was written, and would otherwise set an explicitly-null value to the literal string '~'. The dependency/variable cross-check the description defers to 'later' is EnvironmentMapper's, which alone knows the declared dependency set and the engine process's own environment.",
           "type": "object",
           "additionalProperties": {
             "type": ["string", "integer", "number", "boolean"]
@@ -161,8 +181,56 @@
         },
         "security": {
           "$ref": "#/$defs/security"
+        },
+        "ports": {
+          "description": "One or more TCP ports this service exposes, beyond (or instead of) the implicit default HTTP endpoint (services-generalisation spec, REQ-008) — for a system under test that does not speak HTTP at all, such as a customer-supplied Kafka broker. Each port is brought up via Aspire's generic TCP endpoint, never assumed to speak HTTP. Declaring 'ports' suppresses the implicit default HTTP endpoint that 'httpPort' alone would otherwise imply; declare 'httpPort' alongside 'ports' for a hybrid service that exposes both an HTTP endpoint and one or more raw TCP ports. Written as bare decimal integers only — unlike 'httpPort', this is a NEW field with no pre-existing engine behaviour to preserve, so it does not carry 'httpPort''s quoted-string/leading-zero-octal compatibility shape.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "healthCheck": {
+          "$ref": "#/$defs/serviceHealthCheck"
         }
       }
+    },
+    "serviceHealthCheck": {
+      "description": "An author-declared health check for a service (services-generalisation spec, REQ-009), replacing the implicit default (an HTTP GET against '/') applied when this block is omitted on an HTTP-shaped service (no 'ports' declared). The field set required or forbidden is fixed per 'type': 'tcp' requires 'port' and forbids 'path'; 'http' accepts an optional 'path' (defaulting to '/') and forbids 'port'. A service declaring 'ports' with no 'healthCheck' at all gets NO implicit health check — the resource reports healthy once its container reaches the Running state, never via an HTTP request the service may not be able to answer.",
+      "$comment": "Mirrors $defs/security's own mode-conditional allOf/if/then idiom (see that def's remarks for why a per-field boolean 'false' subschema is used instead of a 'not'/'required' negation) — a discriminator field ('type' here, 'mode' there) selects which sibling fields are required/forbidden. healthCheck.port cross-referencing the service's own declared ports/httpPort is EnvironmentMapper's job, not this schema's — shape only, not cross-field semantic consistency (see HealthCheckSpec's own remarks).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "description": "The health-check kind: 'tcp' opens a raw TCP connection to 'port' and considers the service healthy the moment it accepts the connection, issuing no HTTP request at all; 'http' issues an HTTP GET against 'path' on the service's HTTP endpoint (the explicit spelling of the engine's own pre-existing default behaviour). Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "type": "string",
+          "enum": ["tcp", "http"]
+        },
+        "path": {
+          "description": "The HTTP path probed for a 'type: http' health check, e.g. '/healthz'. Defaults to '/' when omitted. Not applicable to 'type: tcp', where declaring it is rejected outright.",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "description": "The TCP port probed for a 'type: tcp' health check. Must be one of this service's own declared ports (an entry under 'ports', or 'httpPort' when the service declares no 'ports' at all) — checked by the engine, not by this schema. Not applicable to 'type: http', where declaring it is rejected outright.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "tcp" } } },
+          "then": { "required": ["port"], "properties": { "path": false } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "http" } } },
+          "then": { "properties": { "port": false } }
+        }
+      ]
     },
     "dependency": {
       "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind.",

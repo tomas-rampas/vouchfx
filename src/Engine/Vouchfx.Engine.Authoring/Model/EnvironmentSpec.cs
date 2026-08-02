@@ -96,6 +96,38 @@ public sealed record ServiceSpec(
     /// init-only property is purely additive.
     /// </remarks>
     public SecuritySpec? Security { get; init; }
+
+    /// <summary>
+    /// One or more TCP ports this service exposes, beyond (or instead of) the implicit
+    /// default HTTP endpoint (services-generalisation spec, REQ-008). <see langword="null"/>
+    /// when the service declares no <c>ports:</c> list — today's HTTP-only-by-default
+    /// behaviour (an implicit HTTP endpoint on <see cref="HttpPort"/>, or port 80) is
+    /// unchanged. When declared, the service is brought up via Aspire's generic TCP
+    /// endpoint for each port rather than an implicit <c>WithHttpEndpoint</c>, so a
+    /// non-HTTP system under test (e.g. a customer-supplied Kafka broker) can be targeted
+    /// at all; the implicit default HTTP endpoint is then suppressed unless
+    /// <see cref="HttpPort"/> is ALSO explicitly declared (a hybrid service exposing both).
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </remarks>
+    public IReadOnlyList<int>? Ports { get; init; }
+
+    /// <summary>
+    /// An author-declared health check for this service (services-generalisation spec,
+    /// REQ-009), replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
+    /// endpointName: "http")</c>) applied when this is <see langword="null"/> on an
+    /// HTTP-shaped service (no <see cref="Ports"/> declared). A <see cref="Ports"/>-declared
+    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> gets NO implicit
+    /// health check at all — the resource reports healthy once its container reaches the
+    /// Running state, never via an HTTP request the service may not even be able to answer.
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </remarks>
+    public HealthCheckSpec? HealthCheck { get; init; }
 }
 
 /// <summary>

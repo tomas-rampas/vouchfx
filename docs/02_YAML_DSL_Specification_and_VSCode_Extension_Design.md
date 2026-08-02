@@ -224,7 +224,7 @@ Declarative fixtures are the recommended default because they live in source con
 
 #### 3.2.6 Configuring the system under test
 
-Services declared under `environment.services` may carry an optional `env` map to configure the service container with environment variables. Each variable name maps to a value that may be a literal string, zero or more `${conn:<dependency>}` references to a dependency declared under `environment.dependencies`, or both interleaved. The engine resolves connection references at topology-build time in the consumer service's network context — that is, containerised services receive the container-internal hostnames and ports, not the host-published ones.
+Services declared under `environment.services` may carry an optional `env` map to configure the service container with environment variables. Each variable name maps to a value that may be a literal string, zero or more `${conn:<dependency>}` references to a dependency declared under `environment.dependencies`, zero or more `${env:NAME}` references to engine-process environment variables, or all three interleaved. The engine resolves `${conn:…}` references at topology-build time in the consumer service's network context — that is, containerised services receive the container-internal hostnames and ports, not the host-published ones. The engine resolves `${env:…}` references at topology-build time from the process's own environment variables; an unset variable fails the suite before any container starts, naming the variable. In CI, any secret present in the runner's process environment is readable by a suite via `${env:NAME}` — run untrusted suites only in contexts without secrets.
 
 ```yaml
 environment:
@@ -257,9 +257,34 @@ Supported dependency kinds and their available parts are:
 | `dynamodb` | `host`, `port` |
 | `minio` | `host`, `port` |
 
-Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}` or `${secret:…}` references — are passed through to the container verbatim.
+Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in environment values** — secrets resolve at step-execution time, whereas container environment variables are baked in at startup, and exposing secret values via `docker inspect` would defeat the reproducibility envelope. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. **Environment variables set this way are visible via `docker inspect`** — this is inherent to how container environments work and is not a platform defect. Authors should treat service-visible environment variables as non-confidential; use `${secret:…}` references and the redaction mechanisms in §17 for any credentials that require protection. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}` or `${secret:…}` references — are passed through to the container verbatim.
 
-Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias.
+Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias. A host resource sharing its name with a declared service — a listener named `orders-api` alongside `environment.services.orders-api` — is likewise a validation error naming both: the two would otherwise stage into the same key, and a step targeting that name would silently reach the engine's own listener instead of the system under test.
+
+#### 3.2.6a Raw TCP endpoints and health-check configuration
+
+Services may carry an optional **`ports`** list to declare raw TCP endpoints. Declaring `ports: [9093, ...]` exposes raw TCP listeners on the specified ports without an implicit HTTP health probe or HTTP endpoint, enabling non-HTTP systems under test to be declared (e.g. a customer-supplied Kafka broker, a proprietary binary service protocol). Each port is exposed via Aspire's generic endpoint (scheme `tcp`). Declaring `ports` suppresses the service's implicit HTTP endpoint unless `httpPort` is also declared alongside it — the opt-in hybrid shape that exposes both the raw TCP listeners and a named HTTP endpoint side by side.
+
+A service may also carry an optional **`healthCheck`** object to override or explicitly declare a health probe. The schema supports two forms:
+
+| Form | Meaning |
+|---|---|
+| `{ type: tcp, port: N }` | A TCP-connect probe on the specified port (the raw port number from the container, not a named endpoint). No HTTP request is issued; the probe succeeds when the port accepts a connection. Use this for non-HTTP services. |
+| `{ type: http, path: "/..." }` | An HTTP GET probe on the specified path (e.g. `path: "/"` or `path: "/health"`), issued against the service's declared HTTP endpoint. This is the explicit spelling of the default HTTP `/` health check applied to `image:`-form services. |
+
+The `type` values are case-sensitive (`tcp` and `http` only). Omitting `healthCheck` on an `image:`-form HTTP service preserves today's default behaviour (HTTP probe on `/`). Omitting it on a `ports:`-only service means no health check is applied. Because `type: http` probes the service's HTTP endpoint, it is invalid on a `ports:`-only service that declares no `httpPort` — such a service exposes no HTTP endpoint for the probe to target.
+
+```yaml
+environment:
+  services:
+    kafka-broker:
+      image: confluentinc/cp-kafka:latest
+      ports: [9093]
+      healthCheck: { type: tcp, port: 9093 }
+    app-server:
+      image: myorg/app:latest
+      healthCheck: { type: http, path: "/readiness" }
+```
 
 #### 3.2.7 Test doubles
 
@@ -310,7 +335,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 | Field | Meaning |
 |---|---|
-| target | Logical name of the service to call, as declared under environment.services. |
+| target | Logical name of a declared service or dependency to call, as declared under `environment.services` or `environment.dependencies`. Unknown targets are rejected at validation time (`vouchfx validate`), before any container starts, with a message naming the target and listing available services and dependencies. Host-resource-contributed names (e.g. a `webhook-listen.http` listener) are also valid targets. |
 | method | The HTTP verb: GET, POST, PUT, PATCH, or DELETE. |
 | path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
 | headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
@@ -341,7 +366,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 
 | Field | Required | Meaning |
 |---|---|---|
-| target | Yes | Logical name of the service to call, as declared under environment.services. Identical addressing to http.rest. |
+| target | Yes | Logical name of a declared service or dependency to call, as declared under `environment.services` or `environment.dependencies`. Unknown targets are rejected at validation time (`vouchfx validate`), before any container starts. Identical addressing semantics to `http.rest`. |
 | path | Yes | The request path; may contain `{placeholder}` and `${secret:...}` tokens. |
 | action | No | The SOAPAction header value (the SOAP 1.1 convention). Sent quoted per the SOAP 1.1 specification (`SOAPAction: "value"`). May contain `{placeholder}` and `${secret:source/path}` tokens. Omitted entirely when not declared. |
 | envelope | Yes | The full SOAP request envelope XML, as a raw template string. Sent as `Content-Type: text/xml; charset=utf-8` (SOAP 1.1). SOAP 1.2's `application/soap+xml` (with the action folded into the Content-Type rather than a separate header) is a documented v1 limitation, not supported. May contain `{placeholder}` and `${secret:...}` tokens, resolved at step-execution time exactly like http.rest's body. |
@@ -410,7 +435,7 @@ The Kafka provider ships with two distinct paths. The plain-payload path publish
 
 | Field | Required | Meaning |
 |---|---|---|
-| target | Yes | Logical name of the kafka dependency declared under environment.dependencies. |
+| target | Yes | Logical name of a declared service or dependency to publish to, as declared under `environment.services` or `environment.dependencies`. |
 | topic | Yes | The Kafka topic to publish to. May contain {placeholder} and ${secret:...} tokens. |
 | key | No | Optional message key. May contain {placeholder} and ${secret:...} tokens. |
 | payload | Yes | The message body as a UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:...} tokens. |
@@ -505,7 +530,7 @@ The Kafka provider ships with two distinct paths. The plain-payload path evaluat
 
 | Field | Required | Meaning |
 |---|---|---|
-| target | Yes | Logical name of the kafka dependency to consume from, as declared under environment.dependencies. |
+| target | Yes | Logical name of a declared service or dependency to consume from, as declared under `environment.services` or `environment.dependencies`. |
 | topic | Yes | The Kafka topic to consume the message from. |
 | match | Yes | An assertion-criteria block (see below). |
 | match.key | No | Expected message key (ordinal string equality). May contain {placeholder} and ${secret:...} tokens. |
@@ -811,7 +836,7 @@ Unlike `mq-publish`/`mq-expect`/`cache-assert`, this family adds **no new infras
 
 | Field | Required | Meaning |
 |---|---|---|
-| target | Yes | Logical name of the service to scrape, as declared under environment.services — normally the system under test. |
+| target | Yes | Logical name of a declared service or dependency to scrape, as declared under `environment.services` or `environment.dependencies`. Unknown targets are rejected at validation time (`vouchfx validate`), before any container starts, with a message naming the target and listing available services and dependencies. |
 | path | No | The scrape path. May contain {placeholder} and ${secret:...} tokens. Defaults to `/metrics` when omitted. |
 | metric | Yes | The Prometheus sample (metric) name to select, e.g. `orders_processed_total`. May contain {placeholder} and ${secret:...} tokens. |
 | labels | No | Map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match). Values may contain {placeholder} and ${secret:...} tokens. |

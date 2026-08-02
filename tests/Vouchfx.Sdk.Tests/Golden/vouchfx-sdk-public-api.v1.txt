@@ -41,6 +41,7 @@ interface Vouchfx.Sdk.IHostResourceContributor<TModel>
   method System.Collections.Generic.IEnumerable<Vouchfx.Sdk.HostResourceRequirement> HostResources(TModel model)
 
 interface Vouchfx.Sdk.IProjectContext
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,System.Collections.Generic.IReadOnlyList<System.String>> DeclaredServices { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
   property System.String SuiteDirectory { get }
 

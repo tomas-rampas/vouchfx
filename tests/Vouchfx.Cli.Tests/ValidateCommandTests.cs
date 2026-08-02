@@ -57,7 +57,14 @@ public sealed class ValidateCommandTests : IDisposable
         }
     }
 
+    // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012: http.rest's
+    // target must name a declared service or dependency) — this fixture predates that
+    // target-reconciliation check, when http.rest accepted any target string.
     private const string ValidScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    svc:\n" +
+        "      image: myorg/svc:1.0\n" +
         "steps:\n" +
         "  - id: check\n" +
         "    type: http.rest\n" +
@@ -464,7 +471,13 @@ public sealed class ValidateCommandTests : IDisposable
 
     // A trivially-valid, always-compiling scenario used purely to occupy the FIRST
     // ordinal-sorted discovery slot alongside the referencing scenario in dir 'b'.
+    // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012) — see
+    // ValidScenario's own remark above for why.
     private const string AnchorScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    svc:\n" +
+        "      image: myorg/svc:1.0\n" +
         "steps:\n" +
         "  - id: check\n" +
         "    type: http.rest\n" +

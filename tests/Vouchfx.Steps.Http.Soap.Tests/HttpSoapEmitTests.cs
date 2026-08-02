@@ -106,6 +106,17 @@ public sealed class HttpSoapEmitTests
         SoapExpectation? expect = null) =>
         new(target, path, action, envelope, expect);
 
+    /// <summary>
+    /// A <see cref="StubProjectContext"/> declaring service <c>"sut"</c> — <see cref="MakeModel"/>'s
+    /// default target (REQ-012: target reconciliation needs it declared as a service or
+    /// dependency to pass).
+    /// </summary>
+    private static readonly StubProjectContext s_sutDeclaredContext = new(
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["sut"] = new List<string> { "http" },
+        });
+
     // ── 1. StatementBlock braces ─────────────────────────────────────────────────
 
     [Fact]
@@ -168,7 +179,7 @@ public sealed class HttpSoapEmitTests
     {
         var result = _provider.Validate(
             new HttpSoapModel(string.Empty, string.Empty, null, string.Empty, null),
-            new StubProjectContext());
+            s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("target", StringComparison.Ordinal));
@@ -181,7 +192,7 @@ public sealed class HttpSoapEmitTests
     {
         var result = _provider.Validate(
             MakeModel(path: "http://evil.example/x"),
-            new StubProjectContext());
+            s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("rooted relative path", StringComparison.Ordinal));
@@ -192,7 +203,7 @@ public sealed class HttpSoapEmitTests
     {
         var result = _provider.Validate(
             MakeModel(envelope: "<unclosed><tag>"),
-            new StubProjectContext());
+            s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("well-formed", StringComparison.Ordinal));
@@ -205,9 +216,28 @@ public sealed class HttpSoapEmitTests
         // well-formedness — see the provider's "ENVELOPE VALIDATION STRICTNESS" note.
         var result = _provider.Validate(
             MakeModel(envelope: "<a><b>{userId}</b><c attr=\"${secret:env/X}\"/></a>"),
-            new StubProjectContext());
+            s_sutDeclaredContext);
 
         Assert.True(result.IsValid);
+    }
+
+    // ── Target reconciliation (services-generalisation spec, REQ-012/EDGE-009) ──
+
+    /// <summary>
+    /// REQ-012/EDGE-009: a <c>target</c> naming neither a declared service nor a declared
+    /// dependency fails validation, naming the unknown target and listing what IS declared.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesNeitherServiceNorDependency_IsInvalid_ListsDeclaredSurfaces()
+    {
+        var result = _provider.Validate(
+            MakeModel(target: "does-not-exist"),
+            s_sutDeclaredContext);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("does-not-exist", StringComparison.Ordinal) &&
+            e.Contains("sut", StringComparison.Ordinal));
     }
 
     // ── 9. Success envelope, default expect → Pass ───────────────────────────────
@@ -581,6 +611,16 @@ public sealed class HttpSoapEmitTests
 
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+
+        internal StubProjectContext(
+            IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
+        {
+            DeclaredServices = services
+                ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        }
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
     }
 
     /// <summary>

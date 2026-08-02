@@ -323,20 +323,28 @@ public sealed class MqExpectKafkaProvider
                 "(key, headers, payloadContains, or json).");
         }
 
-        // (d) dependency reconciliation: target must name a declared kafka dependency.
+        // (d) target reconciliation: names a declared kafka dependency, OR (REQ-011,
+        //     services-generalisation spec) a declared SERVICE — a customer-supplied broker
+        //     under environment.services. See MqPublishKafkaProvider.Validate's own remarks
+        //     (mirrored here) for the full rationale.
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
-            if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
+            if (ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
             {
-                errors.Add(
-                    $"mq-expect.kafka: 'target' '{model.Target}' is not a " +
-                    "kafka dependency declared in environment.dependencies.");
+                if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+                {
+                    errors.Add(
+                        $"mq-expect.kafka: 'target' '{model.Target}' is declared as a " +
+                        $"'{depType}' dependency, not the required kafka dependency.");
+                }
             }
-            else if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+            else if (!ctx.DeclaredServices.ContainsKey(model.Target))
             {
                 errors.Add(
-                    $"mq-expect.kafka: 'target' '{model.Target}' is declared as a " +
-                    $"'{depType}' dependency, not the required kafka dependency.");
+                    $"mq-expect.kafka: 'target' '{model.Target}' is not a kafka dependency " +
+                    "declared in environment.dependencies, nor a declared service in " +
+                    "environment.services. " +
+                    DescribeDeclaredSurfaces(ctx));
             }
         }
 
@@ -366,6 +374,23 @@ public sealed class MqExpectKafkaProvider
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
+    }
+
+    /// <summary>
+    /// Formats the "Declared dependencies: ...; declared services: ..." tail appended to an
+    /// unresolved-target message (REQ-011/REQ-012 message-shape alignment) — mirrors
+    /// <c>MqPublishKafkaProvider</c>'s own identical helper.
+    /// </summary>
+    private static string DescribeDeclaredSurfaces(IProjectContext ctx)
+    {
+        var deps = ctx.DeclaredDependencies.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredDependencies.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        var services = ctx.DeclaredServices.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        return $"Declared dependencies: {deps}. Declared services: {services}.";
     }
 
     /// <summary>

@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/services/kafka-broker/healthCheck/bogus
+# expected-keyword: additionalProperties
+#
+# services-generalisation spec REQ-009: healthCheck is a closed object
+# (additionalProperties: false) — an unrecognised key is rejected here, at schema time.
+metadata:
+  name: rejected-service-healthcheck-unknown-key
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093]
+      healthCheck:
+        type: tcp
+        port: 9093
+        bogus: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

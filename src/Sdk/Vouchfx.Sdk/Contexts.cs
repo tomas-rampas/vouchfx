@@ -67,6 +67,37 @@ public interface IProjectContext
     IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <summary>
+    /// Gets the map of service names to the endpoint/port names each one exposes, as
+    /// declared under <c>environment.services</c> in the scenario file
+    /// (services-generalisation spec, REQ-010).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Keys are the logical service names (e.g. <c>"kafka-broker"</c>), mirroring
+    /// <see cref="DeclaredDependencies"/>'s own shape; values are the Aspire endpoint names
+    /// that service's declared shape produces (e.g. <c>["http"]</c> for the implicit
+    /// default HTTP endpoint, or <c>["tcp-9093"]</c> for a declared <c>ports: [9093]</c>
+    /// entry) — empty for a project-form service, whose endpoints Aspire auto-discovers
+    /// from the project's own launch profile rather than this engine modelling them. The
+    /// map is empty when the scenario file omits the <c>environment.services</c> section.
+    /// </para>
+    /// <para>
+    /// Providers use this map the same way they use <see cref="DeclaredDependencies"/>: to
+    /// reconcile a step's <c>target</c> against declared infrastructure (dependency/service
+    /// reconciliation, §13) — e.g. <c>mq-publish.kafka</c> accepting a <c>target</c> naming
+    /// either a declared <c>kafka</c> dependency or a declared service exposing a
+    /// Kafka-compatible endpoint.
+    /// </para>
+    /// <para>
+    /// This is an ADDITIVE member on a provider-CONSUMED (never provider-implemented)
+    /// interface (see this interface's own remarks) — non-breaking for providers; only the
+    /// engine (and any test harness implementing this interface as a stand-in) must satisfy
+    /// it.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+
+    /// <summary>
     /// Gets the directory that relative file paths in step fields (e.g.
     /// <c>script.csharp</c>'s <c>file</c> field) are resolved against.
     /// </summary>

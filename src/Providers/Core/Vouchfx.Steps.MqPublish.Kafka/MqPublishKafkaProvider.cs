@@ -265,20 +265,31 @@ public sealed class MqPublishKafkaProvider
         if (string.IsNullOrWhiteSpace(model.Payload))
             errors.Add("mq-publish.kafka: 'payload' must not be empty.");
 
-        // (d) dependency reconciliation: target must name a declared kafka dependency.
+        // (d) target reconciliation: names a declared kafka dependency, OR (REQ-011,
+        //     services-generalisation spec) a declared SERVICE — a customer-supplied broker
+        //     under environment.services, since the customer's own mTLS broker runs its own
+        //     entrypoint/config and is authored as a service, never the engine-provisioned
+        //     kafka dependency type. Acceptance is name-membership only for the service case;
+        //     protocol correctness is a later slice's concern (the probe fails closed at
+        //     runtime).
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
-            if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
+            if (ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
             {
-                errors.Add(
-                    $"mq-publish.kafka: 'target' '{model.Target}' is not a " +
-                    "kafka dependency declared in environment.dependencies.");
+                if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+                {
+                    errors.Add(
+                        $"mq-publish.kafka: 'target' '{model.Target}' is declared as a " +
+                        $"'{depType}' dependency, not the required kafka dependency.");
+                }
             }
-            else if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+            else if (!ctx.DeclaredServices.ContainsKey(model.Target))
             {
                 errors.Add(
-                    $"mq-publish.kafka: 'target' '{model.Target}' is declared as a " +
-                    $"'{depType}' dependency, not the required kafka dependency.");
+                    $"mq-publish.kafka: 'target' '{model.Target}' is not a kafka dependency " +
+                    "declared in environment.dependencies, nor a declared service in " +
+                    "environment.services. " +
+                    DescribeDeclaredSurfaces(ctx));
             }
         }
 
@@ -317,6 +328,24 @@ public sealed class MqPublishKafkaProvider
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
+    }
+
+    /// <summary>
+    /// Formats the "Declared dependencies: ...; declared services: ..." tail appended to an
+    /// unresolved-target message (REQ-011/REQ-012 message-shape alignment) — names are sorted
+    /// ordinally for deterministic output, and an empty surface reads "(none)" rather than an
+    /// empty list.
+    /// </summary>
+    private static string DescribeDeclaredSurfaces(IProjectContext ctx)
+    {
+        var deps = ctx.DeclaredDependencies.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredDependencies.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        var services = ctx.DeclaredServices.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        return $"Declared dependencies: {deps}. Declared services: {services}.";
     }
 
     // ── CsxFragment components ────────────────────────────────────────────────
