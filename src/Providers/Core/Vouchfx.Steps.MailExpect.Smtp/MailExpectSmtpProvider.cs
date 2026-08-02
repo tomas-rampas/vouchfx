@@ -150,12 +150,14 @@ public sealed class MailExpectSmtpProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Queries a Mailpit inbox and asserts that at least one (or a declared count of) captured message matches the declared criteria.",
           "type": "object",
           "required": ["target", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expect": {
               "description": "The expectation block: how many messages must match the criteria.",
@@ -163,25 +165,27 @@ public sealed class MailExpectSmtpProvider
               "required": ["match"],
               "properties": {
                 "count": {
-                  "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists.",
-                  "type": "integer",
-                  "minimum": 1
+                  "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be the canonical positive-integer spelling — digits only, no leading zero (e.g. \"1\"). \"0\" is rejected on this branch just as the numeric branch's minimum of 1 rejects a bare 0 — a zero count is never a meaningful expectation for this field, and the value is never {placeholder}-substituted. (The no-leading-zero rule is the canonical-spelling choice, not a consequence of the minimum: a bare 01 is read by YAML as the integer 1 and accepted.)",
+                  "type": ["integer", "string"],
+                  "minimum": 1,
+                  "pattern": "^[1-9][0-9]*$"
                 },
                 "match": {
                   "description": "Criteria a message must satisfy.  At least one criterion must be declared.",
                   "type": "object",
+                  "minProperties": 1,
                   "properties": {
                     "to": {
                       "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
                       "type": "string"
                     },
                     "subject-contains": {
-                      "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                      "type": "string"
+                      "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                      "type": ["string", "integer", "number", "boolean"]
                     },
                     "body-contains": {
-                      "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message.",
-                      "type": "string"
+                      "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                      "type": ["string", "integer", "number", "boolean"]
                     }
                   },
                   "additionalProperties": false

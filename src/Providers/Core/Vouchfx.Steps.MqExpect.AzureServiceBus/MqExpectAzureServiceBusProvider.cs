@@ -68,31 +68,47 @@ public sealed class MqExpectAzureServiceBusProvider
           "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
           "type": "object",
           "required": ["target"],
+          "oneOf": [
+            { "required": ["queue"] },
+            { "required": ["topic", "subscription"] }
+          ],
+          "dependentRequired": {
+            "topic": ["subscription"],
+            "subscription": ["topic"]
+          },
+          "anyOf": [
+            { "required": ["expectPayloadContains"] },
+            { "required": ["expectProperties"] }
+          ],
           "properties": {
             "target": {
               "description": "Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "queue": {
               "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "topic": {
               "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "subscription": {
               "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} substitution tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expectPayloadContains": {
-              "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+              "type": ["string", "integer", "number", "boolean"]
             },
             "expectProperties": {
               "description": "Optional application-property key=value pairs all of which must be present on the matched message.  Values may contain {placeholder} and ${secret:source/path} tokens.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             }
           }
         }

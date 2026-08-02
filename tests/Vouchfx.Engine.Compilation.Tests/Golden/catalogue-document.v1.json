@@ -14,7 +14,9 @@
         "expect"
       ],
       "captureSupported": true,
-      "familyIntent": "Query a data store and assert properties of the result set or document."
+      "familyIntent": "Query a data store and assert properties of the result set or document.",
+      "exactlyOneOfGroups": [],
+      "atLeastOneOfGroups": []
     },
     {
       "type": "http.rest",
@@ -31,7 +33,9 @@
         "headers"
       ],
       "captureSupported": true,
-      "familyIntent": "Call HTTP endpoints (REST or SOAP) on services under test and assert responses."
+      "familyIntent": "Call HTTP endpoints (REST or SOAP) on services under test and assert responses.",
+      "exactlyOneOfGroups": [],
+      "atLeastOneOfGroups": []
     },
     {
       "type": "mq-publish.kafka",
@@ -46,7 +50,47 @@
         "payload"
       ],
       "captureSupported": true,
-      "familyIntent": "Publish a message onto a broker to drive the system under test."
+      "familyIntent": "Publish a message onto a broker to drive the system under test.",
+      "exactlyOneOfGroups": [],
+      "atLeastOneOfGroups": []
+    },
+    {
+      "type": "script.csharp",
+      "family": "script",
+      "provider": "csharp",
+      "requiredFields": [],
+      "optionalFields": [],
+      "captureSupported": true,
+      "familyIntent": "Run inline or file-backed C# for cases the declarative step types cannot express.",
+      "exactlyOneOfGroups": [
+        [
+          "code",
+          "file"
+        ]
+      ],
+      "atLeastOneOfGroups": []
+    },
+    {
+      "type": "mq-expect.azureservicebus",
+      "family": "mq-expect",
+      "provider": "azureservicebus",
+      "requiredFields": [
+        "target"
+      ],
+      "optionalFields": [
+        "queue",
+        "subscription",
+        "topic"
+      ],
+      "captureSupported": true,
+      "familyIntent": "Assert that a message matching declared criteria was received from a broker.",
+      "exactlyOneOfGroups": [],
+      "atLeastOneOfGroups": [
+        [
+          "expectPayloadContains",
+          "expectProperties"
+        ]
+      ]
     }
   ]
 }

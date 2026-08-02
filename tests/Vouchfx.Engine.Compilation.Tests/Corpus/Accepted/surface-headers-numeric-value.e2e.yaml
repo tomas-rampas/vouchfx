@@ -1,0 +1,23 @@
+# Scalar-coercion widening (T2a, feat/fragment-completeness): http.rest's
+# 'headers' additionalProperties now accepts ["string","integer","number","boolean"]
+# — schema ≡ parser. HttpRestProvider.Bind reads header values via a raw
+# YamlScalarNode cast regardless of the YAML value's declared type, so a
+# numeric header value already worked at runtime; it previously failed only
+# at this schema gate.
+# Formerly scalar-coercion-headers-numeric-value.e2e.yaml (pinned as a still-
+# rejected case by SchemaAcceptedCorpusTests); promoted into the plain
+# accepted set now that the widening has landed.
+metadata:
+  name: surface-headers-numeric-value
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: call-app
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    headers:
+      X-Retry-Count: 3

@@ -1,0 +1,20 @@
+# Scalar-coercion widening (T2a, feat/fragment-completeness): mq-publish.kafka's
+# 'payload' now accepts ["string","integer","number","boolean"] — schema ≡ parser.
+# The binder reads it via a raw YamlScalarNode cast regardless of the YAML
+# value's declared type, so a bare numeric payload already worked at runtime;
+# it previously failed only at this schema gate.
+# Formerly scalar-coercion-payload-numeric.e2e.yaml (pinned as a still-rejected
+# case by SchemaAcceptedCorpusTests); promoted into the plain accepted set now
+# that the widening has landed.
+metadata:
+  name: surface-payload-numeric
+environment:
+  dependencies:
+    events:
+      type: kafka
+steps:
+  - id: publish-event
+    type: mq-publish.kafka
+    target: events
+    topic: orders
+    payload: 12345

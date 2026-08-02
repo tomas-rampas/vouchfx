@@ -354,6 +354,7 @@ public sealed class SchemaStepSurfaceClosureTests
                     type: mq-expect.azureservicebus
                     target: orders-asb
                     queue: orders
+                    expectPayloadContains: order
                 """,
             ["mq-publish.redis"] = """
                 steps:
@@ -651,19 +652,29 @@ public sealed class SchemaStepSurfaceClosureTests
         Assert.DoesNotContain(result.Errors, e => e.InstanceLocation.StartsWith("/steps/1", StringComparison.Ordinal));
     }
 
-    // ── Boundary: unevaluatedProperties does NOT recurse into nested blocks ────
+    // ── Boundary, now closed: nested blocks no longer accept unknown keys ──────
+    //
+    // T3a2 (feat/fragment-completeness): the three tests below used to document
+    // that unevaluatedProperties does NOT recurse into nested blocks (avro/
+    // match/expect stayed open even after the step-root typo-closing change).
+    // That was always a deliberate, honestly-documented GAP, not a design
+    // decision — these three tests were written as the TARGETS for the follow-up
+    // change that closes it. mq-publish.kafka's 'avro' and mq-expect.kafka's
+    // 'match' each REPLACE their own "additionalProperties": true with false
+    // (a replacement, not merely a removal — the same same-object-cancellation
+    // trap the step-root closure's own finding 2 warns about applies one level
+    // down too); http.rest's 'expect' goes from "no additionalProperties
+    // keyword at all" (unconstrained) to an explicit false. All three now
+    // reject an unknown key with a plain additionalProperties violation.
 
     /// <summary>
-    /// mq-publish.kafka's nested 'avro' block explicitly declares its own
-    /// <c>"additionalProperties": true</c> — untouched by this change (only
-    /// TOP-LEVEL fragment additionalProperties was removed). Per JSON Schema
-    /// 2020-12, unevaluatedProperties only ever concerns the immediate object
-    /// it is declared on, so an unknown key inside 'avro' must stay valid —
-    /// this documents, honestly, that closing nested blocks remains a
-    /// SEPARATE, still-necessary future change (out of scope here).
+    /// mq-publish.kafka's nested 'avro' block now closes with
+    /// <c>"additionalProperties": false</c> (previously true) — an unknown key
+    /// alongside a real field is rejected, located exactly at the offending
+    /// property.
     /// </summary>
     [Fact]
-    public void NestedUnknownKey_InsideOpenAvroBlock_MqPublishKafka_IsAccepted()
+    public void NestedUnknownKey_InsideAvroBlock_MqPublishKafka_IsRejected()
     {
         var registry = FullRegistry();
 
@@ -685,16 +696,20 @@ public sealed class SchemaStepSurfaceClosureTests
 
         var result = DocumentValidator.Validate(yaml, registry);
 
-        Assert.True(result.IsValid,
-            $"Expected the step-root unevaluatedProperties:false to have NO effect inside 'avro'; got: {Dump(result.Errors)}");
+        Assert.False(result.IsValid, "Expected the closed 'avro' block to reject an unknown key.");
+        var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/avro/unknownAvroKey").ToList();
+        Assert.True(located.Count > 0,
+            $"Expected an error located exactly at '/steps/0/avro/unknownAvroKey'; got: {Dump(result.Errors)}");
+        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
     }
 
     /// <summary>
     /// Same probe as the avro test, against mq-expect.kafka's nested 'match'
-    /// block (also explicit <c>additionalProperties: true</c>, untouched).
+    /// block — now closes with <c>"additionalProperties": false</c>
+    /// (previously true).
     /// </summary>
     [Fact]
-    public void NestedUnknownKey_InsideOpenMatchBlock_MqExpectKafka_IsAccepted()
+    public void NestedUnknownKey_InsideMatchBlock_MqExpectKafka_IsRejected()
     {
         var registry = FullRegistry();
 
@@ -711,19 +726,21 @@ public sealed class SchemaStepSurfaceClosureTests
 
         var result = DocumentValidator.Validate(yaml, registry);
 
-        Assert.True(result.IsValid,
-            $"Expected the step-root unevaluatedProperties:false to have NO effect inside 'match'; got: {Dump(result.Errors)}");
+        Assert.False(result.IsValid, "Expected the closed 'match' block to reject an unknown key.");
+        var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/match/unknownMatchKey").ToList();
+        Assert.True(located.Count > 0,
+            $"Expected an error located exactly at '/steps/0/match/unknownMatchKey'; got: {Dump(result.Errors)}");
+        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
     }
 
     /// <summary>
-    /// http.rest's nested 'expect' block is a third, DIFFERENT shape of
-    /// "open": it declares NO additionalProperties keyword at all (neither
-    /// true nor false) — the JSON Schema default is unconstrained either way,
-    /// so this probes the same question via the "absent" form rather than the
-    /// "explicit true" form covered above.
+    /// http.rest's nested 'expect' block was a third, DIFFERENT shape of
+    /// "open": it declared NO additionalProperties keyword at all (neither
+    /// true nor false). It now closes with an explicit
+    /// <c>"additionalProperties": false</c>.
     /// </summary>
     [Fact]
-    public void NestedUnknownKey_InsideOpenExpectBlock_HttpRest_IsAccepted()
+    public void NestedUnknownKey_InsideExpectBlock_HttpRest_IsRejected()
     {
         var registry = FullRegistry();
 
@@ -741,8 +758,11 @@ public sealed class SchemaStepSurfaceClosureTests
 
         var result = DocumentValidator.Validate(yaml, registry);
 
-        Assert.True(result.IsValid,
-            $"Expected the step-root unevaluatedProperties:false to have NO effect inside 'expect'; got: {Dump(result.Errors)}");
+        Assert.False(result.IsValid, "Expected the closed 'expect' block to reject an unknown key.");
+        var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/expect/unknownExpectKey").ToList();
+        Assert.True(located.Count > 0,
+            $"Expected an error located exactly at '/steps/0/expect/unknownExpectKey'; got: {Dump(result.Errors)}");
+        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
     }
 
     // ── Finding 1, re-proved directly against the REAL (already-fixed) schema ──

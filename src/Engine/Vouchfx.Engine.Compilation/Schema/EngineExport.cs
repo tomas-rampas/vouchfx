@@ -196,7 +196,8 @@ public static class EngineExport
                 + "SchemaFragment.");
         }
 
-        var (required, optional) = ExtractFields(typeKey, registered.SchemaFragment.Json);
+        var (required, optional, exactlyOneOf, atLeastOneOf) =
+            ExtractFields(typeKey, registered.SchemaFragment.Json);
         var familyIntent = ResolveFamilyIntent(family);
 
         // Capture is a common language-level step field; bar B marks every fragment-backed
@@ -208,15 +209,88 @@ public static class EngineExport
             RequiredFields: required,
             OptionalFields: optional,
             CaptureSupported: true,
-            FamilyIntent: familyIntent);
+            FamilyIntent: familyIntent,
+            ExactlyOneOfGroups: exactlyOneOf,
+            AtLeastOneOfGroups: atLeastOneOf);
     }
 
     /// <summary>
-    /// Parses a provider's schema-fragment JSON for top-level <c>properties</c> and
-    /// <c>required</c>. Field lists are type-specific only (fragments do not restate
-    /// common root-step fields).
+    /// Parses a provider's schema-fragment JSON for top-level <c>properties</c>,
+    /// <c>required</c>, and (T1, feat/fragment-completeness; group vehicle
+    /// corrected per gatekeeper B1) a root-level <c>oneOf</c>/<c>anyOf</c> of
+    /// single-name <c>required</c> branches. Field lists are type-specific only
+    /// (fragments do not restate common root-step fields).
     /// </summary>
-    private static (IReadOnlyList<string> Required, IReadOnlyList<string> Optional) ExtractFields(
+    /// <remarks>
+    /// <para>
+    /// Before T1, this method only ever read the top-level <c>required</c>
+    /// array. script.csharp declares NO top-level <c>required</c> at all — its
+    /// "exactly one of code/file" constraint lives entirely inside a
+    /// <c>oneOf</c> — so the catalogue silently reported
+    /// <c>RequiredFields: []</c>, an outright lie (an agent/editor reading the
+    /// catalogue would believe an empty step body validates).
+    /// </para>
+    /// <para>
+    /// <b>B1 correction (gatekeeper, proven against the built CLI):</b> the
+    /// first cut of this fix synthesised a PROSE string ("exactly one of:
+    /// code, file") into <see cref="StepCatalogueEntry.RequiredFields"/> —
+    /// but that list is consumed by <c>SuiteScaffolder</c> as bare field
+    /// NAMES, emitted verbatim as a YAML key
+    /// (<c>SuiteScaffolder.EmitField</c>/<c>EmitScalar</c>); the prose string
+    /// rendered as <c>exactly one of: code, file: scaffold</c> — a hard YAML
+    /// parse error, proven for both script.csharp and
+    /// mq-publish.azureservicebus. Fixed by using the CORRECT vehicle: two
+    /// typed, structured fields on <see cref="StepCatalogueEntry"/> —
+    /// <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/> (from a root
+    /// <c>oneOf</c>) and <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>
+    /// (from a root <c>anyOf</c>) — each a list of field-name GROUPS, never a
+    /// sentence. <c>SuiteScaffolder</c> consumes these directly (emits the
+    /// first group member with its own scaffold value) rather than parsing
+    /// prose back out of a names list. The field names in either kind of
+    /// group are still excluded from <see cref="StepCatalogueEntry.RequiredFields"/>
+    /// and <see cref="StepCatalogueEntry.OptionalFields"/> (listing them
+    /// there too would silently contradict the group's own constraint — see
+    /// <c>BuildCatalogue_ScriptCsharp_SurfacesOneOfRequirement_NotEmpty</c>).
+    /// </para>
+    /// <para>
+    /// Both detections are generic, not written for any one provider — a
+    /// genuine public extension point (Community providers may use either
+    /// shape). <c>oneOf</c> → <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/>
+    /// (script.csharp's <c>code</c>/<c>file</c>; mq-publish.azureservicebus's
+    /// <c>queue</c>/<c>topic</c>). <c>anyOf</c> → <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>
+    /// (mq-expect.azureservicebus's <c>expectPayloadContains</c>/<c>expectProperties</c> —
+    /// this ALSO fixes the corollary M4 finding: relying on
+    /// <see cref="StepCatalogueEntry.RequiredFields"/> alone for that type
+    /// previously under-specified a minimal document — <c>target</c> plus
+    /// nothing else — that the composed schema rejects). Either fires
+    /// alongside any genuinely top-level <c>required</c> names
+    /// (mq-publish.azureservicebus keeps <c>target</c>/<c>payload</c> as
+    /// ordinary required entries too).
+    /// </para>
+    /// <para>
+    /// Degrade-don't-fabricate (mirrors <c>SchemaErrorCollector</c>'s own
+    /// <c>HasUnattributableBranch</c> guard, M1-r): when any branch's
+    /// <c>required</c> does NOT name exactly one field and nothing else —
+    /// mq-expect.azureservicebus's
+    /// <c>oneOf: [{required:[queue]}, {required:[topic,subscription]}]</c>, a
+    /// two-name branch mixed with a one-name branch — the synthesis for THAT
+    /// keyword is skipped entirely rather than emitting a group that
+    /// misstates the actual constraint (it is NOT "exactly one of queue,
+    /// topic, subscription"; it is "queue, OR topic together with
+    /// subscription"). Those field names fall back to plain
+    /// <c>required</c>/<c>properties</c> handling exactly as before this fix.
+    /// The qualifying shape is intentionally narrow — code, not merely this
+    /// comment, enforces it (gatekeeper finding #4): a branch qualifies only
+    /// when it is EXACTLY <c>{"required": ["&lt;name&gt;"]}</c> and nothing
+    /// else (see <see cref="TryReadSingleRequiredGroupNames"/>), the safer
+    /// direction for a synthesis that other tooling trusts verbatim.
+    /// </para>
+    /// </remarks>
+    private static (
+        IReadOnlyList<string> Required,
+        IReadOnlyList<string> Optional,
+        IReadOnlyList<IReadOnlyList<string>> ExactlyOneOf,
+        IReadOnlyList<IReadOnlyList<string>> AtLeastOneOf) ExtractFields(
         string typeKey,
         string fragmentJson)
     {
@@ -269,12 +343,25 @@ public static class EngineExport
             // Stable ordinal sort for goldens / diffs.
             allProperties.Sort(StringComparer.Ordinal);
 
+            // T1 (feat/fragment-completeness, B1-corrected): a root-level oneOf/anyOf
+            // whose every branch names exactly one required field, and nothing else,
+            // becomes a typed group — see the method's own remarks for why (script.csharp's
+            // real bug, and the B1 prose-in-a-names-list defect this replaces) and the
+            // degrade-don't-fabricate guard for mixed-cardinality branches
+            // (mq-expect.azureservicebus's real shape).
+            var exactlyOneOfNames = TryReadSingleRequiredGroupNames(root, "oneOf");
+            var atLeastOneOfNames = TryReadSingleRequiredGroupNames(root, "anyOf");
+
+            bool IsGrouped(string name) =>
+                (exactlyOneOfNames is not null && exactlyOneOfNames.Contains(name)) ||
+                (atLeastOneOfNames is not null && atLeastOneOfNames.Contains(name));
+
             var required = allProperties
-                .Where(requiredSet.Contains)
+                .Where(name => requiredSet.Contains(name) && !IsGrouped(name))
                 .ToList();
 
             var optional = allProperties
-                .Where(name => !requiredSet.Contains(name))
+                .Where(name => !requiredSet.Contains(name) && !IsGrouped(name))
                 .ToList();
 
             // required[] entries that are not also in properties are still listed as
@@ -282,14 +369,95 @@ public static class EngineExport
             // for nested allOf-only shapes). Keep them, sorted.
             foreach (var name in requiredSet.OrderBy(n => n, StringComparer.Ordinal))
             {
-                if (!required.Contains(name, StringComparer.Ordinal))
+                if (!IsGrouped(name) && !required.Contains(name, StringComparer.Ordinal))
+                {
                     required.Add(name);
+                }
             }
 
             required.Sort(StringComparer.Ordinal);
 
-            return (required, optional);
+            IReadOnlyList<IReadOnlyList<string>> exactlyOneOf = exactlyOneOfNames is { Count: > 0 }
+                ? new IReadOnlyList<string>[] { exactlyOneOfNames }
+                : Array.Empty<IReadOnlyList<string>>();
+
+            IReadOnlyList<IReadOnlyList<string>> atLeastOneOf = atLeastOneOfNames is { Count: > 0 }
+                ? new IReadOnlyList<string>[] { atLeastOneOfNames }
+                : Array.Empty<IReadOnlyList<string>>();
+
+            return (required, optional, exactlyOneOf, atLeastOneOf);
         }
+    }
+
+    /// <summary>
+    /// Reads a schema-fragment root's own <paramref name="keyword"/> array
+    /// (<c>"oneOf"</c> or <c>"anyOf"</c>) and returns the ORDERED
+    /// (declaration-order, not sorted) list of field names when EVERY branch
+    /// qualifies. A branch qualifies ONLY when it is EXACTLY
+    /// <c>{"required": ["&lt;singleName&gt;"]}</c> — a <c>required</c> array
+    /// of length 1 AND no other property on the branch object (gatekeeper
+    /// finding #4: the code enforces "nothing else", not merely a comment —
+    /// the safer direction for a synthesis other tooling, and
+    /// <c>SuiteScaffolder</c>, trusts verbatim). Returns
+    /// <see langword="null"/> when the keyword is absent, or when any branch
+    /// does not qualify — the degrade-don't-fabricate guard documented on
+    /// <see cref="ExtractFields"/> (mirrors
+    /// <c>SchemaErrorCollector.CompositeGroupState.HasUnattributableBranch</c>,
+    /// M1-r, applied here at catalogue-export time rather than validation
+    /// time).
+    /// </summary>
+    private static List<string>? TryReadSingleRequiredGroupNames(JsonElement root, string keyword)
+    {
+        if (!root.TryGetProperty(keyword, out var composite) || composite.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        foreach (var branch in composite.EnumerateArray())
+        {
+            if (branch.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            // Exactly one property on the branch, and it must be "required" —
+            // {"required": ["x"], "type": "object"} or any other extra content
+            // disqualifies the branch (finding #4: tightened to match the doc).
+            var propertyCount = 0;
+            JsonElement? branchRequired = null;
+            foreach (var prop in branch.EnumerateObject())
+            {
+                propertyCount++;
+                if (propertyCount > 1)
+                {
+                    return null;
+                }
+
+                if (!string.Equals(prop.Name, "required", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                branchRequired = prop.Value;
+            }
+
+            if (branchRequired is not { ValueKind: JsonValueKind.Array } requiredArray ||
+                requiredArray.GetArrayLength() != 1)
+            {
+                return null;
+            }
+
+            var only = requiredArray[0];
+            if (only.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(only.GetString()))
+            {
+                return null;
+            }
+
+            names.Add(only.GetString()!);
+        }
+
+        return names.Count > 0 ? names : null;
     }
 
     private static string ResolveFamilyIntent(string family)

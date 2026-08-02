@@ -362,6 +362,7 @@ The `--json` output is a versioned catalogue document carrying the engine versio
 
 - dotted `type` (`family.provider`), plus separate `family` and `provider` fields
 - `requiredFields` and `optionalFields` (type-specific field names from the provider schema fragment)
+- `exactlyOneOfGroups` and `atLeastOneOfGroups` (arrays of field-name groups, for a type whose schema requires exactly one, or at least one, of a set of fields — e.g. `script.csharp`'s `[["code", "file"]]`). A field name that appears in one of these groups is deliberately excluded from `requiredFields`/`optionalFields`: it is neither unconditionally required nor freely optional, so listing it in either would misstate the constraint.
 - `captureSupported` (boolean; capture is a common language field and is supported on every fragment-backed type)
 - `familyIntent` (a short one-liner describing the family's purpose)
 

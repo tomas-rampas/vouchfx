@@ -63,33 +63,42 @@ public sealed class DbAssertMongodbProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Runs a filter query against a MongoDB collection and asserts on the matched document count and/or the first matched document's field values.",
           "type": "object",
           "required": ["target", "collection", "filter", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the mongodb dependency to query, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "collection": {
               "description": "Name of the MongoDB collection to query.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "filter": {
               "description": "JSON filter document.  May contain {placeholder} tokens resolved at runtime.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "expect": {
               "description": "Assertion block declaring the expected query outcome.  At least one of count or document must be specified.",
               "type": "object",
+              "anyOf": [
+                { "required": ["count"] },
+                { "required": ["document"] }
+              ],
               "properties": {
                 "count": {
-                  "description": "Expected number of documents matched by the filter.",
-                  "type": "integer"
+                  "description": "Expected number of documents matched by the filter. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
+                  "pattern": "^[0-9]+$"
                 },
                 "document": {
-                  "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
+                  "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document — a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
               "additionalProperties": false

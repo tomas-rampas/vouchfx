@@ -201,6 +201,80 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
+    /// M2 (gatekeeper, feat/fragment-completeness): before this fix, the
+    /// reference listed script.csharp's code/file under "Optional fields"
+    /// with NO Required section at all — actively disagreeing with the
+    /// catalogue's own ExactlyOneOfGroups (EngineExport.cs, fixed under B1).
+    /// script.csharp's `oneOf` (code XOR file) must now render its own
+    /// "Required — exactly one of" table naming both fields, and neither may
+    /// ALSO appear in the (now absent, since nothing else is required)
+    /// Required/Optional tables — that would be a second, contradictory
+    /// answer to "is this required".
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_ScriptCsharp_RendersExactlyOneOfTable_NotOptional()
+    {
+        var generated = GenerateReference();
+        var section = ExtractStepTypeSection(generated, "script.csharp");
+
+        Assert.Contains("**Required — exactly one of**", section, StringComparison.Ordinal);
+        Assert.Contains("| `code` |", section, StringComparison.Ordinal);
+        Assert.Contains("| `file` |", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("**Optional fields**", section, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Generic mechanism, not a script.csharp special case: mq-publish.azureservicebus's
+    /// identical oneOf (queue/topic) gets the same table.
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_MqPublishAzureServiceBus_RendersExactlyOneOfTable()
+    {
+        var generated = GenerateReference();
+        var section = ExtractStepTypeSection(generated, "mq-publish.azureservicebus");
+
+        Assert.Contains("**Required — exactly one of**", section, StringComparison.Ordinal);
+        Assert.Contains("| `queue` |", section, StringComparison.Ordinal);
+        Assert.Contains("| `topic` |", section, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The anyOf counterpart: mq-expect.azureservicebus's expectPayloadContains/
+    /// expectProperties ("at least one of") renders its own table, distinct
+    /// heading from the oneOf case.
+    /// </summary>
+    [Fact]
+    public void GeneratedReference_MqExpectAzureServiceBus_RendersAtLeastOneOfTable()
+    {
+        var generated = GenerateReference();
+        var section = ExtractStepTypeSection(generated, "mq-expect.azureservicebus");
+
+        Assert.Contains("**Required — at least one of**", section, StringComparison.Ordinal);
+        Assert.Contains("| `expectPayloadContains` |", section, StringComparison.Ordinal);
+        Assert.Contains("| `expectProperties` |", section, StringComparison.Ordinal);
+        // mq-expect.azureservicebus's OWN queue-XOR-(topic+subscription) oneOf has a
+        // two-name branch — degrade-don't-fabricate means NO "exactly one of" table
+        // for THIS type; queue/topic/subscription fall back to the plain Optional table.
+        Assert.DoesNotContain("**Required — exactly one of**", section, StringComparison.Ordinal);
+        Assert.Contains("| `queue` |", section, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Extracts one step type's own <c>### `type`</c> section (up to the next
+    /// <c>### </c> heading or end of string) so a test can make assertions
+    /// scoped to that type alone rather than the whole document.
+    /// </summary>
+    private static string ExtractStepTypeSection(string generated, string typeId)
+    {
+        var marker = $"### `{typeId}`";
+        var start = generated.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Expected to find a '{marker}' section in the generated reference.");
+
+        var next = generated.IndexOf("\n### `", start + marker.Length, StringComparison.Ordinal);
+        return next < 0 ? generated[start..] : generated[start..next];
+    }
+
+    /// <summary>
     /// MAJOR-2 / m1 (feat/close-remaining-surfaces, TWO rounds of the same
     /// finding): <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
     /// from a <c>oneOf</c> of typed alternatives (rendered as separate,

@@ -98,29 +98,34 @@ public sealed class MqPublishKafkaProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Publishes one UTF-8 message to a Kafka topic, either as a plain string value or as an Avro-encoded value via a schema registry. A Pass verdict confirms hand-off to the broker; verify delivery with a following mq-expect.kafka step.",
           "type": "object",
           "required": ["target", "topic", "payload"],
           "properties": {
             "target": {
               "description": "Logical name of the kafka dependency to publish to, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "topic": {
               "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "key": {
-              "description": "Optional message key.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "Optional message key.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "type": ["string", "integer", "number", "boolean"]
             },
             "payload": {
-              "description": "The message payload sent as the Kafka message value.  A UTF-8 string (literal or inline JSON).  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "The message payload sent as the Kafka message value.  A UTF-8 string (literal or inline JSON).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+              "type": ["string", "integer", "number", "boolean"],
+              "minLength": 1
             },
             "headers": {
-              "description": "Optional map of message header names to their string values.",
+              "description": "Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
             "avro": {
               "description": "Optional Avro / schema-registry encoding.  When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored.",
@@ -129,23 +134,27 @@ public sealed class MqPublishKafkaProvider
               "properties": {
                 "schemaRegistry": {
                   "description": "Logical name of the kafka dependency whose schema registry to publish through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "subject": {
                   "description": "The schema-registry subject under which the inline schema is registered.",
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "schema": {
                   "description": "The inline Avro schema (avsc JSON) for the message value.",
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "record": {
                   "description": "Map of Avro field names to their values.  Each value may contain {placeholder} and ${secret:source/path} tokens; field names are used verbatim.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "minProperties": 1,
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

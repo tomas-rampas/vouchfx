@@ -96,27 +96,30 @@ public sealed class MqExpectRedisProvider
           "properties": {
             "target": {
               "description": "Logical name of the redis dependency to consume from, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "stream": {
               "description": "The Redis Stream key to scan via XRANGE.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "match": {
               "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "payloadContains": {
-                  "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

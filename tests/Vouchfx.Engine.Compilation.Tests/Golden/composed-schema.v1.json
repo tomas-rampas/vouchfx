@@ -200,15 +200,16 @@
       }
     },
     "dependency": {
-      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: on v1.0, a dependency's value was entirely unconstrained here, and a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the six fields below are recognised, and a misspelled or unsupported key — previously swept silently into the parser's Extra bucket and never reaching any provider — is now rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — by the allOf/if/then chain at the end of this definition, mirroring the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). That chain is authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field.",
+      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the six fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind.",
+      "$comment": "Mirrors the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). Authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. A misspelled/unsupported key was previously swept silently into the parser's Extra bucket and never reached any provider; it is now rejected here. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field.",
       "required": [
         "type"
       ],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "The dependency's technology kind. Enumerated against EnvironmentMapper's own dependency-registration table (thirteen kinds: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio), so an unrecognised value is caught here, at authoring time, instead of surfacing later as an ArgumentException at suite-build time. Matched case-sensitively; the registry ALSO performs its own lookup case-sensitively, so a differently-cased value (e.g. 'Postgres') is rejected consistently by both the schema and the engine — the schema-level rejection names the correct lower-case spelling directly.",
-          "$comment": "Case-sensitivity mirrors EnvironmentMapper's own s_dependencyRegistry lookup (StringComparer.Ordinal) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
+          "description": "The dependency's technology kind (thirteen kinds: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio); an unrecognised value is caught here, at authoring time, instead of surfacing later as a runtime error. Matched case-sensitively; a differently-cased value (e.g. 'Postgres') is rejected consistently by both the schema and the engine — the schema-level rejection names the correct lower-case spelling directly.",
+          "$comment": "Enumerated against EnvironmentMapper's own dependency-registration table, so an unrecognised value is caught here instead of surfacing later as an ArgumentException at suite-build time. Case-sensitivity mirrors EnvironmentMapper's own s_dependencyRegistry lookup (StringComparer.Ordinal) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
           "type": "string",
           "enum": [
             "postgres",
@@ -635,6 +636,7 @@
             ]
           },
           "then": {
+            "description": "Queries an Elasticsearch index and asserts on the resulting hit count and/or selected _source field values.",
             "type": "object",
             "required": [
               "target",
@@ -644,11 +646,14 @@
             "properties": {
               "target": {
                 "description": "Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "index": {
-                "description": "Elasticsearch index to query.",
-                "type": "string"
+                "description": "Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\s?#\\x00-\\x1F\\x7F-\\x9F]*$"
               },
               "query": {
                 "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
@@ -659,14 +664,22 @@
                 "type": "object",
                 "properties": {
                   "count": {
-                    "description": "Exact number of hits expected.  When set, overrides min-count.",
-                    "type": "integer",
-                    "minimum": 0
+                    "description": "Exact number of hits expected.  When set, overrides min-count. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 0,
+                    "pattern": "^[0-9]+$"
                   },
                   "min-count": {
-                    "description": "Minimum number of hits expected (default 1).  Ignored when count is set.",
-                    "type": "integer",
+                    "description": "Minimum number of hits expected (default 1).  Ignored when count is set. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
                     "minimum": 0,
+                    "pattern": "^[0-9]+$",
                     "default": 1
                   },
                   "fields": {
@@ -681,7 +694,9 @@
                       "properties": {
                         "field": {
                           "description": "Top-level _source field name.  Dot-notation is not supported.",
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^.]*$"
                         },
                         "value": {
                           "description": "Expected string value.  May contain {placeholder} and ${secret:source/path} tokens.",
@@ -709,6 +724,7 @@
             ]
           },
           "then": {
+            "description": "Inspects a Redis key (GET/EXISTS/TTL/HGET/HLEN/LLEN/SCARD) and asserts on the result.",
             "type": "object",
             "required": [
               "target",
@@ -719,11 +735,13 @@
             "properties": {
               "target": {
                 "description": "Logical name of the redis dependency to inspect, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "key": {
                 "description": "The Redis key to inspect.  May contain {placeholder} tokens resolved at step-execution time.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "operation": {
                 "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-SENSITIVE: write them lower-case exactly as listed.",
@@ -747,21 +765,201 @@
                 "type": "object",
                 "properties": {
                   "value": {
-                    "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time.",
-                    "type": "string"
+                    "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "exists": {
                     "description": "Expected key presence for exists, or expected has-a-positive-TTL presence for ttl.",
                     "type": "boolean"
                   },
                   "length": {
-                    "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality).",
-                    "type": "integer"
+                    "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality). When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   }
                 },
                 "additionalProperties": false
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hget"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "field"
+                  ],
+                  "properties": {
+                    "field": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "get"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hget"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "exists"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "exists"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "ttl"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "exists"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hlen"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "llen"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "scard"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
           }
         },
         {
@@ -776,6 +974,7 @@
             ]
           },
           "then": {
+            "description": "Fetches a single item from a DynamoDB table by primary key (GetItem) and asserts on its existence and/or attribute values.",
             "type": "object",
             "required": [
               "target",
@@ -786,15 +985,18 @@
             "properties": {
               "target": {
                 "description": "Logical name of the dynamodb dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "table": {
                 "description": "Name of the DynamoDB table to query. May contain {placeholder} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "key": {
                 "description": "A flat JSON object template naming the primary key (partition key, optionally plus a sort key) for a GetItem call, e.g. {\"orderId\":\"{orderId}\"}. Each top-level value becomes an S/N/BOOL DynamoDB attribute; nested objects/arrays/null are not supported. May contain {placeholder} tokens inside JSON string values.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expect": {
                 "description": "Assertion block declaring the expected GetItem outcome.",
@@ -802,17 +1004,42 @@
                 "properties": {
                   "exists": {
                     "description": "Whether the item is expected to exist. Defaults to true when omitted.",
-                    "type": "boolean"
+                    "type": "boolean",
+                    "default": true
                   },
                   "item": {
-                    "description": "Map of flat (top-level) attribute name to expected string value, compared against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\"). Nested attributes are not supported in v1.",
+                    "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") — a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "exists"
+                      ],
+                      "properties": {
+                        "exists": {
+                          "const": false
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "item": false
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -829,6 +1056,7 @@
             ]
           },
           "then": {
+            "description": "Runs a filter query against a MongoDB collection and asserts on the matched document count and/or the first matched document's field values.",
             "type": "object",
             "required": [
               "target",
@@ -839,29 +1067,53 @@
             "properties": {
               "target": {
                 "description": "Logical name of the mongodb dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "collection": {
                 "description": "Name of the MongoDB collection to query.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "filter": {
                 "description": "JSON filter document.  May contain {placeholder} tokens resolved at runtime.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expect": {
                 "description": "Assertion block declaring the expected query outcome.  At least one of count or document must be specified.",
                 "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "count"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "document"
+                    ]
+                  }
+                ],
                 "properties": {
                   "count": {
-                    "description": "Expected number of documents matched by the filter.",
-                    "type": "integer"
+                    "description": "Expected number of documents matched by the filter. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   },
                   "document": {
-                    "description": "Map of flat (top-level) field name to expected string value, asserted against the first matched document. Dot-notation paths are not supported in v1.",
+                    "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document — a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
@@ -882,6 +1134,7 @@
             ]
           },
           "then": {
+            "description": "Runs a parameterised SQL query against a MySQL dependency and asserts on the returned row count and/or first row's column values.",
             "type": "object",
             "required": [
               "target",
@@ -891,32 +1144,60 @@
             "properties": {
               "target": {
                 "description": "Logical name of the mysql dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "query": {
                 "description": "The SQL query to execute.  May be a multi-line literal.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "parameters": {
-                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "expect": {
                 "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
                 "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
                 "properties": {
                   "rowCount": {
-                    "description": "Expected number of rows returned by the query.",
-                    "type": "integer"
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
@@ -937,6 +1218,7 @@
             ]
           },
           "then": {
+            "description": "Runs a parameterised SQL query against a Postgres dependency and asserts on the returned row count and/or first row's column values.",
             "type": "object",
             "required": [
               "target",
@@ -946,32 +1228,60 @@
             "properties": {
               "target": {
                 "description": "Logical name of the postgres dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "query": {
                 "description": "The SQL query to execute.  May be a multi-line literal.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "parameters": {
-                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "expect": {
                 "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
                 "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
                 "properties": {
                   "rowCount": {
-                    "description": "Expected number of rows returned by the query.",
-                    "type": "integer"
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
@@ -992,6 +1302,7 @@
             ]
           },
           "then": {
+            "description": "Runs a parameterised SQL query against a SQL Server dependency and asserts on the returned row count and/or first row's column values.",
             "type": "object",
             "required": [
               "target",
@@ -1001,32 +1312,60 @@
             "properties": {
               "target": {
                 "description": "Logical name of the sqlserver dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "query": {
                 "description": "The SQL query to execute.  May be a multi-line literal.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "parameters": {
-                "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "expect": {
                 "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
                 "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
                 "properties": {
                   "rowCount": {
-                    "description": "Expected number of rows returned by the query.",
-                    "type": "integer"
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   },
                   "row": {
-                    "description": "Map of column name to expected string value, asserted against the first row.",
+                    "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
@@ -1047,6 +1386,7 @@
             ]
           },
           "then": {
+            "description": "Issues an HTTP request to a logically-named service and optionally asserts on the response status.",
             "type": "object",
             "required": [
               "target",
@@ -1056,7 +1396,8 @@
             "properties": {
               "target": {
                 "description": "Logical name of the service to call, as declared under environment.services.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "method": {
                 "description": "The HTTP verb.",
@@ -1072,14 +1413,20 @@
                 ]
               },
               "path": {
-                "description": "The request path; may contain variable placeholders.",
-                "type": "string"
+                "description": "The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\]*$"
               },
               "headers": {
                 "description": "Optional map of request header names to values.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "body": {
@@ -1090,10 +1437,15 @@
                 "type": "object",
                 "properties": {
                   "status": {
-                    "description": "Expected HTTP status code.",
-                    "type": "integer"
+                    "description": "Expected HTTP status code. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1110,6 +1462,7 @@
             ]
           },
           "then": {
+            "description": "Issues a SOAP request (a raw, author-supplied envelope) to a logically-named service and optionally asserts on the response status, fault presence, and XPath-selected values.",
             "type": "object",
             "required": [
               "target",
@@ -1119,11 +1472,13 @@
             "properties": {
               "target": {
                 "description": "Logical name of the service to call, as declared under environment.services.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "path": {
-                "description": "The request path; may contain {placeholder} and ${secret:...} tokens.",
-                "type": "string"
+                "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\]*$"
               },
               "action": {
                 "description": "Optional SOAPAction header value (SOAP 1.1 convention), sent quoted per spec. May contain {placeholder} and ${secret:source/path} tokens.",
@@ -1131,19 +1486,26 @@
               },
               "envelope": {
                 "description": "The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expect": {
                 "description": "Optional assertion block applied to the SOAP response.",
                 "type": "object",
                 "properties": {
                   "status": {
-                    "description": "Expected HTTP status code. Defaults to 200 when omitted.",
-                    "type": "integer"
+                    "description": "Expected HTTP status code. Defaults to 200 when omitted. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$",
+                    "default": 200
                   },
                   "fault": {
                     "description": "Whether the response is expected to contain a SOAP Fault element. Defaults to false.",
-                    "type": "boolean"
+                    "type": "boolean",
+                    "default": false
                   },
                   "xpath": {
                     "description": "List of {path, value} assertions evaluated against the response envelope, after the status and fault-expectation checks both pass.",
@@ -1156,15 +1518,25 @@
                       ],
                       "properties": {
                         "path": {
-                          "type": "string"
+                          "description": "An XPath expression evaluated against the response envelope.",
+                          "type": "string",
+                          "minLength": 1
                         },
                         "value": {
-                          "type": "string"
+                          "description": "The expected value at 'path' (compared as text). May be written as a bare number/boolean scalar; it is matched as text either way.",
+                          "type": [
+                            "string",
+                            "integer",
+                            "number",
+                            "boolean"
+                          ]
                         }
-                      }
+                      },
+                      "additionalProperties": false
                     }
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1181,6 +1553,7 @@
             ]
           },
           "then": {
+            "description": "Queries a Mailpit inbox and asserts that at least one (or a declared count of) captured message matches the declared criteria.",
             "type": "object",
             "required": [
               "target",
@@ -1189,7 +1562,8 @@
             "properties": {
               "target": {
                 "description": "Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expect": {
                 "description": "The expectation block: how many messages must match the criteria.",
@@ -1199,25 +1573,40 @@
                 ],
                 "properties": {
                   "count": {
-                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists.",
-                    "type": "integer",
-                    "minimum": 1
+                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be the canonical positive-integer spelling — digits only, no leading zero (e.g. \"1\"). \"0\" is rejected on this branch just as the numeric branch's minimum of 1 rejects a bare 0 — a zero count is never a meaningful expectation for this field, and the value is never {placeholder}-substituted. (The no-leading-zero rule is the canonical-spelling choice, not a consequence of the minimum: a bare 01 is read by YAML as the integer 1 and accepted.)",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 1,
+                    "pattern": "^[1-9][0-9]*$"
                   },
                   "match": {
                     "description": "Criteria a message must satisfy.  At least one criterion must be declared.",
                     "type": "object",
+                    "minProperties": 1,
                     "properties": {
                       "to": {
                         "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
                         "type": "string"
                       },
                       "subject-contains": {
-                        "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                        "type": "string"
+                        "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                        "type": [
+                          "string",
+                          "integer",
+                          "number",
+                          "boolean"
+                        ]
                       },
                       "body-contains": {
-                        "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message.",
-                        "type": "string"
+                        "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                        "type": [
+                          "string",
+                          "integer",
+                          "number",
+                          "boolean"
+                        ]
                       }
                     },
                     "additionalProperties": false
@@ -1250,26 +1639,36 @@
             "properties": {
               "target": {
                 "description": "Logical name of the service to scrape, as declared under environment.services — normally the system under test.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "path": {
-                "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted.",
-                "type": "string"
+                "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\]*$",
+                "default": "/metrics"
               },
               "metric": {
                 "description": "The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "labels": {
                 "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "expect": {
                 "description": "The value assertion block.  At least one of value, min, or max must be declared; all three may combine.  Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "value": {
                     "description": "Expected exact value.  Compared with a 1e-9 relative tolerance (see the provider's ScrapeAsync helper).",
@@ -1315,32 +1714,79 @@
             "required": [
               "target"
             ],
+            "oneOf": [
+              {
+                "required": [
+                  "queue"
+                ]
+              },
+              {
+                "required": [
+                  "topic",
+                  "subscription"
+                ]
+              }
+            ],
+            "dependentRequired": {
+              "topic": [
+                "subscription"
+              ],
+              "subscription": [
+                "topic"
+              ]
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "expectPayloadContains"
+                ]
+              },
+              {
+                "required": [
+                  "expectProperties"
+                ]
+              }
+            ],
             "properties": {
               "target": {
                 "description": "Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "queue": {
                 "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "topic": {
                 "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "subscription": {
                 "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} substitution tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expectPayloadContains": {
-                "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ]
               },
               "expectProperties": {
                 "description": "Optional application-property key=value pairs all of which must be present on the matched message.  Values may contain {placeholder} and ${secret:source/path} tokens.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               }
             }
@@ -1358,6 +1804,7 @@
             ]
           },
           "then": {
+            "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.",
             "type": "object",
             "required": [
               "target",
@@ -1367,40 +1814,63 @@
             "properties": {
               "target": {
                 "description": "Logical name of the kafka dependency to consume from, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "topic": {
                 "description": "The Kafka topic to consume the message from.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "match": {
                 "description": "The criteria a consumed message must satisfy.  At least one criterion (key, headers, payloadContains, or json) must be declared.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "key": {
-                    "description": "Optional expected message key (ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional expected message key (ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "headers": {
-                    "description": "Optional map of expected header names to their expected string values.",
+                    "description": "Optional map of expected header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   },
                   "payloadContains": {
-                    "description": "Optional substring the UTF-8 message value must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional substring the UTF-8 message value must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "json": {
-                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message value parsed as JSON.",
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message value parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               },
               "avro": {
                 "description": "Optional Avro / schema-registry decoding.  When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON.",
@@ -1411,7 +1881,8 @@
                 "properties": {
                   "schemaRegistry": {
                     "description": "Logical name of the kafka dependency whose schema registry to decode through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "subject": {
                     "description": "Optional schema-registry subject (informational; the writer schema is fetched by the message's embedded schema id).",
@@ -1422,7 +1893,7 @@
                     "type": "string"
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -1449,11 +1920,13 @@
             "properties": {
               "target": {
                 "description": "Logical name of the nats dependency to consume from, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "subject": {
                 "description": "The NATS JetStream subject to filter messages on.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "stream": {
                 "description": "Optional JetStream stream name.  When absent, derived from 'subject' (same rule as mq-publish.nats).",
@@ -1462,20 +1935,31 @@
               "match": {
                 "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "payloadContains": {
-                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "json": {
-                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -1492,6 +1976,7 @@
             ]
           },
           "then": {
+            "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).",
             "type": "object",
             "required": [
               "target",
@@ -1501,36 +1986,54 @@
             "properties": {
               "target": {
                 "description": "Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "queue": {
                 "description": "The AMQP queue to consume messages from.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "match": {
                 "description": "The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "payloadContains": {
-                    "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "headers": {
-                    "description": "Optional map of expected AMQP header names to their expected string values.",
+                    "description": "Optional map of expected AMQP header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   },
                   "json": {
-                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message body parsed as JSON.",
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message body parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -1557,29 +2060,42 @@
             "properties": {
               "target": {
                 "description": "Logical name of the redis dependency to consume from, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "stream": {
                 "description": "The Redis Stream key to scan via XRANGE.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "match": {
                 "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "payloadContains": {
-                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "json": {
-                    "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -1602,28 +2118,55 @@
               "target",
               "payload"
             ],
+            "oneOf": [
+              {
+                "required": [
+                  "queue"
+                ]
+              },
+              {
+                "required": [
+                  "topic"
+                ]
+              }
+            ],
             "properties": {
               "target": {
                 "description": "Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "queue": {
                 "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "topic": {
                 "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "payload": {
-                "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
               },
               "properties": {
                 "description": "Optional application properties to attach to the message (string key=value pairs).  Values may contain {placeholder} and ${secret:source/path} tokens.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               }
             }
@@ -1641,6 +2184,7 @@
             ]
           },
           "then": {
+            "description": "Publishes one UTF-8 message to a Kafka topic, either as a plain string value or as an Avro-encoded value via a schema registry. A Pass verdict confirms hand-off to the broker; verify delivery with a following mq-expect.kafka step.",
             "type": "object",
             "required": [
               "target",
@@ -1650,25 +2194,44 @@
             "properties": {
               "target": {
                 "description": "Logical name of the kafka dependency to publish to, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "topic": {
                 "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "key": {
-                "description": "Optional message key.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "Optional message key.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ]
               },
               "payload": {
-                "description": "The message payload sent as the Kafka message value.  A UTF-8 string (literal or inline JSON).  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "The message payload sent as the Kafka message value.  A UTF-8 string (literal or inline JSON).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
               },
               "headers": {
-                "description": "Optional map of message header names to their string values.",
+                "description": "Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "avro": {
@@ -1683,25 +2246,34 @@
                 "properties": {
                   "schemaRegistry": {
                     "description": "Logical name of the kafka dependency whose schema registry to publish through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "subject": {
                     "description": "The schema-registry subject under which the inline schema is registered.",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "schema": {
                     "description": "The inline Avro schema (avsc JSON) for the message value.",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "record": {
                     "description": "Map of Avro field names to their values.  Each value may contain {placeholder} and ${secret:source/path} tokens; field names are used verbatim.",
                     "type": "object",
+                    "minProperties": 1,
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -1728,19 +2300,28 @@
             "properties": {
               "target": {
                 "description": "Logical name of the nats dependency to publish to, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "subject": {
                 "description": "The NATS JetStream subject to publish to.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "stream": {
                 "description": "Optional NATS JetStream stream name.  When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed).",
                 "type": "string"
               },
               "payload": {
-                "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
               }
             }
           }
@@ -1767,7 +2348,8 @@
             "properties": {
               "target": {
                 "description": "Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "exchange": {
                 "description": "Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens.",
@@ -1775,17 +2357,30 @@
               },
               "routingKey": {
                 "description": "The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "payload": {
-                "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
               },
               "headers": {
-                "description": "Optional map of AMQP message header names to their string values.",
+                "description": "Optional map of AMQP message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text.",
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
                 }
               }
             }
@@ -1813,15 +2408,24 @@
             "properties": {
               "target": {
                 "description": "Logical name of the redis dependency to publish to, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "stream": {
                 "description": "The Redis Stream key to XADD to.  May contain {placeholder} and ${secret:source/path} tokens.  XADD creates the stream automatically when it does not yet exist.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "payload": {
-                "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
               }
             }
           }
@@ -1838,6 +2442,7 @@
             ]
           },
           "then": {
+            "description": "Runs an author-supplied C# snippet — given inline or as a path to an external .csx file — against the shared step context. Exactly one of 'code' or 'file' must be set.",
             "type": "object",
             "oneOf": [
               {
@@ -1853,12 +2458,15 @@
             ],
             "properties": {
               "code": {
-                "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.",
-                "type": "string"
+                "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.  Capped at 64 KiB (a plain resource bound, not a security control).",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 65536
               },
               "file": {
                 "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           }
@@ -1886,15 +2494,18 @@
             "properties": {
               "target": {
                 "description": "Logical name of the minio dependency to query, as declared under environment.dependencies.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "bucket": {
                 "description": "The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "key": {
                 "description": "The S3 object key. May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "expect": {
                 "description": "The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive.",
@@ -1902,7 +2513,8 @@
                 "properties": {
                   "exists": {
                     "description": "Whether the object is expected to exist. Defaults to true when omitted.",
-                    "type": "boolean"
+                    "type": "boolean",
+                    "default": true
                   },
                   "size": {
                     "description": "Exact expected object size in bytes. Mutually exclusive with minSize. May contain {placeholder} / ${secret:...} tokens.",
@@ -1923,8 +2535,13 @@
                     "type": "string"
                   },
                   "contentContains": {
-                    "description": "A substring the object body (decoded as UTF-8) must contain. Never echoed into the observation.",
-                    "type": "string"
+                    "description": "A substring the object body (decoded as UTF-8) must contain. Never echoed into the observation. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   },
                   "contentType": {
                     "description": "Expected Content-Type, compared against the HEAD response.",
@@ -1934,11 +2551,52 @@
                     "description": "Map of user-metadata key to expected value, compared against the HEAD response's object metadata.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "size"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "minSize": false
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "required": [
+                        "exists"
+                      ],
+                      "properties": {
+                        "exists": {
+                          "const": false
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "size": false,
+                        "minSize": false,
+                        "sha256": false,
+                        "contentContains": false,
+                        "contentType": false,
+                        "metadata": false
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -1955,6 +2613,7 @@
             ]
           },
           "then": {
+            "description": "Asserts that a captured OTLP span from a specific trace matches the declared criteria (service name, span name, and/or attributes).",
             "type": "object",
             "required": [
               "receiver",
@@ -1963,7 +2622,8 @@
             "properties": {
               "receiver": {
                 "description": "Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: \"{svc::<receiver>}\").",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "match": {
                 "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
@@ -1974,7 +2634,8 @@
                 "properties": {
                   "traceId": {
                     "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "service": {
                     "description": "Optional expected exporting-resource service name (the span's resource-level service.name attribute). May contain {placeholder} and ${secret:source/path} tokens.",
@@ -1985,14 +2646,19 @@
                     "type": "string"
                   },
                   "attributes": {
-                    "description": "Optional map of expected span-attribute key to expected string value (subset match — the real span may carry additional attributes not mentioned here). Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                    "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match — the real span may carry additional attributes not mentioned here) — a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }
@@ -2009,6 +2675,7 @@
             ]
           },
           "then": {
+            "description": "Asserts that a captured inbound HTTP request against a host-owned webhook listener matches the declared criteria (method, path, headers, and/or body substring).",
             "type": "object",
             "required": [
               "listener",
@@ -2017,11 +2684,13 @@
             "properties": {
               "listener": {
                 "description": "Logical name of the host-owned webhook listener whose captured inbound requests this step asserts against.  The engine stands the listener up and stages its URL at svc::<listener> (and at the plain <listener> Vars key so an earlier step can interpolate {<listener>}).",
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "match": {
                 "description": "The criteria a captured inbound request must satisfy.  At least one criterion (method, path, headers, or bodyContains) must be declared.",
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "method": {
                     "description": "Optional expected HTTP method (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
@@ -2032,18 +2701,28 @@
                     "type": "string"
                   },
                   "headers": {
-                    "description": "Optional map of expected header names to their expected string values.",
+                    "description": "Optional map of expected header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                     "type": "object",
                     "additionalProperties": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
                     }
                   },
                   "bodyContains": {
-                    "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                    "type": "string"
+                    "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
                   }
                 },
-                "additionalProperties": true
+                "additionalProperties": false
               }
             }
           }

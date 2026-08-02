@@ -24,7 +24,7 @@ namespace Vouchfx.Steps.MqPublish.Rabbitmq;
 /// May contain <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Headers">
-/// Optional map of message-header names to their string values.  Each value may
+/// Optional map of message-header names to their values (read as text; a bare numeric or boolean scalar binds as its literal text).  Each value may
 /// contain <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at
 /// runtime; header names are used verbatim.  <see langword="null"/> when the step
 /// declares no headers.

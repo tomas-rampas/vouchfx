@@ -21,11 +21,11 @@
 //     actually broke (seeded from their commit messages, not summarised).
 //   • Corpus/Accepted/surface-*      — adversarial-but-legal documents across
 //     surfaces (environment.services, all thirteen dependency kinds, capture,
-//     timeout) that a later narrowing is likely to touch next.
-//   • Corpus/Accepted/scalar-coercion-* — shapes the ENGINE accepts but the
-//     schema currently rejects. Pinned by a dedicated theory below that
-//     asserts the present (narrow) behaviour, so the widening tranche cannot
-//     land silently: when it does, that theory fails and names its own fix.
+//     timeout, and — since the T2a scalar-coercion widening tranche
+//     (feat/fragment-completeness) — the scalar/map fields the ENGINE always
+//     accepted via raw-scalar-text binding but the schema used to reject:
+//     headers/parameters/payload/expect.status and their siblings) that a
+//     later narrowing is likely to touch next.
 //   • tests/Vouchfx.Engine.Planning.Tests/Fixtures/**/*.e2e.yaml — the brief
 //     said "~20"; the actual count at time of writing is 41 real suite
 //     fixtures, none previously validated against the language schema.
@@ -127,52 +127,32 @@ public sealed class SchemaAcceptedCorpusTests
     private static string AcceptedCorpusDirectory =>
         Path.Combine(AppContext.BaseDirectory, "Corpus", "Accepted");
 
-    /// <summary>
-    /// Filename prefix marking a fixture as a member of the scalar-coercion
-    /// tranche — see <see cref="ScalarCoercionCase_WillBeAcceptedInFutureTranche"/>.
-    /// These are discovered separately and excluded from
-    /// <see cref="AcceptedFiles"/> so the main gate never sees a document it is
-    /// known, on purpose, to reject today.
-    /// </summary>
-    private const string ScalarCoercionPrefix = "scalar-coercion-";
-
     public static IEnumerable<object[]> AcceptedFiles() =>
         DiscoverYamlFiles(AcceptedCorpusDirectory)
-            .Where(p => !Path.GetFileName(p).StartsWith(ScalarCoercionPrefix, StringComparison.Ordinal))
-            .Select(p => new object[] { p });
-
-    public static IEnumerable<object[]> ScalarCoercionFiles() =>
-        DiscoverYamlFiles(AcceptedCorpusDirectory)
-            .Where(p => Path.GetFileName(p).StartsWith(ScalarCoercionPrefix, StringComparison.Ordinal))
             .Select(p => new object[] { p });
 
     /// <summary>
-    /// Both <see cref="AcceptedFiles"/> and <see cref="ScalarCoercionFiles"/> must
-    /// discover AT LEAST a known-safe floor of files — a bare "at least one"
-    /// would still pass if a glob/path regression silently dropped all but a
-    /// single fixture (every OTHER downstream <c>[Theory]</c> case would then
-    /// just vanish instead of failing loudly, mirroring
+    /// <see cref="AcceptedFiles"/> must discover AT LEAST a known-safe floor of
+    /// files — a bare "at least one" would still pass if a glob/path
+    /// regression silently dropped all but a single fixture (every OTHER
+    /// downstream <c>[Theory]</c> case would then just vanish instead of
+    /// failing loudly, mirroring
     /// <c>ExamplesCompileTests.ExampleFiles_DiscoversAtLeastOneFile</c>'s own
-    /// concern, but for a PARTIAL loss rather than a total one). The floors
-    /// are set comfortably below the current committed count (21 / 4) — safe
-    /// to raise as fixtures are added, a drop below either is worth
-    /// investigating (feat/close-remaining-surfaces, Part D).
+    /// concern, but for a PARTIAL loss rather than a total one). The floor is
+    /// set comfortably below the current committed count — safe to raise as
+    /// fixtures are added, a drop below it is worth investigating
+    /// (feat/close-remaining-surfaces, Part D).
     /// </summary>
     [Fact]
     public void AcceptedFiles_DiscoversAtLeastOneFile()
     {
         const int minAcceptedFiles = 15;
-        const int minScalarCoercionFiles = 2;
 
         var acceptedCount = AcceptedFiles().Count();
-        var scalarCoercionCount = ScalarCoercionFiles().Count();
 
         Assert.True(acceptedCount >= minAcceptedFiles,
             $"Expected at least {minAcceptedFiles} accepted regression/surface files under " +
             $"'{AcceptedCorpusDirectory}', found {acceptedCount}.");
-        Assert.True(scalarCoercionCount >= minScalarCoercionFiles,
-            $"Expected at least {minScalarCoercionFiles} scalar-coercion files under " +
-            $"'{AcceptedCorpusDirectory}', found {scalarCoercionCount}.");
     }
 
     /// <summary>
@@ -193,45 +173,23 @@ public sealed class SchemaAcceptedCorpusTests
         Assert.True(result.IsValid, DescribeUnexpectedInvalid(path, result));
     }
 
-    /// <summary>
-    /// Pins the shapes the ENGINE accepts but the schema currently rejects.
-    /// <c>headers</c>/<c>parameters</c> <c>additionalProperties</c>,
-    /// <c>expect.status</c>, and <c>payload</c> are all typed narrowly (string
-    /// or integer only) across the Core providers that declare them, even
-    /// though every one of those providers reads the field back via raw
-    /// scalar text (<c>GetScalar</c>) regardless of the YAML value's actual
-    /// type — so a non-string/non-integer scalar in these positions already
-    /// works at RUNTIME and fails ONLY at this schema gate.
-    /// </summary>
-    /// <remarks>
-    /// This theory RUNS (it is deliberately not skipped): it pins the current,
-    /// narrow behaviour so the widening cannot land unnoticed. A skipped test
-    /// would document the intent while enforcing nothing — the inverted
-    /// assertion below is what gives it teeth. When the scalar-coercion tranche
-    /// widens <c>http.rest</c> <c>headers</c>, <c>db-assert.*</c>
-    /// <c>parameters</c>, <c>http.rest</c> <c>expect.status</c> and
-    /// <c>mq-publish.*</c> <c>payload</c> to accept the YAML scalar unions the
-    /// engine already tolerates, this test FAILS — which is the signal to flip
-    /// the assertion to <c>Assert.True</c> and rename these fixtures out of the
-    /// <c>scalar-coercion-</c> prefix into <see cref="AcceptedFiles"/>.
-    /// </remarks>
-    [Theory]
-    [MemberData(nameof(ScalarCoercionFiles))]
-    public void ScalarCoercionCase_WillBeAcceptedInFutureTranche(string path)
-    {
-        var yaml = File.ReadAllText(path);
-        var result = DocumentValidator.Validate(yaml, Registry);
-
-        // Deliberately asserting the CURRENT (narrow) behaviour: this documents
-        // what the schema rejects today, so the day it starts accepting these
-        // (schema widened without updating this test) is caught as a FAILURE
-        // here, forcing a conscious decision rather than a silent change.
-        Assert.False(result.IsValid,
-            $"{Path.GetFileName(path)}: expected this scalar-coercion case to still " +
-            "be REJECTED by the current schema. If it now validates, the widening " +
-            "tranche has landed — flip this assertion to Assert.True and move the " +
-            "fixture into the plain accepted set instead of leaving it here.");
-    }
+    // ── Scalar-coercion widening (T2a) — RETIRED, tranche landed ────────────────
+    //
+    // ScalarCoercionFiles()/ScalarCoercionCase_WillBeAcceptedInFutureTranche used
+    // to pin the shapes the ENGINE accepted but the schema rejected (headers/
+    // parameters additionalProperties, expect.status, payload — all read back
+    // via raw scalar text regardless of the YAML value's actual type). The T2a
+    // widening tranche (feat/fragment-completeness) landed: every Core provider's
+    // string-valued map now accepts ["string","integer","number","boolean"], every
+    // int.TryParse-read integer field now accepts ["integer","string"], and the
+    // named VALUE scalars (payload, key, expect.value, payloadContains, …) widened
+    // the same way — see each provider's SchemaFragment and the CHANGELOG entry for
+    // the full field-by-field list. The four fixtures this theory used to pin now
+    // live in Corpus/Accepted as plain surface-* fixtures (surface-expect-status-string,
+    // surface-headers-numeric-value, surface-parameters-numeric-value,
+    // surface-payload-numeric), exercised by AcceptedDocument_IsValid like every
+    // other accepted fixture — this theory (and its now-empty discovery method) is
+    // deleted rather than left as a permanent no-op.
 
     // ── Planning.Tests fixtures: real environment: blocks, never schema-checked ──
     //

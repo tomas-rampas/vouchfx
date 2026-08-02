@@ -17,7 +17,7 @@ namespace Vouchfx.Steps.MqExpect.Redis;
 /// at step-execution time (§17).
 /// </param>
 /// <param name="Json">
-/// Optional map of JSONPath expressions to their expected string values, evaluated
+/// Optional map of JSONPath expressions to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text), evaluated
 /// over the message payload parsed as JSON.  Keys are JSONPath expressions; values
 /// are the expected string representations.  May contain
 /// <c>${secret:source/path}</c> tokens in the values (§17).

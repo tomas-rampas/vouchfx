@@ -85,15 +85,19 @@ public sealed class MqPublishRedisProvider
           "properties": {
             "target": {
               "description": "Logical name of the redis dependency to publish to, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "stream": {
               "description": "The Redis Stream key to XADD to.  May contain {placeholder} and ${secret:source/path} tokens.  XADD creates the stream automatically when it does not yet exist.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "payload": {
-              "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+              "type": ["string", "integer", "number", "boolean"],
+              "minLength": 1
             }
           }
         }

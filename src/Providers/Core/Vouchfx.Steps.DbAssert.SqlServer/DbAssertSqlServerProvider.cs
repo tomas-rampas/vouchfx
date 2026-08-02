@@ -95,34 +95,42 @@ public sealed class DbAssertSqlServerProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Runs a parameterised SQL query against a SQL Server dependency and asserts on the returned row count and/or first row's column values.",
           "type": "object",
           "required": ["target", "query", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the sqlserver dependency to query, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "query": {
               "description": "The SQL query to execute.  May be a multi-line literal.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "parameters": {
-              "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
             "expect": {
               "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
               "type": "object",
+              "anyOf": [
+                { "required": ["rowCount"] },
+                { "required": ["row"] }
+              ],
               "properties": {
                 "rowCount": {
-                  "description": "Expected number of rows returned by the query.",
-                  "type": "integer"
+                  "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
+                  "pattern": "^[0-9]+$"
                 },
                 "row": {
-                  "description": "Map of column name to expected string value, asserted against the first row.",
+                  "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
               "additionalProperties": false

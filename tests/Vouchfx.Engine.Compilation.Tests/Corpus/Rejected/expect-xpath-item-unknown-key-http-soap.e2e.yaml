@@ -1,0 +1,21 @@
+# expected-instance-location: /steps/0/expect/xpath/0/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): http.soap's
+# 'expect.xpath' array items used to declare NO additionalProperties keyword
+# at all, so an unknown key alongside the required 'path'/'value' pair (here,
+# 'extra') was silently accepted. additionalProperties: false now catches it
+# at authoring time.
+metadata:
+  name: rejected-expect-xpath-item-unknown-key-http-soap
+steps:
+  - id: call-soap
+    type: http.soap
+    target: orders-soap
+    path: /soap/orders
+    envelope: "<soap:Envelope></soap:Envelope>"
+    expect:
+      xpath:
+        - path: "//OrderId"
+          value: "1"
+          extra: oops

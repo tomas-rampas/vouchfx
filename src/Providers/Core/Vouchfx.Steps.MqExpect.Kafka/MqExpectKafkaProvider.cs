@@ -113,41 +113,45 @@ public sealed class MqExpectKafkaProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.",
           "type": "object",
           "required": ["target", "topic", "match"],
           "properties": {
             "target": {
               "description": "Logical name of the kafka dependency to consume from, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "topic": {
               "description": "The Kafka topic to consume the message from.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "match": {
               "description": "The criteria a consumed message must satisfy.  At least one criterion (key, headers, payloadContains, or json) must be declared.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "key": {
-                  "description": "Optional expected message key (ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional expected message key (ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "headers": {
-                  "description": "Optional map of expected header names to their expected string values.",
+                  "description": "Optional map of expected header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },
                 "payloadContains": {
-                  "description": "Optional substring the UTF-8 message value must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.",
-                  "type": "string"
+                  "description": "Optional substring the UTF-8 message value must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message value parsed as JSON.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message value parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             },
             "avro": {
               "description": "Optional Avro / schema-registry decoding.  When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON.",
@@ -156,7 +160,8 @@ public sealed class MqExpectKafkaProvider
               "properties": {
                 "schemaRegistry": {
                   "description": "Logical name of the kafka dependency whose schema registry to decode through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "subject": {
                   "description": "Optional schema-registry subject (informational; the writer schema is fetched by the message's embedded schema id).",
@@ -167,7 +172,7 @@ public sealed class MqExpectKafkaProvider
                   "type": "string"
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         }

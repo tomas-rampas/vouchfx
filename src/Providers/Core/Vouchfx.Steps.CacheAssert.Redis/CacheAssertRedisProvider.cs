@@ -108,16 +108,19 @@ public sealed class CacheAssertRedisProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Inspects a Redis key (GET/EXISTS/TTL/HGET/HLEN/LLEN/SCARD) and asserts on the result.",
           "type": "object",
           "required": ["target", "key", "operation", "expect"],
           "properties": {
             "target": {
               "description": "Logical name of the redis dependency to inspect, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "key": {
               "description": "The Redis key to inspect.  May contain {placeholder} tokens resolved at step-execution time.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "operation": {
               "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-SENSITIVE: write them lower-case exactly as listed.",
@@ -133,21 +136,56 @@ public sealed class CacheAssertRedisProvider
               "type": "object",
               "properties": {
                 "value": {
-                  "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time.",
-                  "type": "string"
+                  "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"]
                 },
                 "exists": {
                   "description": "Expected key presence for exists, or expected has-a-positive-TTL presence for ttl.",
                   "type": "boolean"
                 },
                 "length": {
-                  "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality).",
-                  "type": "integer"
+                  "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality). When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                  "type": ["integer", "string"],
+                  "pattern": "^[0-9]+$"
                 }
               },
               "additionalProperties": false
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "hget" } } },
+              "then": { "required": ["field"], "properties": { "field": { "minLength": 1 } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "get" } } },
+              "then": { "properties": { "expect": { "required": ["value"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "hget" } } },
+              "then": { "properties": { "expect": { "required": ["value"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "exists" } } },
+              "then": { "properties": { "expect": { "required": ["exists"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "ttl" } } },
+              "then": { "properties": { "expect": { "required": ["exists"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "hlen" } } },
+              "then": { "properties": { "expect": { "required": ["length"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "llen" } } },
+              "then": { "properties": { "expect": { "required": ["length"] } } }
+            },
+            {
+              "if": { "required": ["operation"], "properties": { "operation": { "const": "scard" } } },
+              "then": { "properties": { "expect": { "required": ["length"] } } }
+            }
+          ]
         }
         """);
 

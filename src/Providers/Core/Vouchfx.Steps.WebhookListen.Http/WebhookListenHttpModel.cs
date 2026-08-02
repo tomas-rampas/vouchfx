@@ -85,7 +85,7 @@ public sealed record WebhookListenHttpModel(string Listener, WebhookMatch Match)
 /// <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Headers">
-/// Optional map of expected header names to their expected string values.  When non-empty,
+/// Optional map of expected header names to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text).  When non-empty,
 /// every named header must be present on the captured request and its value must equal the
 /// expected value (case-insensitive header-name lookup, ordinal value comparison).  Each
 /// expected value may contain <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens

@@ -84,19 +84,23 @@ public sealed class MqPublishNatsProvider
           "properties": {
             "target": {
               "description": "Logical name of the nats dependency to publish to, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "subject": {
               "description": "The NATS JetStream subject to publish to.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "stream": {
               "description": "Optional NATS JetStream stream name.  When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed).",
               "type": "string"
             },
             "payload": {
-              "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+              "type": ["string", "integer", "number", "boolean"],
+              "minLength": 1
             }
           }
         }

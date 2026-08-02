@@ -7,9 +7,18 @@
 // success.
 //
 //   • Schema failure   — http.rest missing its required 'method' field.
-//   • Pipeline failure — http.rest 'path' that does not start with '/' (passes
-//     schema — 'path' is just a string there — but fails HttpRestProvider.Validate's
-//     SSRF guard).
+//   • Pipeline failure — db-assert.postgres 'target' naming no environment.dependencies
+//     entry in the document (passes schema — a step's own SchemaFragment has no
+//     visibility into sibling document sections, so this cross-reference can never be
+//     a JSON Schema check — but fails DbAssertPostgresProvider.Validate's dependency
+//     reconciliation). UPDATE (T3d, feat/fragment-completeness): this test used to use
+//     http.rest's 'path' without a leading '/' — that check has since been LIFTED into
+//     http.rest's own JsonSchemaFragment (an SSRF guard pattern), so the identical
+//     document now fails at the Schema stage instead (pinned directly against
+//     DocumentValidator in SchemaValidateConstraintsTests, Vouchfx.Engine.Compilation.Tests)
+//     and no longer demonstrates a Pipeline-stage failure at all. Dependency
+//     reconciliation is NOT liftable the same way — it is a genuine, permanent
+//     Pipeline-only check — so it replaces the retired example here.
 //   • Roslyn failure   — script.csharp with a deliberately invalid C# body. This is
 //     the one Core-provider path that can reach the Roslyn stage at all:
 //     script.csharp splices `code` VERBATIM into the CSX submission (by design, §13 —
@@ -27,6 +36,7 @@
 
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
+using Vouchfx.Steps.DbAssert.Postgres;
 using Vouchfx.Steps.HttpRest;
 using Vouchfx.Steps.Script.Csharp;
 using Xunit;
@@ -39,6 +49,7 @@ public sealed class ScenarioValidatorTests
     {
         typeof(HttpRestProvider).Assembly,
         typeof(ScriptCsharpProvider).Assembly,
+        typeof(DbAssertPostgresProvider).Assembly,
     };
 
     private static readonly StepKindRegistry s_registry =
@@ -92,18 +103,21 @@ public sealed class ScenarioValidatorTests
     // ── Pipeline stage failure (real provider-model validation, not a stub) ───────
 
     [Fact]
-    public void ValidateScenario_HttpRestPathWithoutLeadingSlash_FailsAtPipelineStage()
+    public void ValidateScenario_DbAssertPostgresUndeclaredDependency_FailsAtPipelineStage()
     {
-        // 'path: users/123' (no leading '/') is a perfectly valid JSON Schema string, so
-        // schema validation passes; HttpRestProvider.Validate's SSRF guard rejects it
-        // ("must be a rooted relative path") — a genuine ProviderPipeline.Compile failure.
+        // 'target: undeclared-db' names no entry under environment.dependencies in THIS
+        // document. A step's own JsonSchemaFragment has no visibility into sibling
+        // document sections, so this cross-reference can never become a JSON Schema
+        // check — it stays a genuine ProviderPipeline.Compile failure:
+        // DbAssertPostgresProvider.Validate's ctx.DeclaredDependencies reconciliation.
         const string yaml = """
             steps:
-              - id: bad-path
-                type: http.rest
-                target: svc
-                method: GET
-                path: users/123
+              - id: bad-target
+                type: db-assert.postgres
+                target: undeclared-db
+                query: SELECT 1
+                expect:
+                  rowCount: 1
             """;
 
         var result = ScenarioValidator.ValidateScenario(yaml, "pipeline-invalid.e2e.yaml", s_registry);
@@ -111,7 +125,13 @@ public sealed class ScenarioValidatorTests
         Assert.False(result.IsValid);
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
-        Assert.Contains("rooted relative path", diagnostic.Message, StringComparison.Ordinal);
+        // Pinned to DbAssertPostgresProvider.Validate's own reconciliation message
+        // (minor, gatekeeper review): a loose "is not a" substring would equally
+        // pass for an unrelated message accidentally containing that fragment.
+        Assert.Contains(
+            "db-assert.postgres: 'target' 'undeclared-db' is not a postgres dependency declared in environment.dependencies.",
+            diagnostic.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

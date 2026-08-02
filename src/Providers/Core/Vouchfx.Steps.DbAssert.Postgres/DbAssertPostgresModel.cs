@@ -38,7 +38,7 @@ public sealed record PostgresExpectation(
 /// </param>
 /// <param name="Parameters">
 /// An optional map of parameter names (without the leading <c>@</c>) to their
-/// string values.  The executor binds these as <c>NpgsqlParameter</c> instances
+/// values, passed as text (a bare numeric or boolean scalar binds as its literal text).  The executor binds these as <c>NpgsqlParameter</c> instances
 /// to prevent SQL injection.
 /// </param>
 /// <param name="Expect">

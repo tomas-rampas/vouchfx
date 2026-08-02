@@ -1,0 +1,21 @@
+# expected-instance-location: /steps/0/match/extra
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): mq-expect.rabbitmq's
+# 'match' block used to declare its own "additionalProperties": true, so an
+# unknown key alongside a real criterion (here, 'payloadContains') was
+# silently accepted. additionalProperties is now false.
+metadata:
+  name: rejected-match-unknown-key-mq-expect-rabbitmq
+environment:
+  dependencies:
+    orders-rabbitmq:
+      type: rabbitmq
+steps:
+  - id: expect-order
+    type: mq-expect.rabbitmq
+    target: orders-rabbitmq
+    queue: orders
+    match:
+      payloadContains: id
+      extra: oops

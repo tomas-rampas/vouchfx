@@ -282,13 +282,84 @@ public static partial class SuiteScaffolder
                 emitted.Add(field);
             }
 
-            // Catalogue oneOf shapes (script.csharp) and provider-validator companions that
-            // are not always listed in fragment "required" still need placeholders so the
-            // full validate pipeline (schema + bind + Validate) succeeds.
+            // B1 (gatekeeper): catalogue-driven oneOf ("exactly one of") / anyOf ("at least
+            // one of") groups — script.csharp's code/file, mq-publish.azureservicebus's
+            // queue/topic, mq-expect.azureservicebus's expectPayloadContains/expectProperties
+            // — emit the FIRST group member with its own scaffold value, unless some member
+            // is already emitted. Reads StepCatalogueEntry.ExactlyOneOfGroups/AtLeastOneOfGroups
+            // directly rather than re-deriving the shape from field names, so this generic
+            // mechanism and EngineExport's own detection can never drift apart.
+            EmitFirstUnemittedPerGroup(sb, entry.ExactlyOneOfGroups, step.Type, entry.Family, entry.Provider, targets, emitted);
+            EmitFirstUnemittedPerGroup(sb, entry.AtLeastOneOfGroups, step.Type, entry.Family, entry.Provider, targets, emitted);
+
+            // Provider-validator companions that the catalogue's typed groups cannot express
+            // still need placeholders so the full validate pipeline (schema + bind + Validate)
+            // succeeds — see EmitCompanionFields' own remarks for exactly which residual case
+            // this covers and why it cannot be folded into the generic group mechanism above.
             EmitCompanionFields(sb, step.Type, entry.Family, entry.Provider, targets, emitted);
         }
     }
 
+    /// <summary>
+    /// For each field-name group (an "exactly one of" or "at least one of" group
+    /// from the catalogue — see <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/>/
+    /// <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>), emits the group's
+    /// FIRST member via the same <see cref="EmitField"/> dispatch every
+    /// individually-required field uses — so the scaffold value is identical to
+    /// what that field name would get if it were simply required — unless any
+    /// member of the group is already emitted (a step intent or an earlier group
+    /// may have already satisfied it).
+    /// </summary>
+    private static void EmitFirstUnemittedPerGroup(
+        StringBuilder sb,
+        IReadOnlyList<IReadOnlyList<string>>? groups,
+        string stepType,
+        string family,
+        string provider,
+        TargetResolver targets,
+        HashSet<string> emitted)
+    {
+        if (groups is null)
+        {
+            return;
+        }
+
+        foreach (var group in groups)
+        {
+            if (group.Count == 0 || group.Any(emitted.Contains))
+            {
+                continue;
+            }
+
+            var chosen = group[0];
+            EmitField(sb, chosen, stepType, family, provider, targets, indent: "    ");
+            emitted.Add(chosen);
+        }
+    }
+
+    /// <summary>
+    /// Residual, genuinely-non-generic companion emission (B1, gatekeeper
+    /// review): script.csharp's code/file and mq-publish.azureservicebus's
+    /// queue/topic used to be hardcoded here too, but both are now ordinary
+    /// <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/> shapes handled by
+    /// <see cref="EmitFirstUnemittedPerGroup"/> above (folded into the generic
+    /// mechanism rather than kept as a second path, per review). The SAME is
+    /// true of mq-expect.azureservicebus's expectPayloadContains/expectProperties
+    /// (an <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/> shape now).
+    /// </summary>
+    /// <remarks>
+    /// What is left, and why it cannot be folded in: mq-expect.azureservicebus's
+    /// OWN 'queue' requirement is <c>queue XOR (topic AND subscription)</c> — a
+    /// <c>oneOf</c> with a TWO-name branch (<c>{required:[topic,subscription]}</c>).
+    /// <c>EngineExport.TryReadSingleRequiredGroupNames</c> deliberately declines
+    /// to synthesise a group for mixed-branch cardinality (the same
+    /// degrade-don't-fabricate guard <c>SchemaErrorCollector</c> uses for its
+    /// own "too many oneOf matches" message) — a THREE-name "exactly one of
+    /// queue, topic, subscription" group would misstate the actual constraint.
+    /// So this one case has no typed-group source to consume, and stays a
+    /// direct, narrowly-scoped emission: 'queue' alone always satisfies the
+    /// FIRST (single-field) branch of that oneOf.
+    /// </remarks>
     private static void EmitCompanionFields(
         StringBuilder sb,
         string stepType,
@@ -297,32 +368,13 @@ public static partial class SuiteScaffolder
         TargetResolver targets,
         HashSet<string> emitted)
     {
-        // script.csharp: fragment uses oneOf [code|file]; catalogue required is empty.
-        if (string.Equals(stepType, "script.csharp", StringComparison.Ordinal)
-            && !emitted.Contains("code")
-            && !emitted.Contains("file"))
+        if (string.Equals(family, "mq-expect", StringComparison.Ordinal)
+            && string.Equals(provider, "azureservicebus", StringComparison.Ordinal)
+            && !emitted.Contains("queue")
+            && !emitted.Contains("topic"))
         {
-            EmitScalar(sb, "code", "// scaffold", indent: "    ");
-            emitted.Add("code");
-        }
-
-        // Azure Service Bus: queue / expect payload are enforced by IStepValidator, not
-        // always by the fragment's top-level required array.
-        if (string.Equals(provider, "azureservicebus", StringComparison.Ordinal))
-        {
-            if (!emitted.Contains("queue") && !emitted.Contains("topic"))
-            {
-                EmitScalar(sb, "queue", "scaffold-queue", indent: "    ");
-                emitted.Add("queue");
-            }
-
-            if (string.Equals(family, "mq-expect", StringComparison.Ordinal)
-                && !emitted.Contains("expectPayloadContains")
-                && !emitted.Contains("expectProperties"))
-            {
-                EmitScalar(sb, "expectPayloadContains", "scaffold", indent: "    ");
-                emitted.Add("expectPayloadContains");
-            }
+            EmitScalar(sb, "queue", "scaffold-queue", indent: "    ");
+            emitted.Add("queue");
         }
     }
 

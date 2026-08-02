@@ -197,17 +197,46 @@ internal static class LanguageReferenceGenerator
 
         sb.Append("Set `type: ").Append(st.TypeId).Append("` to use this step.\n\n");
 
+        // M2 (gatekeeper, feat/fragment-completeness): a root-level oneOf/anyOf whose
+        // every branch names exactly one required field is rendered as its OWN
+        // "exactly one of" / "at least one of" table, and those field names are
+        // excluded from the plain Required/Optional tables below — otherwise (the
+        // finding this fixes) script.csharp's code/file surfaced under "Optional
+        // fields" with no Required section at all, actively disagreeing with the
+        // catalogue's own ExactlyOneOfGroups (EngineExport.cs) once THAT was fixed.
+        // Independent implementation, not shared code, by design — see the file
+        // header ("lives in the TEST project... deliberately decoupled").
+        var fieldsByName = st.Fields.ToDictionary(f => f.Name, StringComparer.Ordinal);
+        var groupedFieldNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in st.ExactlyOneOfGroups.Concat(st.AtLeastOneOfGroups))
+        {
+            foreach (var name in group)
+            {
+                groupedFieldNames.Add(name);
+            }
+        }
+
+        foreach (var group in st.ExactlyOneOfGroups)
+        {
+            WriteFieldGroupTable(sb, "Required — exactly one of", group, fieldsByName);
+        }
+
+        foreach (var group in st.AtLeastOneOfGroups)
+        {
+            WriteFieldGroupTable(sb, "Required — at least one of", group, fieldsByName);
+        }
+
         var requiredFields = st.Fields
-            .Where(f => st.Required.Contains(f.Name))
+            .Where(f => st.Required.Contains(f.Name) && !groupedFieldNames.Contains(f.Name))
             .OrderBy(f => f.Name, StringComparer.Ordinal)
             .ToList();
 
         var optionalFields = st.Fields
-            .Where(f => !st.Required.Contains(f.Name))
+            .Where(f => !st.Required.Contains(f.Name) && !groupedFieldNames.Contains(f.Name))
             .OrderBy(f => f.Name, StringComparer.Ordinal)
             .ToList();
 
-        if (requiredFields.Count == 0 && optionalFields.Count == 0)
+        if (requiredFields.Count == 0 && optionalFields.Count == 0 && groupedFieldNames.Count == 0)
         {
             sb.Append("This step type declares no type-specific fields beyond the common fields.\n\n");
             return;
@@ -278,6 +307,32 @@ internal static class LanguageReferenceGenerator
           .Append(EscapeTableCell(f.Description)).Append(" |\n");
     }
 
+    /// <summary>
+    /// Renders one "exactly one of" / "at least one of" field GROUP as its own
+    /// heading plus a Type/Description table (M2, gatekeeper) — never a bare
+    /// name list: that would silently drop the type/description information
+    /// the plain Required/Optional tables carry for every other field, and
+    /// this generator's whole purpose is that a reader never has to open the
+    /// schema itself to learn a field's type or description.
+    /// </summary>
+    private static void WriteFieldGroupTable(
+        StringBuilder sb, string heading, List<string> group, Dictionary<string, Field> fieldsByName)
+    {
+        // n3 (gatekeeper, third round): no trailing colon inside the bold — matches this
+        // file's existing "**Required fields**" / "**Optional fields**" convention exactly.
+        sb.Append("**").Append(heading).Append("**\n\n");
+        sb.Append("| Field | Type | Description |\n");
+        sb.Append("| --- | --- | --- |\n");
+        foreach (var name in group)
+        {
+            if (fieldsByName.TryGetValue(name, out var f))
+            {
+                WriteTypeFieldRow(sb, f);
+            }
+        }
+        sb.Append('\n');
+    }
+
     // ── Schema navigation ──────────────────────────────────────────────────────
 
     private static JsonElement NavigateStepDefinition(JsonElement root)
@@ -310,11 +365,63 @@ internal static class LanguageReferenceGenerator
             var description = TryGetString(then, "description");
             var required = ReadRequiredSet(then);
             var fields = ReadFields(then);
+            var exactlyOneOfGroups = ReadSingleRequiredGroups(then, "oneOf");
+            var atLeastOneOfGroups = ReadSingleRequiredGroups(then, "anyOf");
 
-            result.Add(new StepType(typeId, description, required, fields));
+            result.Add(new StepType(typeId, description, required, fields, exactlyOneOfGroups, atLeastOneOfGroups));
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reads a step type's own <c>then</c> clause's <paramref name="keyword"/>
+    /// array (<c>"oneOf"</c> or <c>"anyOf"</c>) and returns the field-name
+    /// group(s) when EVERY branch is shaped EXACTLY <c>{"required": ["name"]}</c>
+    /// — a <c>required</c> array of length 1 and no other property on the
+    /// branch object. Mirrors <c>EngineExport.TryReadSingleRequiredGroupNames</c>
+    /// (<c>Vouchfx.Engine.Compilation</c>) as an INDEPENDENT implementation, not
+    /// shared code — this generator lives in the test project deliberately
+    /// decoupled from the engine assembly (see the file header) — so the two
+    /// must be kept in step by hand, not by a shared reference. Returns an
+    /// empty list, never a fabricated group, when the keyword is absent or any
+    /// branch does not qualify (degrade-don't-fabricate, mirrors
+    /// <c>SchemaErrorCollector</c>'s own <c>HasUnattributableBranch</c> guard).
+    /// </summary>
+    private static List<List<string>> ReadSingleRequiredGroups(JsonElement then, string keyword)
+    {
+        if (!then.TryGetProperty(keyword, out var composite) || composite.ValueKind != JsonValueKind.Array)
+            return new List<List<string>>();
+
+        var names = new List<string>();
+        foreach (var branch in composite.EnumerateArray())
+        {
+            if (branch.ValueKind != JsonValueKind.Object)
+                return new List<List<string>>();
+
+            var propertyCount = 0;
+            JsonElement? branchRequired = null;
+            foreach (var prop in branch.EnumerateObject())
+            {
+                propertyCount++;
+                if (propertyCount > 1 || !string.Equals(prop.Name, "required", StringComparison.Ordinal))
+                    return new List<List<string>>();
+
+                branchRequired = prop.Value;
+            }
+
+            if (branchRequired is not { ValueKind: JsonValueKind.Array } requiredArray ||
+                requiredArray.GetArrayLength() != 1)
+                return new List<List<string>>();
+
+            var only = requiredArray[0];
+            if (only.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(only.GetString()))
+                return new List<List<string>>();
+
+            names.Add(only.GetString()!);
+        }
+
+        return names.Count > 0 ? new List<List<string>> { names } : new List<List<string>>();
     }
 
     /// <summary>
@@ -608,7 +715,9 @@ internal static class LanguageReferenceGenerator
         string TypeId,
         string? Description,
         HashSet<string> Required,
-        List<Field> Fields);
+        List<Field> Fields,
+        List<List<string>> ExactlyOneOfGroups,
+        List<List<string>> AtLeastOneOfGroups);
 
     private sealed record Field(string Name, string Type, string Description);
 }

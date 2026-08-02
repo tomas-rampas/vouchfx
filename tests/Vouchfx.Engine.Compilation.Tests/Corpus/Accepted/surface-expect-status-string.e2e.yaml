@@ -1,0 +1,22 @@
+# Scalar-coercion widening (T2a, feat/fragment-completeness): http.rest's
+# 'expect.status' now accepts ["integer", "string"] — schema ≡ parser.
+# HttpRestProvider.Bind reads it via int.TryParse over the raw scalar text
+# regardless of the YAML value's declared type, so a quoted "200" already
+# worked at runtime; it previously failed only at this schema gate.
+# Formerly scalar-coercion-expect-status-string.e2e.yaml (pinned as a
+# still-rejected case by SchemaAcceptedCorpusTests); promoted into the plain
+# accepted set now that the widening has landed.
+metadata:
+  name: surface-expect-status-string
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: call-app
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    expect:
+      status: "200"

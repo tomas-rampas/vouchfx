@@ -33,6 +33,21 @@ public sealed class ListJsonGoldenTests
     private static readonly string[] HttpRestOptional = new[] { "body", "expect", "headers" };
     private static readonly string[] MqPublishRequired = new[] { "target", "topic" };
     private static readonly string[] MqPublishOptional = new[] { "headers", "payload" };
+    private static readonly string[] MqExpectAsbRequired = new[] { "target" };
+    private static readonly string[] MqExpectAsbOptional = new[] { "queue", "subscription", "topic" };
+
+    // M2 (gatekeeper, third round): the fixture must PIN the two array-of-arrays shapes
+    // ListCommand actually emits, not merely default them to null via the 7-arg ctor — an
+    // entry with no root oneOf/anyOf gets an explicit EMPTY array (proving the golden freezes
+    // "[]", not merely tolerating an omitted property), and at least one entry per group kind
+    // carries a populated group so the nested-array serialisation itself is frozen, not just
+    // the outer property's presence. Mirrors CatalogueJsonGoldenTests' identical fix.
+    private static readonly IReadOnlyList<IReadOnlyList<string>> NoGroups =
+        Array.Empty<IReadOnlyList<string>>();
+    private static readonly IReadOnlyList<IReadOnlyList<string>> ScriptCsharpExactlyOneOf =
+        new IReadOnlyList<string>[] { new[] { "code", "file" } };
+    private static readonly IReadOnlyList<IReadOnlyList<string>> MqExpectAsbAtLeastOneOf =
+        new IReadOnlyList<string>[] { new[] { "expectPayloadContains", "expectProperties" } };
 
     private static StepCatalogueDocument BuildFixture() => new(
         SchemaVersion: EngineExport.CatalogueSchemaVersion,
@@ -46,7 +61,9 @@ public sealed class ListJsonGoldenTests
                 RequiredFields: DbAssertRequired,
                 OptionalFields: DbAssertOptional,
                 CaptureSupported: true,
-                FamilyIntent: "Query a data store and assert properties of the result set or document."),
+                FamilyIntent: "Query a data store and assert properties of the result set or document.",
+                ExactlyOneOfGroups: NoGroups,
+                AtLeastOneOfGroups: NoGroups),
             new StepCatalogueEntry(
                 Type: "http.rest",
                 Family: "http",
@@ -54,7 +71,9 @@ public sealed class ListJsonGoldenTests
                 RequiredFields: HttpRestRequired,
                 OptionalFields: HttpRestOptional,
                 CaptureSupported: true,
-                FamilyIntent: "Call HTTP endpoints (REST or SOAP) on services under test and assert responses."),
+                FamilyIntent: "Call HTTP endpoints (REST or SOAP) on services under test and assert responses.",
+                ExactlyOneOfGroups: NoGroups,
+                AtLeastOneOfGroups: NoGroups),
             new StepCatalogueEntry(
                 Type: "mq-publish.kafka",
                 Family: "mq-publish",
@@ -62,7 +81,29 @@ public sealed class ListJsonGoldenTests
                 RequiredFields: MqPublishRequired,
                 OptionalFields: MqPublishOptional,
                 CaptureSupported: true,
-                FamilyIntent: "Publish a message onto a broker to drive the system under test."),
+                FamilyIntent: "Publish a message onto a broker to drive the system under test.",
+                ExactlyOneOfGroups: NoGroups,
+                AtLeastOneOfGroups: NoGroups),
+            new StepCatalogueEntry(
+                Type: "script.csharp",
+                Family: "script",
+                Provider: "csharp",
+                RequiredFields: Array.Empty<string>(),
+                OptionalFields: Array.Empty<string>(),
+                CaptureSupported: true,
+                FamilyIntent: "Run inline or file-backed C# for cases the declarative step types cannot express.",
+                ExactlyOneOfGroups: ScriptCsharpExactlyOneOf,
+                AtLeastOneOfGroups: NoGroups),
+            new StepCatalogueEntry(
+                Type: "mq-expect.azureservicebus",
+                Family: "mq-expect",
+                Provider: "azureservicebus",
+                RequiredFields: MqExpectAsbRequired,
+                OptionalFields: MqExpectAsbOptional,
+                CaptureSupported: true,
+                FamilyIntent: "Assert that a message matching declared criteria was received from a broker.",
+                ExactlyOneOfGroups: NoGroups,
+                AtLeastOneOfGroups: MqExpectAsbAtLeastOneOf),
         });
 
     [Fact]

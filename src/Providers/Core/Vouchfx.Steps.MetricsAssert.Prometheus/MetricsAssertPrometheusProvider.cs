@@ -111,24 +111,29 @@ public sealed class MetricsAssertPrometheusProvider
           "properties": {
             "target": {
               "description": "Logical name of the service to scrape, as declared under environment.services — normally the system under test.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "path": {
-              "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted.",
-              "type": "string"
+              "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "type": "string",
+              "pattern": "^/(?!/)[^\\\\]*$",
+              "default": "/metrics"
             },
             "metric": {
               "description": "The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "labels": {
               "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
             "expect": {
               "description": "The value assertion block.  At least one of value, min, or max must be declared; all three may combine.  Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time.",
               "type": "object",
+              "minProperties": 1,
               "properties": {
                 "value": {
                   "description": "Expected exact value.  Compared with a 1e-9 relative tolerance (see the provider's ScrapeAsync helper).",

@@ -150,6 +150,7 @@ public sealed class ScriptCsharpProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
+          "description": "Runs an author-supplied C# snippet — given inline or as a path to an external .csx file — against the shared step context. Exactly one of 'code' or 'file' must be set.",
           "type": "object",
           "oneOf": [
             { "required": ["code"] },
@@ -157,12 +158,15 @@ public sealed class ScriptCsharpProvider
           ],
           "properties": {
             "code": {
-              "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.",
-              "type": "string"
+              "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.  Capped at 64 KiB (a plain resource bound, not a security control).",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
             },
             "file": {
               "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             }
           }
         }

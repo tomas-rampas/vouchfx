@@ -75,11 +75,24 @@ public sealed class ListCommandTests
 
         Assert.All(document!.StepTypes, st =>
         {
-            // At least one of required/optional is non-empty for every Core provider
-            // that ships a real model fragment (all Core do).
+            // At least one of required/optional/exactly-one-of/at-least-one-of is non-empty
+            // for every Core provider that ships a real model fragment (all Core do). A type
+            // whose sole requirement lives inside a root oneOf/anyOf (script.csharp's
+            // code/file; mq-publish.azureservicebus's queue/topic; mq-expect.azureservicebus's
+            // expectPayloadContains/expectProperties) legitimately has an EMPTY flat
+            // RequiredFields/OptionalFields pair — the constraint is expressed in the typed
+            // groups instead (StepCatalogueEntry.ExactlyOneOfGroups/AtLeastOneOfGroups), not
+            // omitted. Checking only the flat lists here would resurrect exactly the bug B1
+            // fixed: a step type that looks unconstrained when it is not.
+            var hasAnyFieldInfo =
+                st.RequiredFields.Count > 0
+                || st.OptionalFields.Count > 0
+                || (st.ExactlyOneOfGroups?.Count ?? 0) > 0
+                || (st.AtLeastOneOfGroups?.Count ?? 0) > 0;
             Assert.True(
-                st.RequiredFields.Count > 0 || st.OptionalFields.Count > 0,
-                $"Step type '{st.Type}' has empty required and optional field lists.");
+                hasAnyFieldInfo,
+                $"Step type '{st.Type}' has empty required, optional, exactly-one-of, and "
+                + "at-least-one-of field lists.");
             Assert.True(st.CaptureSupported);
             Assert.False(string.IsNullOrWhiteSpace(st.FamilyIntent));
         });
@@ -92,6 +105,15 @@ public sealed class ListCommandTests
         var pg = Assert.Single(document.StepTypes, st => st.Type == "db-assert.postgres");
         Assert.True(pg.RequiredFields.Count > 0 || pg.OptionalFields.Count > 0);
         Assert.Contains("data store", pg.FamilyIntent, StringComparison.OrdinalIgnoreCase);
+
+        // script.csharp is the specific case that motivates the widened check above: empty
+        // flat lists, but a real constraint expressed as a typed group (B1).
+        var scriptCsharp = Assert.Single(document.StepTypes, st => st.Type == "script.csharp");
+        Assert.Empty(scriptCsharp.RequiredFields);
+        Assert.Empty(scriptCsharp.OptionalFields);
+        Assert.NotNull(scriptCsharp.ExactlyOneOfGroups);
+        var scriptGroup = Assert.Single(scriptCsharp.ExactlyOneOfGroups!);
+        Assert.Equal(new[] { "code", "file" }, scriptGroup);
     }
 
     [Fact]

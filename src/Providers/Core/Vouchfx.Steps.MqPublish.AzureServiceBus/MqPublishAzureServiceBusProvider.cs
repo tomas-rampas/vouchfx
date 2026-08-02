@@ -77,27 +77,36 @@ public sealed class MqPublishAzureServiceBusProvider
           "description": "Publishes one UTF-8 message to an Azure Service Bus queue or topic.  A Pass verdict confirms the send was accepted by the broker.  Verify with a following mq-expect.azureservicebus step.",
           "type": "object",
           "required": ["target", "payload"],
+          "oneOf": [
+            { "required": ["queue"] },
+            { "required": ["topic"] }
+          ],
           "properties": {
             "target": {
               "description": "Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "queue": {
               "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "topic": {
               "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "payload": {
-              "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string"
+              "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+              "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+              "type": ["string", "integer", "number", "boolean"],
+              "minLength": 1
             },
             "properties": {
               "description": "Optional application properties to attach to the message (string key=value pairs).  Values may contain {placeholder} and ${secret:source/path} tokens.",
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             }
           }
         }

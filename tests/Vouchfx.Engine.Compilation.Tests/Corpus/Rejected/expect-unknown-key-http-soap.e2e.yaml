@@ -1,0 +1,17 @@
+# expected-instance-location: /steps/0/expect/statuss
+# expected-keyword: additionalProperties
+#
+# Pre-GA schema tightening (T3a2 — nested-block closure): http.soap's
+# 'expect' block used to declare NO additionalProperties keyword at all, so
+# an unknown key inside it (here, 'status' typo'd as 'statuss') was silently
+# accepted. additionalProperties: false now catches it at authoring time.
+metadata:
+  name: rejected-expect-unknown-key-http-soap
+steps:
+  - id: call-soap
+    type: http.soap
+    target: orders-soap
+    path: /soap/orders
+    envelope: "<soap:Envelope></soap:Envelope>"
+    expect:
+      statuss: 200
