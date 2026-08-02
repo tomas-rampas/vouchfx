@@ -20,18 +20,27 @@
 // Run with: dotnet test --filter "requires=docker". Excluded from the unit-CI job via
 // `dotnet test --filter "requires!=docker"`.
 //
-// MEASURED (live, on this exact tree, Docker Desktop for Windows):
-//   - Pre-fix (bare ConnectAsync, no read discriminator): a `traefik/whoami` service
-//     declaring `ports: [9093]` (whoami does not listen on 9093 — nothing is listening
-//     inside the container at all on that port) with `healthCheck: { type: tcp, port: 9093 }`
-//     reached Healthy — the exact false-positive B1 describes.
-//   - Post-fix: the SAME topology never reaches Healthy within the bounded wait below —
-//     `Map_ServiceTcpHealthCheck_DeadPort_NeverReachesHealthy` is RED against the pre-fix
-//     source and GREEN against the fixed source (verified by temporarily reverting
-//     EnvironmentMapper.ApplyTcpHealthCheck to the bare-connect form and re-running this file).
-//   - Positive control: a live, silent (does-not-speak-first) TCP listener — whoami's own
-//     port 80 — still reaches Healthy within the same bound, proving the bounded
-//     zero-byte-read discriminator does not turn a real backend into a false negative.
+// MEASURED (fix round 3 — this section rewritten; the previous wording claimed a red/green
+// revert-and-rerun of this file that never happened — see fact 3 below). Three separate
+// measurements feed this file's justification, none of them that revert-and-rerun:
+//
+//   1. THE ORIGINAL BUG, pre-fix (peer review of this branch's first commit, 4414931 — not
+//      reproduced by this file itself). A `traefik/whoami` service declaring `ports: [9093]`
+//      (nothing listens on 9093 inside the container) with `healthCheck: { type: tcp, port:
+//      9093 }` reached Healthy in ~18 s under the pre-fix bare-ConnectAsync check — the exact
+//      false positive B1 describes. As a control, the SAME dead port under a `type: http`
+//      health check correctly reported unhealthy, but only after ~126 s.
+//   2. THE FIXED DISCRIMINATOR'S CONNECT/READ SIGNATURE (`good=CONNECT_OK READ_TIMEOUT`,
+//      `bad=CONNECT_OK READ_BYTES=0` — see `ApplyTcpHealthCheck`'s own remarks). Reproduced
+//      against RAW DOCKER-PUBLISHED PORTS, NOT through a DCP-proxied endpoint — three trials
+//      in each direction (good/bad), run independently by two different parties, with
+//      consistent results each time.
+//   3. THIS FILE'S OWN TWO TESTS, against a REAL DCP-proxied endpoint (what they actually
+//      exercise, unlike fact 2). Both have each passed ONCE on Windows, through the full DCP
+//      path. Neither has been proven RED against the pre-fix source: no revert-and-rerun of
+//      `EnvironmentMapper.ApplyTcpHealthCheck` back to the bare-connect form has been
+//      performed against this file, and none should be assumed from facts 1 or 2 above —
+//      those measure the bug and the discriminator, not this file's own DCP path.
 //
 // LINUX CI: UNVERIFIED. This was only run on Docker Desktop for Windows. The same "accept the
 // connection unconditionally, only then dial the backend, close on failure" DCP proxy design is
@@ -42,6 +51,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Vouchfx.Engine.Authoring.Model;
 using Xunit;
 
@@ -104,14 +114,27 @@ public sealed class EnvironmentMapperTcpHealthCheckDockerTests
 
         using var boundedCts = new CancellationTokenSource(s_boundedWait);
 
-        // The fixed check must never report Healthy for a dead backend: either the wait times
-        // out (cancelled) because the resource never leaves its pre-healthy state, or the
-        // resource is observed to move to an explicitly unavailable state — both are acceptable
-        // "did not reach healthy" outcomes; only a clean, non-throwing return would mean B1
-        // regressed.
-        await Assert.ThrowsAnyAsync<Exception>(() =>
+        // n-2 fix (fix round 3): asserting ONLY "the bounded wait throws" is non-discriminating
+        // — a cold image pull, a DCP hiccup, or a slow runner satisfies that identically to "the
+        // probe correctly reported Unhealthy" (none of those are B1 regressing, but all three
+        // would make this assertion pass just the same). Swallow whatever the wait does — throw
+        // or return — and assert on the RESOURCE'S OWN OBSERVED STATE instead: the named tcp
+        // health check this exact topology registers must itself have recorded an explicit
+        // Unhealthy transition. A run that never got far enough to run the health check at all
+        // (the cold-pull/DCP-hiccup case) has no such report and this assertion FAILS, rather
+        // than passing on an unrelated exception — the correct outcome for a run that answered a
+        // different question than the one this test asks.
+        await Record.ExceptionAsync(() =>
             topology.Application.ResourceNotifications.WaitForResourceHealthyAsync(
                 "dead-whoami", WaitBehavior.StopOnResourceUnavailable, boundedCts.Token));
+
+        Assert.True(
+            topology.Application.ResourceNotifications.TryGetCurrentState("dead-whoami", out var resourceEvent),
+            "Expected at least one recorded resource-notification snapshot for 'dead-whoami'.");
+        var healthReport = Assert.Single(
+            resourceEvent.Snapshot.HealthReports,
+            r => r.Name == "dead-whoami-tcp-9093-health");
+        Assert.Equal(HealthStatus.Unhealthy, healthReport.Status);
     }
 
     /// <summary>

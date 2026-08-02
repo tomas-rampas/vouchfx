@@ -322,7 +322,6 @@ public sealed class HttpSoapProvider
             : ValidationResult.Failure(errors.ToArray());
     }
 
-
     /// <summary>
     /// Attempts to parse <paramref name="envelopeTemplate"/> as XML using the same hardened
     /// settings the execution-time XPath evaluation uses (DTD prohibited, no external

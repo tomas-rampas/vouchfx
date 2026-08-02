@@ -119,9 +119,11 @@ public sealed record ServiceSpec(
     /// REQ-009), replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
     /// endpointName: "http")</c>) applied when this is <see langword="null"/> on an
     /// HTTP-shaped service (no <see cref="Ports"/> declared). A <see cref="Ports"/>-declared
-    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> gets NO implicit
-    /// health check at all — the resource reports healthy once its container reaches the
-    /// Running state, never via an HTTP request the service may not even be able to answer.
+    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> does NOT go unchecked
+    /// (M4 fix, fix round 2 — this summary previously said it did, before that fix landed):
+    /// it defaults to a <c>tcp</c> probe against the first declared port, never an HTTP
+    /// request the service may not even be able to answer, but a real check rather than none
+    /// at all — see docs/02 §3.2.6a for what a <c>tcp</c> probe does and does not prove.
     /// </summary>
     /// <remarks>
     /// An init-only property for the same binary-compatibility reason as

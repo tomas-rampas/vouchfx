@@ -243,6 +243,47 @@ file sealed class StubThrowingHostResourceProvider
     }
 }
 
+// G-A fix (gatekeeper, fix round 3): the precedence-proving sibling of
+// StubThrowingHostResourceProvider — Validate ALSO reports the model invalid, so a test can
+// prove Validate's own clean failure wins over the deferred HostResources exception, rather
+// than the exception masking it.
+[StepProvider]
+file sealed class StubFailingValidateThrowingHostResourceProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "failing-validate-throwing-hostresource");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "failing-validate-throwing-hostresource-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Failure("stub validation error: intentional failure");
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        throw new InvalidOperationException("Should not reach Emit after Validate fails.");
+
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model)
+    {
+        // Lazy iterator, same shape as StubThrowingHostResourceProvider's own — see its remarks.
+        yield return new HostResourceRequirement(Kind: string.Empty, VarName: string.Empty);
+    }
+}
+
 // Host resource named identically to a DECLARED SERVICE — G5 (gatekeeper MAJOR-5):
 // proves the service/listener name-collision guard in BuildProjectContext/Compile.
 [StepProvider]
@@ -363,6 +404,52 @@ file sealed class StubBusSrListenerProvider
 
     public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model) =>
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "bus-sr") };
+}
+
+file sealed record CountingBindModel : IStepModel;
+
+// m5 minor (fix round 3): a stub whose ONLY purpose is to count Bind invocations, so the
+// "exactly one Bind call per step" invariant that is the entire point of the M5 redesign
+// (ProviderPipeline.BindAllSteps's own remarks) has a test that actually counts rather than
+// inferring single-call-ness from the absence of a second call's side effects. BindCallCount
+// is static because s_registry (below) freezes ONE provider instance for the lifetime of this
+// test class; the one test that reads it resets it to 0 first, so test order never matters.
+[StepProvider]
+file sealed class StubCountingBindProvider
+    : IStepProvider,
+      IStepBinder<CountingBindModel>,
+      IStepValidator<CountingBindModel>,
+      IStepCompiler<CountingBindModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public static int BindCallCount;
+
+    public StepKindId Kind => new("stub", "counting-bind");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public CountingBindModel Bind(YamlNode node, IBindingContext ctx)
+    {
+        BindCallCount++;
+        return new CountingBindModel();
+    }
+
+    public ValidationResult Validate(CountingBindModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(CountingBindModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* counting-bind step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
 }
 
 // ── Test class ────────────────────────────────────────────────────────────────
@@ -749,6 +836,76 @@ public sealed class ProviderPipelineTests
         Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"]));
     }
 
+    // ── Test: dependency sidecar names are reachable DeclaredServices (M1, fix round 3) ──
+
+    /// <summary>
+    /// M1 fix (fix round 3) — a regression this branch introduced: before this fix,
+    /// <c>reservedSvcNames</c> (the collision guard's own name set) held a dependency's extra
+    /// sidecar name but <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> did not, so
+    /// the three narrowed HTTP-family providers (http.rest/http.soap/metrics-assert.prometheus)
+    /// rejected a target naming Kafka's schema-registry sidecar (<c>&lt;dep&gt;-sr</c>) even
+    /// though <c>EnvironmentMapper</c> actually stages it and it resolves at run time — proven
+    /// live via the CLI in this fix's own report. See this test's mailpit sibling below for the
+    /// other sidecar shape.
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_KafkaWithSchemaRegistry_DeclaredServicesContainsSrSidecar()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                bus:
+                  type: kafka
+                  schemaRegistry: true
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        Assert.Null(registryFailure);
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), boundSteps, out var collisionFailure);
+
+        Assert.Null(collisionFailure);
+        Assert.True(ctx.DeclaredServices.ContainsKey("bus-sr"));
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["bus-sr"]));
+    }
+
+    /// <summary>
+    /// M1 fix (fix round 3) — the mailpit sibling of
+    /// <see cref="BuildProjectContext_KafkaWithSchemaRegistry_DeclaredServicesContainsSrSidecar"/>:
+    /// mailpit's SMTP sidecar (<c>&lt;dep&gt;-smtp</c>) must be reachable too.
+    /// </summary>
+    [Fact]
+    public void BuildProjectContext_MailpitDependency_DeclaredServicesContainsSmtpSidecar()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                mail:
+                  type: mailpit
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        Assert.Null(registryFailure);
+        var ctx = ProviderPipeline.BuildProjectContext(
+            ast, Directory.GetCurrentDirectory(), boundSteps, out var collisionFailure);
+
+        Assert.Null(collisionFailure);
+        Assert.True(ctx.DeclaredServices.ContainsKey("mail-smtp"));
+        Assert.Equal("smtp", Assert.Single(ctx.DeclaredServices["mail-smtp"]));
+    }
+
     // ── Test: single-Bind-per-step, no swallow-catch (M5 fix, fix round 2) ───
 
     /// <summary>
@@ -786,16 +943,17 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// M5 fix (fix round 2) — the LAZY-ITERATOR sibling of
-    /// <see cref="BindAllSteps_StepBindThrows_PropagatesTargetInvocationException"/>: a step
-    /// whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c> enumerator throws (from
-    /// <c>HostResourceRequirement</c>'s own ctor validation) now propagates directly too —
-    /// <see cref="ProviderPipeline.BindAllSteps"/> materialises the host-resource list via
-    /// <c>.ToList()</c> (plain LINQ, not reflection <c>Invoke</c>), so the exception surfaces
-    /// UNWRAPPED, as the provider actually threw it.
+    /// G-A fix (gatekeeper, fix round 3) — supersedes the pre-fix-round-3 version of this
+    /// test, which asserted <see cref="ProviderPipeline.BindAllSteps"/> itself threw. It no
+    /// longer does: a step whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c>
+    /// enumerator throws (from <c>HostResourceRequirement</c>'s own ctor validation) is now
+    /// CAUGHT in <c>BindAllSteps</c> and deferred onto that step's own <c>BoundStep.
+    /// HostResourcesFailure</c> — see <see cref="Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate"/>
+    /// and <see cref="Compile_HostResourcesThrows_ValidateAlsoFails_ReturnsValidateFailureNotTheException"/>
+    /// for where it resurfaces (or doesn't).
     /// </summary>
     [Fact]
-    public void BindAllSteps_StepHostResourcesThrows_PropagatesUnwrapped()
+    public void BindAllSteps_StepHostResourcesThrows_DoesNotThrow_CapturesOntoBoundStep()
     {
         const string yaml = """
             environment:
@@ -810,7 +968,99 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        Assert.Throws<ArgumentException>(() => ProviderPipeline.BindAllSteps(ast, s_registry));
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+
+        Assert.Null(registryFailure);
+        var bound = Assert.Single(boundSteps);
+        Assert.Empty(bound.HostResources);
+        Assert.NotNull(bound.HostResourcesFailure);
+    }
+
+    /// <summary>
+    /// G-A fix (gatekeeper, fix round 3): reaching this exact step's own <c>Validate</c> and
+    /// finding it valid means whatever <c>HostResources()</c> threw is a genuine bug Validate
+    /// does not already cover — <see cref="ProviderPipeline.Compile"/>'s Pass 2 rethrows the
+    /// captured exception, unwrapped (via <c>ExceptionDispatchInfo</c>, not reflection
+    /// <c>Invoke</c>, so no <see cref="System.Reflection.TargetInvocationException"/>
+    /// wrapper), immediately after that <c>Validate</c> call.
+    /// </summary>
+    [Fact]
+    public void Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate()
+    {
+        const string yaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
+            steps:
+              - id: will-throw
+                type: stub.throwing-hostresource
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        Assert.Throws<ArgumentException>(
+            () => ProviderPipeline.Compile(ast, s_registry, SuiteNamespace));
+    }
+
+    /// <summary>
+    /// G-A fix (gatekeeper, fix round 3) — the precedence case the fix exists for: a step
+    /// whose <c>HostResources()</c> throws AND whose own <c>Validate</c> ALSO reports the
+    /// model invalid must surface Validate's clean <see cref="ValidationFailure"/> — never the
+    /// raw <c>HostResources</c> exception, which the pre-fix (unguarded, immediate-propagation)
+    /// behaviour would have thrown instead, aborting compile before this step's own Validate
+    /// ever ran.
+    /// </summary>
+    [Fact]
+    public void Compile_HostResourcesThrows_ValidateAlsoFails_ReturnsValidateFailureNotTheException()
+    {
+        const string yaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
+            steps:
+              - id: will-throw
+                type: stub.failing-validate-throwing-hostresource
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains(
+            "stub validation error: intentional failure",
+            result.Failure!.Message,
+            StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// m5 minor (fix round 3): asserts the "exactly one <c>Bind</c> call per step" invariant
+    /// directly, via <see cref="StubCountingBindProvider.BindCallCount"/>, rather than only
+    /// inferring it (as the two tests above do) from what a SECOND call would have broken.
+    /// </summary>
+    [Fact]
+    public void Compile_SingleStep_CallsBindExactlyOnce()
+    {
+        StubCountingBindProvider.BindCallCount = 0;
+
+        const string yaml = """
+            steps:
+              - id: step-alpha
+                type: stub.counting-bind
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.Null(result.Failure);
+        Assert.Equal(1, StubCountingBindProvider.BindCallCount);
     }
 
     // ── Test: service/listener name-collision guard (G5) ─────────────────────
@@ -918,6 +1168,43 @@ public sealed class ProviderPipelineTests
         Assert.Contains("bus-sr", result.Failure!.Message, StringComparison.Ordinal);
         Assert.Contains("bus", result.Failure.Message, StringComparison.Ordinal);
         Assert.Contains("listen-step", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// m7 fix (fix round 3): the collision guard was one-directional — it checked only a HOST
+    /// RESOURCE's VarName against <c>reservedSvcNames</c>, never a DECLARED SERVICE's own name
+    /// against a dependency's sidecar name. A service named identically to a mailpit
+    /// dependency's own SMTP sidecar (<c>mail-smtp</c>, staged by dependency <c>mail</c>)
+    /// collided silently before this fix — last write wins, whichever loop ran second silently
+    /// overwrote the first's <c>reservedSvcNames</c>/<c>DeclaredServices</c> entries. This test
+    /// is the reverse-direction sibling of
+    /// <see cref="Compile_HostResourceNameCollidesWithMailpitSmtpSidecar_FailsNamingBothSurfaces"/>.
+    /// </summary>
+    [Fact]
+    public void Compile_DeclaredServiceNameCollidesWithMailpitSmtpSidecar_FailsNamingBothSurfaces()
+    {
+        const string yaml = """
+            environment:
+              services:
+                mail-smtp:
+                  image: myorg/decoy:1.0
+              dependencies:
+                mail:
+                  type: mailpit
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains("mail-smtp", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("mail", result.Failure.Message, StringComparison.Ordinal);
         Assert.Null(result.Assembled);
     }
 

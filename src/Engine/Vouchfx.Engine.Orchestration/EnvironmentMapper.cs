@@ -668,8 +668,25 @@ public static class EnvironmentMapper
                             nameof(env));
                     }
 
+                    // m3 fix (fix round 3): for the HYBRID shape (ports + a sibling
+                    // httpPort), declaredPorts previously omitted httpPort entirely — so a
+                    // hybrid service could never tcp-probe its own httpPort: the port number
+                    // was never "among the service's declared ports" by this check's own
+                    // reckoning, even though it IS one of the service's declared ports (just
+                    // declared via the httpPort field rather than the ports list). The
+                    // resulting diagnostic then told the author to do the impossible —
+                    // "declare it under 'ports:'" — when they had already declared it, as
+                    // httpPort, and adding the SAME container port again under 'ports:' would
+                    // double-declare it under two different endpoint names. ApplyHealthCheck's
+                    // own endpoint-resolution fallback (below, in this same file) already
+                    // handles a tcpPort that is the service's httpPort rather than a 'ports:'
+                    // entry — resolving to the "http" endpoint — so admitting httpPort here is
+                    // the only change needed: the previously-dead branch becomes reachable and
+                    // already does the right thing.
                     var declaredPorts = spec.Ports is { Count: > 0 }
-                        ? spec.Ports
+                        ? spec.HttpPort is { } hybridHttpPort
+                            ? new List<int>(spec.Ports) { hybridHttpPort }
+                            : spec.Ports
                         : new List<int> { spec.HttpPort ?? 80 };
 
                     if (!declaredPorts.Contains(tcpPort))
@@ -2015,52 +2032,25 @@ public static class EnvironmentMapper
     /// attaches it via Aspire's generic <c>WithHealthCheck(key)</c>.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// <b>B1 fix (fix round 2 — the tcp health check that could never fail).</b> A bare
     /// <c>ConnectAsync</c> success does NOT prove a backend is listening: the endpoint this
     /// method probes is the HOST-PUBLISHED, DCP-PROXIED address, and DCP's proxy accepts the
     /// TCP connection UNCONDITIONALLY — before it has even attempted to reach the real
-    /// backend — and only then tries the backend itself. Measured live, on this exact tree,
-    /// with Docker (<c>EnvironmentMapperTcpHealthCheckDockerTests</c>): a service with
-    /// <c>ports: [9093]</c>, <c>healthCheck: { type: tcp, port: 9093 }</c>, and NOTHING
-    /// listening on 9093 was declared "healthy" in ~18 seconds by the pre-fix connect-only
-    /// check.
-    /// </para>
+    /// backend — and only then tries the backend itself. Measured (peer review of this
+    /// branch's first commit, 4414931): a service with <c>ports: [9093]</c>,
+    /// <c>healthCheck: { type: tcp, port: 9093 }</c>, and NOTHING listening on 9093 was
+    /// declared "healthy" in ~18 seconds by the pre-fix connect-only check; the same dead port
+    /// under a <c>type: http</c> control correctly reported unhealthy, but only after
+    /// ~126 seconds.
     /// <para>
-    /// The fix discriminates with a bounded, small-buffer read AFTER a successful connect:
-    /// <list type="bullet">
-    ///   <item><description>
-    ///     Read returns <c>0</c> bytes — DCP's proxy closed the pipe immediately because the
-    ///     real backend refused/was unreachable → <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>.
-    ///   </description></item>
-    ///   <item><description>
-    ///     Read times out (no bytes, connection stays open) — the overwhelming majority of
-    ///     TCP protocols do not speak first, so a live backend's connection is simply held
-    ///     open with nothing to read yet → <see cref="HealthCheckResult.Healthy"/>.
-    ///   </description></item>
-    ///   <item><description>
-    ///     Read returns <c>&gt;0</c> bytes immediately — a server-speaks-first protocol (e.g.
-    ///     SMTP, SSH) greeted us unprompted → definitely alive →
-    ///     <see cref="HealthCheckResult.Healthy"/>.
-    ///   </description></item>
-    /// </list>
-    /// Measured live, on this exact tree, with Docker, using two services (one with a real
-    /// listener on port 80, one dead on port 9093): <c>good=CONNECT_OK READ_TIMEOUT
-    /// (alive-ish)</c>, <c>bad=CONNECT_OK READ_BYTES=0</c> — exactly the discriminator this
-    /// method implements. <b>Measured on Docker Desktop for Windows only</b> — the
-    /// Linux/DCP-on-Linux proxy-close-timing behaviour is UNVERIFIED; the same "accept
-    /// unconditionally, close on backend failure" DCP proxy design is documented for both
-    /// platforms, but this has not been re-confirmed on Linux CI.
-    /// </para>
-    /// <para>
-    /// <b>What this proves, and what it does not.</b> A <see cref="HealthCheckResult.Healthy"/>
-    /// result confirms a listener accepted the connection and stayed open — it is
-    /// deliberately protocol-agnostic and never inspects application-layer traffic, so it
-    /// cannot detect a server whose listening socket opens before its own internal startup
-    /// finishes (a routine pattern for many servers, not an edge case). This is strictly
-    /// better than Aspire's own "healthy once Running" default for a resource with no
-    /// health-check annotation at all, but it is not a substitute for an application-level
-    /// readiness signal; see docs/02 §3.2.6a's "What a tcp health check does not prove" note.
+    /// This method's own job is the Aspire-specific wiring around the fix: resolve
+    /// <paramref name="endpointName"/>, report <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>
+    /// up front when the endpoint is not yet allocated (pre-<c>StartAsync</c> — an Aspire-only
+    /// concern a unit test against a real socket has no equivalent of), and register/attach the
+    /// named health check. The actual connect/read discriminator that decides Healthy/Unhealthy
+    /// is <see cref="ProbeAsync"/> — extracted into its own method (M4 fix, fix round 3) so it
+    /// has a unit test that runs with no Docker/DCP dependency; see its own remarks for the
+    /// branch-by-branch logic and what it proves.
     /// </para>
     /// </remarks>
     private static IResourceBuilder<ContainerResource> ApplyTcpHealthCheck(
@@ -2073,66 +2063,136 @@ public static class EnvironmentMapper
         var endpoint = containerBuilder.GetEndpoint(endpointName);
 
         var healthCheckKey = $"{serviceName}-tcp-{tcpPort}-health";
-        builder.Services.AddHealthChecks().AddAsyncCheck(healthCheckKey, async ct =>
+        builder.Services.AddHealthChecks().AddAsyncCheck(healthCheckKey, ct =>
         {
             if (!endpoint.IsAllocated)
             {
-                return HealthCheckResult.Unhealthy("Endpoint not yet allocated.");
+                return Task.FromResult(HealthCheckResult.Unhealthy("Endpoint not yet allocated."));
             }
 
-            using var connectTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectTimeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
-
-            using var tcpClient = new System.Net.Sockets.TcpClient();
-            try
-            {
-                await tcpClient.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeoutCts.Token)
-                    .ConfigureAwait(false);
-
-                // B1 fix: connect succeeded — this proves only that DCP's proxy accepted the
-                // connection, never that a real backend is listening behind it (see this
-                // method's own remarks). Discriminate with a bounded zero-byte-buffer read.
-                using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                readTimeoutCts.CancelAfter(TimeSpan.FromSeconds(1));
-
-                try
-                {
-                    var stream = tcpClient.GetStream();
-                    var buffer = new byte[1];
-                    var bytesRead = await stream.ReadAsync(buffer, readTimeoutCts.Token)
-                        .ConfigureAwait(false);
-
-                    return bytesRead == 0
-                        ? HealthCheckResult.Unhealthy(
-                            $"TCP connect to {endpoint.Host}:{endpoint.Port} succeeded, but the " +
-                            "connection was closed immediately (zero bytes read) — no backend is " +
-                            "listening behind the host-published proxy.")
-                        // >0 bytes: a server-speaks-first protocol greeted us unprompted.
-                        : HealthCheckResult.Healthy();
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    // The read timed out waiting for data or EOF (readTimeoutCts fired, not the
-                    // ambient ct): the connection was held open with nothing to read yet — the
-                    // live-backend signature for the overwhelming majority of TCP protocols,
-                    // which do not speak first.
-                    return HealthCheckResult.Healthy();
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-            {
-                // Catches both a genuine connect failure (SocketException — refused,
-                // unreachable, …) and a post-connect read failure other than a timeout (e.g. a
-                // reset), plus the connect-stage LINKED timeout firing — the 'when' clause
-                // re-throws only if the AMBIENT ct itself requested cancellation (the caller
-                // genuinely cancelled the check), which HealthCheckService is expected to
-                // observe rather than have swallowed into an Unhealthy result.
-                return HealthCheckResult.Unhealthy(
-                    $"TCP probe of {endpoint.Host}:{endpoint.Port} failed: {ex.Message}");
-            }
+            return ProbeAsync(endpoint.Host, endpoint.Port, ct);
         });
 
         return containerBuilder.WithHealthCheck(healthCheckKey);
+    }
+
+    /// <summary>
+    /// The B1 discriminator (fix round 2 — the tcp health check that could never fail):
+    /// connects to <paramref name="host"/>:<paramref name="port"/> and, on a successful
+    /// connect, performs a bounded, small-buffer read to distinguish a live backend from
+    /// whatever merely ACCEPTED the connection — in production, DCP's host-published TCP proxy,
+    /// which accepts unconditionally before it has even attempted to reach the real backend
+    /// (see <see cref="ApplyTcpHealthCheck"/>'s own remarks for the pre-fix false-positive this
+    /// closes and its measured evidence).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     Read returns <c>0</c> bytes — whatever accepted the connection closed the pipe
+    ///     immediately because the real backend refused/was unreachable →
+    ///     <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read times out (no bytes, connection stays open) — the overwhelming majority of
+    ///     TCP protocols do not speak first, so a live backend's connection is simply held
+    ///     open with nothing to read yet → <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read returns <c>&gt;0</c> bytes immediately — a server-speaks-first protocol (e.g.
+    ///     SMTP, SSH) greeted us unprompted → definitely alive →
+    ///     <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    /// </list>
+    /// Measured (fix round 2, on this exact tree): against RAW DOCKER-PUBLISHED PORTS, not
+    /// through a DCP-proxied endpoint, three trials in each direction, run independently by two
+    /// parties: <c>good=CONNECT_OK READ_TIMEOUT (alive-ish)</c>, <c>bad=CONNECT_OK
+    /// READ_BYTES=0</c> — exactly the discriminator this method implements. <b>Measured on
+    /// Docker Desktop for Windows only</b> — the Linux/DCP-on-Linux proxy-close-timing
+    /// behaviour is UNVERIFIED; the same "accept unconditionally, close on backend failure"
+    /// DCP proxy design is documented for both platforms, but this has not been re-confirmed
+    /// on Linux CI.
+    /// </para>
+    /// <para>
+    /// <b>What this proves, and what it does not.</b> A <see cref="HealthCheckResult.Healthy"/>
+    /// result confirms a listener accepted the connection and stayed open — it is
+    /// deliberately protocol-agnostic and never inspects application-layer traffic, so it
+    /// cannot detect a server whose listening socket opens before its own internal startup
+    /// finishes (a routine pattern for many servers, not an edge case). This is strictly
+    /// better than Aspire's own "healthy once Running" default for a resource with no
+    /// health-check annotation at all, but it is not a substitute for an application-level
+    /// readiness signal; see docs/02 §3.2.6a's "What a tcp health check does not prove" note.
+    /// </para>
+    /// <para>
+    /// <b>Side effect on the probed connection (n-1, fix round 3).</b> Every poll holds the
+    /// connection open for up to the 1-second read bound before this method (and the caller's
+    /// own disposal of the returned <c>TcpClient</c>) tears it down — and on a server-speaks-
+    /// first protocol, consumes exactly one byte of whatever the server sent (the read buffer
+    /// is a single byte) before disconnecting. A broker or service operator watching connection
+    /// logs will see a client connect, receive at most one byte, then disconnect, once per poll
+    /// interval — expected behaviour of this probe, not a malfunctioning client.
+    /// </para>
+    /// </remarks>
+    /// <param name="host">The host to connect to.</param>
+    /// <param name="port">The port to connect to.</param>
+    /// <param name="ct">
+    /// The ambient cancellation token honoured by the health-check infrastructure. Distinct
+    /// from this method's own internal connect (3s) and read (1s) timeouts — each a separately
+    /// linked <see cref="CancellationTokenSource"/> — so an ambient cancellation propagates to
+    /// the caller unchanged (per the verdict taxonomy, a genuinely cancelled check is the
+    /// caller's concern, never reported as this probe's own <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>).
+    /// </param>
+    internal static async Task<HealthCheckResult> ProbeAsync(string host, int port, CancellationToken ct)
+    {
+        using var connectTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectTimeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+
+        using var tcpClient = new System.Net.Sockets.TcpClient();
+        try
+        {
+            await tcpClient.ConnectAsync(host, port, connectTimeoutCts.Token)
+                .ConfigureAwait(false);
+
+            // B1 fix: connect succeeded — this proves only that whatever accepted the
+            // connection did so, never that a real backend is listening behind it (see this
+            // method's own remarks). Discriminate with a bounded zero-byte-buffer read.
+            using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            readTimeoutCts.CancelAfter(TimeSpan.FromSeconds(1));
+
+            try
+            {
+                var stream = tcpClient.GetStream();
+                var buffer = new byte[1];
+                var bytesRead = await stream.ReadAsync(buffer, readTimeoutCts.Token)
+                    .ConfigureAwait(false);
+
+                return bytesRead == 0
+                    ? HealthCheckResult.Unhealthy(
+                        $"TCP connect to {host}:{port} succeeded, but the connection was closed " +
+                        "immediately (zero bytes read) — no backend is listening behind the " +
+                        "host-published proxy.")
+                    // >0 bytes: a server-speaks-first protocol greeted us unprompted.
+                    : HealthCheckResult.Healthy();
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The read timed out waiting for data or EOF (readTimeoutCts fired, not the
+                // ambient ct): the connection was held open with nothing to read yet — the
+                // live-backend signature for the overwhelming majority of TCP protocols,
+                // which do not speak first.
+                return HealthCheckResult.Healthy();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Catches both a genuine connect failure (SocketException — refused,
+            // unreachable, …) and a post-connect read failure other than a timeout (e.g. a
+            // reset), plus the connect-stage LINKED timeout firing — the 'when' clause
+            // re-throws only if the AMBIENT ct itself requested cancellation (the caller
+            // genuinely cancelled the check), which HealthCheckService is expected to
+            // observe rather than have swallowed into an Unhealthy result.
+            return HealthCheckResult.Unhealthy($"TCP probe of {host}:{port} failed: {ex.Message}");
+        }
     }
 
     // -----------------------------------------------------------------------

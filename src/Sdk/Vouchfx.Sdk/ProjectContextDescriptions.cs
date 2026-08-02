@@ -30,6 +30,13 @@ public static class ProjectContextDescriptions
     /// </param>
     public static string DescribeDeclaredSurfaces(IProjectContext ctx)
     {
+        // G-C (gatekeeper, fix round 3): this is a PUBLIC API on a contract frozen for the
+        // whole v1.x engine series (§13) — unlike the five private copies it replaced, callers
+        // are not limited to this file's own five in-tree call sites, so a null ctx must fail
+        // fast with a located, actionable exception rather than an NRE surfacing from whichever
+        // line below happens to dereference it first.
+        ArgumentNullException.ThrowIfNull(ctx);
+
         var deps = ctx.DeclaredDependencies.Count == 0
             ? "(none)"
             : string.Join(", ", ctx.DeclaredDependencies.Keys.OrderBy(k => k, StringComparer.Ordinal));

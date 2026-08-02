@@ -254,7 +254,7 @@
       }
     },
     "serviceHealthCheck": {
-      "description": "An author-declared health check for a service (services-generalisation spec, REQ-009), replacing the implicit default (an HTTP GET against '/') applied when this block is omitted on an HTTP-shaped service (no 'ports' declared). The field set required or forbidden is fixed per 'type': 'tcp' requires 'port' and forbids 'path'; 'http' accepts an optional 'path' (defaulting to '/') and forbids 'port'. A service declaring 'ports' with no 'healthCheck' at all gets NO implicit health check — the resource reports healthy once its container reaches the Running state, never via an HTTP request the service may not be able to answer.",
+      "description": "An author-declared health check for a service (services-generalisation spec, REQ-009), replacing the implicit default (an HTTP GET against '/') applied when this block is omitted on an HTTP-shaped service (no 'ports' declared). The field set required or forbidden is fixed per 'type': 'tcp' requires 'port' and forbids 'path'; 'http' accepts an optional 'path' (defaulting to '/') and forbids 'port'. A service declaring 'ports' with no 'healthCheck' at all does not go unchecked: it defaults to a 'tcp' probe against the first declared port rather than either an HTTP request the service may not be able to answer, or no check at all.",
       "$comment": "Mirrors $defs/security's own mode-conditional allOf/if/then idiom (see that def's remarks for why a per-field boolean 'false' subschema is used instead of a 'not'/'required' negation) — a discriminator field ('type' here, 'mode' there) selects which sibling fields are required/forbidden. healthCheck.port cross-referencing the service's own declared ports/httpPort is EnvironmentMapper's job, not this schema's — shape only, not cross-field semantic consistency (see HealthCheckSpec's own remarks).",
       "type": "object",
       "additionalProperties": false,
@@ -263,7 +263,7 @@
       ],
       "properties": {
         "type": {
-          "description": "The health-check kind: 'tcp' opens a raw TCP connection to 'port' and considers the service healthy the moment it accepts the connection, issuing no HTTP request at all; 'http' issues an HTTP GET against 'path' on the service's HTTP endpoint (the explicit spelling of the engine's own pre-existing default behaviour). Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "description": "The health-check kind: 'tcp' opens a raw TCP connection to 'port' and, after a bounded zero-byte read that discriminates a live backend from a proxy that merely accepted the connection, considers the service healthy only once that discriminator passes — issuing no HTTP request at all; 'http' issues an HTTP GET against 'path' on the service's HTTP endpoint (the explicit spelling of the engine's own pre-existing default behaviour). Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
           "type": "string",
           "enum": [
             "tcp",

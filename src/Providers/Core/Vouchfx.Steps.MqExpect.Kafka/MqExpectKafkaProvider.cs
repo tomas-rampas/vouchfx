@@ -376,7 +376,6 @@ public sealed class MqExpectKafkaProvider
             : ValidationResult.Failure(errors.ToArray());
     }
 
-
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="match"/> declares at least
     /// one effective criterion: a non-null key, a non-empty headers map, a non-null

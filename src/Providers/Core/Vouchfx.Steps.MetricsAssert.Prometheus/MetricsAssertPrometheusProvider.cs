@@ -331,7 +331,6 @@ public sealed class MetricsAssertPrometheusProvider
             : ValidationResult.Failure(errors.ToArray());
     }
 
-
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="text"/> contains no
     /// <c>{placeholder}</c> or <c>${secret:...}</c> token, i.e. it is safe to parse and

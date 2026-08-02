@@ -500,6 +500,52 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
+    /// m3 fix (fix round 3): the hybrid shape's own sibling of
+    /// <see cref="Map_ServiceHealthCheckTcp_PortNotAmongDeclaredPorts_ThrowsArgumentException"/>
+    /// — a <c>tcp</c> health check naming a hybrid service's OWN <c>httpPort</c> (rather than
+    /// one of its <c>ports:</c> entries) must now validate and map successfully. Before this
+    /// fix, <c>declaredPorts</c> omitted <c>httpPort</c> for the hybrid shape entirely, so this
+    /// threw "not among the service's declared ports" and told the author to declare the
+    /// SAME port again under <c>ports:</c> — impossible without double-declaring the port
+    /// under two different endpoint names.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckTcp_HybridShapeTargetsOwnHttpPort_MapsSuccessfully()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "myorg/hybrid:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "tcp", Path: null, Port: 8080),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // ApplyHealthCheck's own endpoint-resolution fallback: a tcpPort that is NOT among
+        // spec.Ports resolves to the "http" endpoint — the previously-dead branch this fix
+        // makes reachable, proven here by the registered key targeting port 8080 (httpPort),
+        // not one of the 'ports:' entries.
+        Assert.Equal("hybrid-tcp-8080-health", healthCheck.Key);
+    }
+
+    /// <summary>
     /// G-M3 (gatekeeper): <c>Map()</c>'s eager validation for an UNRECOGNISED
     /// <c>healthCheck.type</c> — untested at the mapper level until now (only reachable
     /// indirectly via YAML+schema in <c>EnvironmentSchemaTests</c>'s wrong-case corpus
