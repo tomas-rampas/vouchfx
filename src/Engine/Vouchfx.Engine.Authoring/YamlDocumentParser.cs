@@ -331,8 +331,9 @@ public static class YamlDocumentParser
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
             var env = ParseEnvMap(serviceMapping, keyScalar.Value);
+            var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
 
-            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env);
+            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env) { Security = security };
         }
 
         return dict.Count > 0 ? dict : null;
@@ -447,16 +448,114 @@ public static class YamlDocumentParser
             // helper rather than changing GetScalar itself.
             var version = GetScalarOrPlainNull(depMapping, "version");
             var image = GetScalarOrPlainNull(depMapping, "image");
+            var security = ParseSecurity(depMapping, "Dependency", keyScalar.Value);
 
-            // Collect any extra fields (everything except 'type', 'version', and
-            // 'image') into a new mapping node so provider resource contributors
-            // can bind them.
-            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image");
+            // Collect any extra fields (everything except 'type', 'version', 'image',
+            // and 'security') into a new mapping node so provider resource
+            // contributors can bind them. 'security' is excluded here because it is
+            // now explicitly bound above, exactly like 'image'/'version'/'type'.
+            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security");
 
-            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image };
+            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image, Security = security };
         }
 
         return dict.Count > 0 ? dict : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Security block parser (authenticated-infrastructure-mtls, PR A) — shared by
+    // both ParseServiceMap and ParseDependencyMap (REQ-001 is kind-generic).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Parses a service's or dependency's optional <c>security:</c> block (REQ-001)
+    /// into a strongly-typed <see cref="SecuritySpec"/>.
+    /// </summary>
+    /// <param name="ownerMapping">The service's or dependency's own YAML mapping node.</param>
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — used only in diagnostic messages,
+    /// mirroring the capitalised label already used by e.g. <see cref="ParseEnvMap"/>'s
+    /// and <see cref="ParseDependencyMap"/>'s own throw messages.
+    /// </param>
+    /// <param name="ownerName">The service's or dependency's logical (map-key) name.</param>
+    /// <remarks>
+    /// Every field is read as its raw scalar text with NO requiredness enforced here —
+    /// <c>mode</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
+    /// mtls-requires-<c>clientCert</c>/<c>clientKey</c> rule, and the
+    /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule are the JSON Schema layer's
+    /// responsibility (<c>root-language-schema.json</c>'s <c>$defs/security</c>),
+    /// mirroring this parser's existing "deliberately lenient" design (see this file's
+    /// header remarks). <c>endpoint</c> is kept as raw scalar text rather than parsed to
+    /// <see cref="int"/>: unlike <c>httpPort</c>, which always means a port number,
+    /// <c>endpoint</c> may equally name a declared endpoint (a non-numeric string), so
+    /// pre-parsing it here would lose that second, equally valid shape.
+    /// </remarks>
+    private static SecuritySpec? ParseSecurity(YamlMappingNode ownerMapping, string ownerLabel, string ownerName)
+    {
+        if (!TryGetMapping(ownerMapping, "security", out var securityNode))
+        {
+            return null;
+        }
+
+        var mode = GetScalar(securityNode, "mode");
+        var endpoint = GetScalar(securityNode, "endpoint");
+        var caCert = GetScalar(securityNode, "caCert");
+        var clientCert = GetScalar(securityNode, "clientCert");
+        var clientKey = GetScalar(securityNode, "clientKey");
+        var serverArtifacts = ParseServerArtifacts(securityNode, ownerLabel, ownerName);
+
+        return new SecuritySpec(mode, endpoint, caCert, clientCert, clientKey, serverArtifacts);
+    }
+
+    /// <summary>
+    /// Parses a security block's optional <c>serverArtifacts:</c> sequence (REQ-016's
+    /// authoring surface) into a list of <see cref="SecurityServerArtifactSpec"/> pairs.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>serverArtifacts</c> is present but is not a sequence, or when any
+    /// item is not a mapping — mirroring <see cref="ParseSeedSqlSequence"/>'s rigour for a
+    /// malformed list: silently dropping a malformed entry would leave an artefact
+    /// unstaged, surfacing later as a misattributed EnvironmentError (§12.1) rather than
+    /// an authoring-time diagnostic.
+    /// </exception>
+    private static List<SecurityServerArtifactSpec>? ParseServerArtifacts(
+        YamlMappingNode securityNode,
+        string ownerLabel,
+        string ownerName)
+    {
+        if (!TryGetNode(securityNode, "serverArtifacts", out var artifactsNode))
+        {
+            return null;
+        }
+
+        if (artifactsNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"{ownerLabel} '{ownerName}' security 'serverArtifacts' at line {artifactsNode.Start.Line} " +
+                $"must be a sequence of {{ source, target }} mappings, but found {artifactsNode.NodeType}.",
+                artifactsNode.Start.Line,
+                artifactsNode.Start.Column);
+        }
+
+        var list = new List<SecurityServerArtifactSpec>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlMappingNode itemMapping)
+            {
+                throw new YamlParseException(
+                    $"{ownerLabel} '{ownerName}' security 'serverArtifacts' item at line {item.Start.Line} " +
+                    "must be a mapping declaring 'source' and 'target' (e.g. '{ source: ./certs/x.jks, " +
+                    $"target: /etc/x.jks }}'), but found {item.NodeType}.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            var source = GetScalar(itemMapping, "source");
+            var target = GetScalar(itemMapping, "target");
+            list.Add(new SecurityServerArtifactSpec(source, target));
+        }
+
+        return list.Count > 0 ? list : null;
     }
 
     // -------------------------------------------------------------------------

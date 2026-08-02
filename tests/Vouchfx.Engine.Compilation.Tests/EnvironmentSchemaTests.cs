@@ -1225,4 +1225,102 @@ public sealed class EnvironmentSchemaTests
             e.InstanceLocation == "/environment/dependencies/asb/topics/0/name" &&
             e.Message.Contains("[type]", System.StringComparison.Ordinal));
     }
+
+    // ── Part 5: environment.services/dependencies 'security' block container
+    // enrichment (REQ-002; gatekeeper NOTE-1) ───────────────────────────────
+
+    /// <summary>
+    /// A 'security' block present but missing its required 'endpoint' must name the
+    /// owning dependency, exactly like a depth-4 additionalProperties/properties
+    /// rejection already does above (e.g. <see cref="Dependency_UnknownKey_IsRejected"/>)
+    /// — not the bare, unqualified "[required] Required properties [...] are not
+    /// present" every OTHER 'required' violation in this schema still reports (a step's
+    /// own missing fields, a dependency's missing 'type', ...).
+    /// </summary>
+    [Fact]
+    public void Dependency_Security_MissingEndpoint_NamesTheDependency()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    mode: tls
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "A security block missing the required 'endpoint' must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/cache/security" &&
+            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("on dependency 'cache'", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// An unrecognised key directly inside a 'security' block must name the owning
+    /// dependency, exactly like every other closed-object unknown-key rejection this
+    /// class pins. Previously this location (one level below the block itself) was too
+    /// deep for TryResolveEnvironmentContainer's exact-depth-4 match, so it degraded to
+    /// the bare "Unknown property 'bogus'" with no owner named.
+    /// </summary>
+    [Fact]
+    public void Dependency_Security_UnknownKey_NamesTheDependency()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    mode: tls
+                    endpoint: 6380
+                    bogus: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An unrecognised key inside a security block must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/cache/security/bogus" &&
+            e.Message.Contains(
+                "[additionalProperties] Unknown property 'bogus' on dependency 'cache'",
+                System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The SERVICE-side variant of
+    /// <see cref="Dependency_Security_MissingEndpoint_NamesTheDependency"/> — proves the
+    /// container enrichment is not dependency-only.
+    /// </summary>
+    [Fact]
+    public void Service_Security_MissingEndpoint_NamesTheService()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  security:
+                    mode: tls
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "A service security block missing the required 'endpoint' must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/app/security" &&
+            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("on service 'app'", System.StringComparison.Ordinal));
+    }
 }

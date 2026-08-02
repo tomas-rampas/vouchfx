@@ -771,12 +771,16 @@ internal static class SchemaErrorCollector
     /// substituting a named, actionable message for each of the three
     /// blank-keyword false-schema shapes (see the class remarks —
     /// <c>unevaluatedProperties</c>, <c>additionalProperties</c>, and a
-    /// per-field <c>properties/&lt;name&gt;: false</c>), enriching an
-    /// <c>enum</c> violation with the offending value and the live accepted
-    /// list (see <see cref="FormatEnumError"/>), enriching a <c>const</c>
-    /// violation similarly (m4 — see <see cref="FormatConstError"/>), and
-    /// falling back to the original <c>[{keyword}] {message}</c> format for
-    /// every other, genuinely-named keyword.
+    /// per-field <c>properties/&lt;name&gt;: false</c>), naming the owning
+    /// dependency/service for a <c>required</c> violation inside a
+    /// <c>security</c> block (REQ-002 — e.g. the missing-<c>endpoint</c>
+    /// case), enriching an <c>enum</c> violation with the offending value
+    /// and the live accepted list (see <see cref="FormatEnumError"/>),
+    /// enriching a <c>const</c> violation similarly (m4 — see
+    /// <see cref="FormatConstError"/>), and falling back to the original
+    /// <c>[{keyword}] {message}</c> format for every other, genuinely-named
+    /// keyword — including a <c>required</c> violation anywhere OUTSIDE a
+    /// <c>security</c> block, which stays exactly as before.
     /// </summary>
     private static string FormatError(
         string keyword, string message, string evaluationPath, string instanceLocation,
@@ -795,6 +799,23 @@ internal static class SchemaErrorCollector
         if (IsForbiddenPropertyShape(keyword, evaluationPath))
         {
             return FormatForbiddenPropertyError(instanceLocation, instance, schema, schemaLocation);
+        }
+
+        // REQ-002 / gatekeeper NOTE-1: a 'required' violation AT or BELOW a
+        // dependency's/service's own 'security' sub-object — the missing-'endpoint'
+        // case above all, but also e.g. mtls's paired 'clientCert'/'clientKey' or a
+        // serverArtifacts entry's own missing 'source'/'target' — names the owning
+        // dependency/service exactly like the additionalProperties/properties shapes
+        // above already do at the same depth. A 'required' violation anywhere ELSE
+        // (a step's own missing fields, a missing dependency 'type', …) is untouched:
+        // TryResolveEnvironmentContainer only resolves outside a security context at
+        // exactly depth 4 (any field directly on the dependency/service), which no
+        // OTHER 'required' clause in this schema currently reaches.
+        if (keyword == "required" &&
+            TryResolveEnvironmentContainer(
+                instanceLocation, out var requiredContainerKind, out var requiredContainerName, allowNestedSecurity: true))
+        {
+            return $"[required] {message} on {requiredContainerKind} '{requiredContainerName}'";
         }
 
         if (keyword == "enum")
@@ -940,13 +961,18 @@ internal static class SchemaErrorCollector
     /// Builds the actionable message for an <c>additionalProperties: false</c>
     /// rejection: names the offending property and, when
     /// <paramref name="instanceLocation"/> matches the pointer shape
-    /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>
-    /// (see <see cref="TryResolveEnvironmentContainer"/>) or a captureEntry's
-    /// own <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/&lt;property&gt;</c>
+    /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>, OR is
+    /// at-or-below that same container's own <c>security</c> sub-object — e.g.
+    /// <c>.../security/&lt;bogus&gt;</c> or a nested
+    /// <c>.../security/serverArtifacts/0/&lt;bogus&gt;</c> (REQ-002; see
+    /// <see cref="TryResolveEnvironmentContainer"/>'s <c>allowNestedSecurity</c>) — or a
+    /// captureEntry's own <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/&lt;property&gt;</c>
     /// (n-b, fourth-round gatekeeper re-review — see
     /// <see cref="TryResolveCaptureEntryContainer"/>), the container's own
     /// kind and map key — e.g. <c>Unknown property 'imagePullPolcy' on
-    /// service 'orders-api'</c> or <c>Unknown property 'badkey' on capture
+    /// service 'orders-api'</c>, <c>Unknown property 'bogus' on dependency
+    /// 'cache'</c> for an unrecognised key inside that dependency's own
+    /// <c>security</c> block, or <c>Unknown property 'badkey' on capture
     /// entry 'orderId'</c>. Every other unknown-key surface this shape
     /// covers (<c>metadata</c>, the document root, a <c>topics[]</c> item, a
     /// provider's own nested block) degrades to the bare property name rather
@@ -959,7 +985,8 @@ internal static class SchemaErrorCollector
     {
         var propertyName = LastPointerSegment(instanceLocation);
 
-        if (TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName))
+        if (TryResolveEnvironmentContainer(
+            instanceLocation, out var containerKind, out var containerName, allowNestedSecurity: true))
         {
             return $"[additionalProperties] Unknown property '{propertyName}' on {containerKind} '{containerName}'";
         }
@@ -1932,11 +1959,39 @@ internal static class SchemaErrorCollector
     /// present in the pointer, never something that needs reading back out
     /// of the instance the way a dependency's <c>type</c> does.
     /// </summary>
-    private static bool TryResolveEnvironmentContainer(string instanceLocation, out string containerKind, out string containerName)
+    /// <param name="instanceLocation">The failing node's own instance-location pointer.</param>
+    /// <param name="containerKind">
+    /// Set to <see cref="ServiceContainerKind"/> or <see cref="DependencyContainerKind"/>
+    /// on a successful resolve; <see cref="string.Empty"/> otherwise.
+    /// </param>
+    /// <param name="containerName">
+    /// Set to the resolved container's own map key on a successful resolve;
+    /// <see cref="string.Empty"/> otherwise.
+    /// </param>
+    /// <param name="allowNestedSecurity">
+    /// When <see langword="true"/>, ALSO resolves a pointer AT OR BELOW that same
+    /// dependency's/service's own <c>security</c> sub-object — i.e.
+    /// <c>/environment/(services|dependencies)/&lt;name&gt;/security</c> itself (already
+    /// matched even when this is <see langword="false"/>, being exactly depth 4) or
+    /// anything nested under it, such as an unrecognised key directly inside the block
+    /// (<c>.../security/&lt;bogus&gt;</c>) or inside one of its own nested
+    /// <c>serverArtifacts[]</c> entries (<c>.../security/serverArtifacts/0/&lt;bogus&gt;</c>).
+    /// Defaults to <see langword="false"/> so every EXISTING caller — in particular
+    /// <see cref="FormatForbiddenPropertyError"/>, whose own generic "sibling if-clause"
+    /// branch already names WHY a security field is forbidden (e.g. "is not valid when
+    /// 'mode' is 'tls'") for exactly this nested shape — keeps its current behaviour
+    /// unchanged; only <see cref="FormatAdditionalPropertiesError"/> and
+    /// <see cref="FormatError"/>'s own <c>required</c> branch opt in.
+    /// </param>
+    private static bool TryResolveEnvironmentContainer(
+        string instanceLocation, out string containerKind, out string containerName, bool allowNestedSecurity = false)
     {
         var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        if (segments.Length == 4 && segments[0] == "environment" &&
+        var isDirectField = segments.Length == 4;
+        var isNestedSecurityField = allowNestedSecurity && segments.Length > 4 && segments[3] == "security";
+
+        if ((isDirectField || isNestedSecurityField) && segments[0] == "environment" &&
             (segments[1] == "services" || segments[1] == "dependencies"))
         {
             containerKind = segments[1] == "services" ? ServiceContainerKind : DependencyContainerKind;

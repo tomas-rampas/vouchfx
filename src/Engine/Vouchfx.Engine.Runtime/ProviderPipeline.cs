@@ -179,6 +179,24 @@ internal static class ProviderPipeline
         // empty when the scenario omits the environment section (Sprint-4).
         var projectCtx = BuildProjectContext(ast, resolvedSuiteDirectory);
 
+        // Environment-level security-artefact validation (authenticated-infrastructure-
+        // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
+        // every DECLARED path-valued field under environment.services/dependencies'
+        // 'security' blocks. Runs once, before any step's own bind/validate/emit, so a
+        // suite with an escaping or missing security artefact fails here — at
+        // `vouchfx validate` / pre-topology `vouchfx run` time — rather than surfacing
+        // later as an opaque container-startup or TLS-handshake failure.
+        var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
+        if (environmentSecurityFailure is not null)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: environmentSecurityFailure);
+        }
+
         foreach (var node in ast.Steps)
         {
             if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
