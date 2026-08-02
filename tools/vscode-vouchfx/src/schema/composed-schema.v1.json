@@ -1573,7 +1573,7 @@
                 ],
                 "properties": {
                   "count": {
-                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be a positive integer with no leading zero (e.g. \"1\"); \"0\" is rejected here too, matching the numeric branch's own minimum of 1 — a zero count is never a meaningful expectation for this field, since the value is never {placeholder}-substituted.",
+                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be the canonical positive-integer spelling — digits only, no leading zero (e.g. \"1\"). \"0\" is rejected on this branch just as the numeric branch's minimum of 1 rejects a bare 0 — a zero count is never a meaningful expectation for this field, and the value is never {placeholder}-substituted. (The no-leading-zero rule is the canonical-spelling choice, not a consequence of the minimum: a bare 01 is read by YAML as the integer 1 and accepted.)",
                     "type": [
                       "integer",
                       "string"
