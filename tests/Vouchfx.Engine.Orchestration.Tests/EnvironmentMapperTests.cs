@@ -315,14 +315,19 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
-    /// REQ-008 (does not attempt an HTTP request during startup) + REQ-009's own default: a
-    /// <c>ports</c>-declared service with NO <c>healthCheck</c> gets NO implicit health check
-    /// at all (unlike the pre-existing HTTP-only-by-default shape, which always applied
-    /// <c>WithHttpHealthCheck</c>) — the resource reports healthy once its container reaches
-    /// the Running state, per Aspire's own default, never via an HTTP probe.
+    /// M4 fix (fix round 2): a <c>ports</c>-declared service with NO <c>healthCheck</c> and NO
+    /// sibling <c>httpPort</c> now DEFAULTS to a <c>tcp</c> probe on the FIRST declared port
+    /// (<c>Ports[0]</c>) rather than getting no health check at all — REQ-008 (does not attempt
+    /// an HTTP request against a service that may not speak HTTP) is preserved, but "no health
+    /// check at all" left the service gated only on Aspire's own "reaches Running" default,
+    /// which — combined with B1 (the tcp health check that could never fail) — meant BOTH
+    /// shapes available to a non-HTTP system under test were ungated. The registered key
+    /// matches the SAME <c>"{service}-tcp-{port}-health"</c> format the explicit
+    /// <c>type: tcp</c> form uses (<see cref="Map_ServiceHealthCheckTcp_RegistersResolvableHealthCheck_NeverPerformsHttpRequest"/>),
+    /// because it is now built by the SAME <c>ApplyTcpHealthCheck</c> helper.
     /// </summary>
     [Fact]
-    public void Map_ServiceWithPortsOnly_NoHealthCheckDeclared_RegistersNoHealthCheckAnnotation()
+    public void Map_ServiceWithPortsOnly_NoHealthCheckDeclared_DefaultsToTcpHealthCheckOnFirstPort()
     {
         var env = new EnvironmentSpec(
             Services: new Dictionary<string, ServiceSpec>
@@ -332,6 +337,45 @@ public sealed class EnvironmentMapperTests
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,
+                    Env: null)
+                { Ports = new List<int> { 9093, 9094 } },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // Targets the FIRST declared port (9093), not the second (9094) — and is NOT the
+        // Aspire-generated default-http-check key shape.
+        Assert.Equal("kafka-broker-tcp-9093-health", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// M4 fix (fix round 2): the hybrid shape (<c>ports</c> + a sibling <c>httpPort</c>) with
+    /// NO explicit <c>healthCheck</c> now defaults to the SAME HTTP probe an <c>image:</c>-form
+    /// HTTP service gets — a hybrid service IS an image-form HTTP service, and leaving it
+    /// entirely ungated (the pre-fix behaviour, purely because <c>hasExplicitPorts</c> was
+    /// true) was never a deliberate choice <c>docs/02</c> documented. Asserted via the SAME
+    /// deterministic key format as <see cref="Map_ServiceNoHealthCheckDeclared_HttpOnlyShape_DefaultsToRootPathHealthCheck"/>.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithPortsAndHttpPort_NoHealthCheckDeclared_DefaultsToHttpHealthCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "myorg/hybrid:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
                     Env: null)
                 { Ports = new List<int> { 9093 } },
             },
@@ -344,8 +388,9 @@ public sealed class EnvironmentMapperTests
         var builder = CreateBuilder();
         mapped.Configure(builder);
 
-        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
-        Assert.Empty(resource.Annotations.OfType<HealthCheckAnnotation>());
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+        Assert.Equal("hybrid_http_/_200_check", healthCheck.Key);
     }
 
     /// <summary>
@@ -2512,6 +2557,73 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
+    /// m5 fix (fix round 2, PR #349 follow-up): a malformed or wrong-case <c>${env:...}</c>-
+    /// shaped token must be REJECTED, not silently pass through as opaque literal text. The
+    /// reviewer confirmed all four of these validated PASS before this fix — mirrors the
+    /// existing <c>${secret:...}</c> sigil-presence check's own rationale.
+    /// </summary>
+    [Theory]
+    [InlineData("${env:}")]
+    [InlineData("${env:2BAD}")]
+    [InlineData("${ENV:GOOD}")]
+    [InlineData("${env: SPACED }")]
+    public void Map_ServiceEnv_MalformedOrWrongCaseEnvSigil_ThrowsArgumentException(string malformedToken)
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["REGION"] = malformedToken }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("env:", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("well-formed", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// m5 fix — the SAME malformed-sigil rejection must not fire for the DOCUMENTED
+    /// <c>${OTHER_VAR}</c>-style self-expansion passthrough idiom, which shares the
+    /// <c>${</c>/<c>}</c> shape but never contains the literal <c>env:</c> sigil at all.
+    /// Regression-guards <see cref="Map_ServiceEnv_NonConnDollarBraceSigil_DeliveredVerbatim"/>'s
+    /// own scenario against a false positive from the new check.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_NonEnvDollarBraceSigil_NotFlaggedByEnvSigilCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["P"] = "${ENV_VAR}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("${ENV_VAR}", ValueExpressionOf(envVars["P"]));
+    }
+
+    /// <summary>
     /// EDGE-008: an UNSET <c>${env:NAME}</c> reference fails the suite eagerly (before any
     /// builder mutation — same "thrown by Map() itself" discipline as
     /// <see cref="Map_ServiceEnv_UnknownDependency_ThrowsArgumentException"/>), naming the
@@ -2542,6 +2654,165 @@ public sealed class EnvironmentMapperTests
 
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
         Assert.Contains(varName, ex.Message, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------------
+    // TokeniseEnvValue: ${conn:...} AND ${env:...} in the SAME value (m10 fix, fix round 2)
+    // -----------------------------------------------------------------------
+    // TokeniseEnvValue's rewrite from a single-pattern Matches() call to a leftmost-wins
+    // merge of TWO independent regexes (s_connRefPattern, s_envRefPattern) is the only
+    // structural change to this shared, previously-stable function — every test above
+    // exercises ONE reference kind at a time. These three tests pin both interleavings
+    // (conn-then-env, env-then-conn) plus the boundary case with no separating literal
+    // between the two tokens, proving the leftmost-wins merge picks the correct match at
+    // each position rather than, say, always preferring one pattern.
+
+    /// <summary>
+    /// m10 fix: <c>${conn:...}</c> followed by <c>${env:...}</c>, separated by literal text —
+    /// both resolve, in the written order.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            ["MIXED"] = "host=${conn:orders.host}-region=${env:" + varName + "}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "host={orders.bindings.tcp.host}-region=eu-west-1",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// m10 fix — the reverse ordering of
+    /// <see cref="Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder"/>: <c>${env:...}</c>
+    /// followed by <c>${conn:...}</c>, separated by literal text.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_EnvRefThenConnRef_BothResolveInOrder()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_EnvRefThenConnRef_BothResolveInOrder);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            ["MIXED"] = "region=${env:" + varName + "}-host=${conn:orders.host}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "region=eu-west-1-host={orders.bindings.tcp.host}",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// m10 fix — the boundary case: the two reference kinds sit ADJACENT with NO separating
+    /// literal text between them, proving <c>TokeniseEnvValue</c>'s leftmost-wins merge
+    /// correctly re-evaluates both patterns from the position immediately after the first
+    /// match, rather than skipping ahead by a fixed or mismatched amount.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_ConnRefAdjacentToEnvRef_NoSeparatingLiteral_BothResolve()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_ConnRefAdjacentToEnvRef_NoSeparatingLiteral_BothResolve);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            // No literal text at all between the two references.
+                            ["MIXED"] = $"${{conn:orders.host}}${{env:{varName}}}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "{orders.bindings.tcp.host}eu-west-1",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
     }
 
     // NOTE (EDGE-008's "explicit empty value is honoured as-is" half): NOT independently
@@ -4352,5 +4623,69 @@ public sealed class EnvironmentMapperTests
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
         Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
         Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -----------------------------------------------------------------------
+    // GetDependencyServiceSidecarNames (m1 fix, fix round 2) — the declarative source
+    // ProviderPipeline's host-resource-vs-declared-name collision guard consults.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// m1 fix: a <c>mailpit</c> dependency unconditionally stages an SMTP sidecar into
+    /// <c>svc::&lt;name&gt;-smtp</c> — <see cref="EnvironmentMapper.GetDependencyServiceSidecarNames"/>
+    /// must report that name so the collision guard can reserve it.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_Mailpit_ReturnsSmtpSuffixedName()
+    {
+        var spec = new DependencySpec(Type: "mailpit", Version: null, Extra: null);
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("mail", spec).ToList();
+
+        Assert.Equal("mail-smtp", Assert.Single(names));
+    }
+
+    /// <summary>
+    /// m1 fix: a <c>kafka</c> dependency WITHOUT <c>schemaRegistry: true</c> stages no
+    /// sidecar at all — the collision guard must reserve nothing extra for it.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_KafkaWithoutSchemaRegistry_ReturnsEmpty()
+    {
+        var spec = new DependencySpec(Type: "kafka", Version: null, Extra: null);
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("bus", spec).ToList();
+
+        Assert.Empty(names);
+    }
+
+    /// <summary>
+    /// m1 fix: a <c>kafka</c> dependency WITH <c>schemaRegistry: true</c> stages a schema-
+    /// registry sidecar into <c>svc::&lt;name&gt;-sr</c> — the exact key the reviewer
+    /// confirmed a listener named <c>bus-sr</c> could previously shadow undetected.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_KafkaWithSchemaRegistry_ReturnsSrSuffixedName()
+    {
+        const string yaml = """
+            metadata:
+              name: sidecar-probe
+            environment:
+              dependencies:
+                bus:
+                  type: kafka
+                  schemaRegistry: true
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        var spec = env.Dependencies!["bus"];
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("bus", spec).ToList();
+
+        Assert.Equal("bus-sr", Assert.Single(names));
     }
 }

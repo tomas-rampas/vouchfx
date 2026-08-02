@@ -34,11 +34,18 @@ public interface IBindingContext { }
 /// <para>
 /// This context is <strong>engine-supplied and provider-consumed</strong>:
 /// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — only the
-/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
-/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
-/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
-/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// interface. Adding a member is therefore non-breaking for providers — the ENGINE
+/// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
+/// this remark previously claimed the engine as "the single in-tree implementor",
+/// which the services-generalisation spec's own <see cref="DeclaredServices"/>
+/// addition below made visibly false — adding that member required updating ~22
+/// test-only stand-in implementations across this repository's own test suites,
+/// which also implement this interface in-tree, just never ship. The claim that
+/// matters for provider authors is unaffected either way: no PROVIDER implements
+/// this interface, so no provider needs to change when a member is added.) The
+/// <em>frozen v1 contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em>
+/// surface (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely
+/// via new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
 /// freezes at the M1.5 milestone (end of Phase 2).
 /// </para>
 /// <para>

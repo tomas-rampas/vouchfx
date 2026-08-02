@@ -78,6 +78,9 @@ record Vouchfx.Sdk.JsonSchemaFragment : System.IEquatable<Vouchfx.Sdk.JsonSchema
   .ctor(System.String Json)
   property System.String Json { get; init }
 
+class Vouchfx.Sdk.ProjectContextDescriptions
+  method static System.String DescribeDeclaredSurfaces(Vouchfx.Sdk.IProjectContext ctx)
+
 record Vouchfx.Sdk.ProviderMetadata : System.IEquatable<Vouchfx.Sdk.ProviderMetadata>
   .ctor(System.String Version, System.String MinEngineVersion, System.String License, System.Collections.Generic.IReadOnlyList<System.String> Authors)
   property System.Collections.Generic.IReadOnlyList<System.String> Authors { get; init }

@@ -22,6 +22,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation;
+using Vouchfx.Engine.Orchestration;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Runtime;
@@ -63,6 +64,29 @@ internal sealed record ResourcePlanEntry(
 internal sealed record HostResourcePlanEntry(
     string StepId,
     HostResourceRequirement Requirement);
+
+/// <summary>
+/// One step's <see cref="IStepBinder{TModel}.Bind"/> result, retained across
+/// <see cref="ProviderPipeline.Compile"/>'s two passes (M5 fix, fix round 2 — see the
+/// class remarks for the redesign this replaces).
+/// </summary>
+/// <param name="Node">The step's normalised AST node.</param>
+/// <param name="Instance">The resolved provider instance for this step's canonical type.</param>
+/// <param name="Model">The bound step model, produced by exactly ONE <c>Bind</c> call.</param>
+/// <param name="HostResources">
+/// This step's <see cref="IHostResourceContributor{TModel}"/> contribution, materialised
+/// (via <c>.ToList()</c>) once here rather than left as a lazy enumerable — it is read twice
+/// downstream (once by <see cref="ProviderPipeline.BuildProjectContext"/> to derive
+/// <c>DeclaredServices</c>, once by <see cref="ProviderPipeline.Compile"/>'s second pass to
+/// populate <see cref="HostResourcePlanEntry"/>) and a lazy C# iterator would otherwise
+/// re-execute its body — including <see cref="HostResourceRequirement"/>'s own constructor
+/// validation — on each enumeration.
+/// </param>
+internal sealed record BoundStep(
+    Vouchfx.Engine.Authoring.Ast.StepNode Node,
+    IStepProvider Instance,
+    object Model,
+    IReadOnlyList<HostResourceRequirement> HostResources);
 
 /// <summary>
 /// Records a model-validation failure surfaced during the pipeline's validate stage.
@@ -200,11 +224,49 @@ internal static class ProviderPipeline
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
 
-        // Build the declared-dependencies map once for the whole pipeline run.
-        // This is derived from environment.dependencies (name → Type) and is
-        // empty when the scenario omits the environment section (Sprint-4).
+        // Environment-level security-artefact validation (authenticated-infrastructure-
+        // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
+        // every DECLARED path-valued field under environment.services/dependencies'
+        // 'security' blocks. Runs FIRST — before any step is bound — for two reasons.
+        // It reads only ast.Environment, so it needs nothing from a bound model. And a
+        // suite with a broken security artefact must report THAT, cleanly, even when it
+        // also contains a step whose Bind throws: Bind is unguarded here (deliberately —
+        // see BindAllSteps' remarks), so binding first would let a provider-bug exception
+        // pre-empt a diagnosable environment error. Keeping this check ahead of Pass 1
+        // preserves the failure precedence the previous pre-pass design happened to give,
+        // without the speculative second Bind that design needed.
+        var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
+        if (environmentSecurityFailure is not null)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: environmentSecurityFailure);
+        }
+
+        // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
+        // IHostResourceContributor contribution (M5 fix, fix round 2 — replaces the
+        // previous speculative pre-pass that called Bind a SECOND time per step, purely
+        // to discover host-resource names before the main loop reached that step). See
+        // BuildProjectContext's own remarks for why deriving DeclaredServices needs
+        // every step's host-resource contribution up front regardless of step order.
+        var (boundSteps, registryFailure) = BindAllSteps(ast, registry);
+        if (registryFailure is not null)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: registryFailure);
+        }
+
+        // Build the declared-services/dependencies project context from the retained
+        // bindings above — no re-binding, no speculative second Bind call.
         var projectCtx = BuildProjectContext(
-            ast, resolvedSuiteDirectory, registry, out var hostResourceServiceCollision);
+            ast, resolvedSuiteDirectory, boundSteps, out var hostResourceServiceCollision);
 
         // G5 (gatekeeper MAJOR-5): a step's own host-resource contribution (e.g. a
         // webhook-listen.http listener) named identically to a DECLARED SERVICE must be
@@ -222,49 +284,19 @@ internal static class ProviderPipeline
                 Failure: hostResourceServiceCollision);
         }
 
-        // Environment-level security-artefact validation (authenticated-infrastructure-
-        // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
-        // every DECLARED path-valued field under environment.services/dependencies'
-        // 'security' blocks. Runs once, before any step's own bind/validate/emit, so a
-        // suite with an escaping or missing security artefact fails here — at
-        // `vouchfx validate` / pre-topology `vouchfx run` time — rather than surfacing
-        // later as an opaque container-startup or TLS-handshake failure.
-        var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
-        if (environmentSecurityFailure is not null)
+        // ── Pass 2: Validate / Resources / CompileReferences / Emit over the RETAINED
+        // models from Pass 1 — no second Bind call for any step. ──────────────────────
+        foreach (var bound in boundSteps)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: environmentSecurityFailure);
-        }
+            var node = bound.Node;
+            var instance = bound.Instance;
+            var model = bound.Model;
 
-        foreach (var node in ast.Steps)
-        {
-            if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
-            {
-                // This should not happen: AstBuilder already verified the type.
-                // Return a ValidationFailure so the caller can surface Inconclusive.
-                return new PipelineResult(
-                    Assembled: null,
-                    ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                    CompileReferencePaths: Array.Empty<string>(),
-                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                    Failure: new ValidationFailure(
-                        $"Internal error: provider '{node.CanonicalType}' missing from registry after AST build."));
-            }
-
-            var instance = rp.Instance;
-            var bindingCtx = new RunBindingContext();
             // S04-B-02 / S07-B-01a: pass the step's format-aware capture map
             // (varName → CaptureExpr) into the compile context so providers can emit
             // capture logic into the CSX block.  The context exposes both the typed
             // CaptureExprs view and the back-compatible expression-string Captures view.
             var compileCtx = new RunCompileContext(node.Id, suiteNamespace, resolvedSuiteDirectory, node.Capture);
-
-            // ── Bind ──────────────────────────────────────────────────────────
-            var model = ReflectBind(instance, node.RawNode, bindingCtx);
 
             // ── Validate ──────────────────────────────────────────────────────
             var validResult = ReflectValidate(instance, model, projectCtx);
@@ -291,10 +323,11 @@ internal static class ProviderPipeline
             }
 
             // ── Host resources (tolerant, S07-F-01a) ──────────────────────────
-            // Providers that do not implement IHostResourceContributor<TModel>
-            // contribute nothing; the runner starts a host-side resource (in the
-            // Default ALC) for each requirement collected here, before any step runs.
-            foreach (var hostReq in ReflectHostResources(instance, model))
+            // Reuses the SAME materialised list Pass 1 already collected — never
+            // re-enumerated, so a lazy iterator's body (including
+            // HostResourceRequirement's own ctor validation) runs exactly once per step
+            // in total, not once per pass.
+            foreach (var hostReq in bound.HostResources)
             {
                 hostResourcePlan.Add(new HostResourcePlanEntry(
                     StepId: node.Id,
@@ -568,6 +601,58 @@ internal static class ProviderPipeline
     }
 
     /// <summary>
+    /// Pass 1 of <see cref="Compile"/> (M5 fix, fix round 2): binds every step in
+    /// <paramref name="ast"/> exactly ONCE, materialising each one's
+    /// <see cref="IHostResourceContributor{TModel}"/> contribution alongside the model, and
+    /// returns the retained list as <see cref="BoundStep"/> records.
+    /// </summary>
+    /// <remarks>
+    /// Extracted into its own method — rather than inlined in <see cref="Compile"/> — so
+    /// <see cref="BuildProjectContext"/>'s own unit tests (<c>Vouchfx.Engine.Runtime.Tests</c>,
+    /// already granted <c>InternalsVisibleTo</c> access) can produce a real
+    /// <see cref="BoundStep"/> list without needing a full <see cref="Compile"/> round trip,
+    /// exactly the same reason <see cref="BuildProjectContext"/> itself stayed <c>internal</c>
+    /// rather than <c>private</c>.
+    /// </remarks>
+    /// <returns>
+    /// The bound steps, and — only in the defensive "registry lookup failed after AST build
+    /// already verified the type" case, which should never happen in practice — a non-null
+    /// <see cref="ValidationFailure"/> instead (the bound-steps list is then incomplete and
+    /// must not be used, mirroring every other early-return failure in this file).
+    /// </returns>
+    internal static (List<BoundStep> BoundSteps, ValidationFailure? RegistryFailure) BindAllSteps(
+        ScenarioAst ast, StepKindRegistry registry)
+    {
+        var boundSteps = new List<BoundStep>(ast.Steps.Count);
+        foreach (var node in ast.Steps)
+        {
+            if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
+            {
+                // This should not happen: AstBuilder already verified the type.
+                return (boundSteps, new ValidationFailure(
+                    $"Internal error: provider '{node.CanonicalType}' missing from registry after AST build."));
+            }
+
+            var instance = rp.Instance;
+            var bindingCtx = new RunBindingContext();
+
+            // ── Bind (unguarded — exactly as the pre-M5 main loop always called it:
+            // IStepBinder<T>.Bind is not documented as safe to call more than once per
+            // compile, so this redesign calls it EXACTLY once, and a throw here propagates
+            // to Compile's own caller unchanged, same as it always did). ──
+            var model = ReflectBind(instance, node.RawNode, bindingCtx);
+
+            // Host resources (tolerant, S07-F-01a), materialised once here — see
+            // BoundStep's own remarks for why ToList() rather than a lazy enumerable.
+            var hostResources = ReflectHostResources(instance, model).ToList();
+
+            boundSteps.Add(new BoundStep(node, instance, model, hostResources));
+        }
+
+        return (boundSteps, null);
+    }
+
+    /// <summary>
     /// Builds a <see cref="RunProjectContext"/> from the scenario AST's
     /// <c>environment.dependencies</c> (Sprint-4), <c>environment.services</c>
     /// (services-generalisation spec, REQ-010), AND every step's own
@@ -582,28 +667,19 @@ internal static class ProviderPipeline
     /// <param name="suiteDirectory">
     /// The base directory relative file-path step fields are resolved against.
     /// </param>
-    /// <param name="registry">
-    /// The frozen step-kind registry, needed to bind each step's model and reflect its
-    /// <see cref="IHostResourceContributor{TModel}"/> contribution (if any) — a lightweight
-    /// PRE-PASS over every step, independent of and before the main
-    /// <see cref="Compile"/> loop's own bind/validate/emit pass. This pre-pass is required
-    /// because host-resource contributions can be declared by a LATER step than the one
-    /// that references them (e.g. <c>await-callback</c>, declaring listener <c>cb</c>, comes
-    /// AFTER <c>trigger-callback</c>, which targets <c>cb</c>) — a single linear pass
-    /// could not see step 3's contribution while validating step 2.  <c>Bind</c> is safe to
-    /// call twice per step (once here, once again in <see cref="Compile"/>'s own loop): every
-    /// CORE provider's <c>Bind</c> is a defensive, side-effect-free data-binding function in
-    /// this codebase's own established convention (a malformed node yields a "safe empty"
-    /// model rather than throwing; <c>Validate</c> is what rejects it) — but this is NOT a
-    /// universal guarantee (G6, gatekeeper): <c>http.rest</c>'s own <c>Bind</c> serialises a
-    /// structured <c>body:</c> via unbounded recursion over the YAML tree
-    /// (<c>HttpRestProvider.YamlToJsonElement</c>), which can throw on a sufficiently deep or
-    /// malformed body — so the <c>try</c>/<c>catch</c> below is a LOAD-BEARING guard today,
-    /// for at least this one shipped Core provider, not merely belt-and-braces for a
-    /// hypothetical future one. The main <see cref="Compile"/> loop's OWN <c>Bind</c> call
-    /// (immediately after, unchanged) remains the authoritative path that surfaces any real
-    /// binding problem for THAT step; other steps' host resources are still discovered
-    /// normally when one step's pre-pass throws.
+    /// <param name="boundSteps">
+    /// Every step's RETAINED <see cref="BoundStep"/> from <see cref="Compile"/>'s Pass 1
+    /// (M5 fix, fix round 2). This method no longer binds anything itself — it reads each
+    /// step's already-materialised <see cref="BoundStep.HostResources"/> list, discovered
+    /// regardless of step order, because host-resource contributions can be declared by a
+    /// LATER step than the one that references them (e.g. <c>await-callback</c>, declaring
+    /// listener <c>cb</c>, comes AFTER <c>trigger-callback</c>, which targets <c>cb</c>) — a
+    /// single linear pass over <see cref="Compile"/>'s own Validate/Emit loop could not see
+    /// step 3's contribution while validating step 2. Before this fix, discovering these
+    /// ahead of step order required a SEPARATE, speculative pre-pass that called
+    /// <c>Bind</c> a SECOND time per step (once here, once again in the main loop) — an
+    /// undocumented obligation on the frozen v1 <c>IStepBinder&lt;T&gt;</c> contract this
+    /// redesign removes entirely: one <c>Bind</c> call per step, full stop.
     /// </param>
     /// <param name="collisionFailure">
     /// Set to a non-null <see cref="ValidationFailure"/> (G5, gatekeeper MAJOR-5) when some
@@ -641,7 +717,7 @@ internal static class ProviderPipeline
     /// round trip through a stub provider that happens to capture its <c>IProjectContext</c>.
     /// </remarks>
     internal static RunProjectContext BuildProjectContext(
-        ScenarioAst ast, string suiteDirectory, StepKindRegistry registry,
+        ScenarioAst ast, string suiteDirectory, IReadOnlyList<BoundStep> boundSteps,
         out ValidationFailure? collisionFailure)
     {
         collisionFailure = null;
@@ -655,82 +731,107 @@ internal static class ProviderPipeline
                 depMap[kv.Key] = kv.Value.Type;
         }
 
+        // m7 fix (fix round 2): a service and a dependency may not share a name. Before this
+        // fix, a suite declaring both 'environment.services.orders' and
+        // 'environment.dependencies.orders' validated PASS and only failed later, deep
+        // inside Aspire's own AddContainer ("a resource with the same name already exists").
+        // This method is the first place in the pipeline that holds BOTH name sets at once
+        // (depMap, just built above, and the service names the loop below is about to
+        // collect), so this is the natural, one-line home for the check — reported here,
+        // before any builder mutation, exactly like every other eager cross-reference check
+        // in this codebase's own established convention (see EnvironmentMapper.Map's own
+        // service/dependency validation loops for the same idiom).
+        if (services is not null)
+        {
+            foreach (var serviceName in services.Keys)
+            {
+                if (depMap.ContainsKey(serviceName))
+                {
+                    collisionFailure ??= new ValidationFailure(
+                        $"'{serviceName}' is declared as both a service (environment.services." +
+                        $"{serviceName}) and a dependency (environment.dependencies.{serviceName}). " +
+                        "A service and a dependency cannot share a name — rename one of the two.");
+                }
+            }
+        }
+
         var serviceMap = new Dictionary<string, IReadOnlyList<string>>(
             services?.Count ?? 0, StringComparer.Ordinal);
-        // G5 (gatekeeper MAJOR-5): tracks which serviceMap keys came from a DECLARED
-        // SERVICE, as opposed to a step's own host-resource contribution merged in by the
-        // pre-pass below — the two are declared through completely different surfaces
-        // (environment.services vs. a step's IHostResourceContributor) and must never
-        // silently collide; see collisionFailure's own remarks.
-        var declaredServiceNames = new HashSet<string>(StringComparer.Ordinal);
+
+        // m1 fix (fix round 2): the guard below rejects a host resource whose VarName
+        // collides with ANY svc::<name>-shaped key another surface already owns — NOT only
+        // a declared service. The previous version guarded only DECLARED SERVICE names, on
+        // the stated (but WRONG) reasoning that dependencies stage exclusively into
+        // conn::<name>. That does not hold: two dependency kinds ALSO stage a svc::<name>
+        // sidecar key — mailpit's SMTP endpoint (svc::<dep>-smtp) and kafka's optional
+        // schema-registry sidecar (svc::<dep>-sr) — and ScenarioRunner routes both to
+        // VarKeys.Service(...) (neither suffixed name is in DependencyNames), staging host
+        // resources afterwards into the SAME dictionary, last write wins. Before this fix, a
+        // listener named 'mail-smtp' alongside a mailpit dependency 'mail', or a listener
+        // named 'bus-sr' alongside a kafka dependency 'bus' with 'schemaRegistry: true',
+        // both validated PASS — and the '-sr' key specifically is read at run time by both
+        // Kafka providers, so an Avro publish would have sent schema-registry traffic to the
+        // engine's own listener. reservedSvcNames maps every such reserved name to a
+        // human-readable description of what actually owns it, sourced from
+        // EnvironmentMapper.GetDependencyServiceSidecarNames — the SAME declarative helper
+        // the dependency Build lambdas' own sidecar-naming functions back onto (see that
+        // method's remarks) — so this guard's name set cannot drift from what Configure
+        // actually stages the way the old, hand-maintained "dependencies never collide"
+        // assumption did.
+        var reservedSvcNames = new Dictionary<string, string>(StringComparer.Ordinal);
         if (services is not null)
         {
             foreach (var kv in services)
             {
                 serviceMap[kv.Key] = ServiceEndpointNaming.DeclaredEndpointNames(kv.Value);
-                declaredServiceNames.Add(kv.Key);
+                reservedSvcNames[kv.Key] = $"a declared service (environment.services.{kv.Key})";
             }
         }
 
-        // Pre-pass: every step's own IHostResourceContributor requirement (S07-F-01a) is
-        // ALSO a valid svc::<name> target, regardless of step order (see this method's own
-        // <param name="registry"> remarks for why a pre-pass, not the main Compile() loop
-        // itself, must discover these).
-        foreach (var node in ast.Steps)
+        if (deps is not null)
         {
-            if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
-                continue;
-
-            var instance = rp.Instance;
-            var bindingCtx = new RunBindingContext();
-            try
+            foreach (var (depName, depSpec) in deps)
             {
-                var model = ReflectBind(instance, node.RawNode, bindingCtx);
-
-                // G6 (gatekeeper MAJOR-6b): ReflectHostResources' own enumeration moved
-                // INSIDE this try — HostResourceRequirement's constructor validates both
-                // Kind and VarName (ArgumentException.ThrowIfNullOrEmpty), and since
-                // IHostResourceContributor.HostResources is very plausibly implemented as
-                // a C# iterator (yield return), that validation runs lazily, the instant
-                // THIS foreach calls MoveNext() — which used to sit OUTSIDE the try, so a
-                // community provider's HostResources() throwing on an unvalidated model
-                // (a Bind-produced "safe empty" model with an empty/null field) would abort
-                // this ENTIRE pre-pass uncaught, rather than merely omitting that one step's
-                // own contribution the way a throwing Bind already does.
-                foreach (var hostReq in ReflectHostResources(instance, model))
+                foreach (var sidecarName in EnvironmentMapper.GetDependencyServiceSidecarNames(depName, depSpec))
                 {
-                    // Guarded on the COLLISION itself, never on 'collisionFailure is null':
-                    // a second colliding host resource must also take the 'continue' below
-                    // rather than fall through to the overwrite this guard exists to prevent.
-                    // (Unreachable in effect today — Compile returns the failure before this
-                    // context is read — but a guard whose correctness depends on its caller
-                    // is a trap for whoever edits that caller next. '??=' keeps the FIRST
-                    // collision's message, which is the one an author fixes first.)
-                    if (declaredServiceNames.Contains(hostReq.VarName))
-                    {
-                        collisionFailure ??= new ValidationFailure(
-                            $"host resource '{hostReq.VarName}' (kind '{hostReq.Kind}', declared by " +
-                            $"step '{node.Id}') collides with a DECLARED SERVICE of the same name " +
-                            $"(environment.services.{hostReq.VarName}). A host resource (e.g. a " +
-                            "webhook listener) cannot share a name with a declared service — rename " +
-                            "one of the two.");
-                        continue;
-                    }
-
-                    serviceMap[hostReq.VarName] = new[] { hostReq.Kind };
+                    reservedSvcNames[sidecarName] =
+                        $"dependency '{depName}' (type '{depSpec.Type}')'s own sidecar endpoint " +
+                        $"(environment.dependencies.{depName})";
                 }
             }
-            catch
+        }
+
+        // Merge every step's own IHostResourceContributor requirement (S07-F-01a) — ALSO a
+        // valid svc::<name> target, regardless of step order (see this method's own
+        // <param name="boundSteps"> remarks). No binding happens here: boundSteps already
+        // carries each step's materialised HostResources list from Compile's Pass 1, so a
+        // community provider's throwing Bind or HostResources() enumerator would already
+        // have propagated out of Pass 1 before this method is ever called — there is
+        // nothing left here that can throw on a per-step basis, so no per-step catch/
+        // continue is needed (contrast the pre-M5 pre-pass, which called Bind speculatively
+        // a second time and had to swallow exactly that class of exception).
+        foreach (var bound in boundSteps)
+        {
+            foreach (var hostReq in bound.HostResources)
             {
-                // See this method's own <param name="registry"> remarks: Bind is
-                // defensive/non-throwing for every CORE provider today, but http.rest's own
-                // Bind is a measured exception (unbounded YamlToJsonElement recursion), and a
-                // community provider's HostResources() enumerator can likewise throw. Either
-                // way, this pre-pass must never let one step's exception abort context
-                // construction for every OTHER step — the main Compile() loop's OWN
-                // Bind/HostResources calls (immediately after, unchanged) remain the
-                // authoritative path that surfaces any real problem for THAT step.
-                continue;
+                // Guarded on the COLLISION itself, never on 'collisionFailure is null':
+                // a second colliding host resource must also take the 'continue' below
+                // rather than fall through to the overwrite this guard exists to prevent.
+                // (Unreachable in effect today — Compile returns the failure before this
+                // context is read — but a guard whose correctness depends on its caller
+                // is a trap for whoever edits that caller next. '??=' keeps the FIRST
+                // collision's message, which is the one an author fixes first.)
+                if (reservedSvcNames.TryGetValue(hostReq.VarName, out var owner))
+                {
+                    collisionFailure ??= new ValidationFailure(
+                        $"host resource '{hostReq.VarName}' (kind '{hostReq.Kind}', declared by " +
+                        $"step '{bound.Node.Id}') collides with {owner}. A host resource (e.g. a " +
+                        "webhook listener) cannot share a name with a declared service or with a " +
+                        "dependency's own sidecar endpoint — rename one of the two.");
+                    continue;
+                }
+
+                serviceMap[hostReq.VarName] = new[] { hostReq.Kind };
             }
         }
 

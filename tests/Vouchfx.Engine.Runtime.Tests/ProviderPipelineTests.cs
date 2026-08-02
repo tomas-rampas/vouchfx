@@ -284,6 +284,87 @@ file sealed class StubListenerProvider
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "cb") };
 }
 
+// m1 fix (fix round 2): a host resource named identically to a dependency's own SIDECAR
+// svc:: key (a mailpit dependency's "-smtp" suffix) — proves the collision guard's fixed
+// name set now covers dependency sidecars, not only declared services. Fixed VarName
+// "mail-smtp" mirrors StubListenerProvider's own hardcoded-VarName minimalism.
+[StepProvider]
+file sealed class StubMailSmtpListenerProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "mail-smtp-listener");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "mail-smtp-listener-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* mail-smtp-listener step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model) =>
+        new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "mail-smtp") };
+}
+
+// m1 fix (fix round 2) — the kafka-schema-registry sibling of
+// StubMailSmtpListenerProvider: proves a host resource named identically to a kafka
+// dependency's OWN "-sr" schema-registry sidecar is caught too.
+[StepProvider]
+file sealed class StubBusSrListenerProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "bus-sr-listener");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "bus-sr-listener-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* bus-sr-listener step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model) =>
+        new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "bus-sr") };
+}
+
 // ── Test class ────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -626,8 +707,13 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
+        // M5 fix (fix round 2): BuildProjectContext no longer binds — it reads the
+        // already-bound BoundStep list from ProviderPipeline.BindAllSteps (Compile's own
+        // Pass 1), never re-binding a step a second time.
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
-            ast, Directory.GetCurrentDirectory(), s_registry, out _);
+            ast, Directory.GetCurrentDirectory(), boundSteps, out _);
 
         Assert.True(ctx.DeclaredServices.ContainsKey("kafka-broker"));
         Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"]));
@@ -655,23 +741,29 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
-            ast, Directory.GetCurrentDirectory(), s_registry, out _);
+            ast, Directory.GetCurrentDirectory(), boundSteps, out _);
 
         Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"]));
     }
 
-    // ── Test: pre-pass swallow-catch resilience (S2, G6) ─────────────────────
+    // ── Test: single-Bind-per-step, no swallow-catch (M5 fix, fix round 2) ───
 
     /// <summary>
-    /// S2 (security MINOR-1): a step whose provider's <c>Bind</c> ALWAYS throws must not
-    /// abort <see cref="ProviderPipeline.BuildProjectContext"/>'s pre-pass for every other
-    /// step — the pre-pass swallow-catch omits just that one step's own contribution and
-    /// continues; the declared service (collected before the pre-pass even starts) still
-    /// surfaces.
+    /// M5 fix (fix round 2, PR #349 follow-up): <c>Bind</c> is now called EXACTLY once per
+    /// step, in <see cref="ProviderPipeline.BindAllSteps"/> (Compile's own Pass 1) — there is
+    /// no longer a separate speculative pre-pass, so there is nothing left to swallow a
+    /// throwing <c>Bind</c> into. A step whose provider's <c>Bind</c> always throws now
+    /// propagates that exception out of <see cref="ProviderPipeline.BindAllSteps"/> directly
+    /// — exactly the same "no purity assumption beyond what already holds" contract the
+    /// pre-M5 MAIN loop's own (always unguarded) <c>Bind</c> call already had; only the
+    /// now-removed speculative pre-pass ever silently ate this. <c>MethodInfo.Invoke</c>
+    /// wraps the provider's own thrown exception in <see cref="TargetInvocationException"/>.
     /// </summary>
     [Fact]
-    public void BuildProjectContext_StepBindThrows_CompletesAndOmitsThatStepsContribution()
+    public void BindAllSteps_StepBindThrows_PropagatesTargetInvocationException()
     {
         const string yaml = """
             environment:
@@ -686,24 +778,24 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var ctx = ProviderPipeline.BuildProjectContext(
-            ast, Directory.GetCurrentDirectory(), s_registry, out var collision);
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(
+            () => ProviderPipeline.BindAllSteps(ast, s_registry));
 
-        Assert.Null(collision);
-        Assert.True(ctx.DeclaredServices.ContainsKey("svc"));
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
+        Assert.Contains("Bind always throws", ex.InnerException!.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// G6 (gatekeeper MAJOR-6b): the LAZY-ITERATOR variant of
-    /// <see cref="BuildProjectContext_StepBindThrows_CompletesAndOmitsThatStepsContribution"/> —
-    /// a step whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c> enumerator throws
-    /// (from <c>HostResourceRequirement</c>'s own ctor validation) must be caught too, now
-    /// that the enumeration moved inside the pre-pass's <c>try</c>. Before the fix this
-    /// exception propagated OUTSIDE the try (the enumeration sat after it) and aborted
-    /// <see cref="ProviderPipeline.BuildProjectContext"/> entirely, uncaught.
+    /// M5 fix (fix round 2) — the LAZY-ITERATOR sibling of
+    /// <see cref="BindAllSteps_StepBindThrows_PropagatesTargetInvocationException"/>: a step
+    /// whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c> enumerator throws (from
+    /// <c>HostResourceRequirement</c>'s own ctor validation) now propagates directly too —
+    /// <see cref="ProviderPipeline.BindAllSteps"/> materialises the host-resource list via
+    /// <c>.ToList()</c> (plain LINQ, not reflection <c>Invoke</c>), so the exception surfaces
+    /// UNWRAPPED, as the provider actually threw it.
     /// </summary>
     [Fact]
-    public void BuildProjectContext_StepHostResourcesThrows_CompletesAndOmitsThatStepsContribution()
+    public void BindAllSteps_StepHostResourcesThrows_PropagatesUnwrapped()
     {
         const string yaml = """
             environment:
@@ -718,11 +810,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var ctx = ProviderPipeline.BuildProjectContext(
-            ast, Directory.GetCurrentDirectory(), s_registry, out var collision);
-
-        Assert.Null(collision);
-        Assert.True(ctx.DeclaredServices.ContainsKey("svc"));
+        Assert.Throws<ArgumentException>(() => ProviderPipeline.BindAllSteps(ast, s_registry));
     }
 
     // ── Test: service/listener name-collision guard (G5) ─────────────────────
@@ -762,6 +850,110 @@ public sealed class ProviderPipelineTests
         Assert.Contains("cb", result.Failure!.Message, StringComparison.Ordinal);
         Assert.Contains("service", result.Failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("listen-step", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// m1 fix (fix round 2, PR #349 follow-up): a host resource named identically to a
+    /// MAILPIT DEPENDENCY's own SMTP sidecar key must be rejected too — before this fix, the
+    /// collision guard checked only declared-service names, on the (wrong) stated reasoning
+    /// that dependencies never stage a svc::-shaped key; a listener named <c>mail-smtp</c>
+    /// alongside a <c>mailpit</c> dependency <c>mail</c> validated PASS and would have
+    /// silently shadowed the dependency's own SMTP sidecar endpoint.
+    /// </summary>
+    [Fact]
+    public void Compile_HostResourceNameCollidesWithMailpitSmtpSidecar_FailsNamingBothSurfaces()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                mail:
+                  type: mailpit
+            steps:
+              - id: listen-step
+                type: stub.mail-smtp-listener
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains("mail-smtp", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("mail", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains("listen-step", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// m1 fix (fix round 2) — the kafka-schema-registry sibling of
+    /// <see cref="Compile_HostResourceNameCollidesWithMailpitSmtpSidecar_FailsNamingBothSurfaces"/>:
+    /// a listener named <c>bus-sr</c> alongside a <c>kafka</c> dependency <c>bus</c> with
+    /// <c>schemaRegistry: true</c> must be rejected — the reviewer's own measured
+    /// consequence of the pre-fix gap: the <c>-sr</c> key is read at run time by both Kafka
+    /// providers, so an Avro publish would have sent schema-registry traffic to the engine's
+    /// own listener instead of the real registry.
+    /// </summary>
+    [Fact]
+    public void Compile_HostResourceNameCollidesWithKafkaSchemaRegistrySidecar_FailsNamingBothSurfaces()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                bus:
+                  type: kafka
+                  schemaRegistry: true
+            steps:
+              - id: listen-step
+                type: stub.bus-sr-listener
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains("bus-sr", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("bus", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains("listen-step", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// m7 fix (fix round 2, PR #349 follow-up): a service and a dependency may not share a
+    /// name. Before this fix, a suite declaring both <c>environment.services.orders</c> and
+    /// <c>environment.dependencies.orders</c> validated PASS and only failed later, deep
+    /// inside Aspire's own <c>AddContainer</c> ("a resource with the same name already
+    /// exists") — an opaque failure at topology-build time rather than a located authoring
+    /// diagnostic at validate time.
+    /// </summary>
+    [Fact]
+    public void Compile_ServiceAndDependencyShareName_FailsNamingBoth()
+    {
+        const string yaml = """
+            environment:
+              services:
+                orders:
+                  image: myorg/orders-api:1.0
+              dependencies:
+                orders:
+                  type: postgres
+            steps:
+              - id: step-alpha
+                type: stub.alpha
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Contains("orders", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("service", result.Failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("dependency", result.Failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Null(result.Assembled);
     }
 

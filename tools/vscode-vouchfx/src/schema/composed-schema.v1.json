@@ -241,6 +241,7 @@
           "description": "One or more TCP ports this service exposes, beyond (or instead of) the implicit default HTTP endpoint (services-generalisation spec, REQ-008) — for a system under test that does not speak HTTP at all, such as a customer-supplied Kafka broker. Each port is brought up via Aspire's generic TCP endpoint, never assumed to speak HTTP. Declaring 'ports' suppresses the implicit default HTTP endpoint that 'httpPort' alone would otherwise imply; declare 'httpPort' alongside 'ports' for a hybrid service that exposes both an HTTP endpoint and one or more raw TCP ports. Written as bare decimal integers only — unlike 'httpPort', this is a NEW field with no pre-existing engine behaviour to preserve, so it does not carry 'httpPort''s quoted-string/leading-zero-octal compatibility shape.",
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "type": "integer",
             "minimum": 1,
@@ -2051,7 +2052,7 @@
             ],
             "properties": {
               "target": {
-                "description": "Logical name of the kafka dependency to consume from, as declared under environment.dependencies.",
+                "description": "Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
                 "type": "string",
                 "minLength": 1
               },
@@ -2431,7 +2432,7 @@
             ],
             "properties": {
               "target": {
-                "description": "Logical name of the kafka dependency to publish to, as declared under environment.dependencies.",
+                "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
                 "type": "string",
                 "minLength": 1
               },

@@ -642,6 +642,45 @@ public sealed class HttpRestExecutionTests
             e.Contains("svc", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// DEPENDENCY (never a service) must be rejected too — http.rest resolves 'target'
+    /// exclusively against declared services (<c>VarKeys.Service</c>); a dependency stages
+    /// its connection into <c>conn::&lt;name&gt;</c> instead, which http.rest never reads.
+    /// Before this fix, the suite the reviewer probed — an http.rest step targeting a
+    /// declared 'postgres' dependency — validated PASS and then could never work at run
+    /// time. The message must name the dependency and list the services it CAN reach.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesDeclaredDependency_IsInvalid_NamesDependencyAndListsServices()
+    {
+        var provider = new HttpRestProvider();
+        var ctx = new StubProjectContext(
+            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["orders-api"] = new List<string> { "http" },
+            },
+            dependencies: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = "postgres",
+            });
+        var model = new HttpRestModel(
+            Target: "orders-db",
+            Method: "GET",
+            Path: "/health",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("orders-db", StringComparison.Ordinal) &&
+            e.Contains("dependency", StringComparison.OrdinalIgnoreCase) &&
+            e.Contains("orders-api", StringComparison.Ordinal));
+    }
+
     // ── M1: Runtime same-authority — normal request still passes ──────────────
 
     /// <summary>
@@ -766,24 +805,27 @@ public sealed class HttpRestExecutionTests
     /// <summary>
     /// Minimal <see cref="IProjectContext"/> stub for validation tests. Both maps default
     /// empty; a test that needs its <c>target</c> to reconcile against a declared service
-    /// (REQ-012) passes <paramref name="services"/> — see
-    /// <see cref="StubProjectContext(IReadOnlyDictionary{string,IReadOnlyList{string}}?)"/>.
+    /// (REQ-012) passes <paramref name="services"/>, and a test proving M1's dependency-
+    /// target rejection (fix round 2) passes <paramref name="dependencies"/> — see
+    /// <see cref="StubProjectContext(IReadOnlyDictionary{string,IReadOnlyList{string}}?, IReadOnlyDictionary{string,string}?)"/>.
     /// </summary>
     private sealed class StubProjectContext : IProjectContext
     {
         internal StubProjectContext(
-            IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
+            IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null,
+            IReadOnlyDictionary<string, string>? dependencies = null)
         {
             DeclaredServices = services
                 ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            DeclaredDependencies = dependencies
+                ?? new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         /// <inheritdoc />
         public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
 
         /// <inheritdoc />
-        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
-            new Dictionary<string, string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
         /// <inheritdoc />
         public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }

@@ -279,6 +279,37 @@ public sealed class MetricsAssertPrometheusProviderTests
             e.Contains("sut", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// DEPENDENCY (never a service) must be rejected — mirrors HttpRestProvider's own
+    /// identical fix and rationale. The message must name the dependency and list the
+    /// services it CAN reach.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesDeclaredDependency_IsInvalid_NamesDependencyAndListsServices()
+    {
+        var ctx = new StubProjectContext(
+            deps: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = "postgres",
+            },
+            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["sut"] = new List<string> { "http" },
+            });
+        var model = new MetricsAssertPrometheusModel(
+            "orders-db", "/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("orders-db", StringComparison.Ordinal) &&
+            e.Contains("dependency", StringComparison.OrdinalIgnoreCase) &&
+            e.Contains("sut", StringComparison.Ordinal));
+    }
+
     // ── 12. Registry: provider discoverable ──────────────────────────────────
 
     [Fact]

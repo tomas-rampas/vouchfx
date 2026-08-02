@@ -281,7 +281,7 @@ public static class EnvironmentMapper
 
                     if (KafkaWantsSchemaRegistry(spec.Extra))
                     {
-                        var srName = name + "-sr";
+                        var srName = KafkaSchemaRegistryServiceName(name);
                         var internalEndpoint = kafkaBuilder.Resource.InternalEndpoint;
                         var bootstrapServers = ReferenceExpression.Create(
                             $"PLAINTEXT://{internalEndpoint.Property(EndpointProperty.Host)}:{internalEndpoint.Property(EndpointProperty.Port)}");
@@ -314,7 +314,7 @@ public static class EnvironmentMapper
                 {
                     var gates = new List<string> { name };
                     if (KafkaWantsSchemaRegistry(spec.Extra))
-                        gates.Add(name + "-sr");
+                        gates.Add(KafkaSchemaRegistryServiceName(name));
                     return gates;
                 }),
 
@@ -346,7 +346,7 @@ public static class EnvironmentMapper
                     // provider via VarKeys.Connection(model.Target)).
                     serviceEndpoints[name] = containerBuilder.GetEndpoint("http");
                     // Stage SMTP URL as svc::<name>-smtp for docker tests and SUT config.
-                    serviceEndpoints[name + "-smtp"] = containerBuilder.GetEndpoint("smtp");
+                    serviceEndpoints[MailpitSmtpServiceName(name)] = containerBuilder.GetEndpoint("smtp");
 
                     var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
                     return (retained, retained);
@@ -1161,6 +1161,23 @@ public static class EnvironmentMapper
         @"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Matches ONLY the <c>${env:</c> sigil itself (m5 fix, fix round 2) — case-INSENSITIVE,
+    /// unlike <see cref="s_envRefPattern"/> — used by <see cref="ValidateEnvValue"/> as a
+    /// PRESENCE check, mirroring the existing <c>${secret:...}</c> sigil-presence check
+    /// (<see cref="SecretReference.Sigil"/>'s own rationale): a malformed or wrong-case
+    /// attempt at an <c>env:</c> reference must be rejected too, not silently pass through
+    /// as opaque literal text. Case-insensitive specifically so a case-mistake on the
+    /// reserved word itself (<c>${ENV:GOOD}</c> for the case-sensitive-canonical
+    /// <c>${env:GOOD}</c>) is caught — every other malformed shape (<c>${env:}</c>,
+    /// <c>${env:2BAD}</c>, <c>${env: SPACED }</c>) already contains the exact-case sigil, so
+    /// case-insensitivity only widens what this check catches, never what
+    /// <see cref="s_envRefPattern"/> itself accepts as well-formed.
+    /// </summary>
+    private static readonly Regex s_envSigilPattern = new(
+        @"\$\{env:",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>The <c>${conn:name.part}</c> accessors supported by database-backed kinds.</summary>
     private static readonly string[] s_dbKindParts = { "host", "port", "username", "password", "database" };
 
@@ -1283,6 +1300,31 @@ public static class EnvironmentMapper
                     $"Service '{serviceName}' env entry '{envKey}' references unsupported part " +
                     $"'{part}' of dependency '{depName}' (type '{depSpec.Type}'). Supported parts: " +
                     $"{string.Join(", ", GetSupportedEnvParts(depSpec.Type).OrderBy(p => p, StringComparer.Ordinal))}.",
+                    nameof(envValue));
+            }
+        }
+
+        // m5 fix (fix round 2): sigil-PRESENCE check, mirroring the ${secret:...} check
+        // above — env: previously used a well-formed-match-ONLY scan (below), which by
+        // construction never sees anything malformed, so '${env:}', '${env:2BAD}',
+        // '${ENV:GOOD}', and '${env: SPACED }' all validated PASS and reached the container
+        // as opaque literal text: a silent wrong value from a typo, against EDGE-008's
+        // stated purpose (surface the author's mistake, never guess). For every sigil-shaped
+        // occurrence (matched case-insensitively — see s_envSigilPattern's own remarks),
+        // confirm a WELL-FORMED s_envRefPattern match starts at that exact index; a mismatch
+        // means the sigil was found but the token was not well-formed at that position.
+        foreach (Match sigil in s_envSigilPattern.Matches(envValue))
+        {
+            var wellFormed = s_envRefPattern.Match(envValue, sigil.Index);
+            if (!wellFormed.Success || wellFormed.Index != sigil.Index)
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' contains a '${{env:...}}'-" +
+                    $"shaped token at position {sigil.Index} that is not well-formed. An " +
+                    "'env:' reference must exactly match '${env:NAME}' — a case-sensitive, " +
+                    "lower-case 'env:' sigil (never 'ENV:'/'Env:'), immediately followed by a " +
+                    "variable name starting with a letter or underscore (no spaces, no other " +
+                    "leading characters), and a closing '}' with nothing else inside.",
                     nameof(envValue));
             }
         }
@@ -1417,7 +1459,7 @@ public static class EnvironmentMapper
     {
         if (string.Equals(dependencyType, "mailpit", StringComparison.Ordinal))
         {
-            var smtp = serviceEndpoints[name + "-smtp"];
+            var smtp = serviceEndpoints[MailpitSmtpServiceName(name)];
             return new DependencyEnvAccess(
                 FullConnection: BuildHostPortExpression(smtp),
                 Host: smtp.Property(EndpointProperty.Host),
@@ -1850,20 +1892,40 @@ public static class EnvironmentMapper
     ///     <c>EnvironmentMapperTests</c> pin this).
     ///   </description></item>
     ///   <item><description>
-    ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> — NO implicit health
-    ///     check at all (REQ-008: unconditionally applying an HTTP check would attempt an
-    ///     HTTP request against a service that may not even speak HTTP). Aspire's own default
-    ///     applies: the resource reports healthy once its container reaches the Running state.
+    ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> AND a sibling
+    ///     <c>httpPort</c> (the hybrid shape) — M4 fix (fix round 2): treat it as what it
+    ///     actually is, an image-form HTTP service, and apply the SAME default HTTP probe
+    ///     (<c>WithHttpHealthCheck(path: "/", endpointName: "http")</c>) rather than leaving
+    ///     it ungated. Before this fix a hybrid service with no explicit <c>healthCheck</c>
+    ///     fell into the "no implicit check" branch below purely because
+    ///     <c>hasExplicitPorts</c> is true — <c>docs/02</c> never actually promised that for
+    ///     the hybrid shape (it only documents the http-only and ports-only defaults), it was
+    ///     simply an oversight in the boolean split.
+    ///   </description></item>
+    ///   <item><description>
+    ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> and NO <c>httpPort</c>
+    ///     (ports-only) — M4 fix (fix round 2): default to a <c>tcp</c> probe on the FIRST
+    ///     declared port (<c>spec.Ports[0]</c>) via the SAME <see cref="ApplyTcpHealthCheck"/>
+    ///     helper the explicit <c>type: tcp</c> branch below uses. Before this fix the service
+    ///     was left with NO <see cref="HealthCheckAnnotation"/> at all, so per the pinned
+    ///     Aspire 13.4.2 XML docs for <c>WaitForResourceHealthyAsync</c>, a resource with no
+    ///     health-check annotation "will be considered healthy once it reaches a Running
+    ///     state" — combined with B1 (the tcp health check that could never fail), BOTH shapes
+    ///     available to a non-HTTP system under test were ungated. A protocol-agnostic tcp
+    ///     probe is strictly better than "Running" and costs nothing once B1's bounded
+    ///     zero-byte-read discriminator makes a bare tcp probe meaningful.
     ///   </description></item>
     ///   <item><description>
     ///     <c>type: http</c> — <c>WithHttpHealthCheck(path: healthCheck.Path ?? "/",
     ///     endpointName: "http")</c>, the explicit spelling of the same default.
     ///   </description></item>
     ///   <item><description>
-    ///     <c>type: tcp</c> — a raw TCP connect against the resolved endpoint, registered as a
-    ///     named async health check (<c>IServiceCollection.AddHealthChecks().AddAsyncCheck</c>)
-    ///     and attached via Aspire's generic <c>WithHealthCheck(key)</c>; issues NO HTTP
-    ///     request at all. <c>Map()</c>'s eager validation loop has already confirmed
+    ///     <c>type: tcp</c> — a raw TCP connect (plus B1's bounded zero-byte-read
+    ///     discriminator — see <see cref="ApplyTcpHealthCheck"/>) against the resolved
+    ///     endpoint, registered as a named async health check
+    ///     (<c>IServiceCollection.AddHealthChecks().AddAsyncCheck</c>) and attached via
+    ///     Aspire's generic <c>WithHealthCheck(key)</c>; issues NO HTTP request at all.
+    ///     <c>Map()</c>'s eager validation loop has already confirmed
     ///     <see cref="HealthCheckSpec.Port"/> is set and matches a declared port/httpPort, so
     ///     both are used unchecked here.
     ///   </description></item>
@@ -1880,10 +1942,36 @@ public static class EnvironmentMapper
 
         if (healthCheck is null)
         {
-            return hasExplicitPorts
-                ? containerBuilder
-                : containerBuilder.WithHttpHealthCheck(
+            if (!hasExplicitPorts)
+            {
+                return containerBuilder.WithHttpHealthCheck(
                     path: "/", endpointName: ServiceEndpointNaming.HttpEndpointName);
+            }
+
+            if (spec.HttpPort is not null)
+            {
+                // M4 fix: hybrid shape (ports + httpPort, no explicit healthCheck) — it IS an
+                // image-form HTTP service, so it gets the same default HTTP probe one.
+                return containerBuilder.WithHttpHealthCheck(
+                    path: "/", endpointName: ServiceEndpointNaming.HttpEndpointName);
+            }
+
+            // M4 fix: ports-only, no explicit healthCheck — default to a tcp probe on the
+            // first declared port rather than leaving the service ungated. This is
+            // STRICTLY BETTER than Aspire's own "healthy once Running" default (it proves a
+            // listener actually accepted a connection) but it is NOT a readiness guarantee:
+            // a tcp probe is deliberately protocol-agnostic and never inspects
+            // application-layer traffic, so it cannot detect a server whose listening
+            // socket opens before its own internal startup finishes (a routine pattern, not
+            // an edge case — e.g. a broker that starts accepting TCP connections a handful
+            // of milliseconds before it is ready to serve its protocol). A non-HTTP system
+            // under test with a slow post-listen startup may still need its first step
+            // written to tolerate a brief warm-up (verifyMode: RETRY) — see docs/02
+            // §3.2.6a's "What a tcp health check does not prove" note, which this default
+            // inherits verbatim.
+            var defaultPort = spec.Ports![0];
+            var defaultEndpointName = ServiceEndpointNaming.TcpEndpointName(defaultPort);
+            return ApplyTcpHealthCheck(builder, containerBuilder, serviceName, defaultPort, defaultEndpointName);
         }
 
         if (string.Equals(healthCheck.Type, "http", StringComparison.Ordinal))
@@ -1907,40 +1995,8 @@ public static class EnvironmentMapper
             var endpointName = spec.Ports?.Contains(tcpPort) == true
                 ? ServiceEndpointNaming.TcpEndpointName(tcpPort)
                 : ServiceEndpointNaming.HttpEndpointName;
-            var endpoint = containerBuilder.GetEndpoint(endpointName);
 
-            var healthCheckKey = $"{serviceName}-tcp-{tcpPort}-health";
-            builder.Services.AddHealthChecks().AddAsyncCheck(healthCheckKey, async ct =>
-            {
-                if (!endpoint.IsAllocated)
-                {
-                    return HealthCheckResult.Unhealthy("Endpoint not yet allocated.");
-                }
-
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
-
-                try
-                {
-                    using var tcpClient = new System.Net.Sockets.TcpClient();
-                    await tcpClient.ConnectAsync(endpoint.Host, endpoint.Port, timeoutCts.Token)
-                        .ConfigureAwait(false);
-                    return HealthCheckResult.Healthy();
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-                {
-                    // Catches both a genuine connect failure (SocketException — refused,
-                    // unreachable, …) and the LINKED timeout firing (OperationCanceledException
-                    // whose token is timeoutCts.Token, not the ambient ct) — the 'when' clause
-                    // re-throws only if the AMBIENT ct itself requested cancellation (the
-                    // caller genuinely cancelled the check), which HealthCheckService is
-                    // expected to observe rather than have swallowed into an Unhealthy result.
-                    return HealthCheckResult.Unhealthy(
-                        $"TCP connect to {endpoint.Host}:{endpoint.Port} failed: {ex.Message}");
-                }
-            });
-
-            return containerBuilder.WithHealthCheck(healthCheckKey);
+            return ApplyTcpHealthCheck(builder, containerBuilder, serviceName, tcpPort, endpointName);
         }
 
         // Unreachable once the schema's closed 'type' enum (tcp/http) is in place; defensive
@@ -1951,6 +2007,132 @@ public static class EnvironmentMapper
             $"Service '{serviceName}' declares 'healthCheck.type' = '{healthCheck.Type}', which " +
             "is not recognised. Supported values: tcp, http.",
             nameof(spec));
+    }
+
+    /// <summary>
+    /// Registers a raw-TCP health check for <paramref name="tcpPort"/> against
+    /// <paramref name="containerBuilder"/>'s <paramref name="endpointName"/> endpoint, and
+    /// attaches it via Aspire's generic <c>WithHealthCheck(key)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>B1 fix (fix round 2 — the tcp health check that could never fail).</b> A bare
+    /// <c>ConnectAsync</c> success does NOT prove a backend is listening: the endpoint this
+    /// method probes is the HOST-PUBLISHED, DCP-PROXIED address, and DCP's proxy accepts the
+    /// TCP connection UNCONDITIONALLY — before it has even attempted to reach the real
+    /// backend — and only then tries the backend itself. Measured live, on this exact tree,
+    /// with Docker (<c>EnvironmentMapperTcpHealthCheckDockerTests</c>): a service with
+    /// <c>ports: [9093]</c>, <c>healthCheck: { type: tcp, port: 9093 }</c>, and NOTHING
+    /// listening on 9093 was declared "healthy" in ~18 seconds by the pre-fix connect-only
+    /// check.
+    /// </para>
+    /// <para>
+    /// The fix discriminates with a bounded, small-buffer read AFTER a successful connect:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     Read returns <c>0</c> bytes — DCP's proxy closed the pipe immediately because the
+    ///     real backend refused/was unreachable → <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read times out (no bytes, connection stays open) — the overwhelming majority of
+    ///     TCP protocols do not speak first, so a live backend's connection is simply held
+    ///     open with nothing to read yet → <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read returns <c>&gt;0</c> bytes immediately — a server-speaks-first protocol (e.g.
+    ///     SMTP, SSH) greeted us unprompted → definitely alive →
+    ///     <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    /// </list>
+    /// Measured live, on this exact tree, with Docker, using two services (one with a real
+    /// listener on port 80, one dead on port 9093): <c>good=CONNECT_OK READ_TIMEOUT
+    /// (alive-ish)</c>, <c>bad=CONNECT_OK READ_BYTES=0</c> — exactly the discriminator this
+    /// method implements. <b>Measured on Docker Desktop for Windows only</b> — the
+    /// Linux/DCP-on-Linux proxy-close-timing behaviour is UNVERIFIED; the same "accept
+    /// unconditionally, close on backend failure" DCP proxy design is documented for both
+    /// platforms, but this has not been re-confirmed on Linux CI.
+    /// </para>
+    /// <para>
+    /// <b>What this proves, and what it does not.</b> A <see cref="HealthCheckResult.Healthy"/>
+    /// result confirms a listener accepted the connection and stayed open — it is
+    /// deliberately protocol-agnostic and never inspects application-layer traffic, so it
+    /// cannot detect a server whose listening socket opens before its own internal startup
+    /// finishes (a routine pattern for many servers, not an edge case). This is strictly
+    /// better than Aspire's own "healthy once Running" default for a resource with no
+    /// health-check annotation at all, but it is not a substitute for an application-level
+    /// readiness signal; see docs/02 §3.2.6a's "What a tcp health check does not prove" note.
+    /// </para>
+    /// </remarks>
+    private static IResourceBuilder<ContainerResource> ApplyTcpHealthCheck(
+        IDistributedApplicationBuilder builder,
+        IResourceBuilder<ContainerResource> containerBuilder,
+        string serviceName,
+        int tcpPort,
+        string endpointName)
+    {
+        var endpoint = containerBuilder.GetEndpoint(endpointName);
+
+        var healthCheckKey = $"{serviceName}-tcp-{tcpPort}-health";
+        builder.Services.AddHealthChecks().AddAsyncCheck(healthCheckKey, async ct =>
+        {
+            if (!endpoint.IsAllocated)
+            {
+                return HealthCheckResult.Unhealthy("Endpoint not yet allocated.");
+            }
+
+            using var connectTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectTimeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+
+            using var tcpClient = new System.Net.Sockets.TcpClient();
+            try
+            {
+                await tcpClient.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeoutCts.Token)
+                    .ConfigureAwait(false);
+
+                // B1 fix: connect succeeded — this proves only that DCP's proxy accepted the
+                // connection, never that a real backend is listening behind it (see this
+                // method's own remarks). Discriminate with a bounded zero-byte-buffer read.
+                using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                readTimeoutCts.CancelAfter(TimeSpan.FromSeconds(1));
+
+                try
+                {
+                    var stream = tcpClient.GetStream();
+                    var buffer = new byte[1];
+                    var bytesRead = await stream.ReadAsync(buffer, readTimeoutCts.Token)
+                        .ConfigureAwait(false);
+
+                    return bytesRead == 0
+                        ? HealthCheckResult.Unhealthy(
+                            $"TCP connect to {endpoint.Host}:{endpoint.Port} succeeded, but the " +
+                            "connection was closed immediately (zero bytes read) — no backend is " +
+                            "listening behind the host-published proxy.")
+                        // >0 bytes: a server-speaks-first protocol greeted us unprompted.
+                        : HealthCheckResult.Healthy();
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // The read timed out waiting for data or EOF (readTimeoutCts fired, not the
+                    // ambient ct): the connection was held open with nothing to read yet — the
+                    // live-backend signature for the overwhelming majority of TCP protocols,
+                    // which do not speak first.
+                    return HealthCheckResult.Healthy();
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Catches both a genuine connect failure (SocketException — refused,
+                // unreachable, …) and a post-connect read failure other than a timeout (e.g. a
+                // reset), plus the connect-stage LINKED timeout firing — the 'when' clause
+                // re-throws only if the AMBIENT ct itself requested cancellation (the caller
+                // genuinely cancelled the check), which HealthCheckService is expected to
+                // observe rather than have swallowed into an Unhealthy result.
+                return HealthCheckResult.Unhealthy(
+                    $"TCP probe of {endpoint.Host}:{endpoint.Port} failed: {ex.Message}");
+            }
+        });
+
+        return containerBuilder.WithHealthCheck(healthCheckKey);
     }
 
     // -----------------------------------------------------------------------
@@ -1981,6 +2163,57 @@ public static class EnvironmentMapper
         return node is YamlScalarNode { Value: { } value } &&
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
+
+    // -----------------------------------------------------------------------
+    // Dependency sidecar svc::-key naming (m1 fix, fix round 2).
+    // -----------------------------------------------------------------------
+    // A dependency's Build lambda ordinarily stages exactly one svc::<name>-shaped key
+    // per kind (or none, for the pure dependency-only kinds) — see the class remarks'
+    // "conn:: vs svc::" summary. TWO kinds are the exception: they stage an ADDITIONAL
+    // sidecar endpoint into svc::<name>-<suffix>, alongside their own conn::<name>. These
+    // two suffix-naming functions are the SINGLE source of truth for those extra names —
+    // both the Build lambdas below AND GetDependencyServiceSidecarNames (consulted by
+    // ProviderPipeline's host-resource-vs-declared-name collision guard) call them, so the
+    // two can never drift apart the way the guard's own stated justification once did
+    // (see that guard's remarks for the mailpit-smtp / kafka-sr false-negative it used to
+    // let through).
+
+    /// <summary>The svc::-staged key for a <c>mailpit</c> dependency's SMTP sidecar endpoint.</summary>
+    private static string MailpitSmtpServiceName(string dependencyName) => dependencyName + "-smtp";
+
+    /// <summary>
+    /// The svc::-staged key for a <c>kafka</c> dependency's optional schema-registry
+    /// sidecar endpoint (present only when <see cref="KafkaWantsSchemaRegistry"/> is true).
+    /// </summary>
+    private static string KafkaSchemaRegistryServiceName(string dependencyName) => dependencyName + "-sr";
+
+    /// <summary>
+    /// Returns the EXTRA <c>svc::&lt;name&gt;</c>-staged keys — beyond the dependency's own
+    /// bare name — that a dependency of <paramref name="spec"/>'s type stages during
+    /// <c>Configure</c>. Empty for every kind except <c>mailpit</c> (unconditionally, its
+    /// SMTP sidecar) and <c>kafka</c> (conditionally, when <c>schemaRegistry: true</c>).
+    /// </summary>
+    /// <remarks>
+    /// Purely declarative — reads only <paramref name="spec"/>, never invokes any dependency
+    /// registration's <c>Build</c> lambda — so it is safe to call at validation time, before
+    /// any <c>IDistributedApplicationBuilder</c> exists. <c>ProviderPipeline.
+    /// BuildProjectContext</c>'s host-resource-vs-declared-name collision guard (m1 fix, fix
+    /// round 2) calls this for every declared dependency so a host resource (e.g. a webhook
+    /// listener) cannot silently shadow one of these sidecar keys the way a listener named
+    /// <c>mail-smtp</c> alongside a <c>mailpit</c> dependency <c>mail</c>, or a listener named
+    /// <c>bus-sr</c> alongside a <c>kafka</c> dependency <c>bus</c> with
+    /// <c>schemaRegistry: true</c>, previously could — both used to validate PASS, and the
+    /// <c>-sr</c> key specifically is read at run time by both Kafka providers, so an Avro
+    /// publish would have sent schema-registry traffic to the engine's own listener instead.
+    /// </remarks>
+    public static IEnumerable<string> GetDependencyServiceSidecarNames(string name, DependencySpec spec) =>
+        spec.Type switch
+        {
+            "mailpit" => new[] { MailpitSmtpServiceName(name) },
+            "kafka" when KafkaWantsSchemaRegistry(spec.Extra) =>
+                new[] { KafkaSchemaRegistryServiceName(name) },
+            _ => Array.Empty<string>(),
+        };
 
     /// <summary>
     /// Parses the <c>extra.queues</c> sequence from an Azure Service Bus dependency's

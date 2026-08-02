@@ -103,7 +103,7 @@ public sealed class MqPublishKafkaProvider
           "required": ["target", "topic", "payload"],
           "properties": {
             "target": {
-              "description": "Logical name of the kafka dependency to publish to, as declared under environment.dependencies.",
+              "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
               "type": "string",
               "minLength": 1
             },
@@ -289,7 +289,7 @@ public sealed class MqPublishKafkaProvider
                     $"mq-publish.kafka: 'target' '{model.Target}' is not a kafka dependency " +
                     "declared in environment.dependencies, nor a declared service in " +
                     "environment.services. " +
-                    DescribeDeclaredSurfaces(ctx));
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
             }
         }
 
@@ -330,23 +330,6 @@ public sealed class MqPublishKafkaProvider
             : ValidationResult.Failure(errors.ToArray());
     }
 
-    /// <summary>
-    /// Formats the "Declared dependencies: ...; declared services: ..." tail appended to an
-    /// unresolved-target message (REQ-011/REQ-012 message-shape alignment) — names are sorted
-    /// ordinally for deterministic output, and an empty surface reads "(none)" rather than an
-    /// empty list.
-    /// </summary>
-    private static string DescribeDeclaredSurfaces(IProjectContext ctx)
-    {
-        var deps = ctx.DeclaredDependencies.Count == 0
-            ? "(none)"
-            : string.Join(", ", ctx.DeclaredDependencies.Keys.OrderBy(k => k, StringComparer.Ordinal));
-        var services = ctx.DeclaredServices.Count == 0
-            ? "(none)"
-            : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
-
-        return $"Declared dependencies: {deps}. Declared services: {services}.";
-    }
 
     // ── CsxFragment components ────────────────────────────────────────────────
 

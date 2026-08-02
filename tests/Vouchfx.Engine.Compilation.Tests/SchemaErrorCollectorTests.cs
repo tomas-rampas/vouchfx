@@ -17,6 +17,7 @@
 //     SchemaComposer.Validate evaluation pipeline — not merely by construction
 //     of a path string.
 using System;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Json.Schema;
@@ -1185,5 +1186,65 @@ public sealed class SchemaErrorCollectorTests
 
         var forbidden = Assert.Single(errors, e => e.Message.Contains("'extra'", StringComparison.Ordinal));
         Assert.Contains("is not valid when 'mode' is 'strict'", forbidden.Message, StringComparison.Ordinal);
+    }
+
+    // ── m8 (fix round 2, PR #349 follow-up): const/enum dedup + context-aware const ──
+
+    /// <summary>
+    /// m8 fix: a wrong-case <c>healthCheck.type</c> (e.g. <c>type: TCP</c>) on a ports-only
+    /// service previously produced TWO errors at the identical instance location — the good
+    /// <c>[enum] … — write 'tcp'</c> message, plus a redundant
+    /// <c>[const] 'TCP' does not match the value required here: 'tcp'.</c> that named
+    /// neither the service, the field, nor the reason. Measured, pre-fix, against
+    /// <c>Corpus/Rejected/service-healthcheck-type-wrong-case.e2e.yaml</c>. Now exactly one
+    /// error survives at that location.
+    /// </summary>
+    [Fact]
+    public void HealthCheckType_WrongCase_ReportsOnlyEnumError_NoRedundantConst()
+    {
+        var registry = StepKindRegistry.BuildAndFreeze(new[] { typeof(ScriptCsharpProvider).Assembly });
+        var yaml = File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Corpus", "Rejected", "service-healthcheck-type-wrong-case.e2e.yaml"));
+
+        var result = DocumentValidator.Validate(yaml, registry);
+        Assert.False(result.IsValid);
+
+        const string location = "/environment/services/kafka-broker/healthCheck/type";
+        var atLocation = result.Errors.Where(e =>
+            string.Equals(e.InstanceLocation, location, StringComparison.Ordinal)).ToList();
+
+        var only = Assert.Single(atLocation);
+        Assert.Contains("[enum]", only.Message, StringComparison.Ordinal);
+        Assert.Contains("write 'tcp'", only.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("[const]", only.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// m8 fix — the surviving <c>const</c> case (a VALID enum member, <c>type: http</c>,
+    /// still failing the narrower ports-only-service conditional, so it has no enum sibling
+    /// to be suppressed against): the message now names the service, the field, and the
+    /// reason, matching the standard <see cref="SchemaErrorCollector.FormatForbiddenPropertyError"/>
+    /// already set for context-aware messages elsewhere in this class. Before this fix the
+    /// message was the bare library-shaped
+    /// <c>[const] 'http' does not match the value required here: 'tcp'.</c>
+    /// </summary>
+    [Fact]
+    public void HealthCheckType_PortsOnlyConditional_ConstMessageNamesServiceFieldAndReason()
+    {
+        var registry = StepKindRegistry.BuildAndFreeze(new[] { typeof(ScriptCsharpProvider).Assembly });
+        var yaml = File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Corpus", "Rejected", "service-healthcheck-http-without-http-endpoint.e2e.yaml"));
+
+        var result = DocumentValidator.Validate(yaml, registry);
+        Assert.False(result.IsValid);
+
+        const string location = "/environment/services/kafka-broker/healthCheck/type";
+        var error = Assert.Single(result.Errors, e =>
+            string.Equals(e.InstanceLocation, location, StringComparison.Ordinal));
+
+        Assert.Contains("[const]", error.Message, StringComparison.Ordinal);
+        Assert.Contains("kafka-broker", error.Message, StringComparison.Ordinal);
+        Assert.Contains("httpPort", error.Message, StringComparison.Ordinal);
+        Assert.Contains("ports", error.Message, StringComparison.Ordinal);
     }
 }

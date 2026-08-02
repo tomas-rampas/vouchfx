@@ -308,7 +308,8 @@ internal static class SchemaErrorCollector
 
             synthesisedOneOfErrors ??= new List<CollectedError>();
             synthesisedOneOfErrors.Add(new CollectedError(
-                state.InstanceLocation, state.Prefix, message, IsUnevaluatedProperties: false));
+                state.InstanceLocation, state.Prefix, message, IsUnevaluatedProperties: false,
+                Keyword: "oneOf"));
         }
 
         if (synthesisedOneOfErrors is not null)
@@ -322,7 +323,8 @@ internal static class SchemaErrorCollector
         // its genuine unevaluatedProperties entry hidden by a phantom sibling
         // that is about to be dropped anyway.
         var afterCompositeSuppression = SuppressSatisfiedCompositeBranchNoise(collected, groupStates);
-        var survivors = SuppressUnevaluatedPropertiesCascade(afterCompositeSuppression);
+        var afterEnumConstDedup = SuppressRedundantConstWhenEnumPresent(afterCompositeSuppression);
+        var survivors = SuppressUnevaluatedPropertiesCascade(afterEnumConstDedup);
 
         var errors = new List<SchemaValidationError>(survivors.Count);
         foreach (var error in survivors)
@@ -352,8 +354,28 @@ internal static class SchemaErrorCollector
     /// pre-computed here, since it is only ever needed when at least one
     /// composite group turned out satisfied).
     /// </summary>
+    /// <param name="InstanceLocation">The failing node's own instance-location pointer.</param>
+    /// <param name="EvaluationPath">
+    /// The failing node's own evaluation-path pointer, re-scanned lazily by
+    /// <see cref="SuppressSatisfiedCompositeBranchNoise"/> (see
+    /// <see cref="FindCompositeBranchOccurrences"/>) rather than pre-computed here, since it
+    /// is only ever needed when at least one composite group turned out satisfied.
+    /// </param>
+    /// <param name="Message">The already-formatted, author-facing message text.</param>
+    /// <param name="IsUnevaluatedProperties">
+    /// See <see cref="IsUnevaluatedPropertiesShape"/> — consulted by
+    /// <see cref="SuppressUnevaluatedPropertiesCascade"/>.
+    /// </param>
+    /// <param name="Keyword">
+    /// The raw JSON Schema keyword this error was reported against (e.g. <c>"enum"</c>,
+    /// <c>"const"</c>, <c>"required"</c>) — never re-derived from <c>Message</c>'s
+    /// <c>[keyword]</c> display tag, which exists for the AUTHOR to read, not for this
+    /// class to re-parse. Consulted by <see cref="SuppressRedundantConstWhenEnumPresent"/>
+    /// (m8 fix, fix round 2).
+    /// </param>
     private readonly record struct CollectedError(
-        string InstanceLocation, string EvaluationPath, string Message, bool IsUnevaluatedProperties);
+        string InstanceLocation, string EvaluationPath, string Message, bool IsUnevaluatedProperties,
+        string Keyword);
 
     /// <summary>
     /// Per-(EvaluationPath-prefix, InstanceLocation) tally for one
@@ -496,7 +518,8 @@ internal static class SchemaErrorCollector
                     location,
                     evaluationPath,
                     FormatError(keyword, message, evaluationPath, location, instance, schema, schemaLocation),
-                    IsUnevaluatedPropertiesShape(keyword, evaluationPath)));
+                    IsUnevaluatedPropertiesShape(keyword, evaluationPath),
+                    Keyword: keyword));
             }
         }
 
@@ -575,6 +598,71 @@ internal static class SchemaErrorCollector
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Drops a <c>const</c> error whenever an <c>enum</c> error is ALSO reported at the
+    /// SAME <see cref="CollectedError.InstanceLocation"/> (m8 fix, fix round 2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The composed schema's ports-only-service conditional (<c>$defs/service</c>'s own
+    /// <c>if</c>/<c>then</c>: <c>ports</c> present, no sibling <c>httpPort</c> ⇒
+    /// <c>healthCheck.type</c> is conditionally pinned to <c>const: "tcp"</c>) sits ALONGSIDE
+    /// <c>healthCheck.type</c>'s own unconditional <c>enum: ["tcp","http"]</c>. For a
+    /// wrong-CASE value (e.g. <c>type: TCP</c>), BOTH fail at the exact same
+    /// <c>InstanceLocation</c> — the enum member because <c>"TCP"</c> is not
+    /// case-identical to either accepted spelling, the conditional const because
+    /// <c>"TCP"</c> is not identical to the one value the ports-only shape permits — even
+    /// though they describe the SAME single typo. The enum message already names the exact
+    /// fix ("write 'tcp'"); the const message beside it is pure noise for THIS document
+    /// (measured: <c>service-healthcheck-type-wrong-case.e2e.yaml</c> emitted both before
+    /// this fix). A GENUINELY ports-only-conditional rejection with no case typo (e.g.
+    /// <c>type: http</c>, a valid enum member that still fails the narrower conditional) has
+    /// no enum sibling at all and is untouched by this pass — see
+    /// <see cref="FormatConstError"/>'s own <c>healthCheck.type</c> branch for that surviving
+    /// case's improved message.
+    /// </para>
+    /// <para>
+    /// Scoped narrowly to (<c>const</c> dropped, <c>enum</c> kept) specifically, never the
+    /// reverse and never any other keyword pair: this is the ONE shape in the composed
+    /// schema today where an unconditional <c>enum</c> and a conditional <c>const</c> can
+    /// both fail at identical <see cref="CollectedError.InstanceLocation"/> — a future
+    /// schema addition producing a different keyword collision is unaffected by this pass
+    /// (falls through both untouched, exactly like every other keyword pair today).
+    /// </para>
+    /// </remarks>
+    private static List<CollectedError> SuppressRedundantConstWhenEnumPresent(List<CollectedError> errors)
+    {
+        HashSet<string>? locationsWithEnumError = null;
+        foreach (var error in errors)
+        {
+            if (string.Equals(error.Keyword, "enum", StringComparison.Ordinal))
+            {
+                locationsWithEnumError ??= new HashSet<string>(StringComparer.Ordinal);
+                locationsWithEnumError.Add(error.InstanceLocation);
+            }
+        }
+
+        // Fast path: no enum error anywhere in this document, so there is nothing a const
+        // error could be redundant with — mirrors the other suppression passes' own
+        // early-out shape.
+        if (locationsWithEnumError is null)
+            return errors;
+
+        var survivors = new List<CollectedError>(errors.Count);
+        foreach (var error in errors)
+        {
+            if (string.Equals(error.Keyword, "const", StringComparison.Ordinal) &&
+                locationsWithEnumError.Contains(error.InstanceLocation))
+            {
+                continue;
+            }
+
+            survivors.Add(error);
+        }
+
+        return survivors;
     }
 
     /// <summary>
@@ -1610,30 +1698,34 @@ internal static class SchemaErrorCollector
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The composed schema has exactly ONE user-facing <c>const</c> —
-    /// <c>metadata.schemaVersion</c> — named directly below, mirroring
-    /// <see cref="FormatForbiddenPropertyError"/>'s own fixed-rule-vs-generic-
-    /// fallback split (see that method's remarks for the same reasoning
-    /// applied to <c>image</c>/<c>project</c>): offering "omit the field" as
-    /// an alternative is safe ONLY because this schema's own definition
-    /// marks <c>schemaVersion</c> optional, a fact this method is told about
-    /// by name rather than inferred from the schema. Every OTHER
-    /// <c>const</c> in the composed schema belongs to a dependency-kind
-    /// discriminator clause ($defs/dependency's <c>allOf</c>/<c>if</c>/<c>then</c>
-    /// chain), which <see cref="IsIfDiscriminatorNoise"/> already filters out
-    /// before this method is ever reached (see the class remarks) — so no
-    /// other <c>const</c> currently reaches here at all. A future provider-
-    /// authored <c>const</c> falls through to the generic branch below
-    /// rather than borrowing <c>schemaVersion</c>'s specific,
-    /// optionality-dependent advice.
+    /// The composed schema has TWO user-facing <c>const</c> shapes (m8 fix, fix round 2
+    /// corrects this remark — it previously claimed exactly one; that was already wrong
+    /// the day <c>$defs/service</c>'s ports-only conditional shipped, and the second
+    /// branch below closes the gap): <c>metadata.schemaVersion</c>, and
+    /// <c>environment.services.&lt;name&gt;.healthCheck.type</c>'s conditional pin to
+    /// <c>"tcp"</c> on a ports-only service (no sibling <c>httpPort</c> — a <c>type: http</c>
+    /// probe has no HTTP endpoint to target there). Both are named directly below, mirroring
+    /// <see cref="FormatForbiddenPropertyError"/>'s own fixed-rule-vs-generic-fallback split
+    /// (see that method's remarks for the same reasoning applied to <c>image</c>/<c>project</c>).
+    /// A wrong-CASE value at the healthCheck.type location (e.g. <c>type: TCP</c>) ALSO fails
+    /// the field's own unconditional <c>enum</c> at the identical location; that redundant
+    /// pairing is suppressed upstream by <see cref="SuppressRedundantConstWhenEnumPresent"/>
+    /// before this method is ever reached for it, so this method only ever sees a
+    /// healthCheck.type <c>const</c> that has no enum sibling — a valid enum member (e.g.
+    /// <c>"http"</c>) failing the narrower ports-only conditional. Every OTHER <c>const</c>
+    /// in the composed schema still belongs to a dependency-kind discriminator clause
+    /// ($defs/dependency's <c>allOf</c>/<c>if</c>/<c>then</c> chain), which
+    /// <see cref="IsIfDiscriminatorNoise"/> filters out before this method is ever reached
+    /// (see the class remarks). A future provider-authored <c>const</c> falls through to the
+    /// generic branch below rather than borrowing either named case's specific advice.
     /// </para>
     /// <para>
     /// The expected value is still read from the LIVE composed schema via
     /// <paramref name="schemaLocation"/> (see <see cref="TryReadConstValue"/>),
-    /// never hardcoded to <c>"v1"</c>, so this stays correct the day the
-    /// engine recognises a 'v2'. Degrades to a generic (but still
-    /// <c>[const]</c>-tagged) message when either the offending or the
-    /// expected value cannot be resolved — never a guess.
+    /// never hardcoded to <c>"v1"</c>/<c>"tcp"</c>, so both stay correct the day the engine
+    /// recognises a 'v2', or the ports-only conditional's own required value ever changes.
+    /// Degrades to a generic (but still <c>[const]</c>-tagged) message when either the
+    /// offending or the expected value cannot be resolved — never a guess.
     /// </para>
     /// </remarks>
     private static string FormatConstError(
@@ -1655,6 +1747,15 @@ internal static class SchemaErrorCollector
         {
             return $"[const] '{TruncateForDisplay(offendingValue)}' is not a language schema version this " +
                    $"engine recognises — write '{expectedValue}', or omit the field.";
+        }
+
+        if (TryResolveHealthCheckTypeContainer(instanceLocation, out var serviceName))
+        {
+            return $"[const] Service '{serviceName}' declares 'healthCheck: {{ type: " +
+                   $"{TruncateForDisplay(offendingValue)} }}', but its 'ports' declaration has no " +
+                   "sibling 'httpPort' — no HTTP endpoint exists there for anything but a 'tcp' " +
+                   $"probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ " +
+                   $"type: {expectedValue} }}'.";
         }
 
         return $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
@@ -2112,6 +2213,38 @@ internal static class SchemaErrorCollector
         }
 
         containerName = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves <c>environment/services/&lt;name&gt;/healthCheck/type</c> — ONE segment
+    /// deeper than <see cref="TryResolveHealthCheckContainer"/>'s own <c>healthCheck</c>
+    /// container match — for <see cref="FormatConstError"/>'s ports-only-conditional
+    /// <c>healthCheck.type</c> branch (m8 fix, fix round 2). Every OTHER healthCheck field
+    /// rejection at this depth (an unrecognised key, a forbidden <c>port</c>/<c>path</c>)
+    /// already lands correctly via the additionalProperties/properties formatters and does
+    /// not need this helper; only the <c>type</c> field's conditional <c>const</c> does.
+    /// </summary>
+    /// <param name="instanceLocation">The failing node's own instance-location pointer.</param>
+    /// <param name="serviceName">
+    /// Set to the resolved service's own map key on a successful resolve;
+    /// <see cref="string.Empty"/> otherwise.
+    /// </param>
+    private static bool TryResolveHealthCheckTypeContainer(string instanceLocation, out string serviceName)
+    {
+        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 5 &&
+            segments[0] == "environment" &&
+            segments[1] == "services" &&
+            segments[3] == "healthCheck" &&
+            segments[4] == "type")
+        {
+            serviceName = DecodePointerSegment(segments[2]);
+            return true;
+        }
+
+        serviceName = string.Empty;
         return false;
     }
 
