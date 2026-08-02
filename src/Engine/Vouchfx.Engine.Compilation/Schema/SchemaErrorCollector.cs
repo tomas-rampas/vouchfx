@@ -2034,8 +2034,10 @@ internal static class SchemaErrorCollector
         {
             containerKind = segments[1] == "services" ? ServiceContainerKind : DependencyContainerKind;
             containerName = DecodePointerSegment(segments[2]);
-            // Safe to index segments[4] unconditionally here: isNestedSecurityField being
-            // true already guarantees segments.Length > 4 (see its own condition above).
+            // segments[4] is guarded by the &&'s short-circuit ORDERING, not
+            // unconditionally safe: isNestedSecurityField, evaluated first, guarantees
+            // segments.Length > 4 — reordering the two operands would throw for a
+            // length-4 pointer (the security object itself).
             isNestedBelowSecurity = isNestedSecurityField && segments[4] == "serverArtifacts";
             return true;
         }

@@ -176,6 +176,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Contains("environment.dependencies.mq.security.clientCert", result!.Message, StringComparison.Ordinal);
         var expectedResolved = Path.GetFullPath(Path.Combine(_suiteDir, "certs", "client.pem"));
         Assert.Contains(expectedResolved, result.Message, StringComparison.Ordinal);
+        Assert.True(result.IsSecurityPreflight);
     }
 
     [Fact]
@@ -231,6 +232,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.NotNull(result);
         Assert.Contains("resolves outside the suite directory", result!.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("not found", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.IsSecurityPreflight);
     }
 
     [Fact]
