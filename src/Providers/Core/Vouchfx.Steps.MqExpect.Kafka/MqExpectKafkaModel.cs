@@ -120,7 +120,7 @@ public sealed record KafkaAvro(
 /// <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Headers">
-/// Optional map of expected header names to their expected string values.  When
+/// Optional map of expected header names to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text).  When
 /// non-empty, every named header must be present on the message and its UTF-8 value
 /// must equal the expected value.  Each expected value may contain <c>{placeholder}</c>
 /// and <c>${secret:source/path}</c> tokens resolved at runtime; header names are used
@@ -131,7 +131,7 @@ public sealed record KafkaAvro(
 /// <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Json">
-/// Optional map of JSONPath expressions to their expected string values.  When
+/// Optional map of JSONPath expressions to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text).  When
 /// non-empty, the message value is parsed as JSON and each JSONPath must select a node
 /// whose stringified value equals the expected value.  A non-JSON payload or a path that
 /// selects nothing fails the criterion (no error is raised).  Each expected value may

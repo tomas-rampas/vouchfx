@@ -110,7 +110,7 @@ public sealed class DbAssertSqlServerProvider
               "minLength": 1
             },
             "parameters": {
-              "description": "Optional map of SQL parameter names (without leading '@') to their string values.",
+              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },

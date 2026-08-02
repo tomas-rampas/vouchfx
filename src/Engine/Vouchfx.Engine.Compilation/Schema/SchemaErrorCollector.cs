@@ -1230,6 +1230,32 @@ internal static class SchemaErrorCollector
             return false;
         }
 
+        // The doc contract for this method is the EXACT shape
+        // {"required":["field"],"properties":{"field":{"const":...}}} — and the
+        // 'required' half is load-bearing for the message's truth, not
+        // decoration. Without 'required', the if-clause ALSO matches when the
+        // field is ABSENT ('properties' is a no-op on a missing key), so the
+        // then-branch's exclusion applies in the absent case too and
+        // "not valid when 'field' is X" would be a fabricated half-truth.
+        // Every shipped shape carries the required pair (dynamodb/s3
+        // exists:false); a future fragment with an optional-const if-clause
+        // must degrade to the generic message, not inherit a conditional it
+        // does not have. Same strict-shape doctrine as
+        // TryReadSoleRequiredNoOtherContent and EngineExport's group reader.
+        if (!ifClause.TryGetProperty("required", out var required) ||
+            required.ValueKind != JsonValueKind.Array ||
+            required.GetArrayLength() != 1)
+        {
+            return false;
+        }
+
+        var soleRequired = required[0];
+        if (soleRequired.ValueKind != JsonValueKind.String ||
+            !string.Equals(soleRequired.GetString(), found.Name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         var constElement = found.Value.GetProperty("const");
         fieldName = found.Name;
         constDisplay = constElement.ValueKind switch

@@ -123,7 +123,7 @@ public sealed class MqPublishKafkaProvider
               "minLength": 1
             },
             "headers": {
-              "description": "Optional map of message header names to their string values.",
+              "description": "Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },

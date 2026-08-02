@@ -53,7 +53,7 @@ namespace Vouchfx.Steps.MqPublish.Kafka;
 /// <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Headers">
-/// An optional map of message-header names to their string values.  Each value may
+/// An optional map of message-header names to their values (read as text; a bare numeric or boolean scalar binds as its literal text).  Each value may
 /// contain <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at
 /// runtime; header names are used verbatim.  <see langword="null"/> when the step
 /// declares no headers.

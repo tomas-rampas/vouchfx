@@ -134,7 +134,7 @@ public sealed class WebhookListenHttpProvider
                   "type": "string"
                 },
                 "headers": {
-                  "description": "Optional map of expected header names to their expected string values.",
+                  "description": "Optional map of expected header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },

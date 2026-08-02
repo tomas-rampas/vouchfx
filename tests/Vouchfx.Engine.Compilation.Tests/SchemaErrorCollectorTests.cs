@@ -1060,4 +1060,86 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains("'badkey'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("capture entry 'orderId'", onlyError.Message, StringComparison.Ordinal);
     }
+
+    // ── TryReadSingleConstCondition: the 'required' half is load-bearing ─────
+    //
+    // Review finding: the method's doc contract is the EXACT shape
+    // {"required":["field"],"properties":{"field":{"const":...}}} but the
+    // implementation never checked 'required'. Without it, the if-clause ALSO
+    // matches when the field is ABSENT ('properties' is a no-op on a missing
+    // key), so "not valid when 'field' is X" would be a fabricated half-truth
+    // for an optional-const if-clause. Unreachable through the 25 shipped
+    // fragments (every shipped shape carries the pair); pinned here so a
+    // Community fragment with an optional-const if-clause degrades to the
+    // generic message instead of inheriting a conditional it does not have.
+
+    private const string OptionalConstIfClauseSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "block": {
+              "type": "object",
+              "allOf": [
+                {
+                  "if": { "properties": { "mode": { "const": "strict" } } },
+                  "then": { "properties": { "extra": false } }
+                }
+              ]
+            }
+          }
+        }
+        """;
+
+    private const string RequiredConstIfClauseSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "block": {
+              "type": "object",
+              "allOf": [
+                {
+                  "if": { "required": ["mode"], "properties": { "mode": { "const": "strict" } } },
+                  "then": { "properties": { "extra": false } }
+                }
+              ]
+            }
+          }
+        }
+        """;
+
+    /// <summary>
+    /// An if-clause whose const-bearing property is NOT required must degrade
+    /// to the generic forbidden-property message — the conditional form would
+    /// be false for the field-absent case the same clause also matches.
+    /// </summary>
+    [Fact]
+    public void ForbiddenProperty_OptionalConstIfClause_DegradesToGenericMessage()
+    {
+        var results = Evaluate(OptionalConstIfClauseSchema, """{"block": {"mode": "strict", "extra": 1}}""");
+        Assert.False(results.IsValid);
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(OptionalConstIfClauseSchema));
+
+        var forbidden = Assert.Single(errors, e => e.Message.Contains("'extra'", StringComparison.Ordinal));
+        Assert.Contains("is not valid here", forbidden.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("when 'mode'", forbidden.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The positive control: with the required pair present — the exact shape
+    /// the shipped dynamodb/s3 clauses use — the conditional form still fires.
+    /// </summary>
+    [Fact]
+    public void ForbiddenProperty_RequiredConstIfClause_KeepsConditionalMessage()
+    {
+        var results = Evaluate(RequiredConstIfClauseSchema, """{"block": {"mode": "strict", "extra": 1}}""");
+        Assert.False(results.IsValid);
+
+        var errors = SchemaErrorCollector.CollectErrors(
+            results, schema: ParseSchemaElement(RequiredConstIfClauseSchema));
+
+        var forbidden = Assert.Single(errors, e => e.Message.Contains("'extra'", StringComparison.Ordinal));
+        Assert.Contains("is not valid when 'mode' is 'strict'", forbidden.Message, StringComparison.Ordinal);
+    }
 }

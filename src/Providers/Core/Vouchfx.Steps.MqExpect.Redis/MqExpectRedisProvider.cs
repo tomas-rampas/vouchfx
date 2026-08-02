@@ -114,7 +114,7 @@ public sealed class MqExpectRedisProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message payload parsed as JSON.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

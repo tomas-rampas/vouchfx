@@ -137,7 +137,7 @@ public sealed class MqExpectKafkaProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "headers": {
-                  "description": "Optional map of expected header names to their expected string values.",
+                  "description": "Optional map of expected header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },
@@ -146,7 +146,7 @@ public sealed class MqExpectKafkaProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected string values, evaluated over the message value parsed as JSON.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message value parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

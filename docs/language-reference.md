@@ -143,7 +143,7 @@ Set `type: db-assert.mysql` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
 
 ### `db-assert.postgres`
 
@@ -163,7 +163,7 @@ Set `type: db-assert.postgres` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
 
 ### `db-assert.sqlserver`
 
@@ -183,7 +183,7 @@ Set `type: db-assert.sqlserver` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their string values. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
 
 ### `http.rest`
 
@@ -402,7 +402,7 @@ Set `type: mq-publish.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
-| `headers` | `object` | Optional map of message header names to their string values. |
+| `headers` | `object` | Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text. |
 | `key` | `string` \| `integer` \| `number` \| `boolean` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 
 ### `mq-publish.nats`
@@ -444,7 +444,7 @@ Set `type: mq-publish.rabbitmq` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `exchange` | `string` | Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens. |
-| `headers` | `object` | Optional map of AMQP message header names to their string values. |
+| `headers` | `object` | Optional map of AMQP message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text. |
 
 ### `mq-publish.redis`
 

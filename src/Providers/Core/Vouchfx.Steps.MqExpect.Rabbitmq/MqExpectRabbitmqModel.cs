@@ -34,10 +34,10 @@ public sealed record MqExpectRabbitmqModel(
 /// May contain <c>{placeholder}</c> and <c>${secret:source/path}</c> tokens resolved at runtime.
 /// </param>
 /// <param name="Headers">
-/// Optional map of expected header names to their expected string values.
+/// Optional map of expected header names to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text).
 /// </param>
 /// <param name="Json">
-/// Optional map of JSONPath expressions to their expected string values.
+/// Optional map of JSONPath expressions to their expected values (read as text; a bare numeric or boolean scalar binds as its literal text).
 /// </param>
 public sealed record RabbitmqMatch(
     string? PayloadContains,
