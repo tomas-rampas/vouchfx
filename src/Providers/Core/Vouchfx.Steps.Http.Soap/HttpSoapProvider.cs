@@ -389,9 +389,11 @@ public sealed class HttpSoapProvider
             public static async System.Threading.Tasks.Task ExecuteAsync(
                 System.Collections.Generic.IDictionary<string, object?> vars,
                 Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,
+                Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,
                 string outcomeKey,
                 string captureStatusKey,
                 string serviceKey,
+                string targetName,
                 string pathTemplate,
                 string? actionTemplate,
                 string envelopeTemplate,
@@ -414,6 +416,12 @@ public sealed class HttpSoapProvider
                 var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
                 try
                 {
+                    // REQ-024: present the declared client certificate and trust the declared CA
+                    // for THIS step's target — same placement and same reasoning as
+                    // HttpRest_Helpers.ExecuteAsync (inside the guarded region so a malformed
+                    // artefact is a step-scoped EnvironmentError; before the first SendAsync so
+                    // the underlying handler is still mutable).
+                    Security_Helpers.ConfigureHandler(security, targetName, handler);
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
                     // enforcement mechanism; otherwise keep the 30s stall-window convention.
@@ -731,9 +739,11 @@ public sealed class HttpSoapProvider
                 await HttpSoap_Helpers.ExecuteAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{pathTemplateLiteral}},
                     {{actionLiteral}},
                     {{envelopeTemplateLiteral}},
@@ -750,11 +760,12 @@ public sealed class HttpSoapProvider
             """;
 
         // Build the helpers list: HttpSoap_Helpers + Secret_Helpers (ResolveTemplate is
-        // self-contained — Substitute_Helpers is not needed). Byte-identical across providers —
-        // deduplication is handled by CsxAssembler.
+        // self-contained — Substitute_Helpers is not needed) + Security_Helpers (REQ-024).
+        // Byte-identical across providers — deduplication is handled by CsxAssembler.
         var helpers = new List<string>(s_helpers)
         {
             SecretHelper.Source,
+            SecurityHelper.Source,
         };
 
         return new CsxFragment(

@@ -37,6 +37,52 @@ public sealed class SecurityProfileRegistryTests
 
     private static readonly string[] s_expectedBuiltInProfiles = { "mtls", "tls" };
 
+    /// <summary>
+    /// Every profile this registry wires is named explicitly in the emitted
+    /// <c>Security_Helpers</c> profile switch, and no other — the guard that stops a future
+    /// wired profile from silently inheriting HTTPS client-certificate semantics.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These are two genuinely separate decisions and both have to be made. Registering an
+    /// <c>ISecurityProfileWiring</c> makes a profile DECLARABLE; it says nothing about what an
+    /// HTTP-family step should do when it meets one. <c>Security_Helpers.ConfigureHandler</c>
+    /// answers that second question, and it fails closed — a profile it does not name throws
+    /// rather than falling through to "present whatever certificates happen to be non-null".
+    /// </para>
+    /// <para>
+    /// Failing closed is what makes the drift SAFE, and this test is what makes it VISIBLE.
+    /// Without it, adding a wiring here and forgetting the helper produces a profile that
+    /// validates at authoring time and then errors at step-execution time — correct, but
+    /// discovered by an author rather than by the person who added the profile. The assertion
+    /// is on the exact SET in both directions, so removing a profile from the helper while it
+    /// is still wired fails too.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryWiredProfile_IsNamedInTheEmittedSecurityHelperProfileSwitch()
+    {
+        // The helper's switch arms, read out of the emitted source rather than restated: a
+        // second hand-maintained list here would be the very drift this test exists to catch.
+        var named = System.Text.RegularExpressions.Regex
+            .Matches(SecurityHelper.Source, @"string\.Equals\(profile, ""(?<profile>[^""]+)""")
+            .Select(m => m.Groups["profile"].Value)
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(p => p, System.StringComparer.Ordinal)
+            .ToList();
+
+        // Guards the regex itself: a rewrite that changed the comparison shape would otherwise
+        // report an empty set and compare equal to an empty registry.
+        Assert.NotEmpty(named);
+
+        var wired = SecurityProfileRegistry.BuiltIn.All
+            .Select(w => w.Profile)
+            .OrderBy(p => p, System.StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(wired, named);
+    }
+
     [Fact]
     public void TryGet_RegisteredProfile_ReturnsTrue()
     {

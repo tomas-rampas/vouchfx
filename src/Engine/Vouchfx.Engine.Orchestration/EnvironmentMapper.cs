@@ -624,6 +624,47 @@ public static class EnvironmentMapper
                     nameof(env));
             }
 
+            // ── REQ-023: the secured endpoint ────────────────────────────────────────────
+            // Validated eagerly, before any builder mutation, for the same reason every other
+            // check in this loop is: an unresolvable selector must fail with a located,
+            // author-facing diagnostic naming what IS declared, never deep inside Aspire's own
+            // GetEndpoint or — far worse — silently, by leaving the service reachable over
+            // plaintext while its suite believes it is secured.
+            if (spec.Security is not null)
+            {
+                if (spec.Project is not null)
+                {
+                    // A project-form service's endpoints come from the project's own launch
+                    // profile, which this engine neither models nor names (see
+                    // ServiceEndpointNaming.DeclaredEndpointNames' own remarks — it returns an
+                    // EMPTY list for a project-form service), so there is no endpoint here for
+                    // REQ-023 to construct with an https scheme and no svc::<name> value is
+                    // staged for one at all. Failing loudly at topology-build time is the only
+                    // honest option: the alternative is a suite that validates, starts, and
+                    // then presents no client certificate to anything.
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'security' on a 'project'-form service, which this " +
+                        "release cannot secure: a project-form service's endpoints are discovered from " +
+                        "the project's own launch profile, so the engine has no endpoint to construct " +
+                        "with an 'https' scheme. Declare the system under test as an 'image'-form " +
+                        "service to use 'security'.",
+                        nameof(env));
+                }
+
+                if (ServiceEndpointNaming.ResolveSecuredPort(spec) is null)
+                {
+                    var declaredEndpoints = ServiceEndpointNaming.PlaintextEndpoints(spec);
+                    var described = declaredEndpoints.Count == 0
+                        ? "(none)"
+                        : string.Join(", ", declaredEndpoints.Select(e => $"{e.Name} (port {e.Port})"));
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'security.endpoint: {spec.Security.Endpoint}', which is " +
+                        "neither a port number (a bare decimal integer in 1..65535 with no leading zero) " +
+                        $"nor the name of an endpoint this service declares. Declared endpoints: {described}.",
+                        nameof(env));
+                }
+            }
+
             // REQ-009: cross-referencing healthCheck.port against the service's OWN declared
             // ports/httpPort is this mapper's job, not the schema's (see HealthCheckSpec's own
             // remarks) — mirrors the ${conn:name} referencing an unknown dependency precedent.
@@ -683,11 +724,17 @@ public static class EnvironmentMapper
                     // entry — resolving to the "http" endpoint — so admitting httpPort here is
                     // the only change needed: the previously-dead branch becomes reachable and
                     // already does the right thing.
-                    var declaredPorts = spec.Ports is { Count: > 0 }
-                        ? spec.HttpPort is { } hybridHttpPort
-                            ? new List<int>(spec.Ports) { hybridHttpPort }
-                            : spec.Ports
-                        : new List<int> { spec.HttpPort ?? 80 };
+                    //
+                    // REQ-023: derived from ServiceEndpointNaming's own endpoint set rather
+                    // than re-deriving the ports/httpPort shape here, so a service's SECURED
+                    // port (which may be declared only by 'security.endpoint') is admitted
+                    // too. For a service with no 'security' block the set is identical, port
+                    // for port and in the same order, to the three-way expression this
+                    // replaced — the hybrid list, the ports-only list, and the
+                    // 'httpPort ?? 80' singleton.
+                    var declaredPorts = ServiceEndpointNaming.EndpointDeclarations(spec)
+                        .Select(e => e.Port)
+                        .ToList();
 
                     if (!declaredPorts.Contains(tcpPort))
                     {
@@ -712,6 +759,41 @@ public static class EnvironmentMapper
                         "'httpPort:' to expose an HTTP endpoint for this health check to probe, " +
                         "or declare a 'tcp' health check against one of the declared 'ports:' " +
                         "instead.",
+                        nameof(env));
+                }
+                else if (!ServiceEndpointNaming.EndpointDeclarations(spec).Any(
+                             e => string.Equals(
+                                 e.Name, ServiceEndpointNaming.HttpEndpointName, StringComparison.Ordinal)))
+                {
+                    // REQ-023: this service has no "http" endpoint for the check to probe. TWO
+                    // distinct shapes reach here and the diagnostic must not assert the wrong
+                    // one (the message previously claimed the HTTP port "is also" the
+                    // security.endpoint, which is simply false for the second):
+                    //
+                    //   (a) the service declares an HTTP port that IS the secured port, so the
+                    //       "http" endpoint was replaced by the secured "https" one; or
+                    //   (b) the service declares `security` and no `httpPort`/`ports` at all,
+                    //       so the implicit plaintext HTTP endpoint is suppressed outright
+                    //       (PlaintextEndpoints' own REQ-023 rule) and there never was one.
+                    //
+                    // Either way an http health check against the mTLS listener could not pass:
+                    // a container health check cannot present a client certificate (measured on
+                    // the test bed — the listener answers 400 to an unauthenticated request),
+                    // which is exactly why REQ-005's engine-side probe exists separately from
+                    // health gating. The message names what the service actually declares
+                    // rather than assuming shape (a).
+                    var securedPort = ServiceEndpointNaming.ResolveSecuredPort(spec);
+                    var cause = spec.HttpPort is { } declaredHttpPort && declaredHttpPort == securedPort
+                        ? "its 'httpPort' is also its 'security.endpoint', so its only endpoint on that " +
+                          "port is the secured one"
+                        : "it declares 'security' with no separate 'httpPort', so it has no plaintext " +
+                          "HTTP endpoint at all";
+
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'healthCheck: {{ type: http }}' but {cause}. A health " +
+                        "check cannot present a client certificate; declare a 'tcp' health check against " +
+                        "the secured port, or expose a separate unsecured health port under 'ports:' (or " +
+                        "'httpPort:') and probe that.",
                         nameof(env));
                 }
             }
@@ -1013,36 +1095,54 @@ public static class EnvironmentMapper
 
                     var containerBuilder = builder.AddContainer(name, fullImage);
 
-                    if (hasExplicitPorts)
+                    // One endpoint set, computed by ServiceEndpointNaming, for BOTH the actual
+                    // Aspire declarations below and IProjectContext.DeclaredServices (which
+                    // projects the same computation's names) — the two cannot drift.
+                    //
+                    // For a service declaring no 'security' block this loop emits exactly the
+                    // calls the three-way branch it replaced emitted, in the same order:
+                    // WithEndpoint(tcp-<port>) per 'ports:' entry, then WithHttpEndpoint("http")
+                    // for 'httpPort' when declared, or the single implicit
+                    // WithHttpEndpoint("http") on 'httpPort ?? 80' when 'ports:' is absent.
+                    // Generic WithEndpoint (scheme omitted) leaves Aspire's own "tcp" default in
+                    // place (confirmed empirically against the pinned Aspire.Hosting 13.4.2
+                    // DLL), satisfying REQ-008 without this file setting a scheme itself.
+                    var endpointDeclarations = ServiceEndpointNaming.EndpointDeclarations(spec);
+                    foreach (var endpoint in endpointDeclarations)
                     {
-                        // Generic WithEndpoint (scheme omitted) — Aspire itself defaults an
-                        // unscoped endpoint's EndpointAnnotation.UriScheme to "tcp" (confirmed
-                        // empirically against the pinned Aspire.Hosting 13.4.2 DLL), never
-                        // "http", satisfying REQ-008's "not unconditionally http" requirement
-                        // without this file needing to set the scheme itself.
-                        foreach (var port in spec.Ports!)
+                        if (endpoint.IsSecured)
                         {
-                            containerBuilder = containerBuilder.WithEndpoint(
-                                targetPort: port, name: ServiceEndpointNaming.TcpEndpointName(port));
+                            // REQ-023. WithHttpsEndpoint sets EndpointAnnotation.UriScheme to
+                            // "https" unconditionally, which is what makes the staged
+                            // svc::<name> value begin "https://" and therefore what makes the
+                            // three HTTP-family providers issue a TLS request at all — they
+                            // derive their base URL solely from that string, so this fixes the
+                            // transport scheme for all three with no provider change.
+                            //
+                            // It declares endpoint METADATA only: it does not make the
+                            // container serve TLS. The system under test terminates TLS itself
+                            // with material its author supplied, which is exactly the model
+                            // this feature assumes (the client-side trust material is REQ-024).
+                            containerBuilder = containerBuilder.WithHttpsEndpoint(
+                                targetPort: endpoint.Port, name: endpoint.Name);
                         }
-
-                        if (spec.HttpPort is not null)
+                        else if (string.Equals(
+                                     endpoint.Name,
+                                     ServiceEndpointNaming.HttpEndpointName,
+                                     StringComparison.Ordinal))
                         {
                             containerBuilder = containerBuilder.WithHttpEndpoint(
-                                targetPort: spec.HttpPort.Value, name: ServiceEndpointNaming.HttpEndpointName);
+                                targetPort: endpoint.Port, name: endpoint.Name);
+                        }
+                        else
+                        {
+                            containerBuilder = containerBuilder.WithEndpoint(
+                                targetPort: endpoint.Port, name: endpoint.Name);
                         }
                     }
-                    else
-                    {
-                        // Preserve today's exact default shape byte-for-byte (existing
-                        // EnvironmentMapperTests pin this): every image-form service with no
-                        // explicit 'ports:' gets an HTTP endpoint on spec.HttpPort ?? 80.
-                        var port = spec.HttpPort ?? 80;
-                        containerBuilder = containerBuilder.WithHttpEndpoint(
-                            targetPort: port, name: ServiceEndpointNaming.HttpEndpointName);
-                    }
 
-                    containerBuilder = ApplyHealthCheck(builder, containerBuilder, name, spec, hasExplicitPorts);
+                    containerBuilder = ApplyHealthCheck(
+                        builder, containerBuilder, name, spec, hasExplicitPorts, endpointDeclarations);
 
                     containerBuilder = containerBuilder
                         // SUT configuration surface (point 2): a containerised SUT can reach a
@@ -1068,13 +1168,32 @@ public static class EnvironmentMapper
                     ApplyEnv(name, containerBuilder, spec.Env, envAccessByDependency);
 
                     // Stage the primary endpoint for svc::<name> resolution (ResolveServices /
-                    // env: refs) — the "http" endpoint when one exists (preserves every existing
-                    // behaviour byte-for-byte); otherwise the FIRST declared TCP port, so a
+                    // env: refs).
+                    //
+                    // REQ-023: the SECURED endpoint wins outright when the service declares
+                    // one. This is the decision the requirement turns on, so it is recorded
+                    // here rather than inferred. `security.endpoint` is mandatory (REQ-002)
+                    // precisely because an implicit default could resolve to a plaintext
+                    // listener the infrastructure keeps open alongside the secured one — the
+                    // customer's own broker does exactly that. So when an author has named a
+                    // secured endpoint, every step targeting the service must reach THAT one:
+                    // staging a sibling plaintext 'httpPort' here instead would produce a suite
+                    // that passes every assertion having authenticated nothing (EDGE-004). A
+                    // service declaring both 'security' and a plain 'httpPort' therefore keeps
+                    // its plaintext endpoint declared (the SUT may genuinely serve one, and
+                    // it remains available to a health check), but it is not what svc::<name>
+                    // resolves to.
+                    //
+                    // With no 'security' block this is byte-for-byte today's rule: the "http"
+                    // endpoint when one exists, otherwise the FIRST declared TCP port, so a
                     // purely non-HTTP service (REQ-008) still has a well-defined primary
-                    // endpoint for e.g. a step's ${conn:...}-style resolution.
-                    var primaryEndpointName = hasExplicitPorts && spec.HttpPort is null
-                        ? ServiceEndpointNaming.TcpEndpointName(spec.Ports![0])
-                        : ServiceEndpointNaming.HttpEndpointName;
+                    // endpoint.
+                    var securedEndpoint = endpointDeclarations.FirstOrDefault(e => e.IsSecured);
+                    var primaryEndpointName = securedEndpoint is not null
+                        ? securedEndpoint.Name
+                        : hasExplicitPorts && spec.HttpPort is null
+                            ? ServiceEndpointNaming.TcpEndpointName(spec.Ports![0])
+                            : ServiceEndpointNaming.HttpEndpointName;
                     serviceEndpoints[name] = containerBuilder.GetEndpoint(primaryEndpointName);
                 }
                 else if (spec.Project is not null)
@@ -1953,9 +2072,40 @@ public static class EnvironmentMapper
         IResourceBuilder<ContainerResource> containerBuilder,
         string serviceName,
         ServiceSpec spec,
-        bool hasExplicitPorts)
+        bool hasExplicitPorts,
+        IReadOnlyList<ServiceEndpointDeclaration> endpoints)
     {
         var healthCheck = spec.HealthCheck;
+        var securedEndpoint = endpoints.FirstOrDefault(e => e.IsSecured);
+
+        if (healthCheck is null && securedEndpoint is not null)
+        {
+            // REQ-023 default: a TCP probe on the secured endpoint, never an HTTP one.
+            //
+            // For a service whose ONLY endpoint is the secured one, this is a ceiling. A
+            // container health check cannot present a client certificate, so no generic
+            // health-gating mechanism can confirm a mutual-TLS listener is correctly
+            // configured — measured on the test bed, an unauthenticated request to an
+            // `ssl_verify_client on` listener completes the TLS handshake in full and is
+            // answered 400 at the HTTP layer, so an HTTP probe would hold the topology
+            // unhealthy forever for a service that is working perfectly. A TCP probe proves a
+            // listener accepted a connection and nothing more; confirming that the endpoint is
+            // actually SECURED is REQ-005's engine-side probe, which presents the declared
+            // client certificate and therefore cannot live in Aspire's health gating at all.
+            //
+            // For the one OTHER shape that reaches here — a secured service with a genuine
+            // sibling plaintext `httpPort` on a DIFFERENT port — it is a TRADE, not a ceiling:
+            // that plaintext endpoint is probeable, and an HTTP probe against it would be
+            // strictly more informative than a TCP connect. Defaulting to TCP anyway keeps ONE
+            // default for "a service that declares security" instead of a rule whose answer
+            // depends on a second field, and an author who wants the stronger probe declares
+            // `healthCheck: { type: http }` explicitly — which is accepted for exactly this
+            // shape, because the "http" endpoint still exists on its own port. Same escape for
+            // the ceiling case: an explicit healthCheck against a separate unsecured health
+            // port, the shape real mTLS services use.
+            return ApplyTcpHealthCheck(
+                builder, containerBuilder, serviceName, securedEndpoint.Port, securedEndpoint.Name);
+        }
 
         if (healthCheck is null)
         {
@@ -2005,13 +2155,17 @@ public static class EnvironmentMapper
             // ever runs.
             var tcpPort = healthCheck.Port!.Value;
 
-            // Resolve the SAME endpoint reference the port was registered under above: the
-            // dedicated tcp-<port> endpoint when the port came from 'ports', or the "http"
-            // endpoint when it is the service's httpPort (a raw TCP connect does not care
-            // about the target endpoint's URI scheme).
-            var endpointName = spec.Ports?.Contains(tcpPort) == true
-                ? ServiceEndpointNaming.TcpEndpointName(tcpPort)
-                : ServiceEndpointNaming.HttpEndpointName;
+            // Resolve the SAME endpoint reference the port was registered under above, by
+            // looking the port up in the one endpoint set both this method and the
+            // declaration loop were handed: the dedicated tcp-<port> endpoint when the port
+            // came from 'ports', the "http" endpoint when it is the service's httpPort, or
+            // the secured "https" endpoint when it is the service's own security.endpoint
+            // (REQ-023 — a raw TCP connect does not care about the target endpoint's URI
+            // scheme, which is what makes probing the secured endpoint meaningful at all).
+            // Identical, port for port, to the ports-contains test this replaced for every
+            // service that declares no 'security' block.
+            var endpointName = endpoints.FirstOrDefault(e => e.Port == tcpPort)?.Name
+                ?? ServiceEndpointNaming.HttpEndpointName;
 
             return ApplyTcpHealthCheck(builder, containerBuilder, serviceName, tcpPort, endpointName);
         }

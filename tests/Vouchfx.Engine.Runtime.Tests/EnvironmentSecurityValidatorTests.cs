@@ -757,4 +757,57 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Contains(malformedSuiteDirectory, result!.Message, StringComparison.Ordinal);
         Assert.True(result.IsSecurityPreflight);
     }
+
+    // ── 16. A service shape that can never be secured (spec gate SC-1) ────────
+
+    /// <summary>
+    /// <c>security</c> on a <c>project</c>-form service is rejected at VALIDATION time, not
+    /// left to fail once containers are starting.
+    /// </summary>
+    /// <remarks>
+    /// The JSON Schema accepts the combination — <c>$defs/service</c>'s project clause forbids
+    /// <c>ports</c> and <c>healthCheck</c>, not <c>security</c> — and
+    /// <c>EnvironmentMapper.Map</c> then throws at topology-build time. That is the "validates
+    /// but can never work" shape: loud, but only after a full topology cycle the author paid
+    /// for to learn something knowable from the document alone. The mapper's own throw is
+    /// deliberately kept as a fail-closed backstop for direct engine embedding, and
+    /// <c>SecuredServiceEndpointTests.Map_SecurityOnAProjectFormService_...</c> still pins it.
+    /// </remarks>
+    [Fact]
+    public void Validate_SecurityOnAProjectFormService_FailsAtValidationTime()
+    {
+        var services = new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+        {
+            ["payments"] = new ServiceSpec(null, "./src/Payments/Payments.csproj", null, null, null)
+            {
+                Security = new SecuritySpec("tls", "8443", null, null, null, null),
+            },
+        };
+
+        var result = EnvironmentSecurityValidator.Validate(BuildAst(services: services), _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains("environment.services.payments.security", result!.Message, StringComparison.Ordinal);
+        Assert.Contains("'project'-form service cannot be secured", result.Message, StringComparison.Ordinal);
+        Assert.True(result.IsSecurityPreflight);
+    }
+
+    /// <summary>
+    /// The control: a <c>project</c>-form service with NO <c>security</c> block is untouched by
+    /// the shape check, and an <c>image</c>-form service declaring <c>security</c> still passes.
+    /// </summary>
+    [Fact]
+    public void Validate_ProjectFormServiceWithoutSecurity_IsUnaffected()
+    {
+        var services = new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+        {
+            ["plain"] = new ServiceSpec(null, "./src/Payments/Payments.csproj", null, null, null),
+            ["payments"] = new ServiceSpec("myorg/app:1.0", null, null, null, null)
+            {
+                Security = new SecuritySpec("tls", "8443", null, null, null, null),
+            },
+        };
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(BuildAst(services: services), _suiteDir));
+    }
 }
