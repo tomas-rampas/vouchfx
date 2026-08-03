@@ -304,6 +304,128 @@ public sealed class HttpsClientCertificateTests
         }
     }
 
+    // ── The profile gate (fix round three, MINOR-2) ───────────────────────────────────────
+
+    /// <summary>
+    /// A profile this engine has no HTTPS behaviour for is REFUSED, even when the target's
+    /// certificate material would otherwise have been usable. The client certificate is
+    /// declared and loadable here — under a which-fields-are-set test it would simply have been
+    /// presented — so what this pins is that the DECLARED PROFILE decides, not the fields.
+    /// </summary>
+    /// <remarks>
+    /// REQ-019 makes the profile discriminator open, and slice C's registry decides only which
+    /// profiles are declarable at all. A later profile wired for some other technology, carrying
+    /// certificate paths as most transports do, must not acquire mutual-TLS semantics from these
+    /// three providers by accident. Unreachable from YAML today (the registry rejects an
+    /// unregistered profile before any step runs), exactly like the accessor's half-pair check —
+    /// and for the same reason: the layer between an author and an unintended client identity
+    /// must not be one the runtime never consults.
+    /// </remarks>
+    [Fact]
+    public async Task Execute_UnknownProfile_IsRefusedAsAnEnvironmentErrorRatherThanPresentingWhateverIsDeclared()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        using var responder = MtlsResponder.Start(bed.ServerCertificate);
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWith(MtlsSecurity() with { Profile = "kerberos" }), bed.SuiteDirectory);
+        try
+        {
+            var vars = await RunStepsAsync(
+                new[] { ("call-api", GetModel(expectedStatus: 200)) }, responder.BaseUrl, accessor);
+
+            var outcome = OutcomeOf(vars, "call-api");
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.Contains("kerberos", outcome.Observation, StringComparison.Ordinal);
+
+            // The decisive half: nothing was presented. A step that errored only AFTER opening a
+            // mutual-TLS connection would satisfy the verdict assertion above while having done
+            // the very thing this gate exists to prevent.
+            Assert.Null(responder.LastClientCertificateCommonName);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// <c>profile: tls</c> declared ALONGSIDE a client certificate and key is a contradiction,
+    /// and is refused rather than resolved in either direction.
+    /// </summary>
+    /// <remarks>
+    /// The schema forbids the combination outright, so this is reachable only by an embedder
+    /// that bypasses it. The two readings differ by exactly whether the run authenticates —
+    /// "they meant <c>mtls</c>" presents an identity the profile denies, "they meant no client
+    /// identity" silently drops material the author declared and, against a listener that
+    /// requests but does not require a certificate, passes having authenticated nothing. That is
+    /// the same measured failure mode the accessor's half-pair check closes, reached from the
+    /// other side.
+    /// </remarks>
+    [Fact]
+    public async Task Execute_TlsProfileDeclaringClientMaterial_IsRefusedRatherThanSilentlyIgnored()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        using var responder = MtlsResponder.Start(bed.ServerCertificate);
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWith(MtlsSecurity() with { Profile = "tls" }), bed.SuiteDirectory);
+        try
+        {
+            var vars = await RunStepsAsync(
+                new[] { ("call-api", GetModel(expectedStatus: 200)) }, responder.BaseUrl, accessor);
+
+            var outcome = OutcomeOf(vars, "call-api");
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.Contains("clientCert", outcome.Observation, StringComparison.Ordinal);
+            Assert.Null(responder.LastClientCertificateCommonName);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// <c>profile: mtls</c> that resolves to NO client identity is refused, rather than
+    /// connecting with none. The complement of the test above, and the case with teeth: this
+    /// listener requests a client certificate without requiring one, so the pre-gate behaviour
+    /// was a green suite that presented nothing.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MtlsProfileWithNoClientMaterial_IsRefusedRatherThanConnectingUnauthenticated()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        using var responder = MtlsResponder.Start(bed.ServerCertificate);
+
+        // Declared `mtls`, but only a trust anchor — so the accessor's own half-pair check
+        // (which needs one of the two client fields present) never fires, and the certificate
+        // view resolves with no client identity at all.
+        var mtlsWithoutClientIdentity = new SecuritySpec(
+            Profile: "mtls",
+            Endpoint: "8443",
+            CaCert: TestCertificateAuthority.CaFileName,
+            ClientCert: null,
+            ClientKey: null,
+            ServerArtifacts: null);
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWith(mtlsWithoutClientIdentity), bed.SuiteDirectory);
+        try
+        {
+            var vars = await RunStepsAsync(
+                new[] { ("call-api", GetModel(expectedStatus: 200)) }, responder.BaseUrl, accessor);
+
+            var outcome = OutcomeOf(vars, "call-api");
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.Null(responder.LastClientCertificateCommonName);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
     /// <summary>
     /// A two-tier CA validates end to end: the suite declares the OFFLINE ROOT as its
     /// <c>caCert</c>, the server sends its leaf plus the issuing intermediate, and the step

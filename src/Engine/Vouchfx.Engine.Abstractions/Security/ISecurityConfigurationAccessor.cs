@@ -186,9 +186,9 @@ public interface ISecurityCertificateMaterial
     /// <c>SslStream</c>, and any client library taking the same delegate).
     /// </summary>
     /// <param name="remoteCertificate">The certificate the peer presented.</param>
-    /// <param name="peerSuppliedChain">
-    /// The chain the platform built from what the PEER sent, exactly as the validation
-    /// callback received it, or <see langword="null"/> for a consumer that has none.
+    /// <param name="platformBuiltChain">
+    /// The chain the PLATFORM built for this handshake, exactly as the validation callback
+    /// received it, or <see langword="null"/> for a consumer that has none.
     /// <strong>Untrusted input</strong> — see the provenance remarks below for the one thing
     /// it is used for and the one thing it must never do.
     /// </param>
@@ -234,10 +234,21 @@ public interface ISecurityCertificateMaterial
     /// PEER-CONTROLLED URL during the handshake, on the rejection path.
     /// </para>
     /// <para>
-    /// <strong><paramref name="peerSuppliedChain"/> provenance.</strong> Its certificates are
-    /// added to the rebuilt chain's <c>ExtraStore</c> ONLY, which lets path building find the
-    /// intermediates a two-tier PKI (offline root, issuing intermediate) requires the peer to
-    /// send — the normal enterprise CA shape, which cannot validate without them. They are
+    /// <strong><paramref name="platformBuiltChain"/> provenance — it is a SUPERSET of the
+    /// wire.</strong> Its <c>ChainElements</c> are the platform's own BUILT chain, not a
+    /// transcript of what the peer sent: the platform contributes whatever else it can find
+    /// locally. Measured on a Windows host, both directions: a handshake where the server sent
+    /// ONLY its leaf produced a two-element chain, the root having come from a local cache; and
+    /// a two-tier server that withheld its intermediate still validated, the platform having
+    /// cached that intermediate from an earlier connection. Do not read this parameter as
+    /// evidence of what a peer transmitted, and do not write a test that infers transmission
+    /// from it without per-run unique subject names to defeat that cache.
+    /// </para>
+    /// <para>
+    /// That breadth carries no security consequence, which is why the parameter is taken at all.
+    /// Its certificates are added to the rebuilt chain's <c>ExtraStore</c> ONLY, which lets path
+    /// building find the intermediates a two-tier PKI (offline root, issuing intermediate)
+    /// requires — the normal enterprise CA shape, which cannot validate without them. They are
     /// candidate links, never anchors: the rebuilt chain terminates only at the DECLARED
     /// anchor in its <c>CustomTrustStore</c>, so a self-signed root supplied by the peer as an
     /// "intermediate" does not become trusted by virtue of appearing here (measured, and
@@ -247,7 +258,7 @@ public interface ISecurityCertificateMaterial
     /// </para>
     /// </remarks>
     bool TrustsRemoteCertificate(
-        X509Certificate2? remoteCertificate, X509Chain? peerSuppliedChain, SslPolicyErrors sslPolicyErrors);
+        X509Certificate2? remoteCertificate, X509Chain? platformBuiltChain, SslPolicyErrors sslPolicyErrors);
 }
 
 /// <summary>

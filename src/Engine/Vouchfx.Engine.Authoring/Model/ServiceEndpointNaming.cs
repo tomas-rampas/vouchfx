@@ -174,6 +174,12 @@ public static class ServiceEndpointNaming
     /// </remarks>
     public static IReadOnlyList<ServiceEndpointDeclaration> EndpointDeclarations(ServiceSpec spec)
     {
+        // Stated here rather than inherited from PlaintextEndpoints below. The behaviour is
+        // identical either way — that call throws the same exception for the same argument — but
+        // all four public entry points on this class guarding their own argument is the property
+        // a reader can check locally, and it survives a later refactor that reorders these calls.
+        ArgumentNullException.ThrowIfNull(spec);
+
         var plaintext = PlaintextEndpoints(spec);
         var securedPort = ResolveSecuredPort(spec);
 

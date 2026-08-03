@@ -274,6 +274,18 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
             // ExecutionAndPublication: one load per target however many steps resolve it
             // concurrently under `--parallel`, and the SAME instance to all of them.
+            //
+            // This mode CACHES THE EXCEPTION as well as the value, and that is deliberate. A
+            // transient IOException on the first read therefore poisons that target for the rest
+            // of the scenario rather than being retried by the next step. Two reasons to want
+            // that. Determinism: every step resolving one target must get one answer, and a
+            // per-step retry would make a suite's verdict depend on which step happened to read
+            // first. And the transient case is already narrow — EnvironmentSecurityValidator has
+            // existence-checked the file pre-topology, so a failure here is a file that changed
+            // or became unreadable mid-run, which is an environment fault worth reporting on
+            // every step that depends on it rather than papering over on the second attempt. The
+            // exception surfaces identically each time (a step-scoped EnvironmentError, §12.1),
+            // so a poisoned target is loud, not silent.
             _caCertificate = new Lazy<X509Certificate2?>(LoadCa, LazyThreadSafetyMode.ExecutionAndPublication);
             _clientCertificate = new Lazy<X509Certificate2?>(
                 LoadClient, LazyThreadSafetyMode.ExecutionAndPublication);
@@ -297,7 +309,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         public X509Certificate2? ClientCertificate => _clientCertificate.Value;
 
         public bool TrustsRemoteCertificate(
-            X509Certificate2? remoteCertificate, X509Chain? peerSuppliedChain, SslPolicyErrors sslPolicyErrors)
+            X509Certificate2? remoteCertificate, X509Chain? platformBuiltChain, SslPolicyErrors sslPolicyErrors)
         {
             var ca = CaCertificate;
             if (ca is null)
@@ -406,18 +418,26 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // what makes this safe for legitimate configurations.
                 chain.ChainPolicy.ApplicationPolicy.Add(new Oid(ServerAuthOid));
 
-                // Peer-supplied intermediates, for path building ONLY. A two-tier PKI (offline
-                // root declared as `caCert`, issuing intermediate sent by the server) is the
-                // normal enterprise shape and cannot validate without them — measured as a flat
-                // `false`, whose EnvironmentError then pushes an author towards declaring the
-                // intermediate as their anchor or dropping `caCert` altogether, both of which
-                // weaken their setup. These certificates are UNTRUSTED input and never become
-                // anchors: CustomRootTrust means the chain terminates only at the declared CA in
-                // CustomTrustStore, so a self-signed root supplied here as an "intermediate" is
-                // still rejected (measured, and pinned by test).
-                if (peerSuppliedChain is not null)
+                // The platform's built chain, contributed for path building ONLY. A two-tier PKI
+                // (offline root declared as `caCert`, issuing intermediate sent by the server) is
+                // the normal enterprise shape and cannot validate without the intermediate —
+                // measured as a flat `false`, whose EnvironmentError then pushes an author
+                // towards declaring the intermediate as their anchor or dropping `caCert`
+                // altogether, both of which weaken their setup.
+                //
+                // Note what these elements ARE, because the obvious reading overstates how
+                // tightly the input is scoped: ChainElements is the platform's own BUILT chain, a
+                // SUPERSET of what the peer put on the wire — measured, a server that sent only
+                // its leaf still produced a two-element chain, the root coming from a local
+                // cache. Harmless here, and the reason it is harmless is the next sentence.
+                //
+                // These certificates are UNTRUSTED input and never become anchors whatever their
+                // provenance: CustomRootTrust means the chain terminates only at the declared CA
+                // in CustomTrustStore, so a self-signed root supplied here as an "intermediate"
+                // is still rejected (measured, and pinned by test).
+                if (platformBuiltChain is not null)
                 {
-                    foreach (var element in peerSuppliedChain.ChainElements)
+                    foreach (var element in platformBuiltChain.ChainElements)
                     {
                         chain.ChainPolicy.ExtraStore.Add(element.Certificate);
                     }
