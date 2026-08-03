@@ -406,6 +406,101 @@ file sealed class StubBusSrListenerProvider
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "bus-sr") };
 }
 
+// R-1 residual (peer-review-critic, PR #349 fix round 4) — pins the cross-step trade
+// documented in ProviderPipeline.BindAllSteps's own remarks. Two file-scoped stub kinds,
+// used together by Compile_TargetingStepPrecedesThrowingListenerStep_
+// ReturnsWrongTargetDiagnostic below.
+
+file sealed record TargetingModel(string Target) : IStepModel;
+
+// The step that TARGETS listener "cb" — mirrors http.rest's own 'target' validation shape
+// (HttpRestProvider.Validate) but self-contained, so this test does not need to register
+// the real http.rest provider assembly alongside the stub registry.
+[StepProvider]
+file sealed class StubTargetingCbProvider
+    : IStepProvider,
+      IStepBinder<TargetingModel>,
+      IStepValidator<TargetingModel>,
+      IStepCompiler<TargetingModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "targeting-cb");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public TargetingModel Bind(YamlNode node, IBindingContext ctx) =>
+        new TargetingModel(Target: "cb");
+
+    public ValidationResult Validate(TargetingModel model, IProjectContext ctx) =>
+        ctx.DeclaredServices.ContainsKey(model.Target)
+            ? ValidationResult.Success
+            : ValidationResult.Failure(
+                $"stub.targeting-cb: 'target' '{model.Target}' names neither a declared " +
+                "service in environment.services nor a declared dependency in " +
+                "environment.dependencies.");
+
+    public CsxFragment Emit(TargetingModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* targeting-cb step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+}
+
+// The step that DECLARES listener "cb" — but whose HostResources() throws mid-yield, AFTER
+// having already produced the "cb" requirement, same lazy-iterator shape as
+// StubThrowingHostResourceProvider's own. BindAllSteps' catch discards the WHOLE per-step
+// list on any throw (ToList() does not return partial results), so "cb" never reaches
+// BuildProjectContext's DeclaredServices merge — regardless of what the iterator had
+// already yielded before failing, and regardless of step order.
+[StepProvider]
+file sealed class StubThrowingListenerProvider
+    : IStepProvider,
+      IStepBinder<AlphaModel>,
+      IStepValidator<AlphaModel>,
+      IStepCompiler<AlphaModel>,
+      IHostResourceContributor<AlphaModel>
+{
+    private static readonly string[] s_authors = new[] { "test" };
+
+    public StepKindId Kind => new("stub", "throwing-listener");
+
+    public ProviderMetadata Metadata => new(
+        Version: "0.1.0",
+        MinEngineVersion: "0.1.0",
+        License: "Apache-2.0",
+        Authors: s_authors);
+
+    public JsonSchemaFragment SchemaFragment =>
+        new("""{"type":"object"}""");
+
+    public AlphaModel Bind(YamlNode node, IBindingContext ctx) =>
+        new AlphaModel(Tag: "throwing-listener-tag");
+
+    public ValidationResult Validate(AlphaModel model, IProjectContext ctx) =>
+        ValidationResult.Success;
+
+    public CsxFragment Emit(AlphaModel model, ICompileContext ctx) =>
+        new CsxFragment(
+            RequiredUsings: Array.Empty<string>(),
+            RequiredHelpers: Array.Empty<string>(),
+            StatementBlock: $"{{ /* throwing-listener step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
+
+    public IEnumerable<HostResourceRequirement> HostResources(AlphaModel model)
+    {
+        // Would declare "cb" — but the iterator throws before finishing enumeration.
+        yield return new HostResourceRequirement(Kind: "webhook-listener", VarName: "cb");
+        yield return new HostResourceRequirement(Kind: string.Empty, VarName: string.Empty);
+    }
+}
+
 file sealed record CountingBindModel : IStepModel;
 
 // m5 minor (fix round 3): a stub whose ONLY purpose is to count Bind invocations, so the
@@ -423,6 +518,15 @@ file sealed class StubCountingBindProvider
 {
     private static readonly string[] s_authors = new[] { "test" };
 
+    // R-4 residual (peer-review-critic, PR #349 fix round 4): `public static` mutable state
+    // is safe TODAY only because Compile_SingleStep_CallsBindExactlyOnce is the sole
+    // consumer and resets this to 0 at its own entry, and this test class's [Fact]s run
+    // sequentially (xUnit parallelises across test collections, not within one). It is
+    // NOT safe by construction: a second consumer that reads BindCallCount without also
+    // resetting it at its own entry would see whatever count the previously-run test left
+    // behind, making the result depend on run order rather than on that test's own
+    // behaviour. Any future second consumer MUST reset BindCallCount to 0 at its own entry,
+    // exactly as the one existing consumer does.
     public static int BindCallCount;
 
     public StepKindId Kind => new("stub", "counting-bind");
@@ -872,6 +976,14 @@ public sealed class ProviderPipelineTests
 
         Assert.Null(collisionFailure);
         Assert.True(ctx.DeclaredServices.ContainsKey("bus-sr"));
+
+        // R-3 (peer review, fix round 4): pin the endpoint-name VALUE, not just the key.
+        // The source-scanning drift guard checks that every suffixed serviceEndpoints[...]
+        // write site is represented in GetDependencyServiceSidecarNames' switch — but it
+        // cannot check that the value BuildProjectContext assigns matches the endpoint the
+        // Build lambda actually stages. Nothing consumes these values today (providers use
+        // ContainsKey, DescribeDeclaredSurfaces uses Keys), so a wrong value would be silent.
+        Assert.Contains("http", ctx.DeclaredServices["bus-sr"]);
         Assert.Equal("http", Assert.Single(ctx.DeclaredServices["bus-sr"]));
     }
 
@@ -903,6 +1015,10 @@ public sealed class ProviderPipelineTests
 
         Assert.Null(collisionFailure);
         Assert.True(ctx.DeclaredServices.ContainsKey("mail-smtp"));
+
+        // R-3, mailpit half: this sidecar is the one whose endpoint is NOT the HTTP default,
+        // so it is the case a wrong value would actually show up in. See the sibling test.
+        Assert.Contains("smtp", ctx.DeclaredServices["mail-smtp"]);
         Assert.Equal("smtp", Assert.Single(ctx.DeclaredServices["mail-smtp"]));
     }
 
@@ -1034,6 +1150,55 @@ public sealed class ProviderPipelineTests
         Assert.Contains(
             "stub validation error: intentional failure",
             result.Failure!.Message,
+            StringComparison.Ordinal);
+        Assert.Null(result.Assembled);
+    }
+
+    /// <summary>
+    /// R-1 residual (peer-review-critic, PR #349 fix round 4) — pins the cross-step trade
+    /// documented in <see cref="ProviderPipeline.BindAllSteps"/>'s own remarks: deferring a
+    /// throwing <c>HostResources()</c> onto its OWN step's <c>BoundStep.HostResourcesFailure</c>
+    /// (G-A) protects that step's own <c>Validate</c> call, but
+    /// <see cref="ProviderPipeline.BuildProjectContext"/> runs on every bound step BEFORE
+    /// Pass 2 validates ANY of them, so it never sees the declaring step's "cb" contribution
+    /// — the catch in <c>BindAllSteps</c> replaces the whole per-step list with empty, not a
+    /// partial one, even though the throwing iterator below had already produced "cb" before
+    /// failing. A DIFFERENT, earlier-ordered step that TARGETS "cb" then fails Pass 2's own
+    /// <c>Validate</c> with a confident but WRONG "unknown target" diagnostic — naming
+    /// <c>step-target</c>, not <c>step-listener</c>, whose real <c>HostResourcesFailure</c> is
+    /// never reached, because Pass 2 returns on the FIRST failing step in order. Steps are
+    /// ordered deliberately: the targeting step (<c>step-target</c>) precedes the declaring
+    /// step (<c>step-listener</c>) — the exact ordering the masking depends on.
+    /// </summary>
+    [Fact]
+    public void Compile_TargetingStepPrecedesThrowingListenerStep_ReturnsWrongTargetDiagnostic()
+    {
+        const string yaml = """
+            steps:
+              - id: step-target
+                type: stub.targeting-cb
+              - id: step-listener
+                type: stub.throwing-listener
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        // The WRONG diagnostic: step-target's own validation failure, naming 'cb' as
+        // unknown — never step-listener's real HostResources exception, which this pins as
+        // UNREACHED (a non-null Failure with no unhandled exception escaping Compile proves
+        // it: an unrethrown HostResourcesFailure would instead surface as a thrown
+        // ArgumentException propagating out of this very call, exactly as
+        // Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate, above,
+        // demonstrates for the single-step case).
+        Assert.NotNull(result.Failure);
+        Assert.Contains("step-target", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("'cb'", result.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "neither a declared service",
+            result.Failure.Message,
             StringComparison.Ordinal);
         Assert.Null(result.Assembled);
     }

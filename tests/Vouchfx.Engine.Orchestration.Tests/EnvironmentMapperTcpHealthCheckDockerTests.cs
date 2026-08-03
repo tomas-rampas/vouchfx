@@ -15,7 +15,9 @@
 // "endpoint not yet allocated"). A live probe asserting only "reaches healthy" would ALSO pass
 // either way (the whole point of B1 is that it used to reach healthy for a dead backend too).
 // The only test that actually catches this is the one below: a tcp health check on a port with
-// no listener must NOT reach healthy, proven against a REAL DCP-proxied endpoint.
+// no listener must NOT reach healthy — exercised against a REAL DCP-proxied endpoint (see fact 3
+// below for exactly what that has, and has not, established: a passing observation, not a
+// red/green proof against the pre-fix source).
 //
 // Run with: dotnet test --filter "requires=docker". Excluded from the unit-CI job via
 // `dotnet test --filter "requires!=docker"`.

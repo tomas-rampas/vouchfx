@@ -81,7 +81,10 @@ internal sealed record HostResourcePlanEntry(
 /// populate <see cref="HostResourcePlanEntry"/>) and a lazy C# iterator would otherwise
 /// re-execute its body — including <see cref="HostResourceRequirement"/>'s own constructor
 /// validation — on each enumeration. When <see cref="HostResourcesFailure"/> is set, this is
-/// <see cref="Array.Empty{T}"/> — never a partially-materialised list.
+/// an empty list (<see cref="ProviderPipeline.BindAllSteps"/>'s catch assigns a fresh
+/// <see cref="List{T}"/>, not <see cref="Array.Empty{T}"/> — semantically identical, since
+/// nothing distinguishes the two beyond identity, but named accurately here rather than
+/// naming an API the code does not actually call) — never a partially-materialised list.
 /// </param>
 /// <param name="HostResourcesFailure">
 /// G-A (gatekeeper, fix round 3): captures an exception thrown while materialising
@@ -632,12 +635,42 @@ internal static class ProviderPipeline
     /// returns the retained list as <see cref="BoundStep"/> records.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Extracted into its own method — rather than inlined in <see cref="Compile"/> — so
     /// <see cref="BuildProjectContext"/>'s own unit tests (<c>Vouchfx.Engine.Runtime.Tests</c>,
     /// already granted <c>InternalsVisibleTo</c> access) can produce a real
     /// <see cref="BoundStep"/> list without needing a full <see cref="Compile"/> round trip,
     /// exactly the same reason <see cref="BuildProjectContext"/> itself stayed <c>internal</c>
     /// rather than <c>private</c>.
+    /// </para>
+    /// <para>
+    /// R-1 residual (peer-review-critic, PR #349 fix round 4) — a cross-step trade the G-A
+    /// fix (fix round 3) introduced and this remark documents rather than reverts. Deferring
+    /// a throwing <c>HostResources()</c> onto ITS OWN step's
+    /// <see cref="BoundStep.HostResourcesFailure"/> protects THAT step's own
+    /// <see cref="ProviderPipeline.Compile"/> Pass-2 <c>Validate</c> call — see this method's
+    /// own inline remarks above — but the catch below discards the WHOLE per-step
+    /// <see cref="BoundStep.HostResources"/> list on any throw (<c>ToList()</c> does not
+    /// return partial results, even when the throwing iterator had already produced some
+    /// requirements before failing), so <see cref="BuildProjectContext"/> — which runs on
+    /// EVERY bound step, between this pass and Pass 2, to derive
+    /// <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> — never sees that step's
+    /// contribution at all. A DIFFERENT, EARLIER-ORDERED step that TARGETS the
+    /// never-materialised name (e.g. a <c>webhook-listen.http</c> listener a
+    /// <c>http.rest</c> step dials) then fails Pass 2's own <c>Validate</c> with a confident
+    /// but WRONG "unknown target" diagnostic — naming the targeting step, not the one whose
+    /// <c>HostResources()</c> actually threw — because Pass 2 returns on the FIRST failing
+    /// step's <see cref="ValidationResult"/>, in step order, before the later, declaring
+    /// step's own <see cref="BoundStep.HostResourcesFailure"/> is ever rethrown. This is
+    /// accepted, not fixed: the alternative (propagate immediately, the pre-G-A behaviour)
+    /// reintroduces the ORIGINAL bug G-A exists to prevent — a community provider's own
+    /// model-shaped bug that its OWN <c>Validate</c> could have explained cleanly instead
+    /// aborting the whole compile with a raw reflection exception, for EVERY step, not just
+    /// the one whose <c>HostResources()</c> throws. Pinned by a two-step test in
+    /// <c>ProviderPipelineTests</c> (<c>Compile_TargetingStepPrecedesThrowingListenerStep_
+    /// ReturnsWrongTargetDiagnostic</c>), ordered exactly this way — the targeting step
+    /// first, the declaring step second — so the trade does not decay into folklore.
+    /// </para>
     /// </remarks>
     /// <returns>
     /// The bound steps, and — only in the defensive "registry lookup failed after AST build
@@ -901,6 +934,22 @@ internal static class ProviderPipeline
                     // EnvironmentMapper.cs), "smtp" for mailpit's SMTP endpoint
                     // (MailpitSmtpServiceName) — the same convention DeclaredServices already
                     // uses for a declared service's own endpoint names, above.
+                    //
+                    // R-3 residual (peer-review-critic, PR #349 fix round 4): the drift guard
+                    // above (GetDependencyServiceSidecarNames as the single source of truth)
+                    // covers only the sidecar NAME ("bus-sr", "mail-smtp") — the endpoint-name
+                    // VALUE ("http"/"smtp") assigned below is a SEPARATE, hand-written
+                    // dependency-type switch, not sourced from EnvironmentMapper at all.
+                    // Correct today because both branches happen to match
+                    // EnvironmentMapper's own literals, and nothing currently reads the value
+                    // besides ContainsKey/Keys (providers never dereference it, and
+                    // ProjectContextDescriptions.DescribeDeclaredSurfaces only lists names) —
+                    // but a future third sidecar kind on a NON-HTTP endpoint would satisfy this
+                    // guard's name check while silently carrying the wrong endpoint-name value
+                    // here. Extending GetDependencyServiceSidecarNames to return the
+                    // (name, endpointName) pair — rather than the name alone — would close this
+                    // the same way the name-only drift was closed above; left open since nothing
+                    // consumes the value yet.
                     serviceMap[sidecarName] = new[]
                     {
                         string.Equals(depSpec.Type, "mailpit", StringComparison.Ordinal)
