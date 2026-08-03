@@ -18,10 +18,21 @@
 //      "unevaluatedProperties": false in the SAME schema object is a silent, total no-op per
 //      JSON Schema 2020-12 — kept alive here as a JsonSchema.Net-upgrade regression guard,
 //      exactly as SchemaStepSurfaceClosureTests' own finding-2 guard does for $defs/step.
+//
+// And one thing it records rather than proves (m4, second peer-review round): the seam stops
+// AT THE SCHEMA. Finding 1 shows a composed profile fragment's own field validating; nothing
+// downstream can then read it, because YamlDocumentParser.ParseSecurity binds six fixed keys
+// into SecuritySpec, which carries no Extra bucket (DependencySpec does). Until that additive
+// fix lands, REQ-020 buys authoring-time extensibility only — see
+// SecuritySpec_HasNoExtraBucket_SoAComposedProfileFieldIsDroppedAfterValidation at the foot of
+// this file, which fails the day the bucket appears.
 using System;
+using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Json.Schema;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.Script.Csharp;
@@ -209,16 +220,21 @@ public sealed class SchemaSecuritySurfaceClosureTests
         var mutatedSchema = JsonSchema.FromText(rootObj.ToJsonString());
 
         // An unrecognised key ('bogus') that would normally be rejected by
-        // unevaluatedProperties: false.
+        // unevaluatedProperties: false. Declared on a KAFKA dependency (M1, second
+        // peer-review round): on any other kind the whole 'security' block is now rejected by
+        // $defs/dependency's own final allOf clause, which would make this instance invalid
+        // regardless of the sibling-keyword trap — the WRONG reason, leaving the guard
+        // vacuous. Kafka accepts the block, so the only thing that can decide this
+        // instance's validity is the keyword cancellation this guard is about.
         const string instance = """
             {
               "environment": {
                 "dependencies": {
-                  "cache": {
-                    "type": "redis",
+                  "events": {
+                    "type": "kafka",
                     "security": {
                       "profile": "tls",
-                      "endpoint": 6380,
+                      "endpoint": 9093,
                       "bogus": true
                     }
                   }
@@ -260,6 +276,16 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// gatekeeper measured clean: a blank <c>caCert</c>, an out-of-range <c>endpoint</c>, and a
     /// nested <c>serverArtifacts[0].target</c> pattern miss.
     /// </summary>
+    /// <remarks>
+    /// The first two fixtures moved from a redis dependency to a kafka one in M1 (second
+    /// peer-review round): a 'security' block on any non-kafka dependency kind is now
+    /// rejected outright, which would make those documents single-error for a reason that has
+    /// nothing to do with an annotation cascade — the guard would still be green while
+    /// proving nothing. Kafka accepts the block, so the single error each fixture yields is
+    /// still the one direct-field defect it declares. The third fixture was already on kafka.
+    /// The whole-block rejection's OWN single-error behaviour is pinned separately, by
+    /// <c>EnvironmentSchemaTests.Dependency_Security_OnNonKafkaKind_YieldsExactlyOneError_WhateverIsInsideTheBlock</c>.
+    /// </remarks>
     [Theory]
     [InlineData(
         // A declared-but-blank caCert fails $defs/security.properties.caCert's own
@@ -267,11 +293,11 @@ public sealed class SchemaSecuritySurfaceClosureTests
         """
         environment:
           dependencies:
-            cache:
-              type: redis
+            events:
+              type: kafka
               security:
                 profile: tls
-                endpoint: 6380
+                endpoint: 9093
                 caCert: ""
         steps:
           - id: noop
@@ -284,8 +310,8 @@ public sealed class SchemaSecuritySurfaceClosureTests
         """
         environment:
           dependencies:
-            cache:
-              type: redis
+            events:
+              type: kafka
               security:
                 profile: tls
                 endpoint: 70000
@@ -322,4 +348,72 @@ public sealed class SchemaSecuritySurfaceClosureTests
         Assert.False(result.IsValid, $"Expected this document to be rejected. Got: {yaml}");
         Assert.Single(result.Errors);
     }
+
+    // ── Where the REQ-020 seam STOPS: the schema layer, and no further ────────────────
+
+    /// <summary>
+    /// m4 (peer review, fix round 2): REQ-020's composed-profile-fragment seam is proven at the
+    /// SCHEMA layer by Finding 1 above — and the NEXT layer silently drops the data.
+    /// <c>YamlDocumentParser.ParseSecurity</c> reads six fixed keys and binds them into
+    /// <see cref="SecuritySpec"/>, which — unlike its sibling
+    /// <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec"/> — has no <c>Extra</c> bucket.
+    /// So a composed profile fragment's own field validates and is then discarded before any
+    /// consumer can see it: today the seam is authoring-time only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is recorded, not fixed. Fixing it is purely additive (an init-only property on an
+    /// UNFROZEN Authoring record — <see cref="SecuritySpec"/>'s own remarks already state the
+    /// init-only-never-positional rule that makes it safe), so nothing is lost by deferring it
+    /// until a second profile exists to define what the bucket should carry. What was NOT
+    /// acceptable was leaving the limit unrecorded: every other statement about REQ-020 in this
+    /// repository describes the seam as working, with nothing anywhere saying it stops at the
+    /// schema.
+    /// </para>
+    /// <para>
+    /// Asserted by REFLECTION over the record's own members rather than by round-tripping a
+    /// fragment field, because there is no shipped profile fragment to round-trip: the real
+    /// schema rejects an unknown key inside <c>security</c> (that is Finding 1's whole point),
+    /// so the only way to observe the drop today is to look at what the model CAN hold. The
+    /// <c>DependencySpec</c> half of the assertion is the control — it proves this test can
+    /// detect a bucket when one exists, so the <c>SecuritySpec</c> half is not vacuous — and the
+    /// test flips the moment the bucket is added, which is exactly when this note needs
+    /// rewriting.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SecuritySpec_HasNoExtraBucket_SoAComposedProfileFieldIsDroppedAfterValidation()
+    {
+        static bool HasExtraBucket(Type recordType) =>
+            recordType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Any(p => p.Name == "Extra");
+
+        Assert.True(HasExtraBucket(typeof(Vouchfx.Engine.Authoring.Model.DependencySpec)),
+            "Control: DependencySpec is expected to carry an 'Extra' bucket — if it no longer " +
+            "does, this test can no longer detect one and the SecuritySpec assertion below " +
+            "proves nothing.");
+
+        Assert.False(HasExtraBucket(typeof(SecuritySpec)),
+            "SecuritySpec has GAINED an 'Extra' bucket. That is the additive fix this test " +
+            "documents as deferred — good news, but it means REQ-020's seam no longer stops at " +
+            "the schema, so update this test, SchemaSecuritySurfaceClosureTests' own header, and " +
+            "the CHANGELOG entry that records the limit.");
+
+        // The six keys ParseSecurity reads, pinned so a SEVENTH fixed key added without an
+        // Extra bucket still leaves this note accurate about the shape it describes.
+        var declared = typeof(SecuritySpec)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.Name)
+            .Where(n => n != "EqualityContract")
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(s_securitySpecMembers, declared);
+    }
+
+    /// <summary>The six keys <c>YamlDocumentParser.ParseSecurity</c> binds, ordinally sorted.</summary>
+    private static readonly string[] s_securitySpecMembers =
+    {
+        "CaCert", "ClientCert", "ClientKey", "Endpoint", "Profile", "ServerArtifacts",
+    };
 }

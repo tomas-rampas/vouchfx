@@ -1237,14 +1237,23 @@ public sealed class EnvironmentSchemaTests
     /// present" every OTHER 'required' violation in this schema still reports (a step's
     /// own missing fields, a dependency's missing 'type', ...).
     /// </summary>
+    /// <remarks>
+    /// Declared on a KAFKA dependency (M1, second peer-review round): a 'security' block on
+    /// any other dependency kind is now rejected outright, and
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> correctly subsumes
+    /// this 'required' finding into that one — <c>required</c> reports against the CONTAINER
+    /// missing the property, so both errors land at the identical pointer and the narrowing's
+    /// is the one an author must act on. Kafka accepts the block, so this test keeps pinning
+    /// REQ-002's endpoint rule and the container attribution around it, and nothing else.
+    /// </remarks>
     [Fact]
     public void Dependency_Security_MissingEndpoint_NamesTheDependency()
     {
         const string yaml = """
             environment:
               dependencies:
-                cache:
-                  type: redis
+                events:
+                  type: kafka
                   security:
                     profile: tls
             steps:
@@ -1256,9 +1265,9 @@ public sealed class EnvironmentSchemaTests
 
         Assert.False(result.IsValid, "A security block missing the required 'endpoint' must be rejected.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/dependencies/cache/security" &&
+            e.InstanceLocation == "/environment/dependencies/events/security" &&
             e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
-            e.Message.Contains("on dependency 'cache'", System.StringComparison.Ordinal));
+            e.Message.Contains("on dependency 'events'", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1281,14 +1290,18 @@ public sealed class EnvironmentSchemaTests
     [Fact]
     public void Dependency_Security_UnknownKey_NamesTheDependency()
     {
+        // A KAFKA dependency (M1, second peer-review round): on any other kind the whole
+        // 'security' block is now rejected and SuppressErrorsInsideForbiddenContainer subsumes
+        // this nested finding into that one — leaving nothing at the pinned location. Kafka
+        // accepts the block, so this keeps pinning REQ-020's closure and nothing else.
         const string yaml = """
             environment:
               dependencies:
-                cache:
-                  type: redis
+                events:
+                  type: kafka
                   security:
                     profile: tls
-                    endpoint: 6380
+                    endpoint: 9093
                     bogus: true
             steps:
               - id: noop
@@ -1299,9 +1312,9 @@ public sealed class EnvironmentSchemaTests
 
         Assert.False(result.IsValid, "An unrecognised key inside a security block must be rejected.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/dependencies/cache/security/bogus" &&
+            e.InstanceLocation == "/environment/dependencies/events/security/bogus" &&
             e.Message.Contains(
-                "[unevaluatedProperties] Unknown property 'bogus' on dependency 'cache'",
+                "[unevaluatedProperties] Unknown property 'bogus' on dependency 'events'",
                 System.StringComparison.Ordinal));
     }
 
@@ -1418,24 +1431,40 @@ public sealed class EnvironmentSchemaTests
                 System.StringComparison.Ordinal));
     }
 
-    // ── Part 5c: REQ-021 — security.profile legality is narrowed per target kind ──────
+    // ── Part 5c: REQ-021 — 'security' legality is narrowed per target kind ────────────
     //
-    // $defs/dependency's own final allOf clause pins 'profile' to 'tls' for every
-    // dependency kind EXCEPT kafka (the only kind this release wires client certificates
-    // for), via an allow-list ('not: { const: "kafka" }' in the 'if' condition) rather
-    // than an enumerated exclusion of every other kind. Freeze-critical because it is a
-    // NARROWING (REQ-021's own rationale): added after 1.0 it would reject suites that
-    // validated before.
+    // $defs/dependency's own final allOf clause forbids the whole 'security' block for
+    // every dependency kind EXCEPT kafka (the only dependency kind this release wires a
+    // client connection for), via an allow-list ('not: { const: "kafka" }' in the 'if'
+    // condition) rather than an enumerated exclusion of every other kind. Freeze-critical
+    // because it is a NARROWING (REQ-021's own rationale): added after 1.0 it would reject
+    // suites that validated before.
+    //
+    // M1 (second peer-review round) TIGHTENED this from a 'profile'-pinned-to-'tls' clause
+    // to an outright block rejection. The old shape legalised 'profile: tls' on kinds
+    // nothing in this release stages a TLS client connection for, so the engine-side
+    // REQ-005 probe would confirm the endpoint speaks TLS while the step's own client
+    // connected in plaintext — the false assurance REQ-022 exists to close. Since the
+    // narrowing gates which suites VALIDATE, rejecting more now and widening in 1.1 (as
+    // REQ-013 lands server-side TLS for the remaining kinds) is the only safe direction.
 
     /// <summary>
     /// RED-FIRST EVIDENCE for REQ-021: 'profile: mtls' on a non-kafka dependency kind
-    /// (redis) is rejected, naming BOTH the kind and the profile in one message — the
-    /// acceptance criterion's own wording. Kept as a permanent regression test, not merely
-    /// a throwaway red-phase check: this schema fixture pins the FIRST-CLASS enforcement
-    /// of the narrowing, independent of the corpus gate's own coverage.
+    /// (redis) is rejected, naming BOTH the kind and the owning dependency in one message.
+    /// Kept as a permanent regression test, not merely a throwaway red-phase check: this
+    /// schema fixture pins the FIRST-CLASS enforcement of the narrowing, independent of the
+    /// corpus gate's own coverage.
     /// </summary>
+    /// <remarks>
+    /// The pinned location moved one segment shallower in M1 — from
+    /// <c>.../security/profile</c> (the old <c>const</c> pin) to <c>.../security</c> (the
+    /// block the clause now rejects) — and the message deliberately no longer names the
+    /// offending PROFILE, because the profile is not what is wrong: no profile is wired for
+    /// this kind, so naming <c>mtls</c> would invite an author to try <c>tls</c> instead,
+    /// which does not work either. The sibling test below pins exactly that.
+    /// </remarks>
     [Fact]
-    public void Dependency_SecurityMtls_OnNonKafkaKind_IsRejected_NamingKindAndProfile()
+    public void Dependency_SecurityMtls_OnNonKafkaKind_IsRejected_NamingKindAndDependency()
     {
         const string yaml = """
             environment:
@@ -1455,12 +1484,13 @@ public sealed class EnvironmentSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid,
-            "'profile: mtls' on a redis dependency must be rejected — redis is not wired for mtls (REQ-021).");
+            "'profile: mtls' on a redis dependency must be rejected — no security profile is wired " +
+            "for redis (REQ-021).");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/environment/dependencies/cache/security/profile" &&
+            e.InstanceLocation == "/environment/dependencies/cache/security" &&
             e.Message.Contains("redis", System.StringComparison.Ordinal) &&
-            e.Message.Contains("mtls", System.StringComparison.Ordinal) &&
-            e.Message.Contains("cache", System.StringComparison.Ordinal));
+            e.Message.Contains("cache", System.StringComparison.Ordinal) &&
+            e.Message.Contains("no security profile is wired", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1523,18 +1553,35 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// 'profile: tls' remains legal on EVERY dependency kind, including the twelve this
-    /// narrowing pins away from 'mtls' — the allow-list only narrows 'mtls', never 'tls'.
-    /// Exercised across a representative spread of non-kafka kinds (not merely redis, the
-    /// kind the negative-control test above already covers) so the narrowing is proven to
-    /// be 'mtls'-specific, not an accidental blanket restriction.
+    /// 'profile: tls' is rejected on EVERY non-kafka dependency kind, exactly like 'mtls' —
+    /// the narrowing is a whole-block restriction, never a profile-specific one. Exercised
+    /// across a representative spread of non-kafka kinds (not merely redis, the kind the
+    /// negative-control test above already covers), each asserting the SAME message an
+    /// author sees, so a partial regression that re-legalised one kind is caught.
     /// </summary>
+    /// <remarks>
+    /// m2 + M1 (second peer-review round). This theory previously asserted the OPPOSITE —
+    /// that 'tls' stayed valid on every kind — and its docstring drew a conclusion the
+    /// fixtures never supported: "proven to be 'mtls'-specific, not an accidental blanket
+    /// restriction". It proved only that 'tls' was legal everywhere; nothing here ever
+    /// exercised a THIRD profile, which the old clause rejected on these kinds just as
+    /// firmly as 'mtls' (the schema's own $comment and the CHANGELOG both said so at the
+    /// time — this test contradicted them). M1 then removed the distinction entirely: no
+    /// profile is legal on a non-kafka dependency at 1.0, so the inverted assertion below is
+    /// now the accurate one.
+    /// </remarks>
     [Theory]
     [InlineData("postgres")]
     [InlineData("mongodb")]
     [InlineData("rabbitmq")]
+    // NIT-1 (peer review, fix round 3): 'elasticsearch' and 'azureservicebus' are the two
+    // vowel-initial kinds, and are here so the message's own article agreement is exercised
+    // rather than reasoned about. The message names the kind without an article at all —
+    // "dependency kind 'elasticsearch'" — because the article cannot agree with a value that
+    // is data; these two cases are what proves the wording never regresses to "a '<kind>'".
     [InlineData("elasticsearch")]
-    public void Dependency_SecurityTls_OnNonKafkaKinds_IsValid(string dependencyType)
+    [InlineData("azureservicebus")]
+    public void Dependency_SecurityTls_OnNonKafkaKinds_IsRejected(string dependencyType)
     {
         var yaml = $$"""
             environment:
@@ -1551,9 +1598,220 @@ public sealed class EnvironmentSchemaTests
 
         var result = YamlSchemaValidator.Validate(yaml);
 
+        Assert.False(result.IsValid,
+            $"Expected 'profile: tls' on a '{dependencyType}' dependency to be REJECTED — no security " +
+            "profile is wired for that kind in this release (REQ-021, as tightened by M1).");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/dep/security" &&
+            e.Message.Contains($"no security profile is wired for dependency kind '{dependencyType}'",
+                System.StringComparison.Ordinal) &&
+            !e.Message.Contains($"a '{dependencyType}' dependency", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The positive control for the theory above: 'profile: tls' on a KAFKA dependency —
+    /// the one dependency kind this release wires — still validates, so the narrowing above
+    /// is proven to be per-KIND rather than a blanket rejection of the field.
+    /// </summary>
+    [Fact]
+    public void Dependency_SecurityTls_OnKafka_IsValid()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: 9093
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
         Assert.True(result.IsValid,
-            $"Expected 'profile: tls' on a '{dependencyType}' dependency to be valid, got: " +
-            string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}")));
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// The narrowing is a WHOLE-BLOCK rejection, not a rejection of the 'profile' field:
+    /// every other field an author might have written inside the block is rejected with it,
+    /// and — the point this pins — with EXACTLY ONE error, not one per field. See
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> (H-A).
+    /// </summary>
+    [Fact]
+    public void Dependency_Security_OnNonKafkaKind_YieldsExactlyOneError_WhateverIsInsideTheBlock()
+    {
+        // Three independent defects INSIDE the block — a wrong-cased profile (a [pattern]
+        // miss), a blank caCert (a [minLength] miss) and an unrecognised key (an
+        // [unevaluatedProperties] miss) — plus the block-level rejection itself. Before the
+        // subsumption pass this shape produced four errors, three of them about the contents
+        // of a block that may not be declared at all.
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    profile: TLS
+                    endpoint: 6380
+                    caCert: ""
+                    bogus: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("/environment/dependencies/cache/security", error.InstanceLocation);
+        Assert.Contains("no security profile is wired for dependency kind 'redis'",
+            error.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// MAJOR-1 (peer review, fix round 3) — the SURVIVES half of the pair above.
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> is the widest
+    /// suppression rule in that class: it drops EVERY error at or below any location a
+    /// boolean-<c>false</c> subschema rejected. Every other test for it asserts
+    /// <c>Assert.Single</c> on a document whose ONLY defect region is the forbidden container,
+    /// so not one of them can fail if the containment check over-reaches — and over-suppression
+    /// is the direction that class's own remarks call the dangerous one, which is why the
+    /// <c>NestedAnyOf_*</c> pair exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The assertion that actually pins the containment check is the <c>securityExtra</c> one.
+    /// A raw <see cref="string.StartsWith(string, System.StringComparison)"/> on the forbidden
+    /// container's pointer accepts <c>/environment/dependencies/cache/securityExtra</c> as
+    /// "inside" <c>/environment/dependencies/cache/security</c> — the two share a character
+    /// prefix but not a JSON Pointer SEGMENT boundary — and silently mutes a genuine unknown-key
+    /// error on a property that merely starts with the same letters. Measured: dropping the
+    /// segment-boundary check makes exactly this assertion fail and no other test in the
+    /// repository fail, which is why the case is written down here rather than left to the
+    /// reader of <c>IsPathOrDescendant</c>'s own remarks.
+    /// </para>
+    /// <para>
+    /// The two SIBLING containers (<c>cache</c>, <c>cache-2</c>) and the independent defect on
+    /// <c>events</c> are pinned alongside it because they are the shapes a reader expects a
+    /// containment rule to get wrong, not because a prefix-naive check breaks them: a
+    /// forbidden-shape error is never subsumed (the rule short-circuits on it before the
+    /// containment test runs), so both containers report under either spelling, and
+    /// <c>/environment/dependencies/events/bogus</c> shares no character prefix with either
+    /// container. Measured, not assumed — see this test's own red run.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Dependency_Security_ForbiddenContainer_DoesNotMuteSiblingsOrPrefixSharingProperties()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  securityExtra: true
+                  security:
+                    profile: tls
+                    endpoint: 6380
+                cache-2:
+                  type: redis
+                  security:
+                    profile: tls
+                    endpoint: 6381
+                events:
+                  type: kafka
+                  bogus: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var dump = string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"));
+        var locations = result.Errors
+            .Select(e => e.InstanceLocation)
+            .OrderBy(l => l, System.StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(locations.Contains("/environment/dependencies/cache/security"),
+            $"The first forbidden 'security' container must report. Errors: {dump}");
+        Assert.True(locations.Contains("/environment/dependencies/cache-2/security"),
+            "A SIBLING dependency's own forbidden 'security' container must report independently — " +
+            $"one container's rejection may never stand in for another's. Errors: {dump}");
+        Assert.True(locations.Contains("/environment/dependencies/cache/securityExtra"),
+            "An unknown key on the SAME dependency whose NAME merely begins with 'security' is not " +
+            "inside the forbidden container — it shares a character prefix, not a JSON Pointer " +
+            $"segment boundary — and must survive the subsumption pass. Errors: {dump}");
+        Assert.True(locations.Contains("/environment/dependencies/events/bogus"),
+            "An independent defect outside every forbidden container must survive alongside them — " +
+            $"the suppression is scoped by containment, never document-wide. Errors: {dump}");
+
+        Assert.True(locations.Count == 4, $"Expected exactly those four errors. Errors: {dump}");
+    }
+
+    /// <summary>
+    /// SEC-4 (security review, fix round 3): both author-controlled values this message
+    /// interpolates — the dependency's NAME and its declared <c>type</c> — are bounded at
+    /// <c>SchemaErrorCollector</c>'s own 200-character display limit. M1 made this the message an
+    /// author hits first for a misplaced <c>security</c> block, and neither value has a length
+    /// limit of its own: the name is a YAML key, and the kind is whatever <c>type</c> holds,
+    /// which on this exact path has already failed its own closed enum and so may be arbitrary.
+    /// </summary>
+    /// <remarks>
+    /// Both are genuinely reachable through the real validator, which is why this is a document
+    /// test rather than a unit call: an over-long <c>type</c> still satisfies the narrowing
+    /// clause's <c>not: { const: "kafka" }</c> condition, so the <c>then</c> branch fires and the
+    /// block is rejected with the long value in hand. The enum violation on <c>type</c> is a
+    /// SIBLING of the forbidden container, not a descendant, so it survives alongside — asserted
+    /// here too, because it is the same containment property MAJOR-1's survivorship test pins.
+    /// </remarks>
+    [Fact]
+    public void Dependency_Security_ForbiddenMessage_BoundsTheDependencyNameAndKind()
+    {
+        var longName = new string('a', 250);
+        var longKind = new string('b', 250);
+
+        var yaml = $$"""
+            environment:
+              dependencies:
+                {{longName}}:
+                  type: {{longKind}}
+                  security:
+                    profile: tls
+                    endpoint: 6380
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var forbidden = Assert.Single(result.Errors,
+            e => e.InstanceLocation == $"/environment/dependencies/{longName}/security");
+
+        Assert.DoesNotContain(longName, forbidden.Message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain(longKind, forbidden.Message, System.StringComparison.Ordinal);
+        Assert.Contains($"'{new string('a', 200)}… (250 chars total)'", forbidden.Message,
+            System.StringComparison.Ordinal);
+        Assert.Contains($"dependency kind '{new string('b', 200)}… (250 chars total)'", forbidden.Message,
+            System.StringComparison.Ordinal);
+
+        // The message stays O(1) in both values rather than a multiple of them.
+        Assert.True(forbidden.Message.Length < 1000,
+            $"Message must be O(1) in the offending values; was {forbidden.Message.Length} chars.");
+
+        // The sibling 'type' enum violation is NOT inside the forbidden container and survives.
+        Assert.Contains(result.Errors,
+            e => e.InstanceLocation == $"/environment/dependencies/{longName}/type");
     }
 
     // ── Part 3: environment.services.ports / healthCheck (services-generalisation, REQ-008/009) ──

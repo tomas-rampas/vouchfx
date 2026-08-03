@@ -54,7 +54,7 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// passes raw schema evaluation with zero errors, even though it can never
 /// bind to a provider. This class closes that gap with a POST-SCHEMA
 /// cross-check against the <see cref="StepKindRegistry"/> supplied to
-/// <see cref="Validate"/> — deliberately kept out of the composed schema
+/// <see cref="Validate(string, StepKindRegistry)"/> — deliberately kept out of the composed schema
 /// itself (which is a frozen, golden-snapshotted v1 artifact; see
 /// <c>SchemaFreezeTests</c>) — mirroring how the vouchfx-mcp
 /// server's <c>SuiteValidator</c>/<c>StepTypeCatalogue</c> solved the
@@ -100,25 +100,57 @@ public static class DocumentValidator
     /// in the composed schema.  Passing an empty registry validates against
     /// the root-language schema only (no provider-specific constraints).
     /// </param>
-    /// <param name="securityProfileRegistry">
-    /// The security-profile registry <see cref="CollectUnknownSecurityProfileErrors"/> checks
-    /// a declared <c>security.profile</c> against (REQ-019). Defaults to
-    /// <see cref="SecurityProfileRegistry.BuiltIn"/> when omitted — the production registry.
-    /// Injectable (G-MINOR-8, gatekeeper) so a caller can prove the registry cross-check's own
-    /// behaviour end-to-end through this front door with a reduced/explicit registry, mirroring
-    /// how <paramref name="registry"/> itself is always a parameter rather than a hardcoded
-    /// <c>StepKindRegistry</c> default.
-    /// </param>
     /// <returns>
     /// A <see cref="SchemaValidationResult"/> whose errors have been enriched
     /// with <c>(line N)</c> prefixes where the pointer-to-line resolution
     /// succeeded.
     /// </returns>
-    public static SchemaValidationResult Validate(
-        string yamlText, StepKindRegistry registry, SecurityProfileRegistry? securityProfileRegistry = null)
-    {
-        var resolvedSecurityProfileRegistry = securityProfileRegistry ?? SecurityProfileRegistry.BuiltIn;
+    public static SchemaValidationResult Validate(string yamlText, StepKindRegistry registry) =>
+        Validate(yamlText, registry, SecurityProfileRegistry.BuiltIn);
 
+    /// <summary>
+    /// The <see cref="Validate(string, StepKindRegistry)"/> overload above, with the
+    /// security-profile registry supplied explicitly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// M2 + M3 (peer review, fix round 2). The registry parameter previously hung off the PUBLIC
+    /// overload with a <see langword="null"/> default — a shipped, documented API surface whose
+    /// own documentation promised a test that did not exist, on a package that was not supposed
+    /// to publish this type at all. Every call site passed two arguments: 81 of them, re-measured
+    /// across <c>src/</c>, <c>tests/</c>, <c>tools/</c> and <c>examples/</c> with build output
+    /// excluded (the review reported 40; the higher figure is the one that holds over that full
+    /// set, and neither figure contained a single three-argument call).
+    /// Both halves are fixed by making the seam <c>internal</c>: <see cref="SecurityProfileRegistry"/>
+    /// is no longer published (see that type's own file header), the public front door is the
+    /// two-argument overload every real caller already used, and this overload is exercised
+    /// directly — <c>DocumentValidatorTests.Validate_UnknownSecurityProfile_WithInjectedReducedRegistry_*</c>
+    /// drives a reduced registry through the SAME method body a production call runs, which is
+    /// what the promise was worth in the first place.
+    /// </para>
+    /// <para>
+    /// The registry reaches <see cref="CollectUnknownSecurityProfileErrors"/> and nowhere else.
+    /// It is deliberately NOT threaded into <see cref="SchemaErrorCollector"/>: that class used to
+    /// consult <c>SecurityProfileRegistry.BuiltIn</c> directly from a REQ-021 <c>const</c> branch,
+    /// so an injected registry would have left the two paths disagreeing on 12 of 13 dependency
+    /// kinds (a profile registered HERE but absent from <c>BuiltIn</c> would have been reported as
+    /// "unknown" by the schema path while being genuinely registered). M1's schema tightening
+    /// deleted that branch outright — no <c>const</c> on <c>security.profile</c> survives anywhere
+    /// in the composed schema — so there is now exactly ONE path that consults a registry, and the
+    /// two can no longer disagree by construction rather than by discipline.
+    /// </para>
+    /// </remarks>
+    /// <param name="yamlText">The raw contents of a <c>.e2e.yaml</c> file.</param>
+    /// <param name="registry">The frozen provider registry (see the overload above).</param>
+    /// <param name="securityProfileRegistry">
+    /// The security-profile registry <see cref="CollectUnknownSecurityProfileErrors"/> checks a
+    /// declared <c>security.profile</c> against (REQ-019) —
+    /// <see cref="SecurityProfileRegistry.BuiltIn"/> on every production path.
+    /// </param>
+    /// <returns>See the overload above.</returns>
+    internal static SchemaValidationResult Validate(
+        string yamlText, StepKindRegistry registry, SecurityProfileRegistry securityProfileRegistry)
+    {
         // Delegate to the composed-schema path; this is the authoritative
         // schema validation (root schema + provider fragments).
         var raw = SchemaComposer.Validate(registry, yamlText);
@@ -148,7 +180,7 @@ public static class DocumentValidator
         // an unregistered profile name is vacuously schema-valid (the pattern matches
         // any lower-case dotted token).
         var unknownProfileErrors = rootMapping is not null
-            ? CollectUnknownSecurityProfileErrors(rootMapping, raw.Errors, resolvedSecurityProfileRegistry)
+            ? CollectUnknownSecurityProfileErrors(rootMapping, raw.Errors, securityProfileRegistry)
             : Array.Empty<SchemaValidationError>();
 
         if ((raw.IsValid || raw.Errors.Count == 0) &&
@@ -336,13 +368,19 @@ public static class DocumentValidator
     /// <summary>
     /// Walks <c>environment.services</c> and <c>environment.dependencies</c> for a declared
     /// <c>security.profile</c> scalar that is a well-formed value but not registered in
-    /// <see cref="SecurityProfileRegistry.BuiltIn"/> — REQ-019: <c>profile</c> is an open
+    /// <paramref name="registry"/> — REQ-019: <c>profile</c> is an open
     /// string pattern in the composed schema (no <c>enum</c>), and an unrecognised name is
     /// rejected here, at validation time, against the frozen registry, mirroring exactly the
     /// division <see cref="CollectUnknownStepTypeErrors"/> already applies to a step's own
     /// <c>type</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// n4 (peer review, fix round 2): this summary previously hardcoded
+    /// "<c>SecurityProfileRegistry.BuiltIn</c>" although the method has taken an injected
+    /// registry since G-MINOR-8 — its <c>&lt;param&gt;</c> was already correct, so the two
+    /// disagreed.
+    /// </para>
     /// <para>
     /// A <c>profile</c> value that already violates the root schema's own
     /// <c>^[a-z0-9-]+(\.[a-z0-9-]+)?$</c> pattern (e.g. a wrong-cased <c>TLS</c>) already has
@@ -351,6 +389,32 @@ public static class DocumentValidator
     /// deferral for a pattern-invalid step <c>type</c>, so the two checks partition cleanly
     /// instead of double-reporting the same defect (the mirror image of issue #265, which
     /// moved a check the OTHER way — schema to registry lookup — to avoid exactly that).
+    /// </para>
+    /// <para>
+    /// H-A (peer review, held item — fix round 2): the deferral ALSO yields when the schema
+    /// rejected the enclosing <c>security</c> BLOCK rather than the <c>profile</c> field itself.
+    /// Since M1, a non-kafka dependency's <c>security</c> block is forbidden outright by a boolean
+    /// <c>false</c> subschema whose error lands one segment shallower
+    /// (<c>.../&lt;name&gt;/security</c>, not <c>.../&lt;name&gt;/security/profile</c>), so a
+    /// pointer-exact test alone would let this cross-check add a second, moot finding about a
+    /// profile inside a block that may not be declared at all. This is the same subsumption
+    /// <see cref="SchemaErrorCollector"/> applies to the schema-side errors it owns
+    /// (<c>SuppressErrorsInsideForbiddenContainer</c>); it is repeated here because THIS
+    /// cross-check's findings are produced after that pass has already run and never pass
+    /// through it.
+    /// </para>
+    /// <para>
+    /// Copilot 2 (PR #351 review, fix round 2): the pointer is built by ESCAPING each map key per
+    /// RFC 6901 (see <see cref="EncodePointerSegment"/>), never by raw interpolation. Both
+    /// <c>environment.services</c> and <c>environment.dependencies</c> are open objects with no
+    /// <c>propertyNames</c> pattern (only <c>variables</c> and <c>capture</c> carry one), so a
+    /// service literally named <c>a/b</c> or <c>c~d</c> is schema-legal today — and
+    /// JsonSchema.Net escapes such a name in the <c>InstanceLocation</c> it reports, while raw
+    /// interpolation did not. The two spellings could then never compare equal, so BOTH the
+    /// deferral above and <see cref="ResolveLineFromPointer"/>'s <c>(line N)</c> enrichment
+    /// silently failed for exactly those names: measured, a service named <c>c~d</c> declaring
+    /// <c>profile: TLS</c> emitted the double-report this method exists to prevent, and a service
+    /// named <c>a/b</c> emitted an error carrying no line number at all.
     /// </para>
     /// <para>
     /// No unevaluated-properties cascade suppression is needed here, unlike
@@ -435,12 +499,26 @@ public static class DocumentValidator
                     continue;
                 }
 
-                var pointer = $"/environment/{ownerSectionKey}/{ownerKeyScalar.Value}/security/profile";
+                // `Value` is `string?` on YamlScalarNode. A genuinely null key is not reachable
+                // through the RepresentationModel this method walks — YamlDotNet 16.3.0 reads an
+                // explicit `~:` back as the one-character TEXT "~" (the same representation quirk
+                // $defs/dependency's own `topics[].name` description records), and an empty key
+                // (`"":`) reads back as "" — so this coalesce is a nullability contract, not a
+                // reachable branch. Coalescing to "" rather than skipping keeps this method's
+                // behaviour identical to the schema's own, which would report such a key as an
+                // empty pointer segment too, so the deferral below still matches.
+                var ownerPointerSegment = EncodePointerSegment(ownerKeyScalar.Value ?? string.Empty);
+                var securityPointer = $"/environment/{ownerSectionKey}/{ownerPointerSegment}/security";
+                var pointer = $"{securityPointer}/profile";
 
-                // Defer to the schema: a `profile` that violates the root schema's
-                // own pattern already has a [pattern] error at this exact pointer —
-                // do not duplicate it with an unknown-profile finding.
-                if (schemaErrorLocations.Contains(pointer))
+                // Defer to the schema on BOTH shapes: a `profile` that violates the root
+                // schema's own pattern already has a [pattern] error at this exact pointer,
+                // and a `security` block the schema rejected outright (M1's per-kind
+                // narrowing) already has an error one segment shallower — reporting an
+                // unknown profile INSIDE a block that may not be declared at all would be
+                // the same double-report, one level up. See this method's own remarks.
+                if (schemaErrorLocations.Contains(pointer) ||
+                    schemaErrorLocations.Contains(securityPointer))
                 {
                     continue;
                 }
@@ -563,4 +641,19 @@ public static class DocumentValidator
     private static string DecodePointerSegment(string segment) =>
         segment.Replace("~1", "/", System.StringComparison.Ordinal)
                .Replace("~0", "~", System.StringComparison.Ordinal);
+
+    /// <summary>
+    /// Encodes a single JSON Pointer segment per RFC 6901: <c>~</c> → <c>~0</c>,
+    /// <c>/</c> → <c>~1</c> — the exact inverse of <see cref="DecodePointerSegment"/>, and the
+    /// escaping JsonSchema.Net itself applies when it reports an <c>InstanceLocation</c>.
+    /// </summary>
+    /// <remarks>
+    /// The replacements must be applied in THIS order (tilde before slash), the mirror image of
+    /// the decoder's own ordering rule: encoding <c>/</c> first would emit a <c>~1</c> whose own
+    /// tilde the second pass would then re-escape into <c>~01</c>, corrupting the segment. A key
+    /// containing both characters (<c>a/b~c</c>) is the case that discriminates the two orders.
+    /// </remarks>
+    private static string EncodePointerSegment(string segment) =>
+        segment.Replace("~", "~0", System.StringComparison.Ordinal)
+               .Replace("/", "~1", System.StringComparison.Ordinal);
 }

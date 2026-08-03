@@ -1,0 +1,37 @@
+# expected-instance-location: /environment/dependencies/cache/security
+# expected-keyword: properties
+#
+# REQ-021, as TIGHTENED by M1 (second peer-review round). This fixture used to live in
+# Corpus/Accepted as security-dependency-tls-no-cacert.e2e.yaml: 'profile: tls' on a
+# redis dependency validated, because the per-kind narrowing pinned 'profile' to the
+# const 'tls' rather than forbidding the block. It was moved here deliberately — the
+# same document, the opposite verdict — because that pin legalised a shape nothing in
+# this release wires: no provider stages a TLS client connection for a redis dependency,
+# so the engine-side REQ-005 probe would confirm the endpoint speaks TLS while the
+# step's own client connected in plaintext. That is the false assurance REQ-022 exists
+# to close, arriving through the schema instead.
+#
+# The schema narrowing (and ISecurityProfileWiring.AppliesTo beside it) gate which
+# suites VALIDATE, so widening later is safe and tightening later is not: at 1.0 no
+# security profile is legal on any dependency kind except kafka, and 1.1 widens as
+# REQ-013 lands server-side TLS for the rest. The clause is a boolean 'false' on the
+# whole block rather than a pin on 'profile' so the message can say what is true — no
+# profile is wired for this kind — instead of implying the author merely picked the
+# wrong value.
+#
+# The sibling fixture security-mtls-non-kafka-dependency.e2e.yaml pins the SAME clause
+# for 'mtls'; both are kept, because 'tls' is the case whose verdict changed at 1.0 and
+# 'mtls' is the case that was already rejected before it.
+metadata:
+  name: rejected-security-tls-non-kafka-dependency
+environment:
+  dependencies:
+    cache:
+      type: redis
+      security:
+        profile: tls
+        endpoint: 6380
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.dependencies.security surface only."

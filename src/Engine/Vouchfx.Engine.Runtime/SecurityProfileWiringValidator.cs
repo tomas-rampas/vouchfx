@@ -117,8 +117,22 @@ internal static class SecurityProfileWiringValidator
             return null;
         }
 
+        // SEC-1 (peer review, fix round 3): 'profile' is an open string pattern with no length
+        // limit of its own, so it is bounded through the SAME helper DescribeUnknownProfile uses
+        // — never a third copy of the rule. Measured unreachable with a long value TODAY: all
+        // four production call sites hard-return on schema failure before ProviderPipeline.Compile,
+        // so only 'tls'/'mtls' survive Stage 1 to reach this method. That is an ORDERING
+        // invariant, not a local bound, and this series already found one ordering assumption of
+        // exactly this shape to be false on a reachable path (the YAML→JSON conversion throw that
+        // left DescribeUnknownProfile holding raw author text). A bound that does not depend on
+        // another stage running first costs one call. 'targetKind' needs no bound: it is either a
+        // dependency 'type' the schema's closed enum has already validated, or this file's own
+        // fixed 'service' sentinel. 'ownerName' is deliberately left verbatim — it is the LOCATOR
+        // an author uses to find the declaration in their own file, and a truncated locator is an
+        // unactionable message; only the offending VALUE is bounded.
         return new ValidationFailure(
-            $"environment.{ownerKindPlural}.{ownerName}.security: profile '{profile}' has no " +
+            $"environment.{ownerKindPlural}.{ownerName}.security: profile " +
+            $"'{SecurityProfileRegistry.TruncateForDisplay(profile)}' has no " +
             $"registered wiring for target kind '{targetKind}'.")
         {
             IsSecurityPreflight = true,

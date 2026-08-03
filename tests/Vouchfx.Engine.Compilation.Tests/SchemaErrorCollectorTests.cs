@@ -17,6 +17,7 @@
 //     SchemaComposer.Validate evaluation pipeline — not merely by construction
 //     of a path string.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -727,6 +728,75 @@ public sealed class SchemaErrorCollectorTests
             $"Expected a bounded message, got {onlyError.Message.Length} characters.");
     }
 
+    /// <summary>
+    /// SEC-2 (security review, fix round 3): the bound above is a CHAR index, so an offending
+    /// value whose astral-plane character straddles it must back off rather than cut between a
+    /// high surrogate and its low-surrogate partner. Measured before the fix:
+    /// <c>ESC + 198×'a' + U+1F600</c> (length 201) landed the cut exactly between the two halves
+    /// and <c>System.Text.Json</c> wrote U+FFFD.
+    /// </summary>
+    /// <remarks>
+    /// This pins <c>SchemaErrorCollector</c>'s OWN copy of the helper. The sibling copy in
+    /// <c>SecurityProfileRegistry</c> — deliberately mirrored rather than shared, because this
+    /// class's is private to a class that one must not depend on — is pinned by
+    /// <c>SecurityProfileRegistryTests.UnknownProfileMessage_WhereTheBoundWouldSplitASurrogatePair_BacksOffToKeepThePairIntact</c>.
+    /// Both are tested, because the defect was pre-existing HERE and faithfully copied THERE, and
+    /// a known bug duplicated across two files with a test on only one of them is how the
+    /// untested copy becomes permanent.
+    /// </remarks>
+    [Fact]
+    public void FormatEnumError_WhereTheBoundWouldSplitASurrogatePair_BacksOffToKeepThePairIntact()
+    {
+        const int bound = 200; // SchemaErrorCollector.MaxOffendingValueChars (private).
+        const string astral = "😀"; // U+1F600 — one high + one low surrogate.
+
+        var registry = StepKindRegistry.BuildAndFreeze(new[] { typeof(CacheAssertRedisProvider).Assembly });
+
+        // The high surrogate lands at index bound-1 (last INCLUDED char of a naive slice) and its
+        // low half at index bound (first EXCLUDED) — the exact straddle.
+        var offending = new string('x', bound - 1) + astral + "trailing-content-past-the-pair";
+        Assert.True(char.IsHighSurrogate(offending[bound - 1]) && char.IsLowSurrogate(offending[bound]),
+            "Fixture precondition: the surrogate pair must straddle the truncation bound.");
+
+        var yaml = $$"""
+            steps:
+              - id: s1
+                type: cache-assert.redis
+                target: cache
+                key: orders:1
+                operation: "{{offending}}"
+                expect:
+                  value: "1"
+            """;
+
+        var result = DocumentValidator.Validate(yaml, registry);
+
+        Assert.False(result.IsValid);
+        var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/operation");
+
+        Assert.Contains($"{new string('x', bound - 1)}… ({offending.Length} chars total)",
+            onlyError.Message, StringComparison.Ordinal);
+
+        for (var i = 0; i < onlyError.Message.Length; i++)
+        {
+            if (char.IsHighSurrogate(onlyError.Message[i]))
+            {
+                Assert.True(i + 1 < onlyError.Message.Length && char.IsLowSurrogate(onlyError.Message[i + 1]),
+                    $"Unpaired high surrogate at index {i} — the message is invalid UTF-16.");
+                i++;
+                continue;
+            }
+
+            Assert.False(char.IsLowSurrogate(onlyError.Message[i]),
+                $"Unpaired low surrogate at index {i} — the message is invalid UTF-16.");
+        }
+
+        // The §14 JSON Lines event stream is the surface this text reaches; a lone surrogate is
+        // where System.Text.Json substitutes U+FFFD instead of round-tripping.
+        Assert.Equal(onlyError.Message,
+            JsonSerializer.Deserialize<string>(JsonSerializer.Serialize(onlyError.Message)));
+    }
+
     // ── [enum] enrichment: case-hint requires a UNIQUE match (MINOR-6) ──────────
     //
     // FormatEnumError's own XML doc promises a suggestion only "when the
@@ -1246,5 +1316,305 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains("kafka-broker", error.Message, StringComparison.Ordinal);
         Assert.Contains("httpPort", error.Message, StringComparison.Ordinal);
         Assert.Contains("ports", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// H-B (peer review, held item — fix round 2). <see cref="SchemaErrorCollector.FormatConstError"/>'s
+    /// remarks assert that every <c>const</c> reaching it is one of TWO named shapes
+    /// (<c>metadata.schemaVersion</c>, and <c>$defs/service</c>'s ports-only
+    /// <c>healthCheck.type</c> pin), because every OTHER <c>const</c> in the composed schema sits
+    /// in an <c>if</c> clause that <see cref="SchemaErrorCollector.IsIfDiscriminatorNoise"/>
+    /// drops before the formatter runs. That claim was FALSE while REQ-021's own narrowing pinned
+    /// <c>security.profile</c> to <c>const: "tls"</c> inside a <c>then</c> — an <c>if</c> filter
+    /// never sees a <c>then</c> — which is exactly why the formatter carried a third,
+    /// <c>security.profile</c>-specific branch to compensate. M1 deleted that clause; this test
+    /// stops the claim from silently rotting again by WALKING the live composed schema for any
+    /// <c>const</c> reachable inside a <c>then</c>, and naming what it found.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately structural (a schema walk) rather than behavioural (a document that trips
+    /// each shape): a behavioural test can only cover shapes someone thought to write a fixture
+    /// for, and the defect being guarded here is precisely "a new one was added and nobody
+    /// noticed". A <c>const</c> inside an <c>if</c>, or inside a <c>oneOf</c>/<c>anyOf</c> branch,
+    /// is out of scope — neither reaches <c>FormatConstError</c> with a diagnosable message the
+    /// remark is about.
+    /// </remarks>
+    [Fact]
+    public void ComposedSchema_DeclaresNoThenClauseConst_OutsideTheTwoNamedShapes()
+    {
+        var registry = StepKindRegistry.BuildAndFreeze(new[] { typeof(ScriptCsharpProvider).Assembly });
+        using var schemaDocument = JsonDocument.Parse(SchemaComposer.ComposeSchemaJson(registry));
+
+        var found = new List<string>();
+        CollectThenClauseConstPaths(schemaDocument.RootElement, "#", inThen: false, found);
+
+        Assert.True(found.Count == 0,
+            "FormatConstError's remarks claim every 'const' outside its two NAMED shapes is " +
+            "'if'-discriminator noise that never reaches it. A 'then'-clause 'const' is NOT " +
+            "filtered (IsIfDiscriminatorNoise matches 'if', not 'then'), so each path below " +
+            "reaches FormatConstError and renders its GENERIC message. Either give it a named " +
+            "branch or update that remark — do not leave the two disagreeing:" +
+            Environment.NewLine + string.Join(Environment.NewLine, found));
+    }
+
+    /// <summary>
+    /// Walks <paramref name="element"/> recursively, recording the JSON path of every
+    /// <c>const</c> keyword found at or below a <c>then</c> subschema, EXCLUDING the two shapes
+    /// <see cref="SchemaErrorCollector.FormatConstError"/> names explicitly. Descending into an
+    /// <c>if</c> resets the flag: a <c>const</c> nested inside a <c>then</c>'s own <c>if</c> is
+    /// discriminator noise like any other.
+    /// </summary>
+    private static void CollectThenClauseConstPaths(
+        JsonElement element, string path, bool inThen, List<string> found)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var childPath = $"{path}/{property.Name}";
+
+                    if (property.Name == "const" && inThen && !IsNamedConstShape(childPath))
+                    {
+                        found.Add(childPath);
+                        continue;
+                    }
+
+                    var childInThen = property.Name switch
+                    {
+                        "then" => true,
+                        "if" => false,
+                        _ => inThen,
+                    };
+
+                    CollectThenClauseConstPaths(property.Value, childPath, childInThen, found);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectThenClauseConstPaths(item, $"{path}/{index++}", inThen, found);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The two <c>const</c> shapes <see cref="SchemaErrorCollector.FormatConstError"/> handles by
+    /// name. <c>metadata.schemaVersion</c>'s is unconditional (never inside a <c>then</c> at all,
+    /// so it never reaches this filter); <c>$defs/service</c>'s <c>healthCheck.type</c> pin is
+    /// the one genuine <c>then</c>-clause exception, and is exempted here explicitly rather than
+    /// by a wildcard, so a DIFFERENT <c>then</c>-clause const added under <c>$defs/service</c>
+    /// is still reported.
+    /// </summary>
+    private static bool IsNamedConstShape(string constPath) =>
+        constPath.EndsWith("/then/properties/healthCheck/properties/type/const", StringComparison.Ordinal) ||
+        constPath.EndsWith("/then/properties/schemaVersion/const", StringComparison.Ordinal);
+
+    /// <summary>
+    /// SEC-3 (security review, fix round 3): the depth FLOOR
+    /// <see cref="SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer"/> silently relies
+    /// on. That rule drops every error at or below any location a boolean-<c>false</c> property
+    /// subschema rejected, and it has no floor on how shallow such a location may be. Today none
+    /// exists shallower than a dependency/service/step SUB-property, so it cannot collapse a
+    /// document — but nothing in the rule enforces that. A future conditional
+    /// <c>properties: { steps: false }</c> or <c>{ environment: false }</c> would sit at instance
+    /// depth 1 and reduce every error in the document to that single one, which is the same
+    /// "correct today, nothing catches it breaking" shape MAJOR-1 named for the containment check
+    /// itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Structural, because the defect being guarded is "a shallow one was added and nobody
+    /// noticed" — a behavioural fixture can only cover shapes somebody thought to write. The
+    /// floor is 3 instance segments (so <c>/environment/dependencies/&lt;name&gt;</c> is the
+    /// shallowest tolerated container); measured minimum across the composed schema is 4, i.e.
+    /// one segment of headroom, so this is a floor rather than a golden that churns whenever a
+    /// clause moves.
+    /// </para>
+    /// <para>
+    /// Measured against the committed GOLDEN rather than a locally composed schema, for two
+    /// reasons: the golden is the full 25-provider composition (a locally composed one would need
+    /// this file to carry its own copy of the Core assembly list, and a one-provider composition
+    /// would leave every provider fragment's own forbidden properties unmeasured), and it is the
+    /// artefact a reviewer actually inspects when <c>VOUCHFX_REGEN_SCHEMA=1</c> rewrites it. The
+    /// two are pinned byte-identical by <c>SchemaFreezeTests.ComposedV1Schema_MatchesGolden_ByteForByte</c>,
+    /// so this measures the live schema by proxy and fails in the same commit that would
+    /// introduce a shallow declaration.
+    /// </para>
+    /// <para>
+    /// Only <c>properties/&lt;name&gt;: false</c> counts — the exact shape
+    /// <see cref="SchemaErrorCollector.IsForbiddenPropertyShape"/> recognises and this rule keys
+    /// on. An <c>additionalProperties: false</c> / <c>unevaluatedProperties: false</c> closure is
+    /// a DIFFERENT shape that never seeds a forbidden container, so it is walked through but
+    /// never recorded.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ComposedSchema_DeclaresNoForbiddenPropertyShallowerThanTheSuppressionFloor()
+    {
+        const int floorSegments = 3;
+
+        var goldenPath = Path.Combine(AppContext.BaseDirectory, "Golden", "composed-schema.v1.json");
+        using var schemaDocument = JsonDocument.Parse(File.ReadAllText(goldenPath));
+
+        var found = new List<(string Pointer, int Depth)>();
+        CollectForbiddenPropertyDepths(
+            schemaDocument.RootElement, schemaDocument.RootElement, "#", 0,
+            new HashSet<string>(StringComparer.Ordinal), found);
+
+        // Vacuity guard: a walk that silently stopped matching would make the floor assertion
+        // below pass over an empty list. Anchored on the declaration THIS series added (REQ-021's
+        // 'security' block on a non-kafka dependency), which is stable under provider churn in a
+        // way a raw count is not.
+        Assert.Contains(found, f =>
+            f.Pointer.EndsWith("/then/properties/security", StringComparison.Ordinal) && f.Depth == 4);
+
+        var tooShallow = found
+            .Where(f => f.Depth < floorSegments)
+            .Select(f => $"{f.Pointer} (instance depth {f.Depth})")
+            .ToList();
+
+        Assert.True(tooShallow.Count == 0,
+            $"A boolean-'false' property declaration at instance depth < {floorSegments} lets " +
+            "SuppressErrorsInsideForbiddenContainer collapse an entire document's errors to one. " +
+            "Either give the rule an explicit depth floor or move the declaration deeper:" +
+            Environment.NewLine + string.Join(Environment.NewLine, tooShallow));
+    }
+
+    /// <summary>
+    /// Walks <paramref name="node"/> recursively, recording every <c>properties/&lt;name&gt;: false</c>
+    /// declaration together with the INSTANCE depth at which it rejects — i.e. the number of JSON
+    /// Pointer segments in the shortest instance location it can produce.
+    /// </summary>
+    /// <remarks>
+    /// Depth advances only through applicators that move the instance cursor
+    /// (<c>properties</c>, <c>patternProperties</c>, <c>additionalProperties</c>,
+    /// <c>unevaluatedProperties</c>, <c>items</c>, <c>prefixItems</c>, <c>contains</c>); the
+    /// in-place applicators (<c>allOf</c>/<c>anyOf</c>/<c>oneOf</c>/<c>if</c>/<c>then</c>/
+    /// <c>else</c>/<c>not</c>/<c>dependentSchemas</c>/<c>$ref</c>) carry it through unchanged.
+    /// Non-schema keywords are not descended into at all, so a <c>false</c> sitting in (say) an
+    /// <c>enum</c> array or a <c>default</c> value can never be miscounted as a subschema.
+    /// <c>$ref</c> resolution is guarded by a visited set keyed on (target, depth): the composed
+    /// schema's ten <c>$defs</c> form a DAG today, and the guard means a future cycle terminates
+    /// rather than hanging the suite.
+    /// </remarks>
+    private static void CollectForbiddenPropertyDepths(
+        JsonElement node,
+        JsonElement root,
+        string pointer,
+        int instanceDepth,
+        HashSet<string> visitedRefs,
+        List<(string Pointer, int Depth)> found)
+    {
+        if (node.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var member in node.EnumerateObject())
+        {
+            var childPointer = $"{pointer}/{member.Name}";
+
+            switch (member.Name)
+            {
+                case "$ref":
+                    if (member.Value.ValueKind == JsonValueKind.String &&
+                        member.Value.GetString() is { } reference &&
+                        reference.StartsWith("#/$defs/", StringComparison.Ordinal) &&
+                        visitedRefs.Add($"{reference}@{instanceDepth}") &&
+                        root.TryGetProperty("$defs", out var defs) &&
+                        defs.TryGetProperty(reference["#/$defs/".Length..], out var target))
+                    {
+                        CollectForbiddenPropertyDepths(
+                            target, root, reference, instanceDepth, visitedRefs, found);
+                    }
+
+                    break;
+
+                // Object-valued maps of subschemas, each advancing the instance cursor by one
+                // segment. This is the ONLY place a forbidden-property declaration is recorded.
+                case "properties":
+                case "patternProperties":
+                    foreach (var property in member.Value.EnumerateObject())
+                    {
+                        var propertyPointer = $"{childPointer}/{property.Name}";
+
+                        if (property.Value.ValueKind == JsonValueKind.False)
+                        {
+                            found.Add((propertyPointer, instanceDepth + 1));
+                            continue;
+                        }
+
+                        CollectForbiddenPropertyDepths(
+                            property.Value, root, propertyPointer, instanceDepth + 1, visitedRefs, found);
+                    }
+
+                    break;
+
+                // Single subschemas that advance the instance cursor. A bare 'false' here is the
+                // additionalProperties/unevaluatedProperties CLOSURE shape, not the
+                // forbidden-property one, so it is deliberately not recorded.
+                case "additionalProperties":
+                case "unevaluatedProperties":
+                case "items":
+                case "unevaluatedItems":
+                case "contains":
+                case "propertyNames":
+                    CollectForbiddenPropertyDepths(
+                        member.Value, root, childPointer, instanceDepth + 1, visitedRefs, found);
+                    break;
+
+                case "prefixItems":
+                    var prefixIndex = 0;
+                    foreach (var item in member.Value.EnumerateArray())
+                    {
+                        CollectForbiddenPropertyDepths(
+                            item, root, $"{childPointer}/{prefixIndex++}", instanceDepth + 1, visitedRefs, found);
+                    }
+
+                    break;
+
+                // In-place applicators: same instance location, so the depth carries through.
+                case "allOf":
+                case "anyOf":
+                case "oneOf":
+                    var branchIndex = 0;
+                    foreach (var branch in member.Value.EnumerateArray())
+                    {
+                        CollectForbiddenPropertyDepths(
+                            branch, root, $"{childPointer}/{branchIndex++}", instanceDepth, visitedRefs, found);
+                    }
+
+                    break;
+
+                case "if":
+                case "then":
+                case "else":
+                case "not":
+                    CollectForbiddenPropertyDepths(
+                        member.Value, root, childPointer, instanceDepth, visitedRefs, found);
+                    break;
+
+                case "dependentSchemas":
+                    foreach (var dependent in member.Value.EnumerateObject())
+                    {
+                        CollectForbiddenPropertyDepths(
+                            dependent.Value, root, $"{childPointer}/{dependent.Name}",
+                            instanceDepth, visitedRefs, found);
+                    }
+
+                    break;
+
+                // Everything else (description, type, enum, required, default, $comment, …) is
+                // not a subschema and is deliberately not descended into.
+                default:
+                    break;
+            }
+        }
     }
 }

@@ -44,6 +44,29 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- Security-profile registry seam (authenticated-infrastructure-mtls, slice C — M2 of the
+       second peer-review round).  This project is PACKABLE with GenerateDocumentationFile=true,
+       so anything `public` in it ships on NuGet with its XML docs.  The spec's Out-of-scope
+       section records that no security-profile extension interface is published until a second
+       profile exists to design a frozen abstraction from; ISecurityProfileWiring,
+       SecurityProfileRegistry and friends are therefore `internal` (see
+       Schema/SecurityProfileRegistry.cs's own header) and reach their two legitimate
+       cross-assembly consumers through these grants instead:
+         • Vouchfx.Engine.Runtime — NOT packable; hosts SecurityProfileWiringValidator (internal)
+           and ProviderPipeline.Compile (internal), both of which take a registry parameter.
+         • Vouchfx.Engine.Runtime.Tests — drives those two with reduced registries (REQ-022's
+           own red-first acceptance).
+       Vouchfx.Engine.Compilation.Tests is already granted above.  Adding a grant here widens the
+       seam; making any of those types `public` PUBLISHES it — a different decision entirely. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
     <PackageReference Include="JsonSchema.Net" />

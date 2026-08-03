@@ -324,7 +324,8 @@ internal static class SchemaErrorCollector
         // that is about to be dropped anyway.
         var afterCompositeSuppression = SuppressSatisfiedCompositeBranchNoise(collected, groupStates);
         var afterEnumConstDedup = SuppressRedundantConstWhenEnumPresent(afterCompositeSuppression);
-        var survivors = SuppressUnevaluatedPropertiesCascade(afterEnumConstDedup);
+        var afterForbiddenContainerSubsumption = SuppressErrorsInsideForbiddenContainer(afterEnumConstDedup);
+        var survivors = SuppressUnevaluatedPropertiesCascade(afterForbiddenContainerSubsumption);
 
         var errors = new List<SchemaValidationError>(survivors.Count);
         foreach (var error in survivors)
@@ -660,6 +661,116 @@ internal static class SchemaErrorCollector
             }
 
             survivors.Add(error);
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
+    /// Drops every error located strictly INSIDE an object that a boolean <c>false</c> subschema
+    /// has already rejected outright (H-A, peer review — held item, fix round 2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>properties/&lt;name&gt;: false</c> idiom this schema uses for every conditional
+    /// exclusion (<c>$defs/dependency</c>'s per-kind <c>schemaRegistry</c>/<c>queues</c>/<c>topics</c>
+    /// clauses and, since M1, its <c>security</c> clause; <c>$defs/security</c>'s own
+    /// <c>clientCert</c>/<c>clientKey</c> pair; <c>$defs/serviceHealthCheck</c>'s
+    /// <c>port</c>/<c>path</c> pair; storage-assert.s3's and db-assert.dynamodb's
+    /// <c>exists: false</c> shapes) rejects the property REGARDLESS of its contents. Every other
+    /// keyword still evaluates that same subtree independently, so a forbidden OBJECT-valued
+    /// property reports its own rejection PLUS one error per defect inside it — a
+    /// <c>required</c> field it omits, a <c>pattern</c> its discriminator fails, an unrecognised
+    /// key its own closure rejects. All of those are moot: the container may not be there at
+    /// all, so what is wrong INSIDE it cannot be the author's next action.
+    /// </para>
+    /// <para>
+    /// Measured before this pass existed: <c>profile: TLS</c> on a redis dependency emitted TWO
+    /// errors (the <c>[pattern]</c> miss and the per-kind narrowing's own finding) where the same
+    /// value on a SERVICE — which carries no per-kind narrowing — emitted ONE. Three review
+    /// rounds passed over the asymmetry because both the corpus fixture and the unit assertion
+    /// for a wrong-cased profile exercised it only on a service. The gatekeeper's original remedy
+    /// (mirror <see cref="SuppressRedundantConstWhenEnumPresent"/>, keyed on <c>pattern</c>
+    /// instead of <c>enum</c>) was written against the OLD schema, where the second error was a
+    /// sibling <c>const</c> at the identical location; M1 replaced that <c>const</c> with a
+    /// boolean <c>false</c> one level UP, so a same-location keyword-pair rule no longer matches
+    /// the shape at all. Subsumption by container is the rule that does — and it is strictly more
+    /// general, covering the <c>required</c>, <c>unevaluatedProperties</c> and
+    /// <c>minLength</c> children the keyword-pair rule never reached.
+    /// </para>
+    /// <para>
+    /// Scoped by CONTAINMENT, not by container name: an error survives unless some OTHER error in
+    /// the same document rejected its own location, or a strict ancestor of it, via this exact
+    /// shape. Containment is <see cref="IsPathOrDescendant"/> — RFC 6901 SEGMENT boundaries, not a
+    /// raw character prefix; a sibling property whose name merely begins with the forbidden
+    /// container's (<c>securityExtra</c> beside a forbidden <c>security</c>) is NOT inside it and
+    /// must survive. <see cref="IsForbiddenPropertyShape"/> is re-used verbatim as the predicate, so this
+    /// pass recognises exactly the shapes <see cref="FormatForbiddenPropertyError"/> renders and
+    /// nothing else — a scalar-valued forbidden property (<c>clientCert</c>, <c>path</c>) has no
+    /// children and no same-location siblings to subsume, and is a no-op.
+    /// </para>
+    /// <para>
+    /// SAME-LOCATION errors are subsumed too, not only strictly-nested ones, because
+    /// <c>required</c> always reports against the CONTAINER missing the property rather than
+    /// against the property itself: a forbidden <c>security</c> block that also omits its required
+    /// <c>endpoint</c> produces both errors at the identical pointer, and the <c>required</c> one
+    /// is exactly as moot as a nested one. A forbidden-shape error is never dropped by this rule
+    /// (it would otherwise subsume itself), so two forbidden properties rejected at the same
+    /// location both survive, and two NESTED forbidden containers collapse to the outermost —
+    /// the one an author must act on.
+    /// </para>
+    /// </remarks>
+    private static List<CollectedError> SuppressErrorsInsideForbiddenContainer(List<CollectedError> errors)
+    {
+        HashSet<string>? forbiddenLocations = null;
+        foreach (var error in errors)
+        {
+            if (IsForbiddenPropertyShape(error.Keyword, error.EvaluationPath))
+            {
+                forbiddenLocations ??= new HashSet<string>(StringComparer.Ordinal);
+                forbiddenLocations.Add(error.InstanceLocation);
+            }
+        }
+
+        // Fast path: nothing in this document was rejected by a boolean 'false' subschema, so
+        // there is no container for anything to be inside of — mirrors the other suppression
+        // passes' own early-out shape.
+        if (forbiddenLocations is null)
+            return errors;
+
+        var survivors = new List<CollectedError>(errors.Count);
+        foreach (var error in errors)
+        {
+            // A forbidden-shape error is the SUBSUMING one, never the subsumed one.
+            if (IsForbiddenPropertyShape(error.Keyword, error.EvaluationPath))
+            {
+                survivors.Add(error);
+                continue;
+            }
+
+            var subsumed = false;
+            foreach (var forbiddenLocation in forbiddenLocations)
+            {
+                // MAJOR-1 (peer review, fix round 3): the shared helper, not an inline
+                // equality-or-StartsWith pair re-derived here. The two were equivalent, but the
+                // helper is where the segment-boundary trap is DOCUMENTED ('/steps/10' is not a
+                // descendant of '/steps/1'), and a rule whose rationale lives on a method it does
+                // not call is one edit away from losing it. It also drops a string allocation per
+                // (error × container) pair. Pinned in the survives direction by
+                // EnvironmentSchemaTests.Dependency_Security_ForbiddenContainer_DoesNotMuteSiblingsOrPrefixSharingProperties,
+                // which is the ONLY test in the repository that fails if this containment check
+                // degrades to a raw prefix test (measured: 1 failure in 723).
+                if (IsPathOrDescendant(forbiddenLocation, error.InstanceLocation))
+                {
+                    subsumed = true;
+                    break;
+                }
+            }
+
+            if (!subsumed)
+            {
+                survivors.Add(error);
+            }
         }
 
         return survivors;
@@ -1265,6 +1376,51 @@ internal static class SchemaErrorCollector
             {
                 var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
 
+                // REQ-021, as tightened by M1 (peer review, fix round 2): 'security' is forbidden
+                // on every dependency kind except kafka, and the generic "Property 'x' is not
+                // valid on a 'redis' dependency" wording above is the WRONG diagnosis for it. An
+                // author reading that concludes they wrote the block in the wrong PLACE, or under
+                // the wrong KEY; the truth is narrower and more useful — the block is understood
+                // perfectly well, no security profile is wired for that dependency kind IN THIS
+                // RELEASE, and the working alternative (declare the technology as a service) is
+                // one line away. This is also why the clause is a boolean 'false' on the whole
+                // block rather than a pin on 'security.profile': pinning the profile can only
+                // ever say "you picked the wrong value", which would be a lie — no value works.
+                if (propertyName == "security")
+                {
+                    // NIT-1 + SEC-4 (peer review, fix round 3). Two bounds on this ONE branch,
+                    // both because M1 made it the message an author hits first:
+                    //   • The kind is named as "dependency kind '<x>'", never "a '<x>'
+                    //     dependency" — the article cannot agree with a value that is DATA
+                    //     (a 'azureservicebus' / a 'elasticsearch'), and picking it from the
+                    //     next character's vowel-ness would still be wrong for a kind such as
+                    //     'unified'. Dropping the article is the robust fix, not a cleverer test.
+                    //   • Both interpolated values are author-controlled and length-unbounded
+                    //     (the container NAME is a YAML key; the KIND is whatever 'type' holds,
+                    //     which on this path has failed its own enum and so may be arbitrary),
+                    //     so both go through TruncateForDisplay — the same bound
+                    //     FormatEnumError already applies to an offending scalar. Deliberately
+                    //     scoped to this branch: the generic messages below are pre-existing,
+                    //     unbounded like every other interpolation in this class, and widening
+                    //     that is a separate change.
+                    var displayName = TruncateForDisplay(containerName);
+
+                    if (dependencyKind is null)
+                    {
+                        return $"[properties] Dependency '{displayName}' declares 'security', but no " +
+                               "security profile is wired for this dependency kind in this release — " +
+                               "declare it under 'environment.services' instead, where every registered " +
+                               "profile is wired.";
+                    }
+
+                    var displayKind = TruncateForDisplay(dependencyKind);
+
+                    return $"[properties] Dependency '{displayName}' (type '{displayKind}') declares " +
+                           $"'security', but no security profile is wired for dependency kind " +
+                           $"'{displayKind}' in this release — only a 'kafka' dependency, or a declared " +
+                           "service, can carry a 'security' block today.";
+                }
+
                 return dependencyKind is null
                     ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
                     : $"[properties] Property '{propertyName}' is not valid on a '{dependencyKind}' dependency";
@@ -1686,8 +1842,21 @@ internal static class SchemaErrorCollector
     /// <summary>
     /// Truncates <paramref name="value"/> to <see cref="MaxOffendingValueChars"/>
     /// with a "… (N chars total)" tail when it exceeds that bound, returning
-    /// it unchanged otherwise.
+    /// it unchanged otherwise. Never splits a UTF-16 surrogate pair.
     /// </summary>
+    /// <remarks>
+    /// SEC-2 (peer review, fix round 3): the cut index is a CHAR index, so a naive
+    /// <c>value[..MaxOffendingValueChars]</c> slice can land exactly between a high surrogate
+    /// and its low-surrogate partner when the author-controlled value contains an astral-plane
+    /// character — measured with <c>ESC + 198×'a' + U+1F600</c> (length 201), where the cut fell
+    /// between the two halves and <c>System.Text.Json</c> wrote U+FFFD. A lone surrogate is
+    /// invalid UTF-16 and can throw when later serialised or transcoded, which would turn a
+    /// length-limit safeguard into a new crash vector. Backing off mirrors
+    /// <c>SuiteSetLoader.TruncateParseErrorMessage</c>, which already made exactly this fix for
+    /// the planner's own bounded field — the same idiom, deliberately, so the two do not drift.
+    /// The loop (rather than a single decrement) also survives malformed input carrying
+    /// consecutive unpaired high surrogates.
+    /// </remarks>
     private static string TruncateForDisplay(string value)
     {
         if (value.Length <= MaxOffendingValueChars)
@@ -1695,8 +1864,14 @@ internal static class SchemaErrorCollector
             return value;
         }
 
+        var cut = MaxOffendingValueChars;
+        while (cut > 0 && char.IsHighSurrogate(value[cut - 1]))
+        {
+            cut--;
+        }
+
         var totalChars = value.Length.ToString(CultureInfo.InvariantCulture);
-        return $"{value[..MaxOffendingValueChars]}… ({totalChars} chars total)";
+        return $"{value[..cut]}… ({totalChars} chars total)";
     }
 
     /// <summary>
@@ -1740,12 +1915,28 @@ internal static class SchemaErrorCollector
     /// pairing is suppressed upstream by <see cref="SuppressRedundantConstWhenEnumPresent"/>
     /// before this method is ever reached for it, so this method only ever sees a
     /// healthCheck.type <c>const</c> that has no enum sibling — a valid enum member (e.g.
-    /// <c>"http"</c>) failing the narrower ports-only conditional. Every OTHER <c>const</c>
-    /// in the composed schema still belongs to a dependency-kind discriminator clause
-    /// ($defs/dependency's <c>allOf</c>/<c>if</c>/<c>then</c> chain), which
-    /// <see cref="IsIfDiscriminatorNoise"/> filters out before this method is ever reached
-    /// (see the class remarks). A future provider-authored <c>const</c> falls through to the
-    /// generic branch below rather than borrowing either named case's specific advice.
+    /// <c>"http"</c>) failing the narrower ports-only conditional.
+    /// </para>
+    /// <para>
+    /// H-B (peer review, held item — corrected in fix round 2, and the correction is now
+    /// self-enforcing). This paragraph used to assert that every OTHER <c>const</c> in the
+    /// composed schema belongs to a discriminator clause "which <see cref="IsIfDiscriminatorNoise"/>
+    /// filters out before this method is ever reached". That was false while REQ-021's own
+    /// narrowing pinned <c>security.profile</c> to <c>const: "tls"</c>: that <c>const</c> sat in
+    /// a <c>then</c>, not an <c>if</c>, so it was NOT filtered and did reach this method — which
+    /// is exactly why this method carried a third, <c>security.profile</c>-specific branch.
+    /// M1's schema tightening deleted that clause (a non-kafka dependency now rejects the whole
+    /// <c>security</c> block via a boolean <c>false</c> subschema, a <c>properties</c> shape
+    /// handled by <see cref="FormatForbiddenPropertyError"/>, never a <c>const</c>), and the
+    /// branch went with it. The claim is therefore true again TODAY — measured, not assumed:
+    /// <c>SchemaErrorCollectorTests.ComposedSchema_DeclaresNoThenClauseConst_OutsideTheTwoNamedShapes</c>
+    /// walks the live composed schema and fails the moment a third <c>then</c>-clause
+    /// <c>const</c> appears, so the next one to be added is caught here rather than silently
+    /// inheriting the generic message.
+    /// </para>
+    /// <para>
+    /// A future provider-authored <c>const</c> falls through to the generic branch below rather
+    /// than borrowing either named case's specific advice.
     /// </para>
     /// <para>
     /// The expected value is still read from the LIVE composed schema via
@@ -1784,50 +1975,6 @@ internal static class SchemaErrorCollector
                    "sibling 'httpPort' — no HTTP endpoint exists there for anything but a 'tcp' " +
                    $"probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ " +
                    $"type: {expectedValue} }}'.";
-        }
-
-        // REQ-021: 'security.profile' pinned to a single value on a dependency kind this
-        // release does not wire the offending profile for (today, only 'mtls' on any kind
-        // other than kafka — see $defs/dependency's own final allOf clause). Names BOTH
-        // halves the acceptance criterion requires: the dependency's own kind (read back
-        // from the instance, exactly like FormatForbiddenPropertyError's dependencyKind
-        // branch already does for a forbidden field) and the rejected profile value.
-        if (TryResolveSecurityProfileContainer(instanceLocation, out var dependencyName))
-        {
-            // G-MAJOR-1 (gatekeeper): this REQ-021 per-kind narrowing occupies the IDENTICAL
-            // instance location as REQ-019's own unknown-profile registry cross-check
-            // (DocumentValidator.CollectUnknownSecurityProfileErrors) for every non-kafka
-            // dependency kind — kafka carries no per-kind narrowing at all, so an unregistered
-            // profile there reaches that cross-check directly, but on the other twelve kinds
-            // ANY non-'tls' value fails THIS const clause first, and DocumentValidator's own
-            // pointer-keyed deferral (needed to avoid double-reporting a wrong-cased [pattern]
-            // value, the mirror of issue #265) then always yields to whatever this method
-            // renders here. Left unguarded, that meant an unregistered profile (a typo, or a
-            // name that was never registered at all) on 12 of 13 dependency kinds rendered
-            // "only 'tls' is wired for this kind" — a message that ASSERTS the profile IS a
-            // recognised mechanism, merely unwired here, when no such mechanism exists
-            // anywhere. Consulting the SAME registry DocumentValidator itself consults (both
-            // live in this Compilation assembly) closes the gap: an offending value that is
-            // not registered AT ALL falls through to the identical "unknown security profile"
-            // wording DocumentValidator would have used had the pointer been free, so an
-            // author sees exactly one message and it is the true one, on every dependency
-            // kind alike. A REGISTERED-but-unwired profile (e.g. 'mtls' on redis) is a
-            // genuinely different defect — the kind-narrowing message below still names it.
-            if (!SecurityProfileRegistry.BuiltIn.TryGet(offendingValue, out _))
-            {
-                return SecurityProfileRegistry.BuiltIn.DescribeUnknownProfile(TruncateForDisplay(offendingValue));
-            }
-
-            var dependencyKind = instance is { } instanceRootForKind
-                ? TryResolveContainerType(instanceLocation[..instanceLocation.LastIndexOf('/')], instanceRootForKind)
-                : null;
-
-            return dependencyKind is null
-                ? $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
-                  $"'{expectedValue}'."
-                : $"[const] Dependency '{dependencyName}' (type '{dependencyKind}') declares " +
-                  $"'security.profile: {TruncateForDisplay(offendingValue)}', but only " +
-                  $"'{expectedValue}' is wired for this kind.";
         }
 
         return $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
@@ -2317,38 +2464,6 @@ internal static class SchemaErrorCollector
         }
 
         serviceName = string.Empty;
-        return false;
-    }
-
-    /// <summary>
-    /// Recognises the pointer shape
-    /// <c>/environment/dependencies/&lt;name&gt;/security/profile</c> (REQ-021's per-kind
-    /// narrowing — <see cref="FormatConstError"/>'s dedicated branch) and extracts the
-    /// owning dependency's own map key. SERVICE-only pointers never match: no per-kind
-    /// narrowing is declared on <c>$defs/service</c> (every profile validates on every
-    /// service), so a <c>const</c> failure at this exact shape can only ever originate
-    /// from a dependency's own per-kind <c>allOf</c> clause in <c>$defs/dependency</c>.
-    /// </summary>
-    /// <param name="instanceLocation">The failing node's own instance-location pointer.</param>
-    /// <param name="dependencyName">
-    /// Set to the resolved dependency's own map key on a successful resolve;
-    /// <see cref="string.Empty"/> otherwise.
-    /// </param>
-    private static bool TryResolveSecurityProfileContainer(string instanceLocation, out string dependencyName)
-    {
-        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        if (segments.Length == 5 &&
-            segments[0] == "environment" &&
-            segments[1] == "dependencies" &&
-            segments[3] == "security" &&
-            segments[4] == "profile")
-        {
-            dependencyName = DecodePointerSegment(segments[2]);
-            return true;
-        }
-
-        dependencyName = string.Empty;
         return false;
     }
 

@@ -16,12 +16,33 @@ namespace Vouchfx.Sdk;
 /// The declared shape of a single entry in <see cref="IProjectContext.DeclaredServices"/>.
 /// </summary>
 /// <param name="EndpointNames">
-/// The Aspire endpoint names this entry exposes — see
-/// <see cref="IProjectContext.DeclaredServices"/>'s own remarks for what populates this per
-/// source. Empty for a project-form service, whose endpoints Aspire auto-discovers from the
-/// project's own launch profile rather than this engine naming them.
+/// The Aspire endpoint names this entry exposes — e.g. <c>["http"]</c> for the implicit default
+/// HTTP endpoint of an <c>image:</c>-form service, or <c>["tcp-9093"]</c> for a declared
+/// <c>ports: [9093]</c> entry. Empty for a project-form service, whose endpoints Aspire
+/// auto-discovers from the project's own launch profile rather than this engine naming them.
 /// </param>
 /// <remarks>
+/// <para>
+/// m5 (peer review, fix round 2): the parameter documentation above used to forward to
+/// <see cref="IProjectContext.DeclaredServices"/>'s own remarks "for what populates this per
+/// source", and those remarks do not answer it for one of the three sources they enumerate. For
+/// a HOST-RESOURCE entry — a <c>webhook-listen.http</c> listener, a <c>trace-expect.otlp</c>
+/// receiver — this list holds the contributing requirement's
+/// <see cref="HostResourceRequirement.Kind"/> (e.g. <c>["webhook-listener"]</c>), which is a
+/// resource-kind discriminator, NOT an Aspire endpoint name. The forward is therefore replaced
+/// by the concrete examples above, and the exception stated here rather than left to a reader to
+/// discover by inspecting <c>ProviderPipeline</c>'s own service-map construction.
+/// </para>
+/// <para>
+/// MINOR-1 (peer review, fix round 3): the paragraph below used to be a SECOND, consecutive
+/// <c>&lt;remarks&gt;</c> element on this same member. <c>Vouchfx.Sdk</c> is packable with
+/// <c>GenerateDocumentationFile=true</c>, and documentation renderers show only the FIRST
+/// <c>&lt;remarks&gt;</c> — so the block that silently disappeared from the emitted
+/// <c>Vouchfx.Sdk.xml</c> was the one carrying the binary-compatibility rule, on a type inside
+/// the frozen v1 contract. Merged into one element with two <c>&lt;para&gt;</c> blocks, the
+/// shape every other file in this change already uses.
+/// </para>
+/// <para>
 /// A record (not a bare <see cref="IReadOnlyList{T}"/>) so a later addition — e.g. a flag
 /// distinguishing an external, engine-unmanaged target from one the engine starts — is a
 /// purely additive, init-only property, never a breaking change to this already-shipped shape.
@@ -32,5 +53,6 @@ namespace Vouchfx.Sdk;
 /// positional parameter would change this record's primary constructor's parameter
 /// order/arity and its compiler-generated <c>Deconstruct</c> — a binary-breaking change for any
 /// already-compiled caller. An init-only property is purely additive.
+/// </para>
 /// </remarks>
 public sealed record DeclaredServiceInfo(IReadOnlyList<string> EndpointNames);

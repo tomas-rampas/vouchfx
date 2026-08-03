@@ -1,12 +1,21 @@
-# expected-instance-location: /environment/dependencies/cache/security/profile
-# expected-keyword: const
+# expected-instance-location: /environment/dependencies/cache/security
+# expected-keyword: properties
 #
-# REQ-021: 'security.profile: mtls' is narrowed to the dependency kinds this release
-# actually wires client certificates for — today, only kafka. $defs/dependency's own
-# final allOf clause pins 'profile' to 'tls' for every OTHER kind via an allow-list
-# ('not: { const: "kafka" }' in the condition, never enumerating every excluded
-# kind), so 'mtls' on a redis dependency is rejected here — freeze-critical because
-# it is a NARROWING: added after 1.0 it would reject suites that validated before.
+# REQ-021: a 'security' block is narrowed to the target kinds this release actually
+# wires a client connection for — today, a kafka dependency or any declared service.
+# $defs/dependency's own final allOf clause forbids the block outright ('security':
+# false) for every OTHER kind via an allow-list ('not: { const: "kafka" }' in the
+# condition, never enumerating every excluded kind), so 'mtls' on a redis dependency
+# is rejected here — freeze-critical because it is a NARROWING: added after 1.0 it
+# would reject suites that validated before.
+#
+# The pins moved in M1 (second peer-review round): the clause used to pin 'profile' to
+# the const 'tls', so this fixture's error landed at .../security/profile with keyword
+# 'const'. It now lands one segment shallower, at the block the clause rejects, with
+# the boolean-'false' subschema's own 'properties' keyword — and the message says no
+# profile is wired for this kind rather than implying 'tls' would have worked. The
+# sibling fixture security-tls-non-kafka-dependency.e2e.yaml pins the SAME clause for
+# the 'tls' case, which that tightening moved out of Corpus/Accepted.
 metadata:
   name: rejected-security-mtls-non-kafka-dependency
 environment:

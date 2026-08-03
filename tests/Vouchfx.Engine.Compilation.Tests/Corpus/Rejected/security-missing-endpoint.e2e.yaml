@@ -1,16 +1,23 @@
-# expected-instance-location: /environment/dependencies/cache/security
+# expected-instance-location: /environment/dependencies/events-kafka/security
 # expected-keyword: required
 #
 # REQ-002 (mandatory explicit endpoint selector): 'endpoint' is required whenever a
-# 'security' block is present, for both modes — an implicit "first endpoint" default
+# 'security' block is present, for both profiles — an implicit "first endpoint" default
 # would silently resolve to an unauthenticated listener kept open beside the secured
-# one. A security block declaring 'mode' but omitting 'endpoint' is rejected here.
+# one. A security block declaring 'profile' but omitting 'endpoint' is rejected here.
+#
+# Uses 'type: kafka' (not redis) deliberately (REQ-021, as tightened by M1): kafka is
+# the only dependency kind that accepts a 'security' block at all, so this fixture pins
+# ONLY the endpoint-required rule, undisturbed by the separate per-kind narrowing a
+# non-kafka kind would also trip — the same discipline
+# security-mtls-missing-clientcert.e2e.yaml already applies. The narrowing itself is
+# pinned by security-tls-non-kafka-dependency.e2e.yaml.
 metadata:
   name: rejected-security-missing-endpoint
 environment:
   dependencies:
-    cache:
-      type: redis
+    events-kafka:
+      type: kafka
       security:
         profile: tls
 steps:

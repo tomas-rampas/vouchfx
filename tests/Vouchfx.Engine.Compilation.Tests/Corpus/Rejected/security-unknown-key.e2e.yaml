@@ -1,4 +1,4 @@
-# expected-instance-location: /environment/dependencies/cache/security/bogus
+# expected-instance-location: /environment/dependencies/events-kafka/security/bogus
 # expected-keyword: unevaluatedProperties
 #
 # REQ-020: $defs/security now carries 'unevaluatedProperties: false' (replacing
@@ -8,15 +8,22 @@
 # dependency, exactly as it was under the old keyword — SchemaErrorCollector's
 # unevaluatedProperties branch resolves the environment container the same way its
 # additionalProperties branch already did.
+#
+# Uses 'type: kafka' (not redis) deliberately (REQ-021, as tightened by M1): on any
+# other dependency kind the whole 'security' block is now rejected, and
+# SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer would correctly subsume
+# this fixture's own nested finding into that one — leaving nothing at the pinned
+# location. Kafka accepts the block, so this fixture keeps pinning REQ-020's closure and
+# nothing else.
 metadata:
   name: rejected-security-unknown-key
 environment:
   dependencies:
-    cache:
-      type: redis
+    events-kafka:
+      type: kafka
       security:
         profile: tls
-        endpoint: 6380
+        endpoint: 9093
         bogus: true
 steps:
   - id: noop
