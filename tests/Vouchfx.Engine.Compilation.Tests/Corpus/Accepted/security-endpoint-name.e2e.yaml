@@ -9,7 +9,7 @@ environment:
     events:
       type: kafka
       security:
-        mode: tls
+        profile: tls
         endpoint: kafka-ssl
 steps:
   - id: noop

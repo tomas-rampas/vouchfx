@@ -41,9 +41,9 @@ public sealed class HttpRestExecutionTests
     /// target reconciliation, so declaring it here keeps that concern out of each test body).
     /// </summary>
     private static readonly StubProjectContext s_svcDeclaredContext = new(
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["svc"] = new List<string> { "http" },
+            ["svc"] = new DeclaredServiceInfo(new List<string> { "http" }),
         });
 
     /// <summary>
@@ -656,9 +656,9 @@ public sealed class HttpRestExecutionTests
     {
         var provider = new HttpRestProvider();
         var ctx = new StubProjectContext(
-            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
             {
-                ["orders-api"] = new List<string> { "http" },
+                ["orders-api"] = new DeclaredServiceInfo(new List<string> { "http" }),
             },
             dependencies: new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -812,11 +812,11 @@ public sealed class HttpRestExecutionTests
     private sealed class StubProjectContext : IProjectContext
     {
         internal StubProjectContext(
-            IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null,
+            IReadOnlyDictionary<string, DeclaredServiceInfo>? services = null,
             IReadOnlyDictionary<string, string>? dependencies = null)
         {
             DeclaredServices = services
-                ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+                ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
             DeclaredDependencies = dependencies
                 ?? new Dictionary<string, string>(StringComparer.Ordinal);
         }
@@ -828,6 +828,6 @@ public sealed class HttpRestExecutionTests
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
         /// <inheritdoc />
-        public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+        public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
     }
 }

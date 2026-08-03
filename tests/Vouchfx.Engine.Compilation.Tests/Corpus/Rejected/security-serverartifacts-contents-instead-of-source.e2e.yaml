@@ -14,7 +14,7 @@ environment:
     events-kafka:
       type: kafka
       security:
-        mode: tls
+        profile: tls
         endpoint: 9093
         serverArtifacts:
           - contents: "not a real file, this must be rejected"

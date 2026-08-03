@@ -79,27 +79,27 @@ public sealed class TestProjectContext : IProjectContext
     /// process's current directory.
     /// </param>
     /// <param name="declaredServices">
-    /// Map of service name to the endpoint/port names it exposes, as would be declared
-    /// under <c>environment.services</c> in a scenario file. Pass <see langword="null"/>
-    /// to use an empty map — the default for a suite that declares no services.
+    /// Map of service name to its declared shape, as would be declared under
+    /// <c>environment.services</c> in a scenario file. Pass <see langword="null"/> to use
+    /// an empty map — the default for a suite that declares no services.
     /// </param>
     public TestProjectContext(
         IReadOnlyDictionary<string, string>? declaredDependencies,
         string? suiteDirectory,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? declaredServices)
+        IReadOnlyDictionary<string, DeclaredServiceInfo>? declaredServices)
     {
         DeclaredDependencies = declaredDependencies
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
         SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
         DeclaredServices = declaredServices
-            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <inheritdoc />
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <inheritdoc />
     public string SuiteDirectory { get; }

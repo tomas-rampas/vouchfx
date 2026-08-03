@@ -144,7 +144,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     // ── 2. REQ-004(b): an undeclared optional field is absent, not missing ──
 
     /// <summary>
-    /// A suite declaring <c>security: { mode: mtls, endpoint: 9093, clientCert: ...,
+    /// A suite declaring <c>security: { profile: mtls, endpoint: 9093, clientCert: ...,
     /// clientKey: ... }</c> with NO <c>caCert</c> field at all must pass this preflight
     /// stage cleanly — no error is raised for the absent field (REQ-004 acceptance (b)).
     /// </summary>
@@ -478,10 +478,10 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
             environment:
               dependencies:
                 mq:
-                  type: rabbitmq
+                  type: kafka
                   security:
-                    mode: mtls
-                    endpoint: 5671
+                    profile: mtls
+                    endpoint: 9093
                     clientCert: ./certs/client.pem
                     clientKey: ./certs/client-key.pem
             steps:
@@ -508,10 +508,10 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
             environment:
               dependencies:
                 mq:
-                  type: rabbitmq
+                  type: kafka
                   security:
-                    mode: mtls
-                    endpoint: 5671
+                    profile: mtls
+                    endpoint: 9093
                     clientCert: ./certs/client.pem
                     clientKey: ./certs/client-key.pem
             steps:
@@ -712,9 +712,11 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     /// <summary>
     /// Every failure <see cref="EnvironmentSecurityValidator.Validate"/> itself raises —
     /// here, a declared-but-blank <c>caCert</c> — carries
-    /// <see cref="ValidationFailure.IsSecurityPreflight"/> set. This is the ONLY producer
-    /// of that marker in the pipeline (see <see cref="ValidationFailure.IsSecurityPreflight"/>'s
-    /// own remarks).
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/> set. G-MINOR-1 (gatekeeper,
+    /// authenticated-infrastructure-mtls slice C): this is one of TWO producers of that
+    /// marker in the pipeline now — <c>SecurityProfileWiringValidator</c> (REQ-022) also sets
+    /// it — see <see cref="ValidationFailure.IsSecurityPreflight"/>'s own remarks for both and
+    /// why; this file's own tests only ever drive the first.
     /// </summary>
     [Fact]
     public void Validate_Failure_CarriesSecurityPreflightMarker()

@@ -16,7 +16,7 @@
 // header note: each concern gets a dedicated static class so it is tested in isolation.
 //
 // Scope note (PR A only): this validates ONLY the host-filesystem shape of declared
-// paths. It does not resolve `mode`/`endpoint` (REQ-002's requiredness is enforced by
+// paths. It does not resolve `profile`/`endpoint` (REQ-002's requiredness is enforced by
 // the JSON Schema layer alone), does not probe the endpoint (REQ-005, a later PR), and
 // does not orchestrate the actual container-file copy (REQ-016, a later PR).
 

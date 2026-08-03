@@ -324,7 +324,42 @@ internal static class SchemaErrorCollector
         // that is about to be dropped anyway.
         var afterCompositeSuppression = SuppressSatisfiedCompositeBranchNoise(collected, groupStates);
         var afterEnumConstDedup = SuppressRedundantConstWhenEnumPresent(afterCompositeSuppression);
-        var survivors = SuppressUnevaluatedPropertiesCascade(afterEnumConstDedup);
+        var afterForbiddenContainerSubsumption = SuppressErrorsInsideForbiddenContainer(afterEnumConstDedup);
+
+        // QUESTION-1 (peer review, fix round 4) — why SuppressErrorsInsideForbiddenContainer
+        // running BEFORE the cascade cannot change the cascade's decision. The cascade drops a
+        // step's unevaluatedProperties entries only when that step still carries some OTHER
+        // error, so a pass that removes errors ahead of it could in principle flip that. It
+        // cannot here, and the reason is STRUCTURAL rather than a happy accident of today's
+        // schema:
+        //
+        //   • The two scopes DO overlap already, so "they cannot interact" is not the argument.
+        //     Measured: $defs/captureEntry's own 'jsonpath' present => '"xpath": false' clause
+        //     plants a forbidden container at /steps/<N>/capture/<var>/xpath, and provider
+        //     fragments plant more (storage-assert.s3's exists:false content fields,
+        //     db-assert.dynamodb's expect.item) — all inside the cascade's /steps/<N> scope.
+        //   • SuppressErrorsInsideForbiddenContainer drops an error E only when some
+        //     forbidden-shape error F is E's own location or a strict ancestor of it, and F
+        //     itself is short-circuited into the survivor list before the containment test — so
+        //     F always reaches the cascade.
+        //   • F is never an unevaluatedProperties error: IsForbiddenPropertyShape requires the
+        //     evaluation path's penultimate segment to be 'properties', IsUnevaluatedPropertiesShape
+        //     requires its final segment to be 'unevaluatedProperties'. F therefore always counts
+        //     as an "other error" for the cascade.
+        //   • TryGetStepScope reads only the first two pointer segments, and F is a
+        //     segment-boundary prefix of E. For F to fall OUTSIDE E's step scope it would have to
+        //     sit at /steps/<N>, /steps, or the root — but a forbidden-property shape's location
+        //     is always an object property's own pointer, and /steps/<N> is an array element
+        //     (reached via 'items', never 'properties'), so no 'properties/<name>: false' clause
+        //     can produce one.
+        //
+        // Net: every error this pass removes from a step leaves behind a surviving,
+        // non-unevaluatedProperties error in that SAME step scope, so membership of the cascade's
+        // stepsWithOtherErrors set is preserved exactly. The invariant that carries the argument
+        // (F's short-circuit) lives in another method, so it is pinned by test rather than left to
+        // this comment — see
+        // SchemaErrorCollectorTests.StepScopedForbiddenContainer_StillSuppressesTheCascade.
+        var survivors = SuppressUnevaluatedPropertiesCascade(afterForbiddenContainerSubsumption);
 
         var errors = new List<SchemaValidationError>(survivors.Count);
         foreach (var error in survivors)
@@ -666,6 +701,133 @@ internal static class SchemaErrorCollector
     }
 
     /// <summary>
+    /// Drops every error located strictly INSIDE an object that a boolean <c>false</c> subschema
+    /// has already rejected outright (H-A, peer review — held item, fix round 2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>properties/&lt;name&gt;: false</c> idiom this schema uses for every conditional
+    /// exclusion (<c>$defs/dependency</c>'s per-kind <c>schemaRegistry</c>/<c>queues</c>/<c>topics</c>
+    /// clauses and, since M1, its <c>security</c> clause; <c>$defs/security</c>'s own
+    /// <c>clientCert</c>/<c>clientKey</c> pair; <c>$defs/serviceHealthCheck</c>'s
+    /// <c>port</c>/<c>path</c> pair; storage-assert.s3's and db-assert.dynamodb's
+    /// <c>exists: false</c> shapes) rejects the property REGARDLESS of its contents. Every other
+    /// keyword still evaluates that same subtree independently, so a forbidden OBJECT-valued
+    /// property reports its own rejection PLUS one error per defect inside it — a
+    /// <c>required</c> field it omits, a <c>pattern</c> its discriminator fails, an unrecognised
+    /// key its own closure rejects. All of those are moot: the container may not be there at
+    /// all, so what is wrong INSIDE it cannot be the author's next action.
+    /// </para>
+    /// <para>
+    /// Measured before this pass existed: <c>profile: TLS</c> on a redis dependency emitted TWO
+    /// errors (the <c>[pattern]</c> miss and the per-kind narrowing's own finding) where the same
+    /// value on a SERVICE — which carries no per-kind narrowing — emitted ONE. Three review
+    /// rounds passed over the asymmetry because both the corpus fixture and the unit assertion
+    /// for a wrong-cased profile exercised it only on a service. The gatekeeper's original remedy
+    /// (mirror <see cref="SuppressRedundantConstWhenEnumPresent"/>, keyed on <c>pattern</c>
+    /// instead of <c>enum</c>) was written against the OLD schema, where the second error was a
+    /// sibling <c>const</c> at the identical location; M1 replaced that <c>const</c> with a
+    /// boolean <c>false</c> one level UP, so a same-location keyword-pair rule no longer matches
+    /// the shape at all. Subsumption by container is the rule that does — and it is strictly more
+    /// general, covering the <c>required</c>, <c>unevaluatedProperties</c> and
+    /// <c>minLength</c> children the keyword-pair rule never reached.
+    /// </para>
+    /// <para>
+    /// Scoped by CONTAINMENT, not by container name: an error survives unless some OTHER error in
+    /// the same document rejected its own location, or a strict ancestor of it, via this exact
+    /// shape. Containment is <see cref="IsPathOrDescendant"/> — RFC 6901 SEGMENT boundaries, not a
+    /// raw character prefix; a sibling property whose name merely begins with the forbidden
+    /// container's (<c>securityExtra</c> beside a forbidden <c>security</c>) is NOT inside it and
+    /// must survive. <see cref="IsForbiddenPropertyShape"/> is re-used verbatim as the predicate, so this
+    /// pass recognises exactly the shapes <see cref="FormatForbiddenPropertyError"/> renders and
+    /// nothing else — a scalar-valued forbidden property (<c>clientCert</c>, <c>path</c>) has no
+    /// children and no same-location siblings to subsume, and is a no-op.
+    /// </para>
+    /// <para>
+    /// SAME-LOCATION errors are subsumed too, not only strictly-nested ones, because
+    /// <c>required</c> always reports against the CONTAINER missing the property rather than
+    /// against the property itself: a forbidden <c>security</c> block that also omits its required
+    /// <c>endpoint</c> produces both errors at the identical pointer, and the <c>required</c> one
+    /// is exactly as moot as a nested one. A forbidden-shape error is never dropped by this rule
+    /// (it would otherwise subsume itself), so two forbidden properties rejected at the same
+    /// location both survive.
+    /// </para>
+    /// <para>
+    /// MINOR-2 (peer review, fix round 4). The paragraph above used to end "…and two NESTED
+    /// forbidden containers collapse to the outermost — the one an author must act on". The code
+    /// does the opposite, and always has: the short-circuit is unconditional, so a forbidden-shape
+    /// error nested INSIDE another forbidden container is never subsumed by it and both are
+    /// reported. That is a known limitation of this rule rather than a behaviour it implements —
+    /// only the outermost is actionable, and the inner one is redundant beside it — and the case
+    /// is REACHABLE today, contrary to the reading that the <c>security</c> block is the only
+    /// object-valued forbidden property. Measured: a <c>project</c>-form service forbids
+    /// <c>healthCheck</c> outright, while <c>$defs/serviceHealthCheck</c>'s own <c>type: http</c>
+    /// clause forbids <c>port</c> INSIDE it, so
+    /// <c>{ project: …, healthCheck: { type: http, port: 8080 } }</c> reports BOTH
+    /// <c>/environment/services/app/healthCheck</c> and
+    /// <c>/environment/services/app/healthCheck/port</c> — pinned by
+    /// <c>EnvironmentSchemaTests.Service_NestedForbiddenContainers_BothSurvive</c>. Collapsing
+    /// them would mean exempting a STRICTLY-nested forbidden error from the short-circuit, a
+    /// behaviour change this round deliberately does not make.
+    /// </para>
+    /// </remarks>
+    private static List<CollectedError> SuppressErrorsInsideForbiddenContainer(List<CollectedError> errors)
+    {
+        HashSet<string>? forbiddenLocations = null;
+        foreach (var error in errors)
+        {
+            if (IsForbiddenPropertyShape(error.Keyword, error.EvaluationPath))
+            {
+                forbiddenLocations ??= new HashSet<string>(StringComparer.Ordinal);
+                forbiddenLocations.Add(error.InstanceLocation);
+            }
+        }
+
+        // Fast path: nothing in this document was rejected by a boolean 'false' subschema, so
+        // there is no container for anything to be inside of — mirrors the other suppression
+        // passes' own early-out shape.
+        if (forbiddenLocations is null)
+            return errors;
+
+        var survivors = new List<CollectedError>(errors.Count);
+        foreach (var error in errors)
+        {
+            // A forbidden-shape error is the SUBSUMING one, never the subsumed one.
+            if (IsForbiddenPropertyShape(error.Keyword, error.EvaluationPath))
+            {
+                survivors.Add(error);
+                continue;
+            }
+
+            var subsumed = false;
+            foreach (var forbiddenLocation in forbiddenLocations)
+            {
+                // MAJOR-1 (peer review, fix round 3): the shared helper, not an inline
+                // equality-or-StartsWith pair re-derived here. The two were equivalent, but the
+                // helper is where the segment-boundary trap is DOCUMENTED ('/steps/10' is not a
+                // descendant of '/steps/1'), and a rule whose rationale lives on a method it does
+                // not call is one edit away from losing it. It also drops a string allocation per
+                // (error × container) pair. Pinned in the survives direction by
+                // EnvironmentSchemaTests.Dependency_Security_ForbiddenContainer_DoesNotMuteSiblingsOrPrefixSharingProperties,
+                // which is the ONLY test in the repository that fails if this containment check
+                // degrades to a raw prefix test (measured: 1 failure in 723).
+                if (IsPathOrDescendant(forbiddenLocation, error.InstanceLocation))
+                {
+                    subsumed = true;
+                    break;
+                }
+            }
+
+            if (!subsumed)
+            {
+                survivors.Add(error);
+            }
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
     /// True when <paramref name="evaluationPath"/>'s FINAL two segments are a
     /// <c>oneOf</c>/<c>anyOf</c> keyword followed by a bare array index (e.g.
     /// <c>.../anyOf/1</c>) — i.e. this node IS one specific branch's own
@@ -876,6 +1038,42 @@ internal static class SchemaErrorCollector
     {
         if (IsUnevaluatedPropertiesShape(keyword, evaluationPath))
         {
+            // REQ-020 (authenticated-infrastructure-mtls, slice C): $defs/security now closes
+            // with 'unevaluatedProperties: false' instead of 'additionalProperties: false', so
+            // an unrecognised key directly inside a security block now reaches THIS branch
+            // rather than FormatAdditionalPropertiesError's — measured regression, not a design
+            // choice: an
+            // unqualified fall-through to the step-only FormatUnevaluatedPropertiesError below
+            // would silently DROP the "on dependency '<name>'"/"in dependency '<name>' (at
+            // security...)" attribution FormatAdditionalPropertiesError already gives every
+            // OTHER environment-surface unknown-key rejection, since $defs/security's own
+            // instance has no 'type' field for TryResolveContainerType to read (a dependency's
+            // 'type' lives two levels up, on the OWNING dependency, not on the security object
+            // itself). Checking TryResolveEnvironmentContainer FIRST — exactly the same check
+            // FormatAdditionalPropertiesError makes — closes that gap; a step's own
+            // unevaluatedProperties violation (InstanceLocation always rooted at '/steps/...')
+            // never matches this environment-rooted check and falls through to the step-naming
+            // formatter unchanged.
+            //
+            // MINOR-2 (fix round 4): the first sentence above used to read "directly inside a
+            // security block (or one of its own serverArtifacts[] entries)". The parenthetical is
+            // false and is dropped — serverArtifacts items $ref $defs/securityServerArtifact,
+            // which retains 'additionalProperties: false', so an unknown key on an artifact entry
+            // still lands in FormatAdditionalPropertiesError's branch. Measured: the corpus
+            // fixture security-serverartifacts-unknown-key.e2e.yaml pins 'expected-keyword:
+            // additionalProperties' and is green.
+            if (TryResolveEnvironmentContainer(
+                    instanceLocation, out var unevalContainerKind, out var unevalContainerName,
+                    out var unevalIsNestedBelowSecurity, allowNestedSecurity: true))
+            {
+                var unevalPropertyName = LastPointerSegment(instanceLocation);
+                return unevalIsNestedBelowSecurity
+                    ? $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' in {unevalContainerKind} " +
+                      $"'{unevalContainerName}' (at {BuildSecuritySubPath(instanceLocation)})"
+                    : $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' on {unevalContainerKind} " +
+                      $"'{unevalContainerName}'";
+            }
+
             return FormatUnevaluatedPropertiesError(instanceLocation, instance);
         }
 
@@ -1236,6 +1434,81 @@ internal static class SchemaErrorCollector
             if (containerKind == DependencyContainerKind)
             {
                 var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
+
+                // REQ-021, as tightened by M1 (peer review, fix round 2): 'security' is forbidden
+                // on every dependency kind except kafka, and the generic "Property 'x' is not
+                // valid on a 'redis' dependency" wording above is the WRONG diagnosis for it. An
+                // author reading that concludes they wrote the block in the wrong PLACE, or under
+                // the wrong KEY; the truth is narrower and more useful — the block is understood
+                // perfectly well, and no security profile is wired for that dependency kind IN
+                // THIS RELEASE. This is also why the clause is a boolean 'false' on the whole
+                // block rather than a pin on 'security.profile': pinning the profile can only
+                // ever say "you picked the wrong value", which would be a lie — no value works.
+                //
+                // MAJOR-1 (peer review, fix round 4): this message used to end "declare it under
+                // 'environment.services' instead, where every registered profile is wired", and
+                // that remedy is a dead end for every kind the message can fire on. Measured
+                // against the 25 Core providers: 17 resolve 'target' only through
+                // IProjectContext.DeclaredDependencies and reject a target that is not a declared
+                // dependency of their own kind (DbAssertPostgresProvider.Validate,
+                // CacheAssertRedisProvider.Validate, MqPublishRabbitmqProvider.Validate, …),
+                // and those 17 cover all twelve excluded kinds — so an author who follows
+                // that advice for a TLS-secured postgres trades this rejection for a
+                // step-validation rejection and still has no working suite. Only http.rest,
+                // http.soap and metrics-assert.prometheus resolve 'target' through
+                // DeclaredServices (they read DeclaredDependencies solely to phrase a better
+                // rejection), so the service form works solely for an HTTP system under test —
+                // never for the twelve kinds this branch fires on. (Kafka is the one kind
+                // that reaches a security block through BOTH surfaces, and it is already legal as
+                // a dependency, so this message never fires for it at all; its service-target path
+                // stages no connection string yet and fails closed at run time as an
+                // EnvironmentError, so it would not be a remedy to offer even if it did fire.)
+                // The message therefore states the accepted surface and the release position, and
+                // offers no substitute declaration, because none exists. REQ-013 widens the set in
+                // 1.1 — said explicitly so an author reads a roadmap position, not a permanent
+                // refusal. This text is about to enter a frozen surface: verify any future edit
+                // against what a provider does at step-execution time, not what the schema accepts.
+                if (propertyName == "security")
+                {
+                    // NIT-1 + SEC-4 (peer review, fix round 3). Two bounds on this ONE branch,
+                    // both because M1 made it the message an author hits first:
+                    //   • The kind is named as "dependency kind '<x>'", never "a '<x>'
+                    //     dependency" — the article cannot agree with a value that is DATA
+                    //     (a 'azureservicebus' / a 'elasticsearch'), and picking it from the
+                    //     next character's vowel-ness would still be wrong for a kind such as
+                    //     'unified'. Dropping the article is the robust fix, not a cleverer test.
+                    //   • Both interpolated values are author-controlled and length-unbounded
+                    //     (the container NAME is a YAML key; the KIND is whatever 'type' holds,
+                    //     which on this path has failed its own enum and so may be arbitrary),
+                    //     so both go through TruncateForDisplay — the same bound
+                    //     FormatEnumError already applies to an offending scalar. Deliberately
+                    //     scoped to this branch: the generic messages below are pre-existing,
+                    //     unbounded like every other interpolation in this class, and widening
+                    //     that is a separate change.
+                    var displayName = TruncateForDisplay(containerName);
+
+                    // Reachable, and measured: a NON-SCALAR 'type' (e.g. 'type: [redis, postgres]')
+                    // still satisfies the narrowing clause's own 'not: { const: "kafka" }'
+                    // condition, so 'security' is rejected while TryResolveContainerType has no
+                    // scalar to read a kind from. Pinned by
+                    // EnvironmentSchemaTests.Dependency_Security_NonScalarType_UsesTheUnqualifiedMessage.
+                    if (dependencyKind is null)
+                    {
+                        return $"[properties] Dependency '{displayName}' declares 'security', but no " +
+                               "security profile is wired for this dependency kind in this release — " +
+                               "only a 'kafka' dependency, or a declared service, can carry a 'security' " +
+                               "block today. Transport security for the remaining dependency kinds " +
+                               "arrives in 1.1.";
+                    }
+
+                    var displayKind = TruncateForDisplay(dependencyKind);
+
+                    return $"[properties] Dependency '{displayName}' (type '{displayKind}') declares " +
+                           $"'security', but no security profile is wired for dependency kind " +
+                           $"'{displayKind}' in this release — only a 'kafka' dependency, or a declared " +
+                           "service, can carry a 'security' block today. Transport security for the " +
+                           "remaining dependency kinds arrives in 1.1.";
+                }
 
                 return dependencyKind is null
                     ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
@@ -1647,9 +1920,11 @@ internal static class SchemaErrorCollector
     /// the OFFENDING value is author/attacker-controlled document content
     /// with no length bound of its own — a multi-kilobyte string in an enum
     /// position previously inflated <see cref="SchemaValidationError.Message"/>
-    /// without limit, and that message flows into the §14 JSON Lines event
-    /// stream every renderer (and the Healer agent) consumes. Bounded here to
-    /// keep every error message O(1) in the size of the offending value,
+    /// without limit, and that message is serialised verbatim into
+    /// <c>vouchfx validate --json</c>'s golden-pinned
+    /// <c>ValidateJsonDiagnostic(Stage, Message)</c> document (and written to
+    /// stdout). Bounded here to keep every error message O(1) in the size of
+    /// the offending value,
     /// mirroring the discipline <see cref="FormatAllowedValuesList"/> already
     /// applies to the accepted side.
     /// </remarks>
@@ -1658,8 +1933,21 @@ internal static class SchemaErrorCollector
     /// <summary>
     /// Truncates <paramref name="value"/> to <see cref="MaxOffendingValueChars"/>
     /// with a "… (N chars total)" tail when it exceeds that bound, returning
-    /// it unchanged otherwise.
+    /// it unchanged otherwise. Never splits a UTF-16 surrogate pair.
     /// </summary>
+    /// <remarks>
+    /// SEC-2 (peer review, fix round 3): the cut index is a CHAR index, so a naive
+    /// <c>value[..MaxOffendingValueChars]</c> slice can land exactly between a high surrogate
+    /// and its low-surrogate partner when the author-controlled value contains an astral-plane
+    /// character — measured with <c>ESC + 198×'a' + U+1F600</c> (length 201), where the cut fell
+    /// between the two halves and <c>System.Text.Json</c> wrote U+FFFD. A lone surrogate is
+    /// invalid UTF-16 and can throw when later serialised or transcoded, which would turn a
+    /// length-limit safeguard into a new crash vector. Backing off mirrors
+    /// <c>SuiteSetLoader.TruncateParseErrorMessage</c>, which already made exactly this fix for
+    /// the planner's own bounded field — the same idiom, deliberately, so the two do not drift.
+    /// The loop (rather than a single decrement) also survives malformed input carrying
+    /// consecutive unpaired high surrogates.
+    /// </remarks>
     private static string TruncateForDisplay(string value)
     {
         if (value.Length <= MaxOffendingValueChars)
@@ -1667,8 +1955,14 @@ internal static class SchemaErrorCollector
             return value;
         }
 
+        var cut = MaxOffendingValueChars;
+        while (cut > 0 && char.IsHighSurrogate(value[cut - 1]))
+        {
+            cut--;
+        }
+
         var totalChars = value.Length.ToString(CultureInfo.InvariantCulture);
-        return $"{value[..MaxOffendingValueChars]}… ({totalChars} chars total)";
+        return $"{value[..cut]}… ({totalChars} chars total)";
     }
 
     /// <summary>
@@ -1712,12 +2006,28 @@ internal static class SchemaErrorCollector
     /// pairing is suppressed upstream by <see cref="SuppressRedundantConstWhenEnumPresent"/>
     /// before this method is ever reached for it, so this method only ever sees a
     /// healthCheck.type <c>const</c> that has no enum sibling — a valid enum member (e.g.
-    /// <c>"http"</c>) failing the narrower ports-only conditional. Every OTHER <c>const</c>
-    /// in the composed schema still belongs to a dependency-kind discriminator clause
-    /// ($defs/dependency's <c>allOf</c>/<c>if</c>/<c>then</c> chain), which
-    /// <see cref="IsIfDiscriminatorNoise"/> filters out before this method is ever reached
-    /// (see the class remarks). A future provider-authored <c>const</c> falls through to the
-    /// generic branch below rather than borrowing either named case's specific advice.
+    /// <c>"http"</c>) failing the narrower ports-only conditional.
+    /// </para>
+    /// <para>
+    /// H-B (peer review, held item — corrected in fix round 2, and the correction is now
+    /// self-enforcing). This paragraph used to assert that every OTHER <c>const</c> in the
+    /// composed schema belongs to a discriminator clause "which <see cref="IsIfDiscriminatorNoise"/>
+    /// filters out before this method is ever reached". That was false while REQ-021's own
+    /// narrowing pinned <c>security.profile</c> to <c>const: "tls"</c>: that <c>const</c> sat in
+    /// a <c>then</c>, not an <c>if</c>, so it was NOT filtered and did reach this method — which
+    /// is exactly why this method carried a third, <c>security.profile</c>-specific branch.
+    /// M1's schema tightening deleted that clause (a non-kafka dependency now rejects the whole
+    /// <c>security</c> block via a boolean <c>false</c> subschema, a <c>properties</c> shape
+    /// handled by <see cref="FormatForbiddenPropertyError"/>, never a <c>const</c>), and the
+    /// branch went with it. The claim is therefore true again TODAY — measured, not assumed:
+    /// <c>SchemaErrorCollectorTests.ComposedSchema_DeclaresNoThenClauseConst_OutsideTheTwoNamedShapes</c>
+    /// walks the live composed schema and fails the moment a third <c>then</c>-clause
+    /// <c>const</c> appears, so the next one to be added is caught here rather than silently
+    /// inheriting the generic message.
+    /// </para>
+    /// <para>
+    /// A future provider-authored <c>const</c> falls through to the generic branch below rather
+    /// than borrowing either named case's specific advice.
     /// </para>
     /// <para>
     /// The expected value is still read from the LIVE composed schema via
@@ -2139,7 +2449,7 @@ internal static class SchemaErrorCollector
     /// Defaults to <see langword="false"/> so every EXISTING caller — in particular
     /// <see cref="FormatForbiddenPropertyError"/>, whose own generic "sibling if-clause"
     /// branch already names WHY a security field is forbidden (e.g. "is not valid when
-    /// 'mode' is 'tls'") for exactly this nested shape — keeps its current behaviour
+    /// 'profile' is 'tls'") for exactly this nested shape — keeps its current behaviour
     /// unchanged; only <see cref="FormatAdditionalPropertiesError"/> and
     /// <see cref="FormatError"/>'s own <c>required</c> branch opt in.
     /// </param>

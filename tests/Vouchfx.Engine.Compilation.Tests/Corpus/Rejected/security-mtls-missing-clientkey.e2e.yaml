@@ -1,7 +1,7 @@
 # expected-instance-location: /environment/dependencies/events-kafka/security
 # expected-keyword: required
 #
-# REQ-001: 'clientCert' and 'clientKey' are required TOGETHER for mode 'mtls'. A
+# REQ-001: 'clientCert' and 'clientKey' are required TOGETHER for profile 'mtls'. A
 # security block declaring 'clientCert' but omitting 'clientKey' is rejected here.
 metadata:
   name: rejected-security-mtls-missing-clientkey
@@ -10,7 +10,7 @@ environment:
     events-kafka:
       type: kafka
       security:
-        mode: mtls
+        profile: mtls
         endpoint: 9093
         clientCert: ./certs/client.pem
 steps:
