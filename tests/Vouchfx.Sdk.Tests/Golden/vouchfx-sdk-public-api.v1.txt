@@ -17,6 +17,10 @@ record Vouchfx.Sdk.CsxFragment : System.IEquatable<Vouchfx.Sdk.CsxFragment>
   property System.Collections.Generic.IReadOnlyList<System.String> RequiredUsings { get; init }
   property System.String StatementBlock { get; init }
 
+record Vouchfx.Sdk.DeclaredServiceInfo : System.IEquatable<Vouchfx.Sdk.DeclaredServiceInfo>
+  .ctor(System.Collections.Generic.IReadOnlyList<System.String> EndpointNames)
+  property System.Collections.Generic.IReadOnlyList<System.String> EndpointNames { get; init }
+
 class Vouchfx.Sdk.DuplicateStepKindException : System.Exception
   .ctor(System.String key, System.String existingTypeName, System.String conflictingTypeName)
 
@@ -41,8 +45,8 @@ interface Vouchfx.Sdk.IHostResourceContributor<TModel>
   method System.Collections.Generic.IEnumerable<Vouchfx.Sdk.HostResourceRequirement> HostResources(TModel model)
 
 interface Vouchfx.Sdk.IProjectContext
-  property System.Collections.Generic.IReadOnlyDictionary<System.String,System.Collections.Generic.IReadOnlyList<System.String>> DeclaredServices { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get }
   property System.String SuiteDirectory { get }
 
 interface Vouchfx.Sdk.IProviderModule

@@ -332,7 +332,7 @@ public sealed class SchemaCompositionTests
             new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <inheritdoc />
-        public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; } =
-            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; } =
+            new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 }

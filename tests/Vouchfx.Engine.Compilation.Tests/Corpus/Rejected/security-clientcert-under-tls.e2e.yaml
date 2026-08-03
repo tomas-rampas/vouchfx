@@ -1,11 +1,11 @@
 # expected-instance-location: /environment/services/app/security/clientCert
 # expected-keyword: properties
 #
-# REQ-001: 'clientCert'/'clientKey' are not applicable to mode 'tls' — mutual TLS's
+# REQ-001: 'clientCert'/'clientKey' are not applicable to profile 'tls' — mutual TLS's
 # whole point is presenting a client identity, which plain 'tls' never does. A field
 # that does nothing must not silently validate (the series' philosophy — mirrors
 # db-assert.dynamodb's/storage-assert.s3's own 'expect.exists: false' forbidden-
-# property clauses), so declaring 'clientCert' under mode 'tls' is rejected here.
+# property clauses), so declaring 'clientCert' under profile 'tls' is rejected here.
 metadata:
   name: rejected-security-clientcert-under-tls
 environment:
@@ -13,7 +13,7 @@ environment:
     app:
       image: myorg/app:1.0
       security:
-        mode: tls
+        profile: tls
         endpoint: 8443
         clientCert: ./certs/client.pem
 steps:

@@ -112,9 +112,9 @@ public sealed class HttpSoapEmitTests
     /// dependency to pass).
     /// </summary>
     private static readonly StubProjectContext s_sutDeclaredContext = new(
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["sut"] = new List<string> { "http" },
+            ["sut"] = new DeclaredServiceInfo(new List<string> { "http" }),
         });
 
     // ── 1. StatementBlock braces ─────────────────────────────────────────────────
@@ -250,9 +250,9 @@ public sealed class HttpSoapEmitTests
     public void Validate_TargetNamesDeclaredDependency_IsInvalid_NamesDependencyAndListsServices()
     {
         var ctx = new StubProjectContext(
-            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
             {
-                ["sut"] = new List<string> { "http" },
+                ["sut"] = new DeclaredServiceInfo(new List<string> { "http" }),
             },
             dependencies: new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -640,17 +640,17 @@ public sealed class HttpSoapEmitTests
         public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
         internal StubProjectContext(
-            IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null,
+            IReadOnlyDictionary<string, DeclaredServiceInfo>? services = null,
             IReadOnlyDictionary<string, string>? dependencies = null)
         {
             DeclaredServices = services
-                ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+                ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
             DeclaredDependencies = dependencies
                 ?? new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         /// <inheritdoc />
-        public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+        public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
     }
 
     /// <summary>

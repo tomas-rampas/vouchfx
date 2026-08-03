@@ -37,18 +37,18 @@ file sealed class StubProjectContext : IProjectContext
 
     internal StubProjectContext(
         IReadOnlyDictionary<string, string>? deps = null,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
+        IReadOnlyDictionary<string, DeclaredServiceInfo>? services = null)
     {
         DeclaredDependencies = deps
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
         DeclaredServices = services
-            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <inheritdoc />
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
 }
 
 internal sealed class StubBindingContext : IBindingContext { }
@@ -67,9 +67,9 @@ public sealed class MetricsAssertPrometheusProviderTests
     /// target reconciliation).
     /// </summary>
     private static readonly IProjectContext s_sutDeclaredContext = new StubProjectContext(
-        services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["sut"] = new List<string> { "http" },
+            ["sut"] = new DeclaredServiceInfo(new List<string> { "http" }),
         });
 
     // ── 1. Bind: full YAML step ────────────────────────────────────────────────
@@ -293,9 +293,9 @@ public sealed class MetricsAssertPrometheusProviderTests
             {
                 ["orders-db"] = "postgres",
             },
-            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
             {
-                ["sut"] = new List<string> { "http" },
+                ["sut"] = new DeclaredServiceInfo(new List<string> { "http" }),
             });
         var model = new MetricsAssertPrometheusModel(
             "orders-db", "/metrics", "orders_total", null,

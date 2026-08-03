@@ -35,19 +35,19 @@ file sealed class StubProjectContext : IProjectContext
 
     internal StubProjectContext(
         IReadOnlyDictionary<string, string>? deps = null,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
+        IReadOnlyDictionary<string, DeclaredServiceInfo>? services = null)
     {
         DeclaredDependencies = deps
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
         DeclaredServices = services
-            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <inheritdoc />
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
 }
 
 /// <summary>
@@ -311,9 +311,9 @@ public sealed class MqPublishKafkaProviderTests
     [Fact]
     public void Validate_TargetIsDeclaredService_IsValid()
     {
-        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        var services = new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["kafka-broker"] = new List<string> { "tcp-9093" },
+            ["kafka-broker"] = new DeclaredServiceInfo(new List<string> { "tcp-9093" }),
         };
         var ctx = new StubProjectContext(services: services);
 
@@ -337,9 +337,9 @@ public sealed class MqPublishKafkaProviderTests
         {
             ["orders-db"] = "postgres",
         };
-        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        var services = new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["web"] = new List<string> { "http" },
+            ["web"] = new DeclaredServiceInfo(new List<string> { "http" }),
         };
         var ctx = new StubProjectContext(deps, services);
 

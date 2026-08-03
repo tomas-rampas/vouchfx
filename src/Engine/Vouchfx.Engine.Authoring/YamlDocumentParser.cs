@@ -569,7 +569,7 @@ public static class YamlDocumentParser
     /// <param name="ownerName">The service's or dependency's logical (map-key) name.</param>
     /// <remarks>
     /// Every field is read as its raw scalar text with NO requiredness enforced here —
-    /// <c>mode</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
+    /// <c>profile</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
     /// mtls-requires-<c>clientCert</c>/<c>clientKey</c> rule, and the
     /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule are the JSON Schema layer's
     /// responsibility (<c>root-language-schema.json</c>'s <c>$defs/security</c>),
@@ -586,14 +586,14 @@ public static class YamlDocumentParser
             return null;
         }
 
-        var mode = GetScalar(securityNode, "mode");
+        var profile = GetScalar(securityNode, "profile");
         var endpoint = GetScalar(securityNode, "endpoint");
         var caCert = GetScalar(securityNode, "caCert");
         var clientCert = GetScalar(securityNode, "clientCert");
         var clientKey = GetScalar(securityNode, "clientKey");
         var serverArtifacts = ParseServerArtifacts(securityNode, ownerLabel, ownerName);
 
-        return new SecuritySpec(mode, endpoint, caCert, clientCert, clientKey, serverArtifacts);
+        return new SecuritySpec(profile, endpoint, caCert, clientCert, clientKey, serverArtifacts);
     }
 
     /// <summary>

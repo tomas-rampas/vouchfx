@@ -21,8 +21,8 @@ file sealed class StubProjectContext : IProjectContext
     public System.Collections.Generic.IReadOnlyDictionary<string, string> DeclaredDependencies { get; init; } =
         new System.Collections.Generic.Dictionary<string, string>();
 
-    public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>> DeclaredServices { get; init; } =
-        new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IReadOnlyList<string>>();
+    public System.Collections.Generic.IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; init; } =
+        new System.Collections.Generic.Dictionary<string, DeclaredServiceInfo>();
 
     public string SuiteDirectory { get; init; } = ".";
 }
@@ -71,10 +71,10 @@ public sealed class ProjectContextDescriptionsTests
                 ["orders-db"] = "postgres",
                 ["bus"] = "kafka",
             },
-            DeclaredServices = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IReadOnlyList<string>>
+            DeclaredServices = new System.Collections.Generic.Dictionary<string, DeclaredServiceInfo>
             {
-                ["web"] = new[] { "http" },
-                ["api"] = new[] { "http" },
+                ["web"] = new DeclaredServiceInfo(new System.Collections.Generic.List<string> { "http" }),
+                ["api"] = new DeclaredServiceInfo(new System.Collections.Generic.List<string> { "http" }),
             },
         };
 
