@@ -150,9 +150,11 @@ public sealed class HttpRestProvider
         "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string captureStatusKey,\n" +
         "        string serviceKey,\n" +
+        "        string targetName,\n" +
         "        string method,\n" +
         "        string pathTemplate,\n" +
         "        string? bodyTemplate,\n" +
@@ -175,6 +177,13 @@ public sealed class HttpRestProvider
         "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
+        "            // REQ-024: present the declared client certificate and trust the declared CA\n" +
+        "            // for THIS step's target. Inside the try, deliberately: a declared-but-\n" +
+        "            // malformed certificate throws SecurityMaterialException, which the general\n" +
+        "            // catch below maps to a step-scoped EnvironmentError (§12.1) rather than\n" +
+        "            // escaping the step. Before the first SendAsync, so the underlying handler is\n" +
+        "            // still mutable. A target with no security block leaves the handler untouched.\n" +
+        "            Security_Helpers.ConfigureHandler(security, targetName, handler);\n" +
         "            // Step-timeout convention (#232): a declared step budget governs this call —\n" +
         "            // lift the transport bound (infinite) and let the step token (ct) be the sole\n" +
         "            // enforcement mechanism; otherwise keep the M2 30s stall-window convention.\n" +
@@ -838,9 +847,11 @@ public sealed class HttpRestProvider
                 await HttpRest_Helpers.ExecuteAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{JsonSerializer.Serialize(model.Method)}},
                     {{pathTemplateLiteral}},
                     {{bodyTemplateLiteral}},
@@ -862,6 +873,7 @@ public sealed class HttpRestProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+            SecurityHelper.Source,
         };
 
         return new CsxFragment(

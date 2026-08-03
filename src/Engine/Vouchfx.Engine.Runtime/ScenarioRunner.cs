@@ -33,6 +33,7 @@ using Vouchfx.Engine.Abstractions.Reproducibility;
 using Vouchfx.Engine.Abstractions.Retry;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Secrets.Vault;
+using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Abstractions.Traces;
 using Vouchfx.Engine.Abstractions.Webhooks;
 using Vouchfx.Engine.Authoring;
@@ -1670,8 +1671,47 @@ public static class ScenarioRunner
         var secretResolvers = BuildSecretResolvers();
         var secretCatalog = new SecretSourceCatalog(secretResolvers);
         var secretAccessor = new SecretAccessor(secretCatalog);
+
+        // ── Per-target client security configuration (REQ-014) ────────────────
+        // Built here, in the Default ALC, from this scenario's OWN declared `security`
+        // blocks, and passed into the boundary BY REFERENCE — exactly like the secret
+        // accessor above.
+        //
+        // The base directory is `scriptBaseDirectory ?? seedBaseDirectory` — the SAME
+        // expression BuildReproducibilityEnvelope already uses for the same reason, and it must
+        // stay that way, because the ONE invariant is "whatever this scenario's
+        // ProviderPipeline.Compile was handed", and the two run paths spell that differently:
+        //
+        //   • RunSuiteAsync (multi-suite) compiles against the per-scenario
+        //     scenarioBaseDirectory and threads it here as scriptBaseDirectory (#268).
+        //   • RunAsync and the watch/kept-topology path compile against seedBaseDirectory and
+        //     never pass scriptBaseDirectory at all, so it arrives null.
+        //
+        // Both halves are load-bearing, and each was MEASURED to invert the trust decision on
+        // its own path. Using seedBaseDirectory alone: a second suite's `caCert: certs/ca.pem`
+        // validated against its own directory and then loaded the FIRST suite's file — the run
+        // rejected the anchor it declared and accepted one it never named. Using
+        // scriptBaseDirectory alone: on the single-scenario paths the null falls back to
+        // Directory.GetCurrentDirectory(), so the anchor is read from wherever the process
+        // happens to be running rather than from the suite directory the validator checked.
+        // The accessor owns the X509Certificate2 instances
+        // it loads (lazily, only for a target some step actually resolves) and is disposed in
+        // the same finally as the secret resolvers below; a scenario declaring no `security`
+        // block gets the shared Null accessor and allocates nothing.
+        //
+        // Nothing here is written to Vars, deliberately and by construction: this accessor is
+        // reachable ONLY as globals.Security. A certificate or key path in Vars would reach
+        // the reported and §14 event surface past the SecretString redaction model (REQ-014).
+        //
+        // Constructed INSIDE the try, not before it: the finally below is the one place that
+        // disposes both the secret resolvers and this accessor, so anything that can throw
+        // during construction must be inside its scope or a failure here leaks the resolvers.
+        ISecurityConfigurationAccessor securityAccessor = NullSecurityConfigurationAccessor.Instance;
         try
         {
+            securityAccessor = SecurityConfigurationAccessor.Build(
+                ast, scriptBaseDirectory ?? seedBaseDirectory);
+
             // Built once, up front (moved ahead of its former use inside the step loop below)
             // because the live sink needs it at construction time, issue #262: the map of
             // captured varName → declaring stepId is a pure compile-time derivation over
@@ -1695,7 +1735,13 @@ public static class ScenarioRunner
                 : new LiveStepEventSink(livePump, runId, ast.Steps, captureOriginMap, secretAccessor);
 
             var globals = new ScriptGlobalVariables(
-                vars, suite.DiscoveredServices, secretAccessor, webhookAccessor, traceAccessor, liveSink);
+                vars,
+                suite.DiscoveredServices,
+                secretAccessor,
+                webhookAccessor,
+                traceAccessor,
+                liveSink,
+                securityAccessor);
 
             // ── Compile-once + RunIsolatedAsync ───────────────────────────────────
             var tpaPaths = BclReferencePaths()
@@ -1914,6 +1960,13 @@ public static class ScenarioRunner
             // the EnvironmentError/Inconclusive early returns above, and any unexpected
             // throw — so no HttpClient leaks across the per-scenario boundary (§5).
             DisposeSecretResolvers(secretResolvers);
+
+            // Same contract for the security accessor's loaded certificates (REQ-014): each
+            // X509Certificate2 wraps an OS key handle, and on Windows a PKCS#12 re-import
+            // materialises a key container that only Dispose releases. The Null accessor
+            // (no `security` block declared, the common path) is not IDisposable, so this
+            // costs an unsecured run one type test.
+            (securityAccessor as IDisposable)?.Dispose();
         }
     }
 

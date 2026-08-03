@@ -419,16 +419,37 @@ internal sealed class SecurityProfileRegistry
 /// <para>
 /// M1 (peer review, fix round 2). Both built-in wirings share this ONE predicate, so the two
 /// cannot drift apart by editing only one of them. The set is deliberately NOT "every kind the
-/// schema happens to accept": a service is to get its TLS/mTLS client material through
-/// REQ-023/REQ-024 (slice D), a kafka dependency through REQ-015 (slice E), and NOTHING ELSE is
-/// planned for 1.0.
+/// schema happens to accept": a service gets its TLS/mTLS client material through
+/// REQ-023/REQ-024 (slice D, landed), a kafka dependency through REQ-015 (slice E, outstanding),
+/// and NOTHING ELSE is planned for 1.0.
 /// </para>
 /// <para>
 /// MAJOR-2 (peer review, fix round 4): this paragraph previously called the set "measured
-/// against the slices that do the wiring". It is not measured — it is a FORECAST, and at this
-/// commit NEITHER member is wired: REQ-024 records that all three HTTP-family providers emit a
-/// bare <c>HttpClientHandler</c>, and REQ-015 that both Kafka providers emit a bare
-/// <c>ProducerConfig</c>. The distinction is not pedantry, because the two directions carry
+/// against the slices that do the wiring". It was not measured then — it was a FORECAST, and at
+/// that commit NEITHER member was wired: REQ-024 recorded that all three HTTP-family providers
+/// emitted a bare <c>HttpClientHandler</c>, and REQ-015 that both Kafka providers emitted a bare
+/// <c>ProducerConfig</c>.
+/// </para>
+/// <para>
+/// <strong>Status, updated by slice D (REQ-023/REQ-024).</strong> The set is now HALF measured
+/// and half forecast, and the halves must not be conflated again:
+/// <list type="bullet">
+///   <item><description>
+///     <c>service</c> — <strong>WIRED, measured.</strong> A service declaring <c>security</c>
+///     is staged with an <c>https</c> scheme (REQ-023), and <c>http.rest</c>/<c>http.soap</c>/
+///     <c>metrics-assert.prometheus</c> configure their emitted <c>HttpClientHandler</c> from
+///     the resolved configuration (REQ-024). Evidenced by execution, not by validation:
+///     <c>HttpsClientCertificateTests</c> runs the compiled CSX against a mutual-TLS listener
+///     and passes only when the declared client certificate actually arrives at the server.
+///   </description></item>
+///   <item><description>
+///     <c>kafka</c> — <strong>still a FORECAST.</strong> Both Kafka providers still emit a bare
+///     <c>ProducerConfig</c>/<c>ConsumerConfig</c>; REQ-015 (slice E) is what makes this true.
+///   </description></item>
+/// </list>
+/// </para>
+/// <para>
+/// The distinction is not pedantry, because the two directions carry
 /// asymmetric risk. Rejecting the twelve excluded dependency kinds is safe even if the forecast
 /// is wrong, since widening a validation-time gate after the freeze is permitted. ACCEPTING
 /// <c>{kafka, service}</c> is NOT safe if the forecast is wrong: shrinking after 1.0 would
@@ -440,8 +461,9 @@ internal sealed class SecurityProfileRegistry
 /// <para>
 /// The gate that enforces it is issue #354: v1.0 must not ship unless slices D and E have
 /// actually wired every member named here, and the set must shrink before the freeze if either
-/// slips. Do not weaken the narrowing to compensate for the forecast — the set is the right
-/// forecast; only the earlier claim about its provenance was wrong.
+/// slips. With slice D landed, that gate now reduces to the <c>kafka</c> member alone: if
+/// REQ-015 slips, <c>kafka</c> — not the whole set — must be removed before 1.0. Do not weaken
+/// the narrowing to compensate for the remaining forecast.
 /// </para>
 /// <para>
 /// Why <c>tls</c> is in here rather than universally wired: <see cref="ISecurityProfileWiring.AppliesTo"/>
@@ -483,9 +505,9 @@ internal static class WiredTargetKindsAtV1
 
 /// <summary>
 /// The built-in <c>tls</c> profile: server-side TLS only, no client identity presented. Accepted
-/// on a <c>kafka</c> dependency and on any declared service — the set 1.0 will wire once slices D
-/// and E land, NOT a set measured against wiring that exists today (see
-/// <see cref="WiredTargetKindsAtV1"/> for the forecast, its asymmetry and the #354 release gate,
+/// on a <c>kafka</c> dependency and on any declared service — the service half is wired and
+/// measured (slice D, REQ-023/REQ-024), the kafka half is still a forecast awaiting REQ-015 (see
+/// <see cref="WiredTargetKindsAtV1"/> for the split, its asymmetry and the #354 release gate,
 /// and for why it is narrower than "every kind the schema once accepted"). REQ-021's schema
 /// narrowing agrees by construction, deliberately rather than
 /// by coincidence: <c>$defs/dependency</c>'s own final <c>allOf</c> clause now forbids the
@@ -502,8 +524,8 @@ internal sealed class TlsProfileWiring : ISecurityProfileWiring
 /// <summary>
 /// The built-in <c>mtls</c> profile: mutual TLS, presenting a client certificate. Accepted on a
 /// <c>kafka</c> dependency and on any declared service — the same set
-/// <see cref="TlsProfileWiring"/> covers, and on the same forecast-not-measurement footing (see
-/// <see cref="WiredTargetKindsAtV1"/>); the spec's own
+/// <see cref="TlsProfileWiring"/> covers, and with the same wired-service/forecast-kafka split
+/// (see <see cref="WiredTargetKindsAtV1"/>); the spec's own
 /// Out-of-scope section records why client certificates for any OTHER managed dependency kind
 /// are deferred to 1.1.
 /// </summary>

@@ -1,0 +1,502 @@
+// Vouchfx.TestSupport — TestCertificateAuthority (authenticated-infrastructure-mtls, slice D).
+//
+// A private certificate authority generated in-process, plus the PEM files a suite would
+// declare under `security:`. Shared by the REQ-014 accessor tests
+// (Vouchfx.Engine.Runtime.Tests/SecurityConfigurationAccessorTests) and the REQ-024 execution
+// tests (Vouchfx.Engine.Runtime.Tests/HttpsClientCertificateTests) so both exercise the SAME
+// material and a fault in one is not masked by a different fixture in the other.
+//
+// Why generated rather than checked in: a committed certificate expires, and a fixture that
+// starts failing on a date nobody chose is worse than no fixture. Generation costs a few
+// milliseconds and pins validity to the run.
+//
+// Deliberately references NO Vouchfx type, preserving this project's stated property (see the
+// csproj comment): it hands back file names and certificate objects, and each test project
+// builds its own SecuritySpec from them.
+using System.Formats.Asn1;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+namespace Vouchfx.TestSupport;
+
+/// <summary>
+/// Generates a private CA, a server certificate for <c>localhost</c>, and a client certificate,
+/// writing the PEM files a suite's <c>security:</c> block would declare into a temporary suite
+/// directory.
+/// </summary>
+public static class TestCertificateAuthority
+{
+    /// <summary>Common name of the generated root CA.</summary>
+    public const string CaSubjectCommonName = "Vouchfx Test Root CA";
+
+    /// <summary>Common name of the generated client certificate.</summary>
+    public const string ClientSubjectCommonName = "vouchfx-test-client";
+
+    /// <summary>Common name of the generated server certificate.</summary>
+    public const string ServerSubjectCommonName = "localhost";
+
+    /// <summary>File name of the CA (trust anchor) PEM inside the suite directory.</summary>
+    public const string CaFileName = "ca.pem";
+
+    /// <summary>File name of the client certificate PEM inside the suite directory.</summary>
+    public const string ClientCertFileName = "client.pem";
+
+    /// <summary>File name of the client private-key PEM inside the suite directory.</summary>
+    public const string ClientKeyFileName = "client-key.pem";
+
+    private static readonly Oid s_serverAuth = new("1.3.6.1.5.5.7.3.1");
+    private static readonly Oid s_clientAuth = new("1.3.6.1.5.5.7.3.2");
+
+    /// <summary>
+    /// Creates a temporary suite directory containing <see cref="CaFileName"/>,
+    /// <see cref="ClientCertFileName"/> and <see cref="ClientKeyFileName"/>, together with a
+    /// server certificate (private key included) chaining to the same CA.
+    /// </summary>
+    public static TestCertificateBed CreateSuiteDirectory()
+    {
+        var suiteDirectory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-mtls-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(suiteDirectory);
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var caKey = RSA.Create(2048);
+        var caRequest = new CertificateRequest(
+            $"CN={CaSubjectCommonName}", caKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        caRequest.CertificateExtensions.Add(
+            new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, 0, critical: true));
+        caRequest.CertificateExtensions.Add(
+            new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, critical: true));
+        caRequest.CertificateExtensions.Add(
+            new X509SubjectKeyIdentifierExtension(caRequest.PublicKey, critical: false));
+
+        using var ca = caRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var serverCertificate = IssueLeaf(ca, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        var clientCertificate = IssueLeaf(ca, ClientSubjectCommonName, includeLocalhostSans: false, now);
+
+        // Two extra server leaves from the SAME anchor, for the extended-key-usage arms of the
+        // trust decision (slice D fix round one). Issued here rather than by a later helper
+        // because the bed deliberately does not retain the CA's private key — see below.
+        var clientAuthOnlyLeaf = IssueLeaf(
+            ca,
+            ServerSubjectCommonName,
+            includeLocalhostSans: true,
+            now,
+            ekus: new OidCollection { s_clientAuth });
+        var noEkuLeaf = IssueLeaf(
+            ca, ServerSubjectCommonName, includeLocalhostSans: true, now, ekus: null, defaultEkus: false);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), ca.ExportCertificatePem());
+            File.WriteAllText(
+                Path.Combine(suiteDirectory, ClientCertFileName), clientCertificate.Certificate.ExportCertificatePem());
+            File.WriteAllText(Path.Combine(suiteDirectory, ClientKeyFileName), clientCertificate.PrivateKeyPem);
+
+            // The CA is re-created from its own DER so the bed does not hold the CA's PRIVATE
+            // key alive: a trust anchor never needs one, and keeping one around invites a test
+            // to sign something the engine should have refused.
+            var anchor = new X509Certificate2(ca.Export(X509ContentType.Cert));
+
+            return new TestCertificateBed(
+                suiteDirectory,
+                anchor,
+                serverCertificate.Loadable,
+                clientAuthOnlyLeaf.Certificate,
+                noEkuLeaf.Certificate);
+        }
+        finally
+        {
+            clientCertificate.Certificate.Dispose();
+            clientCertificate.Loadable.Dispose();
+            clientAuthOnlyLeaf.Loadable.Dispose();
+            noEkuLeaf.Loadable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Creates a suite directory whose declared <c>ca.pem</c> is an OFFLINE ROOT, with a
+    /// separate issuing INTERMEDIATE and a server leaf issued by that intermediate — the normal
+    /// two-tier enterprise PKI shape, which cannot validate unless the peer-supplied
+    /// intermediate reaches the rebuilt chain's <c>ExtraStore</c>.
+    /// </summary>
+    public static TestTwoTierBed CreateTwoTierSuiteDirectory()
+    {
+        var suiteDirectory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-mtls2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(suiteDirectory);
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest(
+            "CN=Vouchfx Test Offline Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(rootRequest);
+        using var root = rootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        using var intermediateKey = RSA.Create(2048);
+        var intermediateRequest = new CertificateRequest(
+            "CN=Vouchfx Test Issuing Intermediate",
+            intermediateKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        AddCaExtensions(intermediateRequest);
+        using var intermediateSigned = intermediateRequest.Create(
+            root, now.AddDays(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(8));
+
+        // Retain the intermediate's key only long enough to issue the leaf.
+        using var intermediateWithKey = intermediateSigned.CopyWithPrivateKey(intermediateKey);
+        using var intermediateSigner = new X509Certificate2(
+            intermediateWithKey.Export(X509ContentType.Pkcs12));
+        var leaf = IssueLeaf(intermediateSigner, ServerSubjectCommonName, includeLocalhostSans: true, now);
+
+        File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), root.ExportCertificatePem());
+
+        return new TestTwoTierBed(
+            suiteDirectory,
+            new X509Certificate2(root.Export(X509ContentType.Cert)),
+            new X509Certificate2(intermediateSigned.Export(X509ContentType.Cert)),
+            leaf.Certificate,
+            leaf.Loadable);
+    }
+
+    /// <summary>
+    /// Creates a SELF-SIGNED certificate authority and a <c>localhost</c> leaf beneath it — the
+    /// attacker's side of the <c>ExtraStore</c> negative control. Neither must ever become
+    /// trusted by virtue of being handed to the engine as a peer-supplied "intermediate".
+    /// </summary>
+    public static (X509Certificate2 Root, X509Certificate2 Leaf) CreateImposterAuthority()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=Imposter Root", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(request);
+        using var imposter = request.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var leaf = IssueLeaf(imposter, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        leaf.Loadable.Dispose();
+
+        return (new X509Certificate2(imposter.Export(X509ContentType.Cert)), leaf.Certificate);
+    }
+
+    /// <summary>
+    /// Creates an anchor plus a leaf carrying an Authority Information Access <c>caIssuers</c>
+    /// extension pointing at <paramref name="caIssuersUrl"/>, and whose ISSUER is deliberately
+    /// absent — so a chain builder that has not had certificate downloads disabled must go to
+    /// that URL looking for the missing link.
+    /// </summary>
+    public static TestAiaBed CreateAuthorityInfoAccessBed(string caIssuersUrl)
+    {
+        var suiteDirectory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-aia-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(suiteDirectory);
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest(
+            "CN=Vouchfx AIA Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(rootRequest);
+        using var root = rootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        using var intermediateKey = RSA.Create(2048);
+        var intermediateRequest = new CertificateRequest(
+            "CN=Vouchfx AIA Intermediate", intermediateKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(intermediateRequest);
+        using var intermediateSigned = intermediateRequest.Create(
+            root, now.AddDays(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(8));
+        using var intermediateWithKey = intermediateSigned.CopyWithPrivateKey(intermediateKey);
+        using var intermediateSigner = new X509Certificate2(
+            intermediateWithKey.Export(X509ContentType.Pkcs12));
+
+        var leaf = IssueLeaf(
+            intermediateSigner, ServerSubjectCommonName, includeLocalhostSans: true, now, aiaUrl: caIssuersUrl);
+        leaf.Loadable.Dispose();
+
+        File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), root.ExportCertificatePem());
+
+        return new TestAiaBed(
+            suiteDirectory, new X509Certificate2(root.Export(X509ContentType.Cert)), leaf.Certificate);
+    }
+
+    private static void AddCaExtensions(CertificateRequest request)
+    {
+        request.CertificateExtensions.Add(
+            new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, 0, critical: true));
+        request.CertificateExtensions.Add(
+            new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, critical: true));
+        request.CertificateExtensions.Add(
+            new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
+    }
+
+    /// <summary>
+    /// Builds an Authority Information Access extension carrying a single <c>caIssuers</c>
+    /// access description whose location is <paramref name="url"/>. Hand-encoded because .NET 8
+    /// exposes no builder for this extension.
+    /// </summary>
+    private static X509Extension AuthorityInfoAccess(string url)
+    {
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())
+        {
+            using (writer.PushSequence())
+            {
+                writer.WriteObjectIdentifier("1.3.6.1.5.5.7.48.2"); // id-ad-caIssuers
+                writer.WriteCharacterString(
+                    UniversalTagNumber.IA5String, url, new Asn1Tag(TagClass.ContextSpecific, 6));
+            }
+        }
+
+        return new X509Extension("1.3.6.1.5.5.7.1.1", writer.Encode(), critical: false);
+    }
+
+    /// <summary>
+    /// Creates a leaf certificate under an UNRELATED, throwaway root — the negative control for
+    /// any trust decision (it must never validate against the bed's own anchor).
+    /// </summary>
+    public static X509Certificate2 CreateUnrelatedLeaf()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        using var otherCaKey = RSA.Create(2048);
+        var otherCaRequest = new CertificateRequest(
+            "CN=Unrelated Root", otherCaKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        otherCaRequest.CertificateExtensions.Add(
+            new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, 0, critical: true));
+        using var otherCa = otherCaRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var leaf = IssueLeaf(otherCa, "unrelated-leaf", includeLocalhostSans: true, now);
+        leaf.Loadable.Dispose();
+        return leaf.Certificate;
+    }
+
+    /// <param name="ekus">
+    /// The extended key usages to stamp on the leaf. Defaults (when the caller passes nothing)
+    /// to BOTH <c>serverAuth</c> and <c>clientAuth</c>: SChannel refuses a client certificate
+    /// with no <c>clientAuth</c> EKU and a server certificate with no <c>serverAuth</c> EKU, so
+    /// the bed's own leaves need both to be usable on either side. Pass an explicit set for the
+    /// EKU arms of the trust decision, or <see langword="null"/> for a leaf carrying NO
+    /// extended-key-usage extension at all (which means unconstrained, not unusable).
+    /// </param>
+    private static (X509Certificate2 Certificate, string PrivateKeyPem, X509Certificate2 Loadable) IssueLeaf(
+        X509Certificate2 issuer,
+        string commonName,
+        bool includeLocalhostSans,
+        DateTimeOffset now,
+        OidCollection? ekus = null,
+        string? aiaUrl = null,
+        bool defaultEkus = true)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest(
+            $"CN={commonName}", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(
+            new X509BasicConstraintsExtension(certificateAuthority: false, hasPathLengthConstraint: false, 0, critical: true));
+        request.CertificateExtensions.Add(
+            new X509KeyUsageExtension(
+                X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, critical: true));
+
+        var effectiveEkus = ekus ?? (defaultEkus ? new OidCollection { s_serverAuth, s_clientAuth } : null);
+        if (effectiveEkus is not null)
+        {
+            request.CertificateExtensions.Add(
+                new X509EnhancedKeyUsageExtension(effectiveEkus, critical: false));
+        }
+
+        request.CertificateExtensions.Add(
+            new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
+
+        if (aiaUrl is not null)
+        {
+            request.CertificateExtensions.Add(AuthorityInfoAccess(aiaUrl));
+        }
+
+        if (includeLocalhostSans)
+        {
+            var sans = new SubjectAlternativeNameBuilder();
+            sans.AddDnsName("localhost");
+            sans.AddIpAddress(IPAddress.Loopback);
+            request.CertificateExtensions.Add(sans.Build());
+        }
+
+        var serial = RandomNumberGenerator.GetBytes(8);
+        using var signed = request.Create(issuer, now.AddDays(-1), now.AddDays(1), serial);
+
+        var certificate = new X509Certificate2(signed.Export(X509ContentType.Cert));
+        using var withKey = signed.CopyWithPrivateKey(key);
+
+        // The PKCS#12 round trip is the SAME one SecurityConfigurationAccessor performs, for
+        // the same measured reason: a certificate carrying an ephemeral key completes neither
+        // side of a TLS handshake on Windows. The bed's server certificate has to work, so it
+        // gets the same treatment.
+        var loadable = new X509Certificate2(withKey.Export(X509ContentType.Pkcs12));
+
+        return (certificate, key.ExportPkcs8PrivateKeyPem(), loadable);
+    }
+}
+
+/// <summary>
+/// A temporary suite directory holding a generated CA, client certificate and client key, plus
+/// the matching server certificate for an in-process TLS listener.
+/// </summary>
+public sealed class TestCertificateBed : IDisposable
+{
+    internal TestCertificateBed(
+        string suiteDirectory,
+        X509Certificate2 anchor,
+        X509Certificate2 serverCertificate,
+        X509Certificate2 clientAuthOnlyServerCertificate,
+        X509Certificate2 noEkuServerCertificate)
+    {
+        SuiteDirectory = suiteDirectory;
+        CaCertificate = anchor;
+        ServerCertificate = serverCertificate;
+        ClientAuthOnlyServerCertificate = clientAuthOnlyServerCertificate;
+        NoEkuServerCertificate = noEkuServerCertificate;
+    }
+
+    /// <summary>
+    /// A leaf from the SAME anchor, for <c>localhost</c>, carrying <c>EKU = clientAuth</c> ONLY.
+    /// In mutual TLS the CA that signs the server signs every client, so this is precisely what
+    /// a client-certificate holder could present while impersonating the server — and it is
+    /// what a rebuilt chain with no application policy accepts.
+    /// </summary>
+    public X509Certificate2 ClientAuthOnlyServerCertificate { get; }
+
+    /// <summary>
+    /// A leaf from the SAME anchor, for <c>localhost</c>, carrying NO extended-key-usage
+    /// extension at all. An absent EKU means UNCONSTRAINED, so this must stay trusted — it is
+    /// the control proving the <c>serverAuth</c> requirement breaks no legitimate configuration.
+    /// </summary>
+    public X509Certificate2 NoEkuServerCertificate { get; }
+
+    /// <summary>The temporary directory the PEM files were written into.</summary>
+    public string SuiteDirectory { get; }
+
+    /// <summary>The generated root CA, without its private key.</summary>
+    public X509Certificate2 CaCertificate { get; }
+
+    /// <summary>
+    /// The server certificate (private key included, PKCS#12-loadable) for
+    /// <c>localhost</c>/<c>127.0.0.1</c>, chaining to <see cref="CaCertificate"/>.
+    /// </summary>
+    public X509Certificate2 ServerCertificate { get; }
+
+    /// <summary>Absolute path of the CA PEM inside <see cref="SuiteDirectory"/>.</summary>
+    public string CaPath => Path.Combine(SuiteDirectory, TestCertificateAuthority.CaFileName);
+
+    /// <summary>Absolute path of the client certificate PEM inside <see cref="SuiteDirectory"/>.</summary>
+    public string ClientCertPath => Path.Combine(SuiteDirectory, TestCertificateAuthority.ClientCertFileName);
+
+    /// <summary>Absolute path of the client key PEM inside <see cref="SuiteDirectory"/>.</summary>
+    public string ClientKeyPath => Path.Combine(SuiteDirectory, TestCertificateAuthority.ClientKeyFileName);
+
+    /// <summary>Removes the temporary suite directory and disposes the generated certificates.</summary>
+    public void Dispose()
+    {
+        CaCertificate.Dispose();
+        ServerCertificate.Dispose();
+        ClientAuthOnlyServerCertificate.Dispose();
+        NoEkuServerCertificate.Dispose();
+
+        TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+    }
+}
+
+/// <summary>
+/// A suite directory whose declared <c>ca.pem</c> is an OFFLINE ROOT, plus the issuing
+/// INTERMEDIATE and the server leaf that intermediate signed — the two-tier enterprise PKI
+/// shape a private CA normally takes.
+/// </summary>
+public sealed class TestTwoTierBed : IDisposable
+{
+    internal TestTwoTierBed(
+        string suiteDirectory,
+        X509Certificate2 root,
+        X509Certificate2 intermediate,
+        X509Certificate2 serverLeaf,
+        X509Certificate2 serverLeafWithKey)
+    {
+        SuiteDirectory = suiteDirectory;
+        RootCertificate = root;
+        IntermediateCertificate = intermediate;
+        ServerLeaf = serverLeaf;
+        ServerLeafWithKey = serverLeafWithKey;
+    }
+
+    /// <summary>The temporary directory holding <c>ca.pem</c> (the ROOT, not the intermediate).</summary>
+    public string SuiteDirectory { get; }
+
+    /// <summary>The offline root — the certificate written to <c>ca.pem</c> and declared as <c>caCert</c>.</summary>
+    public X509Certificate2 RootCertificate { get; }
+
+    /// <summary>The issuing intermediate, which a real server sends alongside its own leaf.</summary>
+    public X509Certificate2 IntermediateCertificate { get; }
+
+    /// <summary>The server leaf, issued by <see cref="IntermediateCertificate"/>, public part only.</summary>
+    public X509Certificate2 ServerLeaf { get; }
+
+    /// <summary>The same leaf with its private key, PKCS#12-loadable, for an in-process listener.</summary>
+    public X509Certificate2 ServerLeafWithKey { get; }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        RootCertificate.Dispose();
+        IntermediateCertificate.Dispose();
+        ServerLeaf.Dispose();
+        ServerLeafWithKey.Dispose();
+        TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+    }
+}
+
+/// <summary>
+/// A suite directory whose declared anchor cannot reach the leaf without the missing
+/// intermediate, and whose leaf advertises an Authority Information Access <c>caIssuers</c> URL
+/// where a chain builder would go looking for it.
+/// </summary>
+public sealed class TestAiaBed : IDisposable
+{
+    internal TestAiaBed(string suiteDirectory, X509Certificate2 root, X509Certificate2 leaf)
+    {
+        SuiteDirectory = suiteDirectory;
+        RootCertificate = root;
+        LeafWithAuthorityInfoAccess = leaf;
+    }
+
+    /// <summary>The temporary directory holding <c>ca.pem</c>.</summary>
+    public string SuiteDirectory { get; }
+
+    /// <summary>The declared anchor.</summary>
+    public X509Certificate2 RootCertificate { get; }
+
+    /// <summary>The leaf carrying the <c>caIssuers</c> URL, whose issuer is deliberately absent.</summary>
+    public X509Certificate2 LeafWithAuthorityInfoAccess { get; }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        RootCertificate.Dispose();
+        LeafWithAuthorityInfoAccess.Dispose();
+        TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+    }
+}
+
+internal static class TestCertificateBedPaths
+{
+    internal static void DeleteQuietly(string directory)
+    {
+        try
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            // A leftover temp directory is not worth failing a test over.
+        }
+    }
+}
