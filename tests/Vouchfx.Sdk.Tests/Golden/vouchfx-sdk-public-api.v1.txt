@@ -113,6 +113,9 @@ record Vouchfx.Sdk.ResourceRequirement : System.IEquatable<Vouchfx.Sdk.ResourceR
 class Vouchfx.Sdk.SecretHelper
   field const System.String Source
 
+class Vouchfx.Sdk.SecurityHelper
+  field const System.String Source
+
 record Vouchfx.Sdk.StepKindId : System.IEquatable<Vouchfx.Sdk.StepKindId>
   .ctor(System.String family, System.String provider)
   property System.String Family { get }

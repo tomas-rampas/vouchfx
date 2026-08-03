@@ -15,10 +15,12 @@
 // Deliberately a separate file/class from ProviderPipeline, mirroring that file's own
 // header note: each concern gets a dedicated static class so it is tested in isolation.
 //
-// Scope note (PR A only): this validates ONLY the host-filesystem shape of declared
-// paths. It does not resolve `profile`/`endpoint` (REQ-002's requiredness is enforced by
-// the JSON Schema layer alone), does not probe the endpoint (REQ-005, a later PR), and
-// does not orchestrate the actual container-file copy (REQ-016, a later PR).
+// Scope note: this validates the host-filesystem shape of declared paths, plus (slice D fix
+// round one) the one SERVICE SHAPE that can never be secured — a `project`-form service, which
+// the schema accepts and EnvironmentMapper then rejects at topology-build time. It does not
+// resolve `profile`/`endpoint` (REQ-002's requiredness is enforced by the JSON Schema layer
+// alone), does not probe the endpoint (REQ-005, a later PR), and does not orchestrate the
+// actual container-file copy (REQ-016, a later PR).
 
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -102,6 +104,12 @@ internal static class EnvironmentSecurityValidator
         {
             foreach (var (name, spec) in services)
             {
+                var shapeFailure = ValidateSecurableShape(spec, name);
+                if (shapeFailure is not null)
+                {
+                    return shapeFailure;
+                }
+
                 var failure = ValidateSecurity(spec.Security, "services", name, resolvedSuiteDirectory);
                 if (failure is not null)
                 {
@@ -124,6 +132,47 @@ internal static class EnvironmentSecurityValidator
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Rejects, at VALIDATION time, a <c>security</c> block declared on a service shape this
+    /// release cannot secure at all (REQ-023).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>project</c>-form service's endpoints are discovered from the project's own launch
+    /// profile, which this engine neither models nor names, so there is no endpoint for
+    /// REQ-023 to construct with an <c>https</c> scheme and no <c>svc::&lt;name&gt;</c> value
+    /// is staged for one. The JSON Schema accepts the combination — <c>$defs/service</c>'s
+    /// project clause forbids <c>ports</c> and <c>healthCheck</c>, not <c>security</c> — and
+    /// <c>EnvironmentMapper.Map</c> then throws at TOPOLOGY-BUILD time.
+    /// </para>
+    /// <para>
+    /// That is the "validates but can never work" shape, and it is caught here instead: a
+    /// suite that passes <c>vouchfx validate</c> and then dies once containers are starting
+    /// costs the author a full topology cycle to learn something knowable from the document
+    /// alone. <c>EnvironmentMapper</c>'s own throw is deliberately KEPT as a fail-closed
+    /// backstop for direct engine embedding that bypasses this stage — the two must agree, and
+    /// a suite reaching the mapper with this shape now means validation was skipped, not that
+    /// it passed.
+    /// </para>
+    /// </remarks>
+    private static ValidationFailure? ValidateSecurableShape(ServiceSpec spec, string ownerName)
+    {
+        if (spec.Security is null || spec.Project is null)
+        {
+            return null;
+        }
+
+        return new ValidationFailure(
+            $"environment.services.{ownerName}.security: a 'project'-form service cannot be secured in " +
+            "this release. A project-form service's endpoints are discovered from its own launch " +
+            "profile, so the engine has no endpoint of its own to expose with an 'https' scheme. " +
+            $"Declare '{ownerName}' as an 'image'-form service to use 'security', or remove the " +
+            "'security' block.")
+        {
+            IsSecurityPreflight = true,
+        };
     }
 
     /// <summary>
