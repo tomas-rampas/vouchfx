@@ -1,7 +1,17 @@
 # Keeps GitHub Actions references in .github/workflows/ maintained.
 # Every workflow pins every third-party action to a full commit SHA for supply-chain
 # integrity; without this ecosystem entry those pins would silently rot.
-# Dependabot updates SHA pins and their trailing version comments together.
+#
+# Dependabot updates a pin's SHA and its own trailing version comment together, but it
+# raises one pull request per ACTION rather than per action repository. Where a single
+# repository provides several actions - github/codeql-action supplies both init and
+# analyze - one upstream release is split across separate pull requests, and such a
+# request can rewrite a SIBLING action's version comment without touching its SHA.
+# PR #323 did exactly that: it relabelled the analyze pin as v4.37.4 while leaving it
+# on the v4.37.3 commit. A pin whose comment misdescribes what it pins defeats the
+# reason for pinning, since that comment is the only human-readable statement of what
+# the SHA is. Actions sharing a repository are therefore grouped below, so one upstream
+# release lands as one commit.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -9,3 +19,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
