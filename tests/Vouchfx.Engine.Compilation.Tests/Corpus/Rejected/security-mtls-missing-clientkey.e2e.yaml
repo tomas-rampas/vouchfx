@@ -10,7 +10,7 @@ environment:
     events-kafka:
       type: kafka
       security:
-        mode: mtls
+        profile: mtls
         endpoint: 9093
         clientCert: ./certs/client.pem
 steps:

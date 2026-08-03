@@ -473,6 +473,180 @@ public sealed class DocumentValidatorTests
         Assert.DoesNotContain("unknown step type", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
+    // ── REQ-019: security.profile is an open discriminator closed at the registry ──
+
+    /// <summary>
+    /// A dependency's <c>security.profile</c> that is a well-formed value (matches the
+    /// root schema's own open pattern) but is not a REGISTERED profile must be rejected
+    /// — mirroring <see cref="Validate_UnknownStepType_OnlyDefect_IsRejected_WithLineAndMessage"/>
+    /// exactly, for the sibling registry-lookup cross-check <see cref="SecurityProfileRegistry"/>
+    /// closes for <c>profile</c> instead of a step's own <c>type</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately uses <c>type: kafka</c>, not a non-kafka kind such as redis: REQ-021's
+    /// OWN per-kind narrowing (a SEPARATE, schema-level rejection) pins a non-kafka
+    /// dependency's <c>profile</c> to the const <c>'tls'</c>, so an unregistered value there
+    /// ALSO fails that schema check at the identical pointer — this method's own
+    /// defer-to-schema discipline (see <see cref="DocumentValidator.CollectUnknownSecurityProfileErrors"/>)
+    /// then correctly yields to the schema's <c>[const]</c> finding instead of adding a
+    /// second, redundant one, which would make THIS test assert the wrong thing entirely.
+    /// Kafka carries no such per-kind narrowing, so this test isolates REQ-019's own
+    /// registry-lookup behaviour cleanly.
+    /// </remarks>
+    [Fact]
+    public void Validate_UnknownSecurityProfile_OnlyDefect_IsRejected_WithLineAndMessage()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: acme-unregistered
+                    endpoint: 9093
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid,
+            "A security.profile matching no registered profile must be rejected (REQ-019).");
+        Assert.NotEmpty(result.Errors);
+
+        var unknownProfileError = result.Errors.FirstOrDefault(e =>
+            e.Message.Contains("acme-unregistered", System.StringComparison.Ordinal));
+
+        Assert.NotNull(unknownProfileError);
+        Assert.Contains("unknown security profile", unknownProfileError!.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("(line ", unknownProfileError.Message, System.StringComparison.Ordinal);
+
+        var lineNumber = ExtractLineNumber(unknownProfileError.Message);
+        Assert.True(lineNumber > 0,
+            $"Expected a positive resolved line number in message: '{unknownProfileError.Message}'");
+    }
+
+    /// <summary>
+    /// Both registered profiles ('tls' on any kind, 'mtls' on kafka or a service) must
+    /// remain valid — the registry cross-check must never produce a false positive
+    /// against either built-in profile.
+    /// </summary>
+    [Fact]
+    public void Validate_RegisteredSecurityProfiles_TlsAndMtls_AreValid()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    profile: tls
+                    endpoint: 6380
+                events:
+                  type: kafka
+                  security:
+                    profile: mtls
+                    endpoint: 9093
+                    clientCert: ./certs/client.pem
+                    clientKey: ./certs/client-key.pem
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.True(result.IsValid, $"Expected valid but got: {FormatErrors(result)}");
+        Assert.Empty(result.Errors);
+    }
+
+    /// <summary>
+    /// A document containing BOTH an unregistered security profile and an unrelated,
+    /// genuine schema violation must report both — the registry cross-check must not
+    /// mask or replace a real schema error, and vice versa (mirrors
+    /// <see cref="Validate_UnknownStepTypeAndOtherViolation_BothReported"/>). Uses
+    /// <c>type: kafka</c> for the same reason as
+    /// <see cref="Validate_UnknownSecurityProfile_OnlyDefect_IsRejected_WithLineAndMessage"/>
+    /// — see that test's own remarks.
+    /// </summary>
+    [Fact]
+    public void Validate_UnknownSecurityProfileAndOtherViolation_BothReported()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: acme-unregistered
+                    endpoint: 9093
+            steps:
+              - id: bad-method-step
+                type: http.rest
+                target: orders-api
+                method: TELEPORT
+                path: /warp
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+
+        var unknownProfileError = result.Errors.FirstOrDefault(e =>
+            e.Message.Contains("acme-unregistered", System.StringComparison.Ordinal));
+        Assert.NotNull(unknownProfileError);
+        Assert.Contains("(line ", unknownProfileError!.Message, System.StringComparison.Ordinal);
+
+        var badMethodError = result.Errors.FirstOrDefault(e =>
+            e.InstanceLocation.StartsWith("/steps/0", System.StringComparison.Ordinal));
+        Assert.NotNull(badMethodError);
+        Assert.Contains("(line ", badMethodError!.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A wrongly-cased <c>security.profile</c> (e.g. <c>TLS</c>) already violates the
+    /// root schema's own <c>^[a-z0-9-]+(\.[a-z0-9-]+)?$</c> pattern — the registry
+    /// cross-check must defer to that <c>[pattern]</c> error rather than emitting a
+    /// SECOND, "unknown security profile" finding at the same instance location
+    /// (mirrors <see cref="Validate_WronglyCasedType_IsRejectedOnce_ByPatternOnly_NotDoubleReported"/>).
+    /// </summary>
+    [Fact]
+    public void Validate_WronglyCasedSecurityProfile_IsRejectedOnce_ByPatternOnly_NotDoubleReported()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  security:
+                    profile: TLS
+                    endpoint: 8443
+            steps:
+              - id: call-api
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /health
+            """;
+
+        var result = DocumentValidator.Validate(yaml, _registry);
+
+        Assert.False(result.IsValid);
+
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/security/profile", onlyError.InstanceLocation);
+        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unknown security profile", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     private static string FormatErrors(SchemaValidationResult result) =>

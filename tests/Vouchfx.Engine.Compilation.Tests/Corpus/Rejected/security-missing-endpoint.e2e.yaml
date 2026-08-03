@@ -12,7 +12,7 @@ environment:
     cache:
       type: redis
       security:
-        mode: tls
+        profile: tls
 steps:
   - id: noop
     type: script.csharp

@@ -255,7 +255,7 @@
     },
     "serviceHealthCheck": {
       "description": "An author-declared health check for a service (services-generalisation spec, REQ-009), replacing the implicit default (an HTTP GET against '/') applied when this block is omitted on an HTTP-shaped service (no 'ports' declared). The field set required or forbidden is fixed per 'type': 'tcp' requires 'port' and forbids 'path'; 'http' accepts an optional 'path' (defaulting to '/') and forbids 'port'. A service declaring 'ports' with no 'healthCheck' at all does not go unchecked: it defaults to a 'tcp' probe against the first declared port rather than either an HTTP request the service may not be able to answer, or no check at all.",
-      "$comment": "Mirrors $defs/security's own mode-conditional allOf/if/then idiom (see that def's remarks for why a per-field boolean 'false' subschema is used instead of a 'not'/'required' negation) — a discriminator field ('type' here, 'mode' there) selects which sibling fields are required/forbidden. healthCheck.port cross-referencing the service's own declared ports/httpPort is EnvironmentMapper's job, not this schema's — shape only, not cross-field semantic consistency (see HealthCheckSpec's own remarks).",
+      "$comment": "Mirrors $defs/security's own profile-conditional allOf/if/then idiom (see that def's remarks for why a per-field boolean 'false' subschema is used instead of a 'not'/'required' negation) — a discriminator field ('type' here, 'profile' there) selects which sibling fields are required/forbidden. healthCheck.port cross-referencing the service's own declared ports/httpPort is EnvironmentMapper's job, not this schema's — shape only, not cross-field semantic consistency (see HealthCheckSpec's own remarks).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -324,7 +324,7 @@
     },
     "dependency": {
       "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected — with a line/column error — by the parser at load time (DSL §3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 §6.5.3/§6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues' and 'topics' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind — 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus — and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind.",
-      "$comment": "Mirrors the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). Authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. A misspelled/unsupported key was previously swept silently into the parser's Extra bucket and never reached any provider; it is now rejected here. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field.",
+      "$comment": "Mirrors the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). Authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. A misspelled/unsupported key was previously swept silently into the parser's Extra bucket and never reached any provider; it is now rejected here. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field. The FINAL allOf entry below (REQ-021) is a different shape: an ALLOW-LIST, not a per-kind exclusion — the dependency's own 'security.profile' is pinned to the CONST 'tls' for every kind EXCEPT kafka, via ONE clause using 'not: { const: \"kafka\" }' inside its 'if' CONDITION, not its 'then' enforcement (G-MINOR-5: this is a 'tls'-only pin, not an 'mtls' exclusion specifically — ANY declared profile other than 'tls', including a future out-of-tree '<vendor>.<name>' profile, is rejected on these twelve kinds; 'mtls' merely being the only OTHER profile the registry recognises today is what makes the two descriptions coincide for now. Kafka is the only dependency kind this release wires client certificates for) — safe for the same reason $defs/service's own ports-only-healthCheck clause uses 'not' inside an 'if' (see that $def's own remarks): an 'if' clause's own failure is unconditionally dropped as discriminator noise (SchemaErrorCollector.IsIfDiscriminatorNoise is depth-independent), so it never needs a diagnosable message of its own; the 'then' branch's 'const: \"tls\"' mismatch is what SchemaErrorCollector.FormatConstError names, together with the dependency's own kind. Written as one allow-list clause rather than twelve per-kind exclusion clauses (one per non-kafka type) deliberately: a future 14th dependency kind is 'tls'-only by default the instant it is added, with no separate exclusion clause to remember. Kafka itself needs no clause of its own here: its 'type' fails the 'not: { const: \"kafka\" }' condition, so this clause's 'if' never matches for it and 'then' never applies, leaving 'profile' governed only by $defs/security's own base definition (both 'tls' and 'mtls' legal).",
       "required": [
         "type"
       ],
@@ -690,29 +690,53 @@
               "topics": false
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "not": {
+                  "const": "kafka"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "security": {
+                "properties": {
+                  "profile": {
+                    "const": "tls"
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
     "security": {
-      "description": "Declares transport security (TLS or mutual TLS) for this dependency's or service's endpoint. Optional; omitting this block preserves today's unauthenticated-by-default behaviour unchanged. The set of fields required or forbidden is fixed per 'mode', so an author can tell, without running anything, which combination validates: 'mode' and 'endpoint' are required whenever this block is present, for both modes; 'caCert' is always optional, for both modes; 'clientCert' and 'clientKey' are required together for mode 'mtls' and forbidden for mode 'tls'. Declaring 'security' does not, by itself, cause the engine to secure an engine-provisioned dependency's own listener — it declares the CLIENT-side expectation for infrastructure whose server side is already secured, such as a custom 'image'/'project' the author has configured for TLS themselves. The engine does not provision server-side TLS for any managed dependency kind, so 'security' on such a kind states an expectation the engine will confirm at run time, never one it creates.",
-      "$comment": "The mtls-requires/tls-forbids clauses below mirror the same per-field boolean 'false' subschema idiom used by db-assert.dynamodb's and storage-assert.s3's own 'expect.exists: false' forbidden-property clauses (see those providers' SchemaFragment) and by $defs/dependency's own per-kind allOf above — a boolean 'false' subschema reliably attaches one correctly-located error exactly at the offending field, where a 'not'/'oneOf' negation would not (see SchemaErrorCollector's own remarks). Declared as its own $def (rather than inlined separately into $defs/service and $defs/dependency) so both containers share exactly one copy of the mode-conditional logic, and so SchemaErrorCollector's TryReadSiblingIfClause (which reads the LAST '/allOf/' segment of the failing node's own schema pointer) resolves unambiguously to THIS def's own allOf, never an outer container's.",
+      "description": "Declares transport security (TLS or mutual TLS) for this dependency's or service's endpoint. Optional; omitting this block preserves today's unauthenticated-by-default behaviour unchanged. The set of fields required or forbidden is fixed per 'profile', so an author can tell, without running anything, which combination validates: 'profile' and 'endpoint' are required whenever this block is present, for both profiles; 'caCert' is always optional, for both profiles; 'clientCert' and 'clientKey' are required together for profile 'mtls' and forbidden for profile 'tls'. Declaring 'security' does not, by itself, cause the engine to secure an engine-provisioned dependency's own listener — it declares the CLIENT-side expectation for infrastructure whose server side is already secured, such as a custom 'image'/'project' the author has configured for TLS themselves. The engine does not provision server-side TLS for any managed dependency kind, so 'security' on such a kind states an expectation the engine will confirm at run time, never one it creates.",
+      "$comment": "The mtls-requires/tls-forbids clauses below mirror the same per-field boolean 'false' subschema idiom used by db-assert.dynamodb's and storage-assert.s3's own 'expect.exists: false' forbidden-property clauses (see those providers' SchemaFragment) and by $defs/dependency's own per-kind allOf above — a boolean 'false' subschema reliably attaches one correctly-located error exactly at the offending field, where a 'not'/'oneOf' negation would not (see SchemaErrorCollector's own remarks). Declared as its own $def (rather than inlined separately into $defs/service and $defs/dependency) so both containers share exactly one copy of the profile-conditional logic, and so SchemaErrorCollector's TryReadSiblingIfClause (which reads the LAST '/allOf/' segment of the failing node's own schema pointer) resolves unambiguously to THIS def's own allOf, never an outer container's. Closes with 'unevaluatedProperties: false' REPLACING 'additionalProperties: false' (never declared alongside it — a sibling 'additionalProperties' in the SAME schema object silently voids 'unevaluatedProperties', per JSON Schema 2020-12 — see SchemaStepSurfaceClosureTests' own finding 2, which documents the identical trap for $defs/step). For every field this $def declares today the two keywords accept and reject identical instances — this is a zero-behaviour change now, and the enabling one for later: 'additionalProperties' can only ever see this object's OWN 'properties', while 'unevaluatedProperties' also recognises a field introduced by a composed profile fragment's own allOf/if/then, the same way $defs/step already lets a provider fragment extend the step surface.",
       "type": "object",
-      "additionalProperties": false,
+      "unevaluatedProperties": false,
       "required": [
-        "mode",
+        "profile",
         "endpoint"
       ],
       "properties": {
-        "mode": {
-          "description": "The transport security mode: 'tls' for server-side TLS only, or 'mtls' for mutual TLS, which additionally presents a client certificate. Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+        "profile": {
+          "description": "The transport security mechanism this endpoint uses: 'tls' for server-side TLS only, or 'mtls' for mutual TLS, which additionally presents a client certificate. Deliberately typed as an open string pattern here, never a closed enum: an unrecognised profile name is rejected at VALIDATION TIME against the engine's security-profile registry, not by this schema — the same division $defs/step already uses for a step's own 'type' (this schema constrains only the shape; DocumentValidator rejects an unregistered value against the frozen registry). 'tls' and 'mtls' are the only profiles the registry recognises today; the optional dotted segment (e.g. 'acme.custom') reserves the '<vendor>.<name>' SHAPE the pattern will accept for a future out-of-tree profile — reserving the syntax costs nothing now, but such a profile does not validate anywhere yet: it would still need to become a REGISTERED profile (an unrecognised name is rejected regardless of shape), and on a DEPENDENCY it is further pinned to kafka or the literal value 'tls' by the per-kind narrowing below, so no third profile can validate on a non-kafka dependency until both gates are widened. Legality is additionally narrowed per target kind elsewhere in this schema — e.g. 'mtls' validates on a kafka dependency or on any declared service, but not on a dependency kind this release does not wire client certificates for. Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "$comment": "No 'enum' here, by design (REQ-019): SchemaFreezeTests composes the golden from the Core registry alone, so a closed enum would mean no profile originating outside that registry could ever validate, and widening it later would mutate a frozen keyword — exactly what the 1.0 language freeze forbids. The registry lookup lives in DocumentValidator.CollectUnknownSecurityProfileErrors, mirroring CollectUnknownStepTypeErrors.",
           "type": "string",
-          "enum": [
-            "tls",
-            "mtls"
-          ]
+          "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)?$"
         },
         "endpoint": {
-          "description": "The secured endpoint to connect to: either a port number, or the name of a declared endpoint. Required whenever this security block is present, for both modes — there is no implicit default endpoint, since an infrastructure's plaintext listener may remain reachable alongside its secured one, and silently resolving to it would authenticate nothing. Write a port as a BARE decimal integer with NO leading zeros, e.g. '8080' — quoting does NOT fix a leading-zero port, it only changes what the value MEANS (see below). A bare leading-zero value is read using YAML's own octal convention rather than decimal, so a bare '0123' is checked here as 83 while the engine reads the raw text '0123' — the two layers disagree. A bare leading-zero value containing an 8 or 9 (not a valid octal digit, e.g. '08080') fails YAML deserialisation outright, before this schema's own range checking below even runs — but a bare leading-zero value using only octal digits does NOT fail: '070000' is silently checked here as octal 28672, which PASSES the range check below even though the decimal port an author most likely meant (70000) would not. Quoting never fixes any of this, because it does not make the value decimal — it makes the value a NAME: a quoted value is checked against the string branch below, which carries no digit pattern and so applies NO port-range checking at all. '\"70000\"' and '\"08080\"' both validate as endpoint names, indistinguishable here from an unambiguous name such as '\"kafka-ssl\"' — never as the ports their digits suggest — while the equivalent bare '70000' is correctly rejected by the range below. This deliberately differs from the service-level 'httpPort' field, whose digit pattern keeps a quoted numeric value a PORT — here, quoting always produces a NAME.",
+          "description": "The secured endpoint to connect to: either a port number, or the name of a declared endpoint. Required whenever this security block is present, for both profiles — there is no implicit default endpoint, since an infrastructure's plaintext listener may remain reachable alongside its secured one, and silently resolving to it would authenticate nothing. Write a port as a BARE decimal integer with NO leading zeros, e.g. '8080' — quoting does NOT fix a leading-zero port, it only changes what the value MEANS (see below). A bare leading-zero value is read using YAML's own octal convention rather than decimal, so a bare '0123' is checked here as 83 while the engine reads the raw text '0123' — the two layers disagree. A bare leading-zero value containing an 8 or 9 (not a valid octal digit, e.g. '08080') fails YAML deserialisation outright, before this schema's own range checking below even runs — but a bare leading-zero value using only octal digits does NOT fail: '070000' is silently checked here as octal 28672, which PASSES the range check below even though the decimal port an author most likely meant (70000) would not. Quoting never fixes any of this, because it does not make the value decimal — it makes the value a NAME: a quoted value is checked against the string branch below, which carries no digit pattern and so applies NO port-range checking at all. '\"70000\"' and '\"08080\"' both validate as endpoint names, indistinguishable here from an unambiguous name such as '\"kafka-ssl\"' — never as the ports their digits suggest — while the equivalent bare '70000' is correctly rejected by the range below. This deliberately differs from the service-level 'httpPort' field, whose digit pattern keeps a quoted numeric value a PORT — here, quoting always produces a NAME.",
           "$comment": "A SINGLE merged schema, not a two-branch 'oneOf', mirroring $defs/service's own 'httpPort' idiom (see that field's remarks): 'minimum'/'maximum' are no-ops against a non-number instance and 'minLength' is a no-op against a non-string instance (JSON Schema draft 2020-12 §6.2/§6.3), so one schema carrying all three keywords accepts exactly the same integer/string shapes a two-branch oneOf did, with no spurious second error. Unlike 'httpPort', deliberately carries NO digit 'pattern' on the string branch: an endpoint NAME (e.g. 'kafka-ssl') is just as legal as a numeric-looking string, so a pattern restricting the string branch to digits would wrongly reject it.",
           "type": [
             "integer",
@@ -728,12 +752,12 @@
           "minLength": 1
         },
         "clientCert": {
-          "description": "Path to the client certificate file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientKey', and only for mode 'mtls' — mutual TLS's whole point is presenting a client identity. Not applicable to mode 'tls', where declaring it is rejected outright: a field that does nothing must not silently validate.",
+          "description": "Path to the client certificate file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientKey', and only for profile 'mtls' — mutual TLS's whole point is presenting a client identity. Not applicable to profile 'tls', where declaring it is rejected outright: a field that does nothing must not silently validate.",
           "type": "string",
           "minLength": 1
         },
         "clientKey": {
-          "description": "Path to the client private key file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientCert', and only for mode 'mtls'. Not applicable to mode 'tls', where declaring it is rejected outright.",
+          "description": "Path to the client private key file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientCert', and only for profile 'mtls'. Not applicable to profile 'tls', where declaring it is rejected outright.",
           "type": "string",
           "minLength": 1
         },
@@ -749,10 +773,10 @@
         {
           "if": {
             "required": [
-              "mode"
+              "profile"
             ],
             "properties": {
-              "mode": {
+              "profile": {
                 "const": "mtls"
               }
             }
@@ -767,10 +791,10 @@
         {
           "if": {
             "required": [
-              "mode"
+              "profile"
             ],
             "properties": {
-              "mode": {
+              "profile": {
                 "const": "tls"
               }
             }

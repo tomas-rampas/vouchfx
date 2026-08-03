@@ -100,13 +100,25 @@ public static class DocumentValidator
     /// in the composed schema.  Passing an empty registry validates against
     /// the root-language schema only (no provider-specific constraints).
     /// </param>
+    /// <param name="securityProfileRegistry">
+    /// The security-profile registry <see cref="CollectUnknownSecurityProfileErrors"/> checks
+    /// a declared <c>security.profile</c> against (REQ-019). Defaults to
+    /// <see cref="SecurityProfileRegistry.BuiltIn"/> when omitted — the production registry.
+    /// Injectable (G-MINOR-8, gatekeeper) so a caller can prove the registry cross-check's own
+    /// behaviour end-to-end through this front door with a reduced/explicit registry, mirroring
+    /// how <paramref name="registry"/> itself is always a parameter rather than a hardcoded
+    /// <c>StepKindRegistry</c> default.
+    /// </param>
     /// <returns>
     /// A <see cref="SchemaValidationResult"/> whose errors have been enriched
     /// with <c>(line N)</c> prefixes where the pointer-to-line resolution
     /// succeeded.
     /// </returns>
-    public static SchemaValidationResult Validate(string yamlText, StepKindRegistry registry)
+    public static SchemaValidationResult Validate(
+        string yamlText, StepKindRegistry registry, SecurityProfileRegistry? securityProfileRegistry = null)
     {
+        var resolvedSecurityProfileRegistry = securityProfileRegistry ?? SecurityProfileRegistry.BuiltIn;
+
         // Delegate to the composed-schema path; this is the authoritative
         // schema validation (root schema + provider fragments).
         var raw = SchemaComposer.Validate(registry, yamlText);
@@ -128,8 +140,23 @@ public static class DocumentValidator
             ? CollectUnknownStepTypeErrors(rootMapping, registry, raw.Errors)
             : Array.Empty<SchemaValidationError>();
 
-        if ((raw.IsValid || raw.Errors.Count == 0) && unknownTypeErrors.Count == 0)
+        // REQ-019: 'security.profile' is an open string pattern in the composed schema
+        // (no 'enum') — an unrecognised profile name is rejected here, at validation
+        // time, against the engine's security-profile registry, mirroring the identical
+        // division CollectUnknownStepTypeErrors already applies to a step's own 'type'.
+        // Also run UNCONDITIONALLY, for the same reason: a document whose only defect is
+        // an unregistered profile name is vacuously schema-valid (the pattern matches
+        // any lower-case dotted token).
+        var unknownProfileErrors = rootMapping is not null
+            ? CollectUnknownSecurityProfileErrors(rootMapping, raw.Errors, resolvedSecurityProfileRegistry)
+            : Array.Empty<SchemaValidationError>();
+
+        if ((raw.IsValid || raw.Errors.Count == 0) &&
+            unknownTypeErrors.Count == 0 &&
+            unknownProfileErrors.Count == 0)
+        {
             return raw;
+        }
 
         // A step whose type matched no registered provider gets exactly the
         // same spurious-unevaluatedProperties cascade SchemaErrorCollector
@@ -159,19 +186,22 @@ public static class DocumentValidator
                 .ToList();
         }
 
-        // Aggregate every (post-suppression) schema error AND every
-        // unknown-step-type error into one result: the cross-check must never
-        // mask or replace a genuine schema violation (on the same step or a
-        // different one), and a real schema violation must never suppress an
-        // unknown-type finding either. Schema errors are listed first,
-        // unknown-type errors appended after, so existing consumers that pick
-        // the FIRST matching error for a given instance location keep seeing
-        // the schema violation there.
-        var combined = new SchemaValidationError[schemaErrors.Count + unknownTypeErrors.Count];
+        // Aggregate every (post-suppression) schema error, every unknown-step-type
+        // error, AND every unknown-security-profile error into one result: neither
+        // cross-check may mask or replace a genuine schema violation (on the same
+        // step/security block or a different one), and a real schema violation must
+        // never suppress either cross-check's own finding. Schema errors are listed
+        // first, unknown-type errors next, unknown-profile errors last, so existing
+        // consumers that pick the FIRST matching error for a given instance location
+        // keep seeing the schema violation there.
+        var combined = new SchemaValidationError[
+            schemaErrors.Count + unknownTypeErrors.Count + unknownProfileErrors.Count];
         for (var i = 0; i < schemaErrors.Count; i++)
             combined[i] = schemaErrors[i];
         for (var i = 0; i < unknownTypeErrors.Count; i++)
             combined[schemaErrors.Count + i] = unknownTypeErrors[i];
+        for (var i = 0; i < unknownProfileErrors.Count; i++)
+            combined[schemaErrors.Count + unknownTypeErrors.Count + i] = unknownProfileErrors[i];
 
         var enriched = new SchemaValidationError[combined.Length];
         for (var i = 0; i < combined.Length; i++)
@@ -298,6 +328,126 @@ public static class DocumentValidator
                 pointer,
                 $"unknown step type '{typeValue}' — not a registered provider " +
                 "(expected <family>.<provider>, e.g. 'db-assert.postgres')."));
+        }
+
+        return errors is null ? Array.Empty<SchemaValidationError>() : errors;
+    }
+
+    /// <summary>
+    /// Walks <c>environment.services</c> and <c>environment.dependencies</c> for a declared
+    /// <c>security.profile</c> scalar that is a well-formed value but not registered in
+    /// <see cref="SecurityProfileRegistry.BuiltIn"/> — REQ-019: <c>profile</c> is an open
+    /// string pattern in the composed schema (no <c>enum</c>), and an unrecognised name is
+    /// rejected here, at validation time, against the frozen registry, mirroring exactly the
+    /// division <see cref="CollectUnknownStepTypeErrors"/> already applies to a step's own
+    /// <c>type</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>profile</c> value that already violates the root schema's own
+    /// <c>^[a-z0-9-]+(\.[a-z0-9-]+)?$</c> pattern (e.g. a wrong-cased <c>TLS</c>) already has
+    /// a <c>[pattern]</c> error at this exact pointer — this method defers to it and reports
+    /// nothing there, mirroring <see cref="CollectUnknownStepTypeErrors"/>'s identical
+    /// deferral for a pattern-invalid step <c>type</c>, so the two checks partition cleanly
+    /// instead of double-reporting the same defect (the mirror image of issue #265, which
+    /// moved a check the OTHER way — schema to registry lookup — to avoid exactly that).
+    /// </para>
+    /// <para>
+    /// No unevaluated-properties cascade suppression is needed here, unlike
+    /// <see cref="CollectUnknownStepTypeErrors"/>'s own step-scoped one: an unregistered
+    /// <c>profile</c> VALUE does not stop <c>$defs/security</c>'s own <c>properties.profile</c>
+    /// declaration from claiming the field as evaluated — only an unregistered step
+    /// <c>type</c> leaves an ENTIRE step's fields unclaimed by any provider fragment.
+    /// </para>
+    /// </remarks>
+    /// <param name="root">The root mapping node of the YAML document.</param>
+    /// <param name="schemaErrors">
+    /// The raw (pre-enrichment) schema-validation errors already produced for this document.
+    /// Consulted only to suppress a finding at an instance location the schema pass already
+    /// flagged (see remarks); never otherwise inspected.
+    /// </param>
+    /// <param name="registry">
+    /// The security-profile registry to check each declared <c>profile</c> against —
+    /// <see cref="SecurityProfileRegistry.BuiltIn"/> in production; a caller-supplied registry
+    /// in a test proving this cross-check's own behaviour explicitly (G-MINOR-8).
+    /// </param>
+    /// <returns>
+    /// One <see cref="SchemaValidationError"/> per declared <c>security.profile</c> with an
+    /// unrecognised value that the schema pass did NOT already flag at the same pointer, in
+    /// document order (services before dependencies, then map-iteration order within each);
+    /// empty when every declared profile is either registered, not a well-formed scalar, or
+    /// already reported by the schema.
+    /// </returns>
+    private static IReadOnlyList<SchemaValidationError> CollectUnknownSecurityProfileErrors(
+        YamlMappingNode root, IReadOnlyList<SchemaValidationError> schemaErrors, SecurityProfileRegistry registry)
+    {
+        var environmentKey = new YamlScalarNode("environment");
+        if (!root.Children.TryGetValue(environmentKey, out var environmentNode) ||
+            environmentNode is not YamlMappingNode environmentMapping)
+        {
+            return Array.Empty<SchemaValidationError>();
+        }
+
+        var schemaErrorLocations = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var schemaError in schemaErrors)
+            schemaErrorLocations.Add(schemaError.InstanceLocation);
+
+        List<SchemaValidationError>? errors = null;
+
+        foreach (var ownerSectionKey in new[] { "services", "dependencies" })
+        {
+            var ownerSectionNode = new YamlScalarNode(ownerSectionKey);
+            if (!environmentMapping.Children.TryGetValue(ownerSectionNode, out var sectionNode) ||
+                sectionNode is not YamlMappingNode sectionMapping)
+            {
+                continue;
+            }
+
+            foreach (var (ownerKeyNode, ownerValueNode) in sectionMapping.Children)
+            {
+                if (ownerKeyNode is not YamlScalarNode ownerKeyScalar ||
+                    ownerValueNode is not YamlMappingNode ownerMapping)
+                {
+                    // Not a well-formed mapping entry — the root schema's own
+                    // constraints already cover this shape; nothing for this
+                    // cross-check to add.
+                    continue;
+                }
+
+                if (!ownerMapping.Children.TryGetValue(new YamlScalarNode("security"), out var securityNode) ||
+                    securityNode is not YamlMappingNode securityMapping)
+                {
+                    continue;
+                }
+
+                if (!securityMapping.Children.TryGetValue(new YamlScalarNode("profile"), out var profileNode) ||
+                    profileNode is not YamlScalarNode profileScalar)
+                {
+                    // Missing or non-scalar `profile` is already a root-schema
+                    // violation (required/type constraints) — do not double-report.
+                    continue;
+                }
+
+                var profileValue = profileScalar.Value;
+                if (string.IsNullOrEmpty(profileValue) ||
+                    registry.TryGet(profileValue, out _))
+                {
+                    continue;
+                }
+
+                var pointer = $"/environment/{ownerSectionKey}/{ownerKeyScalar.Value}/security/profile";
+
+                // Defer to the schema: a `profile` that violates the root schema's
+                // own pattern already has a [pattern] error at this exact pointer —
+                // do not duplicate it with an unknown-profile finding.
+                if (schemaErrorLocations.Contains(pointer))
+                {
+                    continue;
+                }
+
+                errors ??= new List<SchemaValidationError>();
+                errors.Add(new SchemaValidationError(pointer, registry.DescribeUnknownProfile(profileValue)));
+            }
         }
 
         return errors is null ? Array.Empty<SchemaValidationError>() : errors;

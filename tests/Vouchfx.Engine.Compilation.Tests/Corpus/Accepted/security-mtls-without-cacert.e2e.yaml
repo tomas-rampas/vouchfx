@@ -1,4 +1,4 @@
-# Surface coverage: security.mode: mtls with clientCert/clientKey but WITHOUT caCert.
+# Surface coverage: security.profile: mtls with clientCert/clientKey but WITHOUT caCert.
 # REQ-001's own acceptance names this exact shape as valid: trust may already come from
 # an already-declared truststore or the platform default, so caCert stays optional even
 # under mtls.
@@ -9,7 +9,7 @@ environment:
     events-kafka:
       type: kafka
       security:
-        mode: mtls
+        profile: mtls
         endpoint: 9093
         clientCert: ./certs/client.pem
         clientKey: ./certs/client-key.pem

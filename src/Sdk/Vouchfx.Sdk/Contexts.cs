@@ -74,18 +74,21 @@ public interface IProjectContext
     IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <summary>
-    /// Gets the map of service names to the endpoint/port names each one exposes, as
-    /// declared under <c>environment.services</c> in the scenario file
-    /// (services-generalisation spec, REQ-010).
+    /// Gets the map of service names to their declared shape, as declared under
+    /// <c>environment.services</c> in the scenario file (services-generalisation spec,
+    /// REQ-010).
     /// </summary>
     /// <remarks>
     /// <para>
     /// Keys are the logical service names (e.g. <c>"kafka-broker"</c>), mirroring
-    /// <see cref="DeclaredDependencies"/>'s own shape; values are the Aspire endpoint names
+    /// <see cref="DeclaredDependencies"/>'s own shape; each value's
+    /// <see cref="DeclaredServiceInfo.EndpointNames"/> carries the Aspire endpoint names
     /// that service's declared shape produces (e.g. <c>["http"]</c> for the implicit
     /// default HTTP endpoint, or <c>["tcp-9093"]</c> for a declared <c>ports: [9093]</c>
     /// entry) — empty for a project-form service, whose endpoints Aspire auto-discovers
-    /// from the project's own launch profile rather than this engine modelling them.
+    /// from the project's own launch profile rather than this engine modelling them. See
+    /// <see cref="DeclaredServiceInfo"/>'s own remarks for why the value is a record rather
+    /// than a bare endpoint-name list.
     /// </para>
     /// <para>
     /// The map is NOT limited to <c>environment.services</c> entries, and a scenario that
@@ -132,7 +135,7 @@ public interface IProjectContext
     /// it.
     /// </para>
     /// </remarks>
-    IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+    IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <summary>
     /// Gets the directory that relative file paths in step fields (e.g.

@@ -1,4 +1,4 @@
-# Surface coverage: security.mode: tls WITH an explicit caCert declared — the
+# Surface coverage: security.profile: tls WITH an explicit caCert declared — the
 # complementary shape to security-dependency-tls-no-cacert.e2e.yaml (caCert is legal
 # under tls whether present or absent; only its presence differs between the two).
 metadata:
@@ -8,7 +8,7 @@ environment:
     search:
       type: redis
       security:
-        mode: tls
+        profile: tls
         endpoint: 6380
         caCert: ./certs/ca.pem
 steps:

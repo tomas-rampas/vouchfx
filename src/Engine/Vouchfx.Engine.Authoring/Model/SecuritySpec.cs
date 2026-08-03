@@ -16,7 +16,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <para>
 /// Every field is bound from its raw scalar text with no requiredness enforced by
 /// this parser — mirroring the rest of <see cref="YamlDocumentParser"/>'s
-/// deliberately lenient design (see that file's header remarks). <c>mode</c>/
+/// deliberately lenient design (see that file's header remarks). <c>profile</c>/
 /// <c>endpoint</c> requiredness, the <c>mtls</c>-requires-<c>clientCert</c>/
 /// <c>clientKey</c> rule, and the <c>tls</c>-forbids-<c>clientCert</c>/<c>clientKey</c>
 /// rule are all enforced by the JSON Schema layer
@@ -36,10 +36,15 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// already established for its own record; an init-only property is purely additive.
 /// </para>
 /// </remarks>
-/// <param name="Mode">
-/// The transport security mode as authored: <c>"tls"</c> or <c>"mtls"</c>. Retained
-/// verbatim (never case-normalised) so an incorrectly-cased value (e.g. <c>"TLS"</c>)
-/// is rejected by the schema's case-sensitive enum rather than silently accepted here.
+/// <param name="Profile">
+/// The transport security mechanism as authored: <c>"tls"</c> or <c>"mtls"</c> (an open
+/// discriminator, REQ-019 — a dotted <c>&lt;vendor&gt;.&lt;name&gt;</c> form is also
+/// schema-legal, reserved for an out-of-tree profile). Retained verbatim (never
+/// case-normalised) so an incorrectly-cased value (e.g. <c>"TLS"</c>) is rejected by the
+/// schema's case-sensitive pattern rather than silently accepted here; an unrecognised
+/// profile name is rejected separately, at validation time, against the engine's
+/// security-profile registry (<c>DocumentValidator.CollectUnknownSecurityProfileErrors</c>),
+/// not by this record.
 /// </param>
 /// <param name="Endpoint">
 /// The secured endpoint as authored: either a port number or a declared endpoint
@@ -59,12 +64,12 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <param name="ClientCert">
 /// Path to the client certificate file presented during a mutual-TLS handshake,
 /// relative to the suite directory. Required together with <see cref="ClientKey"/>
-/// for <c>mode: mtls</c>; not applicable to <c>mode: tls</c> (enforced by the schema).
+/// for <c>profile: mtls</c>; not applicable to <c>profile: tls</c> (enforced by the schema).
 /// </param>
 /// <param name="ClientKey">
 /// Path to the client private key file presented during a mutual-TLS handshake,
 /// relative to the suite directory. Required together with <see cref="ClientCert"/>
-/// for <c>mode: mtls</c>; not applicable to <c>mode: tls</c> (enforced by the schema).
+/// for <c>profile: mtls</c>; not applicable to <c>profile: tls</c> (enforced by the schema).
 /// </param>
 /// <param name="ServerArtifacts">
 /// Host files to be copied into the container at topology-build time (REQ-016's
@@ -73,7 +78,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <c>serverArtifacts</c> entries.
 /// </param>
 public sealed record SecuritySpec(
-    string? Mode,
+    string? Profile,
     string? Endpoint,
     string? CaCert,
     string? ClientCert,

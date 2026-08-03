@@ -56,19 +56,19 @@ internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
     /// The base directory relative file-path fields are resolved against.
     /// </param>
     /// <param name="declaredServices">
-    /// Map of service name to the endpoint/port names it exposes (services-generalisation
-    /// spec, REQ-010). Defaults to an empty map (the pre-REQ-010 shape) when omitted, so
-    /// this constructor's pre-existing 2-argument call sites keep compiling unchanged.
+    /// Map of service name to its declared shape (services-generalisation spec, REQ-010).
+    /// Defaults to an empty map (the pre-REQ-010 shape) when omitted, so this constructor's
+    /// pre-existing 2-argument call sites keep compiling unchanged.
     /// </param>
     internal RunProjectContext(
         IReadOnlyDictionary<string, string> declaredDependencies,
         string suiteDirectory,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? declaredServices = null)
+        IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>? declaredServices = null)
     {
         DeclaredDependencies = declaredDependencies;
         SuiteDirectory = suiteDirectory;
         DeclaredServices = declaredServices
-            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            ?? new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -88,7 +88,7 @@ internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <inheritdoc />
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+    public IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <inheritdoc />
     public string SuiteDirectory { get; }

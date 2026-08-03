@@ -845,10 +845,10 @@ public sealed class ProviderPipelineTests
     [Fact]
     public void RunProjectContext_WithServices_ExposesMapViaInterface()
     {
-        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        var services = new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
         {
-            ["kafka-broker"] = new List<string> { "tcp-9093" },
-            ["api"] = new List<string> { "http" },
+            ["kafka-broker"] = new DeclaredServiceInfo(new List<string> { "tcp-9093" }),
+            ["api"] = new DeclaredServiceInfo(new List<string> { "http" }),
         };
 
         Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(
@@ -857,8 +857,8 @@ public sealed class ProviderPipelineTests
             services);
 
         Assert.Equal(2, ctx.DeclaredServices.Count);
-        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"]));
-        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["api"]));
+        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"].EndpointNames));
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["api"].EndpointNames));
     }
 
     /// <summary>
@@ -907,7 +907,7 @@ public sealed class ProviderPipelineTests
             ast, Directory.GetCurrentDirectory(), boundSteps, out _);
 
         Assert.True(ctx.DeclaredServices.ContainsKey("kafka-broker"));
-        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"]));
+        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"].EndpointNames));
     }
 
     /// <summary>
@@ -937,7 +937,7 @@ public sealed class ProviderPipelineTests
         var ctx = ProviderPipeline.BuildProjectContext(
             ast, Directory.GetCurrentDirectory(), boundSteps, out _);
 
-        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"]));
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"].EndpointNames));
     }
 
     // ── Test: dependency sidecar names are reachable DeclaredServices (M1, fix round 3) ──
@@ -983,8 +983,8 @@ public sealed class ProviderPipelineTests
         // cannot check that the value BuildProjectContext assigns matches the endpoint the
         // Build lambda actually stages. Nothing consumes these values today (providers use
         // ContainsKey, DescribeDeclaredSurfaces uses Keys), so a wrong value would be silent.
-        Assert.Contains("http", ctx.DeclaredServices["bus-sr"]);
-        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["bus-sr"]));
+        Assert.Contains("http", ctx.DeclaredServices["bus-sr"].EndpointNames);
+        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["bus-sr"].EndpointNames));
     }
 
     /// <summary>
@@ -1018,8 +1018,8 @@ public sealed class ProviderPipelineTests
 
         // R-3, mailpit half: this sidecar is the one whose endpoint is NOT the HTTP default,
         // so it is the case a wrong value would actually show up in. See the sibling test.
-        Assert.Contains("smtp", ctx.DeclaredServices["mail-smtp"]);
-        Assert.Equal("smtp", Assert.Single(ctx.DeclaredServices["mail-smtp"]));
+        Assert.Contains("smtp", ctx.DeclaredServices["mail-smtp"].EndpointNames);
+        Assert.Equal("smtp", Assert.Single(ctx.DeclaredServices["mail-smtp"].EndpointNames));
     }
 
     // ── Test: single-Bind-per-step, no swallow-catch (M5 fix, fix round 2) ───

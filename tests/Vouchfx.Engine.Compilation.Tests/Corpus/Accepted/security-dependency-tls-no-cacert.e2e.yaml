@@ -1,4 +1,4 @@
-# Surface coverage: environment.dependencies.<name>.security with mode: tls and no
+# Surface coverage: environment.dependencies.<name>.security with profile: tls and no
 # caCert declared. REQ-001's own acceptance names this exact shape as valid — caCert's
 # absence is not an error, since the relevant CA may already live in a declared
 # truststore or the platform's own default trust store.
@@ -9,7 +9,7 @@ environment:
     cache:
       type: redis
       security:
-        mode: tls
+        profile: tls
         endpoint: 6380
 steps:
   - id: noop

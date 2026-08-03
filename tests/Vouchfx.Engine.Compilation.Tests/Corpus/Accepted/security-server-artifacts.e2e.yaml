@@ -9,7 +9,7 @@ environment:
     kafka-broker:
       image: myorg/kafka-broker:1.0
       security:
-        mode: mtls
+        profile: mtls
         endpoint: 9093
         clientCert: ./certs/client.pem
         clientKey: ./certs/client-key.pem

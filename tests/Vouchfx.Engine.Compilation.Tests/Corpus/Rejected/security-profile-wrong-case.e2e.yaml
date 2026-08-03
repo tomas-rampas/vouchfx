@@ -1,0 +1,27 @@
+# expected-instance-location: /environment/services/app/security/profile
+# expected-keyword: pattern
+#
+# 'profile' is matched case-sensitively, like every other DSL vocabulary term
+# (dependency type, imagePullPolicy, verifyMode) since the pre-GA schema tightening
+# series. REQ-019 retypes 'profile' from a closed enum to an open string pattern
+# (^[a-z0-9-]+(\.[a-z0-9-]+)?$), so a wrong-case value now fails the PATTERN, not an
+# enum — 'TLS' (upper-case) contains no lower-case-only characters and is rejected
+# here rather than silently normalised. The sibling case — a lower-case value that IS
+# pattern-legal but not a REGISTERED profile — cannot live in this corpus: the harness
+# pins a '[keyword]' tag (SchemaRejectedCorpusTests), and an unknown-profile rejection
+# carries none (it is a registry lookup, not a schema keyword). See
+# DocumentValidatorTests.Validate_UnknownSecurityProfile_OnlyDefect_IsRejected_WithLineAndMessage
+# instead.
+metadata:
+  name: rejected-security-profile-wrong-case
+environment:
+  services:
+    app:
+      image: myorg/app:1.0
+      security:
+        profile: TLS
+        endpoint: 8443
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

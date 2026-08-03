@@ -1,0 +1,24 @@
+# expected-instance-location: /environment/dependencies/cache/security/profile
+# expected-keyword: const
+#
+# REQ-021: 'security.profile: mtls' is narrowed to the dependency kinds this release
+# actually wires client certificates for — today, only kafka. $defs/dependency's own
+# final allOf clause pins 'profile' to 'tls' for every OTHER kind via an allow-list
+# ('not: { const: "kafka" }' in the condition, never enumerating every excluded
+# kind), so 'mtls' on a redis dependency is rejected here — freeze-critical because
+# it is a NARROWING: added after 1.0 it would reject suites that validated before.
+metadata:
+  name: rejected-security-mtls-non-kafka-dependency
+environment:
+  dependencies:
+    cache:
+      type: redis
+      security:
+        profile: mtls
+        endpoint: 6380
+        clientCert: ./certs/client.pem
+        clientKey: ./certs/client-key.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

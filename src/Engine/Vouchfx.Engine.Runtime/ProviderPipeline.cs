@@ -22,6 +22,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation;
+using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Sdk;
 
@@ -114,16 +115,18 @@ internal sealed record BoundStep(
 internal sealed record ValidationFailure(string Message)
 {
     /// <summary>
-    /// <see langword="true"/> only for a failure raised by
-    /// <see cref="EnvironmentSecurityValidator"/>'s pre-topology security preflight
-    /// (path containment/existence for a declared <c>security</c> artefact);
-    /// <see langword="false"/> for every other <see cref="ValidationFailure"/> in this
-    /// pipeline (a step's own bind/validate failure, the registry-lookup internal
-    /// error, a host-resource collision, …). Init-only rather than a constructor
-    /// parameter so every existing <c>new ValidationFailure(message)</c> call site
-    /// keeps compiling unchanged and defaults to <see langword="false"/>; only
-    /// <see cref="EnvironmentSecurityValidator"/>'s own failure sites set it
-    /// <see langword="true"/> via an object initializer.
+    /// <see langword="true"/> for a failure raised by either of this pipeline's two
+    /// pre-topology security-preflight checks — <see cref="EnvironmentSecurityValidator"/>
+    /// (path containment/existence for a declared <c>security</c> artefact, REQ-003/REQ-004)
+    /// or <see cref="SecurityProfileWiringValidator"/> (an unresolved <c>(profile, target-kind)</c>
+    /// pair, REQ-022, G-MINOR-1) — both called from <see cref="ProviderPipeline.Compile"/>
+    /// back-to-back, before any step is bound; <see langword="false"/> for every other
+    /// <see cref="ValidationFailure"/> in this pipeline (a step's own bind/validate failure,
+    /// the registry-lookup internal error, a host-resource collision, …). Init-only rather
+    /// than a constructor parameter so every existing <c>new ValidationFailure(message)</c>
+    /// call site keeps compiling unchanged and defaults to <see langword="false"/>; only
+    /// these two producers' own failure sites set it <see langword="true"/> via an object
+    /// initializer.
     /// </summary>
     /// <remarks>
     /// A narrow, distinguishable signal that survives untouched through
@@ -134,6 +137,17 @@ internal sealed record ValidationFailure(string Message)
     /// is the pipeline-path signal that distinguishes a security-preflight rejection
     /// from an ordinary authoring-error Inconclusive. This PR does not itself change
     /// any verdict mapping, exit code, or <c>ScenarioRunner</c> flow.
+    /// <para>
+    /// G-MINOR-1 (gatekeeper, this slice): <see cref="SecurityProfileWiringValidator"/>'s
+    /// own failure site (added for REQ-022) also sets this marker true, widening it beyond
+    /// its original "EnvironmentSecurityValidator only" scope. Recorded here as a DELIBERATE
+    /// decision, not an oversight the doc comment merely failed to keep up with: a REQ-022
+    /// wiring failure — a declared <c>security.profile</c> that resolves to no registered
+    /// wiring for its target kind — is exactly as much a security-preflight rejection as a
+    /// missing certificate file, and should not silently inherit the ordinary Inconclusive
+    /// exit-code path REQ-018's later exit-code decision treats every OTHER validation
+    /// failure as falling into by default.
+    /// </para>
     /// </remarks>
     public bool IsSecurityPreflight { get; init; }
 }
@@ -220,6 +234,15 @@ internal static class ProviderPipeline
     /// directory used to resolve <c>environment.seed</c> fixture paths. Pass
     /// <see langword="null"/> to fall back to the process's current directory.
     /// </param>
+    /// <param name="securityProfileRegistry">
+    /// The security-profile registry <see cref="SecurityProfileWiringValidator"/> checks every
+    /// declared <c>security</c> block's <c>(profile, target-kind)</c> pair against (REQ-022).
+    /// Defaults to <see cref="SecurityProfileRegistry.BuiltIn"/> when omitted — the production
+    /// registry. Injectable (G-MINOR-8, gatekeeper) so a caller can prove REQ-022's own
+    /// red-first behaviour end-to-end through THIS front door with a reduced/explicit registry,
+    /// mirroring how <paramref name="registry"/> itself is always a parameter rather than a
+    /// hardcoded <c>StepKindRegistry</c> default.
+    /// </param>
     /// <returns>
     /// A <see cref="PipelineResult"/> whose <see cref="PipelineResult.Failure"/> is
     /// non-null when a model-validation failure is encountered (the caller should map
@@ -231,7 +254,8 @@ internal static class ProviderPipeline
         ScenarioAst ast,
         StepKindRegistry registry,
         string suiteNamespace,
-        string? suiteDirectory = null)
+        string? suiteDirectory = null,
+        SecurityProfileRegistry? securityProfileRegistry = null)
     {
         var resolvedSuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
         var fragments = new List<StepCompilePlan>(ast.Steps.Count);
@@ -260,6 +284,24 @@ internal static class ProviderPipeline
                 CompileReferencePaths: Array.Empty<string>(),
                 HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
                 Failure: environmentSecurityFailure);
+        }
+
+        // Security-profile wiring invariant (authenticated-infrastructure-mtls, slice C —
+        // REQ-022): for every declared 'security' block, the (profile, target-kind) pair must
+        // resolve to a registered wiring — closing the false-assurance gap REQ-021's
+        // schema-level narrowing alone cannot (see SecurityProfileWiringValidator's own header
+        // remarks). Runs immediately after the artefact preflight above, same stage, same
+        // reasoning: reads only ast.Environment, so it needs nothing from a bound model.
+        var securityProfileWiringFailure =
+            SecurityProfileWiringValidator.Validate(ast, securityProfileRegistry ?? SecurityProfileRegistry.BuiltIn);
+        if (securityProfileWiringFailure is not null)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: securityProfileWiringFailure);
         }
 
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
@@ -783,7 +825,8 @@ internal static class ProviderPipeline
     /// <see cref="RunProjectContext.DeclaredDependencies"/> map contains every
     /// declared dependency name mapped to its type string, and whose
     /// <see cref="RunProjectContext.DeclaredServices"/> map contains every declared
-    /// service name (mapped to the endpoint/port names it exposes, via
+    /// service name (mapped to a <see cref="Vouchfx.Sdk.DeclaredServiceInfo"/> whose
+    /// <see cref="Vouchfx.Sdk.DeclaredServiceInfo.EndpointNames"/> is populated via
     /// <see cref="ServiceEndpointNaming.DeclaredEndpointNames"/> — the SAME naming
     /// convention <c>EnvironmentMapper</c> uses to build the actual Aspire endpoints, so
     /// the two can never silently drift apart), MERGED with every dependency's own extra
@@ -792,8 +835,9 @@ internal static class ProviderPipeline
     /// <see cref="EnvironmentMapper.GetDependencyServiceSidecarNames"/> enumeration the
     /// collision guard below already consults, so the two cannot disagree about which
     /// names are reachable), MERGED with every step's own host-resource
-    /// contribution (mapped to its <see cref="HostResourceRequirement.Kind"/>, e.g.
-    /// <c>["webhook-listener"]</c>).  Returns <see cref="RunProjectContext.Empty"/> only
+    /// contribution (its <c>EndpointNames</c> holding a single-element list carrying its
+    /// own <see cref="HostResourceRequirement.Kind"/>, e.g. <c>["webhook-listener"]</c>).
+    /// Returns <see cref="RunProjectContext.Empty"/> only
     /// when ALL FOUR sources are empty. When <paramref name="collisionFailure"/> is set,
     /// this value is still returned (never <see langword="null"/>) but callers must not
     /// use it — see that parameter's own remarks.
@@ -843,7 +887,7 @@ internal static class ProviderPipeline
             }
         }
 
-        var serviceMap = new Dictionary<string, IReadOnlyList<string>>(
+        var serviceMap = new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(
             services?.Count ?? 0, StringComparer.Ordinal);
 
         // m1 fix (fix round 2): the guard below rejects a host resource whose VarName
@@ -871,7 +915,7 @@ internal static class ProviderPipeline
         {
             foreach (var kv in services)
             {
-                serviceMap[kv.Key] = ServiceEndpointNaming.DeclaredEndpointNames(kv.Value);
+                serviceMap[kv.Key] = new Vouchfx.Sdk.DeclaredServiceInfo(ServiceEndpointNaming.DeclaredEndpointNames(kv.Value));
                 reservedSvcNames[kv.Key] = $"a declared service (environment.services.{kv.Key})";
             }
         }
@@ -950,12 +994,12 @@ internal static class ProviderPipeline
                     // (name, endpointName) pair — rather than the name alone — would close this
                     // the same way the name-only drift was closed above; left open since nothing
                     // consumes the value yet.
-                    serviceMap[sidecarName] = new[]
+                    serviceMap[sidecarName] = new Vouchfx.Sdk.DeclaredServiceInfo(new[]
                     {
                         string.Equals(depSpec.Type, "mailpit", StringComparison.Ordinal)
                             ? "smtp"
                             : ServiceEndpointNaming.HttpEndpointName,
-                    };
+                    });
                 }
             }
         }
@@ -996,7 +1040,7 @@ internal static class ProviderPipeline
                     continue;
                 }
 
-                serviceMap[hostReq.VarName] = new[] { hostReq.Kind };
+                serviceMap[hostReq.VarName] = new Vouchfx.Sdk.DeclaredServiceInfo(new[] { hostReq.Kind });
             }
         }
 

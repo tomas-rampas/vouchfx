@@ -13,7 +13,7 @@ environment:
     app:
       image: myorg/app:1.0
       security:
-        mode: tls
+        profile: tls
         endpoint: 8443
         clientCert: ./certs/client.pem
 steps:

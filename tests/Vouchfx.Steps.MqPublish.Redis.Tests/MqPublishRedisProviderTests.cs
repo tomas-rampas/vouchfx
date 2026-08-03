@@ -44,8 +44,8 @@ file sealed class StubProjectContext : IProjectContext
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
 
     /// <inheritdoc />
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; } =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; } =
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
 }
 
 /// <summary>Stub <see cref="IBindingContext"/> for tests that need no binding services.</summary>

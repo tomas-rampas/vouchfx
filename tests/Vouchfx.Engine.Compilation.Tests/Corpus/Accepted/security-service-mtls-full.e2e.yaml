@@ -1,4 +1,4 @@
-# Surface coverage: environment.services.<name>.security with mode: mtls and every
+# Surface coverage: environment.services.<name>.security with profile: mtls and every
 # optional field declared together (caCert + clientCert + clientKey) — the full shape
 # REQ-001 describes for a customer's own mTLS-secured broker declared as a service.
 metadata:
@@ -8,7 +8,7 @@ environment:
     kafka-broker:
       image: myorg/kafka-broker:1.0
       security:
-        mode: mtls
+        profile: mtls
         endpoint: 9093
         caCert: ./certs/ca.pem
         clientCert: ./certs/client.pem

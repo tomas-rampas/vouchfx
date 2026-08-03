@@ -1,9 +1,13 @@
 # expected-instance-location: /environment/dependencies/cache/security/bogus
-# expected-keyword: additionalProperties
+# expected-keyword: unevaluatedProperties
 #
-# $defs/security carries 'additionalProperties: false' — an unrecognised key inside a
-# 'security' block is rejected here with a correctly-located error, exactly like every
-# other closed object in this schema (services, dependencies, steps).
+# REQ-020: $defs/security now carries 'unevaluatedProperties: false' (replacing
+# 'additionalProperties: false' — never alongside it, see SchemaStepSurfaceClosureTests
+# for the sibling-keyword trap this avoids). An unrecognised key inside a 'security'
+# block is still rejected here with a correctly-located error naming the owning
+# dependency, exactly as it was under the old keyword — SchemaErrorCollector's
+# unevaluatedProperties branch resolves the environment container the same way its
+# additionalProperties branch already did.
 metadata:
   name: rejected-security-unknown-key
 environment:
@@ -11,7 +15,7 @@ environment:
     cache:
       type: redis
       security:
-        mode: tls
+        profile: tls
         endpoint: 6380
         bogus: true
 steps:

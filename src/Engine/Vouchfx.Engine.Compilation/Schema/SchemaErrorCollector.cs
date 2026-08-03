@@ -876,6 +876,34 @@ internal static class SchemaErrorCollector
     {
         if (IsUnevaluatedPropertiesShape(keyword, evaluationPath))
         {
+            // REQ-020 (authenticated-infrastructure-mtls, slice C): $defs/security now closes
+            // with 'unevaluatedProperties: false' instead of 'additionalProperties: false', so
+            // an unrecognised key directly inside a security block (or one of its own
+            // serverArtifacts[] entries) now reaches THIS branch rather than
+            // FormatAdditionalPropertiesError's — measured regression, not a design choice: an
+            // unqualified fall-through to the step-only FormatUnevaluatedPropertiesError below
+            // would silently DROP the "on dependency '<name>'"/"in dependency '<name>' (at
+            // security...)" attribution FormatAdditionalPropertiesError already gives every
+            // OTHER environment-surface unknown-key rejection, since $defs/security's own
+            // instance has no 'type' field for TryResolveContainerType to read (a dependency's
+            // 'type' lives two levels up, on the OWNING dependency, not on the security object
+            // itself). Checking TryResolveEnvironmentContainer FIRST — exactly the same check
+            // FormatAdditionalPropertiesError makes — closes that gap; a step's own
+            // unevaluatedProperties violation (InstanceLocation always rooted at '/steps/...')
+            // never matches this environment-rooted check and falls through to the step-naming
+            // formatter unchanged.
+            if (TryResolveEnvironmentContainer(
+                    instanceLocation, out var unevalContainerKind, out var unevalContainerName,
+                    out var unevalIsNestedBelowSecurity, allowNestedSecurity: true))
+            {
+                var unevalPropertyName = LastPointerSegment(instanceLocation);
+                return unevalIsNestedBelowSecurity
+                    ? $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' in {unevalContainerKind} " +
+                      $"'{unevalContainerName}' (at {BuildSecuritySubPath(instanceLocation)})"
+                    : $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' on {unevalContainerKind} " +
+                      $"'{unevalContainerName}'";
+            }
+
             return FormatUnevaluatedPropertiesError(instanceLocation, instance);
         }
 
@@ -1758,6 +1786,50 @@ internal static class SchemaErrorCollector
                    $"type: {expectedValue} }}'.";
         }
 
+        // REQ-021: 'security.profile' pinned to a single value on a dependency kind this
+        // release does not wire the offending profile for (today, only 'mtls' on any kind
+        // other than kafka — see $defs/dependency's own final allOf clause). Names BOTH
+        // halves the acceptance criterion requires: the dependency's own kind (read back
+        // from the instance, exactly like FormatForbiddenPropertyError's dependencyKind
+        // branch already does for a forbidden field) and the rejected profile value.
+        if (TryResolveSecurityProfileContainer(instanceLocation, out var dependencyName))
+        {
+            // G-MAJOR-1 (gatekeeper): this REQ-021 per-kind narrowing occupies the IDENTICAL
+            // instance location as REQ-019's own unknown-profile registry cross-check
+            // (DocumentValidator.CollectUnknownSecurityProfileErrors) for every non-kafka
+            // dependency kind — kafka carries no per-kind narrowing at all, so an unregistered
+            // profile there reaches that cross-check directly, but on the other twelve kinds
+            // ANY non-'tls' value fails THIS const clause first, and DocumentValidator's own
+            // pointer-keyed deferral (needed to avoid double-reporting a wrong-cased [pattern]
+            // value, the mirror of issue #265) then always yields to whatever this method
+            // renders here. Left unguarded, that meant an unregistered profile (a typo, or a
+            // name that was never registered at all) on 12 of 13 dependency kinds rendered
+            // "only 'tls' is wired for this kind" — a message that ASSERTS the profile IS a
+            // recognised mechanism, merely unwired here, when no such mechanism exists
+            // anywhere. Consulting the SAME registry DocumentValidator itself consults (both
+            // live in this Compilation assembly) closes the gap: an offending value that is
+            // not registered AT ALL falls through to the identical "unknown security profile"
+            // wording DocumentValidator would have used had the pointer been free, so an
+            // author sees exactly one message and it is the true one, on every dependency
+            // kind alike. A REGISTERED-but-unwired profile (e.g. 'mtls' on redis) is a
+            // genuinely different defect — the kind-narrowing message below still names it.
+            if (!SecurityProfileRegistry.BuiltIn.TryGet(offendingValue, out _))
+            {
+                return SecurityProfileRegistry.BuiltIn.DescribeUnknownProfile(TruncateForDisplay(offendingValue));
+            }
+
+            var dependencyKind = instance is { } instanceRootForKind
+                ? TryResolveContainerType(instanceLocation[..instanceLocation.LastIndexOf('/')], instanceRootForKind)
+                : null;
+
+            return dependencyKind is null
+                ? $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
+                  $"'{expectedValue}'."
+                : $"[const] Dependency '{dependencyName}' (type '{dependencyKind}') declares " +
+                  $"'security.profile: {TruncateForDisplay(offendingValue)}', but only " +
+                  $"'{expectedValue}' is wired for this kind.";
+        }
+
         return $"[const] '{TruncateForDisplay(offendingValue)}' does not match the value required here: " +
                $"'{expectedValue}'.";
     }
@@ -2139,7 +2211,7 @@ internal static class SchemaErrorCollector
     /// Defaults to <see langword="false"/> so every EXISTING caller — in particular
     /// <see cref="FormatForbiddenPropertyError"/>, whose own generic "sibling if-clause"
     /// branch already names WHY a security field is forbidden (e.g. "is not valid when
-    /// 'mode' is 'tls'") for exactly this nested shape — keeps its current behaviour
+    /// 'profile' is 'tls'") for exactly this nested shape — keeps its current behaviour
     /// unchanged; only <see cref="FormatAdditionalPropertiesError"/> and
     /// <see cref="FormatError"/>'s own <c>required</c> branch opt in.
     /// </param>
@@ -2245,6 +2317,38 @@ internal static class SchemaErrorCollector
         }
 
         serviceName = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Recognises the pointer shape
+    /// <c>/environment/dependencies/&lt;name&gt;/security/profile</c> (REQ-021's per-kind
+    /// narrowing — <see cref="FormatConstError"/>'s dedicated branch) and extracts the
+    /// owning dependency's own map key. SERVICE-only pointers never match: no per-kind
+    /// narrowing is declared on <c>$defs/service</c> (every profile validates on every
+    /// service), so a <c>const</c> failure at this exact shape can only ever originate
+    /// from a dependency's own per-kind <c>allOf</c> clause in <c>$defs/dependency</c>.
+    /// </summary>
+    /// <param name="instanceLocation">The failing node's own instance-location pointer.</param>
+    /// <param name="dependencyName">
+    /// Set to the resolved dependency's own map key on a successful resolve;
+    /// <see cref="string.Empty"/> otherwise.
+    /// </param>
+    private static bool TryResolveSecurityProfileContainer(string instanceLocation, out string dependencyName)
+    {
+        var segments = instanceLocation.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 5 &&
+            segments[0] == "environment" &&
+            segments[1] == "dependencies" &&
+            segments[3] == "security" &&
+            segments[4] == "profile")
+        {
+            dependencyName = DecodePointerSegment(segments[2]);
+            return true;
+        }
+
+        dependencyName = string.Empty;
         return false;
     }
 

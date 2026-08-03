@@ -1246,7 +1246,7 @@ public sealed class EnvironmentSchemaTests
                 cache:
                   type: redis
                   security:
-                    mode: tls
+                    profile: tls
             steps:
               - id: noop
                 type: noop.echo
@@ -1268,6 +1268,16 @@ public sealed class EnvironmentSchemaTests
     /// deep for TryResolveEnvironmentContainer's exact-depth-4 match, so it degraded to
     /// the bare "Unknown property 'bogus'" with no owner named.
     /// </summary>
+    /// <remarks>
+    /// REQ-020 (authenticated-infrastructure-mtls, slice C): $defs/security now closes
+    /// with 'unevaluatedProperties: false' (replacing 'additionalProperties: false'), so
+    /// this rejection's own keyword tag changed from '[additionalProperties]' to
+    /// '[unevaluatedProperties]' — a genuine, expected consequence of REQ-020's rename,
+    /// pinned here rather than left for a future reader to rediscover by surprise. The
+    /// "on dependency 'cache'" attribution itself is UNCHANGED: SchemaErrorCollector's
+    /// unevaluatedProperties branch resolves the same environment container its
+    /// additionalProperties branch already did (see that method's own remarks).
+    /// </remarks>
     [Fact]
     public void Dependency_Security_UnknownKey_NamesTheDependency()
     {
@@ -1277,7 +1287,7 @@ public sealed class EnvironmentSchemaTests
                 cache:
                   type: redis
                   security:
-                    mode: tls
+                    profile: tls
                     endpoint: 6380
                     bogus: true
             steps:
@@ -1291,7 +1301,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/cache/security/bogus" &&
             e.Message.Contains(
-                "[additionalProperties] Unknown property 'bogus' on dependency 'cache'",
+                "[unevaluatedProperties] Unknown property 'bogus' on dependency 'cache'",
                 System.StringComparison.Ordinal));
     }
 
@@ -1309,7 +1319,7 @@ public sealed class EnvironmentSchemaTests
                 app:
                   image: myorg/app:1.0
                   security:
-                    mode: tls
+                    profile: tls
             steps:
               - id: noop
                 type: noop.echo
@@ -1349,7 +1359,7 @@ public sealed class EnvironmentSchemaTests
                 events-kafka:
                   type: kafka
                   security:
-                    mode: tls
+                    profile: tls
                     endpoint: 9093
                     serverArtifacts:
                       - target: /etc/kafka/secrets/kafka.server.keystore.jks
@@ -1386,7 +1396,7 @@ public sealed class EnvironmentSchemaTests
                 events-kafka:
                   type: kafka
                   security:
-                    mode: tls
+                    profile: tls
                     endpoint: 9093
                     serverArtifacts:
                       - source: ./certs/kafka.server.keystore.jks
@@ -1406,6 +1416,144 @@ public sealed class EnvironmentSchemaTests
                 "[additionalProperties] Unknown property 'bogus' in dependency 'events-kafka' " +
                 "(at security.serverArtifacts[0].bogus)",
                 System.StringComparison.Ordinal));
+    }
+
+    // ── Part 5c: REQ-021 — security.profile legality is narrowed per target kind ──────
+    //
+    // $defs/dependency's own final allOf clause pins 'profile' to 'tls' for every
+    // dependency kind EXCEPT kafka (the only kind this release wires client certificates
+    // for), via an allow-list ('not: { const: "kafka" }' in the 'if' condition) rather
+    // than an enumerated exclusion of every other kind. Freeze-critical because it is a
+    // NARROWING (REQ-021's own rationale): added after 1.0 it would reject suites that
+    // validated before.
+
+    /// <summary>
+    /// RED-FIRST EVIDENCE for REQ-021: 'profile: mtls' on a non-kafka dependency kind
+    /// (redis) is rejected, naming BOTH the kind and the profile in one message — the
+    /// acceptance criterion's own wording. Kept as a permanent regression test, not merely
+    /// a throwaway red-phase check: this schema fixture pins the FIRST-CLASS enforcement
+    /// of the narrowing, independent of the corpus gate's own coverage.
+    /// </summary>
+    [Fact]
+    public void Dependency_SecurityMtls_OnNonKafkaKind_IsRejected_NamingKindAndProfile()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    profile: mtls
+                    endpoint: 6380
+                    clientCert: ./certs/client.pem
+                    clientKey: ./certs/client-key.pem
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "'profile: mtls' on a redis dependency must be rejected — redis is not wired for mtls (REQ-021).");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/cache/security/profile" &&
+            e.Message.Contains("redis", System.StringComparison.Ordinal) &&
+            e.Message.Contains("mtls", System.StringComparison.Ordinal) &&
+            e.Message.Contains("cache", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The positive control: 'profile: mtls' on a kafka dependency — the one kind this
+    /// release DOES wire client certificates for — still validates. Kafka needs no clause
+    /// of its own in the allow-list narrowing; its 'type' simply fails the 'not: { const:
+    /// "kafka" }' condition, so the 'tls'-only pin never applies to it.
+    /// </summary>
+    [Fact]
+    public void Dependency_SecurityMtls_OnKafka_IsValid()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: mtls
+                    endpoint: 9093
+                    clientCert: ./certs/client.pem
+                    clientKey: ./certs/client-key.pem
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// The service-side positive control: 'profile: mtls' on a declared SERVICE — never
+    /// narrowed by REQ-021's per-kind clause at all, since $defs/service carries no such
+    /// allow-list (only $defs/dependency does) — still validates.
+    /// </summary>
+    [Fact]
+    public void Service_SecurityMtls_IsValid()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  security:
+                    profile: mtls
+                    endpoint: 8443
+                    clientCert: ./certs/client.pem
+                    clientKey: ./certs/client-key.pem
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// 'profile: tls' remains legal on EVERY dependency kind, including the twelve this
+    /// narrowing pins away from 'mtls' — the allow-list only narrows 'mtls', never 'tls'.
+    /// Exercised across a representative spread of non-kafka kinds (not merely redis, the
+    /// kind the negative-control test above already covers) so the narrowing is proven to
+    /// be 'mtls'-specific, not an accidental blanket restriction.
+    /// </summary>
+    [Theory]
+    [InlineData("postgres")]
+    [InlineData("mongodb")]
+    [InlineData("rabbitmq")]
+    [InlineData("elasticsearch")]
+    public void Dependency_SecurityTls_OnNonKafkaKinds_IsValid(string dependencyType)
+    {
+        var yaml = $$"""
+            environment:
+              dependencies:
+                dep:
+                  type: {{dependencyType}}
+                  security:
+                    profile: tls
+                    endpoint: 9999
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected 'profile: tls' on a '{dependencyType}' dependency to be valid, got: " +
+            string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}")));
     }
 
     // ── Part 3: environment.services.ports / healthCheck (services-generalisation, REQ-008/009) ──
@@ -1566,7 +1714,7 @@ public sealed class EnvironmentSchemaTests
 
     /// <summary>
     /// REQ-009 field-requiredness table: 'port' is not applicable to 'type: http' and is
-    /// rejected outright, mirroring $defs/security's own mode-conditional forbidden-field
+    /// rejected outright, mirroring $defs/security's own profile-conditional forbidden-field
     /// idiom.
     /// </summary>
     [Fact]
