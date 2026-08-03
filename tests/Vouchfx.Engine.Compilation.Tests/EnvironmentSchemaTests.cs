@@ -2109,4 +2109,102 @@ public sealed class EnvironmentSchemaTests
             e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
             e.Message.Contains("in service 'kafka-broker' (at healthCheck)", System.StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// MINOR-2(a) (peer review, fix round 4): two NESTED forbidden containers BOTH survive
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> — the outer one does
+    /// not subsume the inner one, because every forbidden-shape error short-circuits into the
+    /// survivor list before the containment test runs.
+    /// </summary>
+    /// <remarks>
+    /// That method's remarks used to assert the OPPOSITE ("two NESTED forbidden containers
+    /// collapse to the outermost"), and the finding that caught it supposed the case was probably
+    /// unreachable because <c>security</c> is the only object-valued forbidden property. Both are
+    /// wrong, and this is the measurement: a <c>project</c>-form service forbids
+    /// <c>healthCheck</c> outright (<c>$defs/service</c>'s own project-form clause), while
+    /// <c>$defs/serviceHealthCheck</c>'s <c>type: http</c> clause forbids <c>port</c> INSIDE that
+    /// same, already-forbidden object. Both errors report. The test exists so the corrected
+    /// sentence stays true: a future change that DOES collapse the nested case (by exempting a
+    /// strictly-nested forbidden error from the short-circuit) must update this test and the
+    /// remarks together, rather than silently re-diverging them.
+    /// </remarks>
+    [Fact]
+    public void Service_NestedForbiddenContainers_BothSurvive()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  project: ./src/App/App.csproj
+                  healthCheck:
+                    type: http
+                    port: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var dump = string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"));
+        var locations = result.Errors.Select(e => e.InstanceLocation).ToList();
+
+        Assert.True(locations.Contains("/environment/services/app/healthCheck"),
+            $"The OUTER forbidden container must report. Errors: {dump}");
+        Assert.True(locations.Contains("/environment/services/app/healthCheck/port"),
+            "The INNER forbidden property must report alongside it — a forbidden-shape error is " +
+            "never subsumed, not even by an enclosing forbidden container. Errors: " + dump);
+        Assert.True(locations.Count == 2, $"Expected exactly those two errors. Errors: {dump}");
+    }
+
+    /// <summary>
+    /// MAJOR-1 (peer review, fix round 4): the <c>dependencyKind is null</c> branch of
+    /// <c>SchemaErrorCollector.FormatForbiddenPropertyError</c>'s <c>security</c> case is
+    /// reachable, and carries the same corrected text as the qualified branch.
+    /// </summary>
+    /// <remarks>
+    /// A non-scalar <c>type</c> still satisfies the narrowing clause's own
+    /// <c>not: { const: "kafka" }</c> condition, so the <c>then</c> branch fires and rejects the
+    /// <c>security</c> block — while <c>TryResolveContainerType</c> has no scalar to read a kind
+    /// from and returns <see langword="null"/>. Measured before this round: this branch shipped
+    /// the bare "declare it under 'environment.services' instead" advice, which is a dead end for
+    /// every kind it can fire on. The <c>type</c> errors survive alongside because they are a
+    /// SIBLING of the forbidden container, not a descendant.
+    /// </remarks>
+    [Fact]
+    public void Dependency_Security_NonScalarType_UsesTheUnqualifiedMessage()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: [redis, postgres]
+                  security:
+                    profile: tls
+                    endpoint: 6380
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var dump = string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"));
+        var forbidden = Assert.Single(result.Errors,
+            e => e.InstanceLocation == "/environment/dependencies/cache/security");
+
+        Assert.Contains("no security profile is wired for this dependency kind in this release",
+            forbidden.Message, System.StringComparison.Ordinal);
+        Assert.Contains("only a 'kafka' dependency, or a declared service, can carry a 'security' block today",
+            forbidden.Message, System.StringComparison.Ordinal);
+        Assert.Contains("arrives in 1.1", forbidden.Message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("environment.services' instead", forbidden.Message,
+            System.StringComparison.Ordinal);
+        Assert.True(result.Errors.Any(e => e.InstanceLocation == "/environment/dependencies/cache/type"),
+            $"The sibling 'type' violation must survive alongside the forbidden container. Errors: {dump}");
+    }
 }

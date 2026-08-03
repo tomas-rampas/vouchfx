@@ -691,9 +691,10 @@ public sealed class SchemaErrorCollectorTests
     // itself unbounded — an author (or an attacker crafting a suite fed to a
     // shared CI runner) supplying an arbitrarily large string in an enum
     // position inflates the resulting SchemaValidationError.Message without
-    // limit, which flows into the §14 JSON Lines event stream every renderer
-    // (and the Healer agent) consumes. Bounded to mirror the in-file
-    // discipline FormatAllowedValuesList already applies.
+    // limit, and that message is serialised verbatim into `vouchfx validate
+    // --json`'s golden-pinned ValidateJsonDiagnostic(Stage, Message) document
+    // (and written to stdout). Bounded to mirror the in-file discipline
+    // FormatAllowedValuesList already applies.
 
     [Fact]
     public void FormatEnumError_MultiKilobyteOffendingValue_IsTruncatedInTheMessage()
@@ -791,10 +792,85 @@ public sealed class SchemaErrorCollectorTests
                 $"Unpaired low surrogate at index {i} — the message is invalid UTF-16.");
         }
 
-        // The §14 JSON Lines event stream is the surface this text reaches; a lone surrogate is
-        // where System.Text.Json substitutes U+FFFD instead of round-tripping.
+        // `vouchfx validate --json` is the serialised surface this text reaches (its
+        // ValidateJsonDiagnostic(Stage, Message) record is golden-pinned) — NOT the §14 JSON
+        // Lines event stream, which no schema-validation message ever enters (MINOR-1, fix
+        // round 4). Either way the property under test is System.Text.Json's: a lone surrogate is
+        // where it substitutes U+FFFD instead of round-tripping.
         Assert.Equal(onlyError.Message,
             JsonSerializer.Deserialize<string>(JsonSerializer.Serialize(onlyError.Message)));
+    }
+
+    // ── Suppression-pass ORDERING: forbidden-container subsumption vs the cascade ──
+    //
+    // QUESTION-1 (peer review, fix round 4). SuppressErrorsInsideForbiddenContainer
+    // runs BEFORE SuppressUnevaluatedPropertiesCascade, and the cascade's decision
+    // depends on whether a step still carries some OTHER error — so a pass that
+    // removes errors ahead of it could in principle flip it. The review's own
+    // premise for why it cannot ("forbidden containers are /environment/…-rooted
+    // and the cascade is /steps/…-scoped, so they cannot interact") is FALSE:
+    // measured, $defs/captureEntry's own 'jsonpath' present => '"xpath": false'
+    // clause plants a forbidden container at /steps/<N>/capture/<var>/xpath, right
+    // inside the cascade's scope, and provider fragments plant more.
+    //
+    // The non-interaction is nonetheless STRUCTURAL, for a different reason — see
+    // CollectErrors' own comment at the call site for the four-step argument. This
+    // pair pins the half of it that a future edit could break: the subsuming
+    // forbidden-shape error survives the pass and stays in the same step scope, so
+    // the cascade still sees the step as carrying an "other error".
+
+    [Fact]
+    public void StepScopedForbiddenContainer_StillSuppressesTheCascade()
+    {
+        const string yaml = """
+            steps:
+              - id: one
+                type: noop.echo
+                bogusField: true
+                capture:
+                  v:
+                    jsonpath: "$.a"
+                    xpath: "//a"
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var dump = string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"));
+        var only = Assert.Single(result.Errors);
+
+        Assert.Equal("/steps/0/capture/v/xpath", only.InstanceLocation);
+        Assert.DoesNotContain(result.Errors, e => e.InstanceLocation == "/steps/0/bogusField");
+        Assert.True(result.Errors.Count == 1,
+            "The step's unevaluatedProperties entry must stay suppressed: the forbidden-shape " +
+            "error at /steps/0/capture/v/xpath survives SuppressErrorsInsideForbiddenContainer " +
+            "and is itself a non-unevaluatedProperties error in the SAME step scope, so the " +
+            $"cascade still counts the step as carrying another error. Errors: {dump}");
+    }
+
+    [Fact]
+    public void StepScopedUnevaluatedProperty_AloneIsStillReported()
+    {
+        // The other direction, so the test above cannot pass by the cascade simply
+        // dropping every unevaluatedProperties entry it ever sees: with no other
+        // error on the step, the unknown-property error is the reported one.
+        const string yaml = """
+            steps:
+              - id: one
+                type: noop.echo
+                bogusField: true
+                capture:
+                  v:
+                    jsonpath: "$.a"
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+        var only = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/bogusField", only.InstanceLocation);
+        Assert.Contains("[unevaluatedProperties]", only.Message, StringComparison.Ordinal);
     }
 
     // ── [enum] enrichment: case-hint requires a UNIQUE match (MINOR-6) ──────────

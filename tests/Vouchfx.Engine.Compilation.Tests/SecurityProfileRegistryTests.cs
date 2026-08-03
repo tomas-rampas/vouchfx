@@ -505,8 +505,12 @@ public sealed class SecurityProfileRegistryTests
     /// <c>FormatConstError</c> path, so the two renderings of the identical value differed above
     /// 200 characters — and M1 deleted that path, which would have removed the bound entirely
     /// rather than unified it. <c>profile</c> is an open string pattern with no length limit of
-    /// its own and this text flows into the §14 JSON Lines event stream, so the bound is a
-    /// security property, not cosmetics.
+    /// its own and this text is serialised verbatim into <c>vouchfx validate --json</c>'s
+    /// golden-pinned <c>ValidateJsonDiagnostic(Stage, Message)</c> document, so the bound is a
+    /// security property, not cosmetics. (MINOR-1, fix round 4: the surface named here used to be
+    /// the §14 JSON Lines event stream, which this text never reaches — no event record carries a
+    /// schema-validation message; the bound's justification is unaffected, since
+    /// <c>validate --json</c> is <c>System.Text.Json</c>-serialised just the same.)
     /// </summary>
     [Fact]
     public void UnknownProfileMessage_TruncatesAtTheSameBoundAsSchemaErrorCollector()
