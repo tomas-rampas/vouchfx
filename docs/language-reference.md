@@ -300,7 +300,7 @@ Set `type: mq-expect.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (key, headers, payloadContains, or json) must be declared. |
-| `target` | `string` | Logical name of the kafka dependency to consume from, as declared under environment.dependencies. |
+| `target` | `string` | Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice. |
 | `topic` | `string` | The Kafka topic to consume the message from. |
 
 **Optional fields**
@@ -394,7 +394,7 @@ Set `type: mq-publish.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as the Kafka message value. A UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
-| `target` | `string` | Logical name of the kafka dependency to publish to, as declared under environment.dependencies. |
+| `target` | `string` | Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice. |
 | `topic` | `string` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. |
 
 **Optional fields**

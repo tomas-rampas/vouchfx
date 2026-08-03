@@ -221,7 +221,38 @@ public sealed class MetricsAssertPrometheusProvider
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(model.Target))
+        {
             errors.Add("metrics-assert.prometheus: 'target' must not be empty.");
+        }
+        else if (!ctx.DeclaredServices.ContainsKey(model.Target))
+        {
+            if (ctx.DeclaredDependencies.ContainsKey(model.Target))
+            {
+                // M1 fix (fix round 2) — mirrors HttpRestProvider.Validate's own identical
+                // fix and rationale: metrics-assert.prometheus resolves 'target' exclusively
+                // against declared services; a dependency target validated PASS before this
+                // fix and could never work at run time.
+                var services = ctx.DeclaredServices.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+                errors.Add(
+                    $"metrics-assert.prometheus: 'target' '{model.Target}' names a dependency " +
+                    "declared in environment.dependencies, which metrics-assert.prometheus " +
+                    "cannot reach — it resolves 'target' only against declared services. " +
+                    "Declared services: " + services + ".");
+            }
+            else
+            {
+                // REQ-012/EDGE-009 (services-generalisation spec): close the previously
+                // unvalidated-target hole — mirrors HttpRestProvider.Validate's own identical
+                // fix and rationale.
+                errors.Add(
+                    $"metrics-assert.prometheus: 'target' '{model.Target}' names neither a " +
+                    "declared service in environment.services nor a declared dependency in " +
+                    "environment.dependencies. " +
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(model.Path))
         {

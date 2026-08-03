@@ -51,6 +51,15 @@
 #   consent is Enabled may still emit via the store-based path. To force telemetry
 #   off regardless, set VOUCHFX_NO_TELEMETRY=1 in the caller job — it always wins.
 #
+#   SECURITY: any secret placed in the "Run vouchfx suite" step's own `env:` block
+#   below (the telemetry token above, or any other secret a caller adds there) is
+#   readable by the SUITE ITSELF via a `${env:NAME}` reference (REQ-006; docs/02
+#   §3.2.6) — the engine passes such secrets through verbatim, by design. Do not call
+#   this workflow from a secrets-bearing trigger context (one where GitHub injects real
+#   repository/organisation secrets) with a `scenario-path` an untrusted contributor can
+#   influence, e.g. a fork's contents merged via `pull_request_target` — that
+#   combination lets an attacker-authored suite exfiltrate the secret.
+#
 # ── Worked example (caller) ─────────────────────────────────────────────────────────
 #   jobs:
 #     e2e:
@@ -284,6 +293,12 @@ jobs:
       #    auditable at a glance in the log instead of inferred. The trailing
       #    `exit $exit_code` keeps step/job gating byte-identical to a bare `dotnet run …`.
       - name: Run vouchfx suite
+        # SECURITY: every value bound below is readable by the SUITE ITSELF via a
+        # ${env:NAME} reference (REQ-006; docs/02 §3.2.6) — that is how the SUT
+        # configuration surface and this workflow's telemetry wiring both work. Never
+        # add a secret here unless this workflow is being called from a trigger context
+        # an untrusted contributor cannot influence (see the telemetry header block
+        # above for the full rationale).
         env:
           SCENARIO_PATH: ${{ inputs.scenario-path }}
           VOUCHFX_TELEMETRY_ENDPOINT: ${{ inputs.telemetry-endpoint }}

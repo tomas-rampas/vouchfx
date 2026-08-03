@@ -118,7 +118,7 @@ public sealed class MqExpectKafkaProvider
           "required": ["target", "topic", "match"],
           "properties": {
             "target": {
-              "description": "Logical name of the kafka dependency to consume from, as declared under environment.dependencies.",
+              "description": "Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
               "type": "string",
               "minLength": 1
             },
@@ -323,20 +323,28 @@ public sealed class MqExpectKafkaProvider
                 "(key, headers, payloadContains, or json).");
         }
 
-        // (d) dependency reconciliation: target must name a declared kafka dependency.
+        // (d) target reconciliation: names a declared kafka dependency, OR (REQ-011,
+        //     services-generalisation spec) a declared SERVICE — a customer-supplied broker
+        //     under environment.services. See MqPublishKafkaProvider.Validate's own remarks
+        //     (mirrored here) for the full rationale.
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
-            if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
+            if (ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
             {
-                errors.Add(
-                    $"mq-expect.kafka: 'target' '{model.Target}' is not a " +
-                    "kafka dependency declared in environment.dependencies.");
+                if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+                {
+                    errors.Add(
+                        $"mq-expect.kafka: 'target' '{model.Target}' is declared as a " +
+                        $"'{depType}' dependency, not the required kafka dependency.");
+                }
             }
-            else if (!string.Equals(depType, "kafka", StringComparison.Ordinal))
+            else if (!ctx.DeclaredServices.ContainsKey(model.Target))
             {
                 errors.Add(
-                    $"mq-expect.kafka: 'target' '{model.Target}' is declared as a " +
-                    $"'{depType}' dependency, not the required kafka dependency.");
+                    $"mq-expect.kafka: 'target' '{model.Target}' is not a kafka dependency " +
+                    "declared in environment.dependencies, nor a declared service in " +
+                    "environment.services. " +
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
             }
         }
 

@@ -613,7 +613,43 @@ public sealed class HttpRestProvider
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(model.Target))
+        {
             errors.Add("http.rest: 'target' must not be empty.");
+        }
+        else if (!ctx.DeclaredServices.ContainsKey(model.Target))
+        {
+            if (ctx.DeclaredDependencies.ContainsKey(model.Target))
+            {
+                // M1 fix (fix round 2, narrows REQ-012's literal wording — see
+                // specs/authenticated-infrastructure-mtls.md's REQ-012 note): http.rest
+                // resolves 'target' EXCLUSIVELY against declared services
+                // (VarKeys.Service(model.Target), staged only for services — never
+                // conn::<target>, which a dependency stages into instead). Before this fix a
+                // target naming a declared dependency validated PASS and then could never
+                // work at run time: exactly the class of gap the split EDGE-009 exists to
+                // close, just on the dependency side instead of the "unknown name" side.
+                var services = ctx.DeclaredServices.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+                errors.Add(
+                    $"http.rest: 'target' '{model.Target}' names a dependency declared in " +
+                    "environment.dependencies, which http.rest cannot reach — it resolves " +
+                    "'target' only against declared services. Declared services: " +
+                    services + ".");
+            }
+            else
+            {
+                // REQ-012/EDGE-009 (services-generalisation spec): close the previously
+                // unvalidated-target hole — http.rest accepted ANY target string, with no
+                // reconciliation against declared infrastructure at all, because IProjectContext
+                // had no DeclaredServices before REQ-010. Fires at validate time, not later as a
+                // runtime "bootstrap not found" EnvironmentError.
+                errors.Add(
+                    $"http.rest: 'target' '{model.Target}' names neither a declared service in " +
+                    "environment.services nor a declared dependency in environment.dependencies. " +
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(model.Method))
             errors.Add("http.rest: 'method' must not be empty.");

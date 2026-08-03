@@ -41,6 +41,7 @@ interface Vouchfx.Sdk.IHostResourceContributor<TModel>
   method System.Collections.Generic.IEnumerable<Vouchfx.Sdk.HostResourceRequirement> HostResources(TModel model)
 
 interface Vouchfx.Sdk.IProjectContext
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,System.Collections.Generic.IReadOnlyList<System.String>> DeclaredServices { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> DeclaredDependencies { get }
   property System.String SuiteDirectory { get }
 
@@ -76,6 +77,9 @@ interface Vouchfx.Sdk.IStepValidator<TModel>
 record Vouchfx.Sdk.JsonSchemaFragment : System.IEquatable<Vouchfx.Sdk.JsonSchemaFragment>
   .ctor(System.String Json)
   property System.String Json { get; init }
+
+class Vouchfx.Sdk.ProjectContextDescriptions
+  method static System.String DescribeDeclaredSurfaces(Vouchfx.Sdk.IProjectContext ctx)
 
 record Vouchfx.Sdk.ProviderMetadata : System.IEquatable<Vouchfx.Sdk.ProviderMetadata>
   .ctor(System.String Version, System.String MinEngineVersion, System.String License, System.Collections.Generic.IReadOnlyList<System.String> Authors)

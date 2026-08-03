@@ -34,11 +34,18 @@ public interface IBindingContext { }
 /// <para>
 /// This context is <strong>engine-supplied and provider-consumed</strong>:
 /// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — only the
-/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
-/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
-/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
-/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// interface. Adding a member is therefore non-breaking for providers — the ENGINE
+/// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
+/// this remark previously claimed the engine as "the single in-tree implementor",
+/// which the services-generalisation spec's own <see cref="DeclaredServices"/>
+/// addition below made visibly false — adding that member required updating ~22
+/// test-only stand-in implementations across this repository's own test suites,
+/// which also implement this interface in-tree, just never ship. The claim that
+/// matters for provider authors is unaffected either way: no PROVIDER implements
+/// this interface, so no provider needs to change when a member is added.) The
+/// <em>frozen v1 contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em>
+/// surface (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely
+/// via new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
 /// freezes at the M1.5 milestone (end of Phase 2).
 /// </para>
 /// <para>
@@ -65,6 +72,67 @@ public interface IProjectContext
     /// infrastructure (dependency reconciliation, §13).
     /// </remarks>
     IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <summary>
+    /// Gets the map of service names to the endpoint/port names each one exposes, as
+    /// declared under <c>environment.services</c> in the scenario file
+    /// (services-generalisation spec, REQ-010).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Keys are the logical service names (e.g. <c>"kafka-broker"</c>), mirroring
+    /// <see cref="DeclaredDependencies"/>'s own shape; values are the Aspire endpoint names
+    /// that service's declared shape produces (e.g. <c>["http"]</c> for the implicit
+    /// default HTTP endpoint, or <c>["tcp-9093"]</c> for a declared <c>ports: [9093]</c>
+    /// entry) — empty for a project-form service, whose endpoints Aspire auto-discovers
+    /// from the project's own launch profile rather than this engine modelling them.
+    /// </para>
+    /// <para>
+    /// The map is NOT limited to <c>environment.services</c> entries, and a scenario that
+    /// omits that section entirely can still produce a non-empty map. It carries every name
+    /// the engine stages under a <c>svc::</c> key, from three sources:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///   <c>environment.services</c> entries, as above.
+    ///   </description></item>
+    ///   <item><description>
+    ///   Host resources contributed by a step's own
+    ///   <see cref="IHostResourceContributor{TModel}"/> — a <c>webhook-listen.http</c>
+    ///   listener or a <c>trace-expect.otlp</c> receiver, for example. These are declared BY
+    ///   a step rather than under <c>environment.services</c>, and a step may legitimately
+    ///   target one declared by a LATER step, which is why they are collected up front.
+    ///   </description></item>
+    ///   <item><description>
+    ///   Sidecar endpoints of managed dependencies, which the engine stages under a suffixed
+    ///   name rather than the dependency's own: a <c>kafka</c> dependency declaring
+    ///   <c>schemaRegistry: true</c> exposes its registry REST API at
+    ///   <c>&lt;name&gt;-sr</c>, and a <c>mailpit</c> dependency exposes SMTP at
+    ///   <c>&lt;name&gt;-smtp</c>. The dependency's own name stays in
+    ///   <see cref="DeclaredDependencies"/> and is staged under <c>conn::</c>, not here.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The practical consequence for a provider reconciling a <c>target</c>: membership of
+    /// this map means "the engine stages a <c>svc::</c> value under this name", not "the
+    /// author wrote this under <c>environment.services</c>". It says nothing about which
+    /// protocol that endpoint speaks.
+    /// </para>
+    /// <para>
+    /// Providers use this map the same way they use <see cref="DeclaredDependencies"/>: to
+    /// reconcile a step's <c>target</c> against declared infrastructure (dependency/service
+    /// reconciliation, §13) — e.g. <c>mq-publish.kafka</c> accepting a <c>target</c> naming
+    /// either a declared <c>kafka</c> dependency or a declared service exposing a
+    /// Kafka-compatible endpoint.
+    /// </para>
+    /// <para>
+    /// This is an ADDITIVE member on a provider-CONSUMED (never provider-implemented)
+    /// interface (see this interface's own remarks) — non-breaking for providers; only the
+    /// engine (and any test harness implementing this interface as a stand-in) must satisfy
+    /// it.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
 
     /// <summary>
     /// Gets the directory that relative file paths in step fields (e.g.

@@ -54,6 +54,10 @@ file sealed class FixtureProjectContext : IProjectContext
 
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 }
 
 /// <summary>Minimal <see cref="ICompileContext"/> for the example fixture.</summary>

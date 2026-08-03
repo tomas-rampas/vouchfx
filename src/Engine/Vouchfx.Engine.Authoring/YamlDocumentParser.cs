@@ -332,11 +332,100 @@ public static class YamlDocumentParser
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
             var env = ParseEnvMap(serviceMapping, keyScalar.Value);
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
+            var ports = ParseServicePorts(serviceMapping, keyScalar.Value);
+            var healthCheck = ParseHealthCheck(serviceMapping);
 
-            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env) { Security = security };
+            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env)
+            {
+                Security = security,
+                Ports = ports,
+                HealthCheck = healthCheck,
+            };
         }
 
         return dict.Count > 0 ? dict : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Service ports / healthCheck parsers (services-generalisation, PR B) —
+    // REQ-008 / REQ-009. Deliberately lenient, like ParseSecurity: requiredness and
+    // per-type field shape are the JSON Schema layer's responsibility
+    // ($defs/serviceHealthCheck); cross-referencing healthCheck.port against the
+    // service's own declared ports/httpPort is EnvironmentMapper's job.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Parses a service's optional <c>ports:</c> sequence (REQ-008) into a list of TCP
+    /// port numbers. Each item is read as a bare integer scalar — unlike <c>httpPort</c>,
+    /// this is a NEW field with no pre-existing engine behaviour to preserve, so it does
+    /// not carry <c>httpPort</c>'s quoted-string/leading-zero-octal compatibility shape;
+    /// an author writes a plain decimal integer per item.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>ports</c> is present but is not a sequence, or when an item is not
+    /// an integer scalar — mirroring <see cref="ParseServerArtifacts"/>'s rigour for a
+    /// malformed list: silently dropping a malformed entry would leave a declared port
+    /// unexposed, surfacing later as a misattributed connection failure instead of an
+    /// authoring-time diagnostic.
+    /// </exception>
+    private static List<int>? ParseServicePorts(YamlMappingNode serviceMapping, string serviceName)
+    {
+        if (!TryGetNode(serviceMapping, "ports", out var portsNode))
+        {
+            return null;
+        }
+
+        if (portsNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"Service '{serviceName}' 'ports' at line {portsNode.Start.Line} must be a sequence " +
+                $"of TCP port numbers (e.g. '[9093, 9094]'), but found {portsNode.NodeType}.",
+                portsNode.Start.Line,
+                portsNode.Start.Column);
+        }
+
+        var list = new List<int>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlScalarNode { Value: { } rawValue } ||
+                !int.TryParse(rawValue, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+            {
+                throw new YamlParseException(
+                    $"Service '{serviceName}' 'ports' item at line {item.Start.Line} must be a bare " +
+                    $"integer TCP port number, but found {item.NodeType}.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            list.Add(port);
+        }
+
+        return list.Count > 0 ? list : null;
+    }
+
+    /// <summary>
+    /// Parses a service's optional <c>healthCheck:</c> block (REQ-009) into a strongly-typed
+    /// <see cref="HealthCheckSpec"/>. Takes no owner-name parameter (unlike
+    /// <see cref="ParseSecurity"/>/<see cref="ParseServerArtifacts"/>): every field here is
+    /// read leniently with no throw path of its own, so there is no diagnostic message to
+    /// splice a service name into.
+    /// </summary>
+    private static HealthCheckSpec? ParseHealthCheck(YamlMappingNode serviceMapping)
+    {
+        if (!TryGetMapping(serviceMapping, "healthCheck", out var healthCheckNode))
+        {
+            return null;
+        }
+
+        var type = GetScalar(healthCheckNode, "type");
+        var path = GetScalar(healthCheckNode, "path");
+        var portRaw = GetScalar(healthCheckNode, "port");
+        int? port = portRaw is not null
+            && int.TryParse(portRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p)
+                ? p
+                : null;
+
+        return new HealthCheckSpec(type, path, port);
     }
 
     /// <summary>

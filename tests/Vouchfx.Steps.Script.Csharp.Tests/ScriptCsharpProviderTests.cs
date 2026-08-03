@@ -78,6 +78,10 @@ file sealed class StubProjectContext : IProjectContext
         = new Dictionary<string, string>(StringComparer.Ordinal);
 
     /// <inheritdoc />
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
+        = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
+    /// <inheritdoc />
     public string SuiteDirectory { get; }
 }
 
