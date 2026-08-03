@@ -33,14 +33,21 @@ file sealed class StubProjectContext : IProjectContext
     /// <inheritdoc />
     public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
 
-    internal StubProjectContext(IReadOnlyDictionary<string, string>? deps = null)
+    internal StubProjectContext(
+        IReadOnlyDictionary<string, string>? deps = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
     {
         DeclaredDependencies = deps
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        DeclaredServices = services
+            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
     }
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
 }
 
 /// <summary>
@@ -355,6 +362,61 @@ public sealed class MqExpectKafkaProviderTests
         Assert.Contains(result.Errors, e =>
             e.Contains("events-bus", StringComparison.Ordinal) &&
             e.Contains("kafka dependency", StringComparison.Ordinal));
+    }
+
+    // ── 12. Validate: target names a declared SERVICE, not a dependency (REQ-011) ──
+
+    /// <summary>
+    /// Services-generalisation spec REQ-011: a <c>target</c> naming a declared
+    /// <em>service</em> (a customer-supplied broker under <c>environment.services</c>,
+    /// not the engine-provisioned <c>kafka</c> dependency type) is accepted —
+    /// name-membership only; protocol correctness is a later slice's concern.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetIsDeclaredService_IsValid()
+    {
+        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["kafka-broker"] = new List<string> { "tcp-9093" },
+        };
+        var ctx = new StubProjectContext(services: services);
+
+        var model = MakeModel("kafka-broker", "orders",
+            new KafkaMatch(Key: "k", Headers: null, PayloadContains: null, Json: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <summary>
+    /// REQ-011/REQ-012 message-shape alignment: a target naming NEITHER a declared
+    /// kafka dependency NOR a declared service names the target and lists what IS
+    /// declared (both dependencies and services).
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNeitherDependencyNorService_ListsBothDeclaredSurfaces()
+    {
+        var deps = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["orders-db"] = "postgres",
+        };
+        var services = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["web"] = new List<string> { "http" },
+        };
+        var ctx = new StubProjectContext(deps, services);
+
+        var model = MakeModel("does-not-exist", "orders",
+            new KafkaMatch(Key: "k", Headers: null, PayloadContains: null, Json: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("does-not-exist", StringComparison.Ordinal) &&
+            e.Contains("orders-db", StringComparison.Ordinal) &&
+            e.Contains("web", StringComparison.Ordinal));
     }
 
     // ── 10. Registry: provider discoverable ────────────────────────────────────

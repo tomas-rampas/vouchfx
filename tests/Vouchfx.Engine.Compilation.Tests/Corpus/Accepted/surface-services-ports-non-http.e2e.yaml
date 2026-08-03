@@ -1,0 +1,14 @@
+# Surface coverage: environment.services.<name>.ports — a non-HTTP service declaring one or
+# more raw TCP ports (services-generalisation spec, REQ-008), e.g. a customer-supplied Kafka
+# broker, with no implicit HTTP endpoint at all.
+metadata:
+  name: surface-services-ports-non-http
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.services.ports surface only."

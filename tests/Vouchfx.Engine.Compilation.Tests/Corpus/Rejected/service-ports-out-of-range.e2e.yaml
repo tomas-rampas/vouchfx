@@ -1,0 +1,16 @@
+# expected-instance-location: /environment/services/kafka-broker/ports/0
+# expected-keyword: maximum
+#
+# services-generalisation spec REQ-008: each 'ports' entry is bounded to the real TCP port
+# range (1-65535), mirroring 'httpPort''s own range check — 70000 is out of range.
+metadata:
+  name: rejected-service-ports-out-of-range
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [70000]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

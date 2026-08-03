@@ -1,0 +1,19 @@
+# expected-instance-location: /environment/services/app/ports
+# expected-keyword: properties
+#
+# services-generalisation spec (gatekeeper G-M2): 'ports' (and 'healthCheck') have no effect
+# on a project-form service — EnvironmentMapper's Configure() only ever reads either field for
+# an image-form service; Aspire's own AddProject auto-discovers the project's own
+# launch-profile endpoints instead. A field that does nothing must not silently validate, so
+# $defs/service now forbids 'ports'/'healthCheck' outright once 'project' is set.
+metadata:
+  name: rejected-service-ports-on-project-form
+environment:
+  services:
+    app:
+      project: ./src/App/App.csproj
+      ports: [8080]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

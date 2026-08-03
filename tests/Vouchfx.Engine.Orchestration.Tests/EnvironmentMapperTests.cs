@@ -16,6 +16,9 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
 using Xunit;
@@ -227,6 +230,523 @@ public sealed class EnvironmentMapperTests
 
         // Assert — gate list contains the service name
         Assert.Contains("api", mapped.HealthGateResourceNames);
+    }
+
+    // -----------------------------------------------------------------------
+    // Non-HTTP service targeting (services-generalisation spec, REQ-008) and
+    // authorable health checks (REQ-009).
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// REQ-008: a service declaring only <c>ports:</c> (no <c>httpPort</c>) is brought up via
+    /// Aspire's generic TCP endpoint — the resource's <see cref="EndpointAnnotation.UriScheme"/>
+    /// is <c>"tcp"</c>, never unconditionally <c>"http"</c> — and gets NO implicit HTTP
+    /// endpoint at all (the implicit default is suppressed once <c>ports</c> is declared).
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithPortsOnly_ExposesTcpEndpoint_NoImplicitHttpEndpoint()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                { Ports = new List<int> { 9093 } },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var endpoints = resource.Annotations.OfType<EndpointAnnotation>().ToList();
+
+        var tcpEndpoint = Assert.Single(endpoints);
+        Assert.Equal("tcp-9093", tcpEndpoint.Name);
+        Assert.Equal("tcp", tcpEndpoint.UriScheme);
+        Assert.Equal(9093, tcpEndpoint.TargetPort);
+
+        Assert.DoesNotContain(endpoints, e => e.Name == "http");
+        Assert.DoesNotContain(endpoints, e => string.Equals(e.UriScheme, "http", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// REQ-008: a service may declare <c>ports</c> AND an explicit <c>httpPort</c> together
+    /// (a hybrid service exposing both a management HTTP API and one or more raw TCP ports) —
+    /// opt-in only, via the sibling field, never implied merely by <c>ports</c> being present.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithPortsAndExplicitHttpPort_ExposesBothTcpAndHttpEndpoints()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "myorg/hybrid:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null)
+                { Ports = new List<int> { 9093 } },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var endpoints = resource.Annotations.OfType<EndpointAnnotation>().ToList();
+
+        Assert.Contains(endpoints, e => e.Name == "tcp-9093" && e.UriScheme == "tcp" && e.TargetPort == 9093);
+        Assert.Contains(endpoints, e => e.Name == "http" && e.UriScheme == "http" && e.TargetPort == 8080);
+        Assert.Equal(2, endpoints.Count);
+    }
+
+    /// <summary>
+    /// M4 fix (fix round 2): a <c>ports</c>-declared service with NO <c>healthCheck</c> and NO
+    /// sibling <c>httpPort</c> now DEFAULTS to a <c>tcp</c> probe on the FIRST declared port
+    /// (<c>Ports[0]</c>) rather than getting no health check at all — REQ-008 (does not attempt
+    /// an HTTP request against a service that may not speak HTTP) is preserved, but "no health
+    /// check at all" left the service gated only on Aspire's own "reaches Running" default,
+    /// which — combined with B1 (the tcp health check that could never fail) — meant BOTH
+    /// shapes available to a non-HTTP system under test were ungated. The registered key
+    /// matches the SAME <c>"{service}-tcp-{port}-health"</c> format the explicit
+    /// <c>type: tcp</c> form uses (<see cref="Map_ServiceHealthCheckTcp_RegistersResolvableHealthCheck_NeverPerformsHttpRequest"/>),
+    /// because it is now built by the SAME <c>ApplyTcpHealthCheck</c> helper.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithPortsOnly_NoHealthCheckDeclared_DefaultsToTcpHealthCheckOnFirstPort()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                { Ports = new List<int> { 9093, 9094 } },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // Targets the FIRST declared port (9093), not the second (9094) — and is NOT the
+        // Aspire-generated default-http-check key shape.
+        Assert.Equal("kafka-broker-tcp-9093-health", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// M4 fix (fix round 2): the hybrid shape (<c>ports</c> + a sibling <c>httpPort</c>) with
+    /// NO explicit <c>healthCheck</c> now defaults to the SAME HTTP probe an <c>image:</c>-form
+    /// HTTP service gets — a hybrid service IS an image-form HTTP service, and leaving it
+    /// entirely ungated (the pre-fix behaviour, purely because <c>hasExplicitPorts</c> was
+    /// true) was never a deliberate choice <c>docs/02</c> documented. Asserted via the SAME
+    /// deterministic key format as <see cref="Map_ServiceNoHealthCheckDeclared_HttpOnlyShape_DefaultsToRootPathHealthCheck"/>.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithPortsAndHttpPort_NoHealthCheckDeclared_DefaultsToHttpHealthCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "myorg/hybrid:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null)
+                { Ports = new List<int> { 9093 } },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+        Assert.Equal("hybrid_http_/_200_check", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// REQ-009: <c>healthCheck: { type: tcp, port: 9093 }</c> registers a NAMED health check
+    /// (via <c>WithHealthCheck(key)</c>) resolvable through the builder's own
+    /// <see cref="IServiceCollection"/> without Docker/StartAsync — proving both that the
+    /// registration mechanics are correct AND (by invoking it directly) that the check itself
+    /// never performs an HTTP request: it probes <see cref="EndpointAnnotation"/>
+    /// allocation/TCP-connect state only, so before any topology starts it reports
+    /// <see cref="HealthStatus.Unhealthy"/> with a message about the endpoint not yet being
+    /// allocated — never an HTTP-shaped failure.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceHealthCheckTcp_RegistersResolvableHealthCheck_NeverPerformsHttpRequest()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "tcp", Path: null, Port: 9093),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var healthCheckAnnotation = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // G-FLAKE (gatekeeper): resolve the registration through a FRESH ServiceCollection
+        // seeded from the live builder's own descriptors, rather than calling
+        // BuildServiceProvider() directly on builder.Services (the live Aspire builder's OWN
+        // collection) and disposing the result — Aspire's own pipeline expects to build ITS
+        // service provider from that collection independently; a throwaway
+        // BuildServiceProvider()/Dispose() cycle run directly against it risks out-of-band
+        // singleton construction/disposal ahead of (and independent from) whatever Aspire's
+        // own machinery does with the SAME collection. Copying every descriptor into an
+        // independent collection still proves exactly what this test needs — the named async
+        // check is registered and resolvable — without ever building or disposing a provider
+        // over the live collection itself.
+        IServiceCollection seededServices = new ServiceCollection();
+        foreach (var descriptor in builder.Services)
+        {
+            seededServices.Add(descriptor);
+        }
+
+        using var serviceProvider = seededServices.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value;
+        var registration = Assert.Single(
+            options.Registrations, r => r.Name == healthCheckAnnotation.Key);
+
+        var check = registration.Factory(serviceProvider);
+        var result = await check.CheckHealthAsync(
+            new HealthCheckContext { Registration = registration }, CancellationToken.None);
+
+        // Pre-StartAsync, the endpoint is never allocated — proves the check reached its own
+        // TCP-probe logic (not an HTTP client) and failed closed rather than throwing.
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Contains("allocated", result.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// REQ-009 eager validation: a <c>healthCheck: { type: tcp, port: X }</c> whose port is
+    /// NOT among the service's own declared <c>ports</c> (or <c>httpPort</c>, when
+    /// <c>ports</c> is absent) fails eagerly — thrown by <c>Map()</c> itself, before any
+    /// builder mutation, mirroring every other eager-validation case in this file. Otherwise
+    /// <c>Configure()</c> would fail deep inside Aspire's own <c>GetEndpoint</c> with an
+    /// unrelated-looking error instead of a clear, located authoring diagnostic.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckTcp_PortNotAmongDeclaredPorts_ThrowsArgumentException()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "tcp", Path: null, Port: 9999),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("kafka-broker", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("9999", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// m3 fix (fix round 3): the hybrid shape's own sibling of
+    /// <see cref="Map_ServiceHealthCheckTcp_PortNotAmongDeclaredPorts_ThrowsArgumentException"/>
+    /// — a <c>tcp</c> health check naming a hybrid service's OWN <c>httpPort</c> (rather than
+    /// one of its <c>ports:</c> entries) must now validate and map successfully. Before this
+    /// fix, <c>declaredPorts</c> omitted <c>httpPort</c> for the hybrid shape entirely, so this
+    /// threw "not among the service's declared ports" and told the author to declare the
+    /// SAME port again under <c>ports:</c> — impossible without double-declaring the port
+    /// under two different endpoint names.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckTcp_HybridShapeTargetsOwnHttpPort_MapsSuccessfully()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "myorg/hybrid:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "tcp", Path: null, Port: 8080),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // ApplyHealthCheck's own endpoint-resolution fallback: a tcpPort that is NOT among
+        // spec.Ports resolves to the "http" endpoint — the previously-dead branch this fix
+        // makes reachable, proven here by the registered key targeting port 8080 (httpPort),
+        // not one of the 'ports:' entries.
+        Assert.Equal("hybrid-tcp-8080-health", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// G-M3 (gatekeeper): <c>Map()</c>'s eager validation for an UNRECOGNISED
+    /// <c>healthCheck.type</c> — untested at the mapper level until now (only reachable
+    /// indirectly via YAML+schema in <c>EnvironmentSchemaTests</c>'s wrong-case corpus
+    /// fixture, which the schema's own closed enum catches before this throw is ever
+    /// reached). Still independently reachable here for a direct <see cref="EnvironmentSpec"/>
+    /// embedding that bypasses the schema's enum entirely — mirrors
+    /// <see cref="Map_ServiceHealthCheckTcp_PortNotAmongDeclaredPorts_ThrowsArgumentException"/>'s
+    /// own direct-embedding-reachability rationale.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckType_Unrecognised_ThrowsArgumentException()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "udp", Path: null, Port: null),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("kafka-broker", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("udp", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// G-M3 (gatekeeper): <c>Map()</c>'s eager validation for <c>healthCheck: { type: http }</c>
+    /// on a <c>ports:</c>-only service with no sibling <c>httpPort</c> — untested at the
+    /// mapper level until now (only reachable indirectly via YAML+schema in
+    /// <c>EnvironmentSchemaTests</c>). STILL independently reachable here even after G4's new
+    /// schema-level rule: the schema only protects the YAML + <c>vouchfx validate</c> path — a
+    /// direct <see cref="EnvironmentSpec"/> embedding bypasses the schema entirely, and this
+    /// mapper-level throw is what still catches it.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckHttp_PortsWithoutHttpPort_ThrowsArgumentException()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "myorg/kafka-broker:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    HealthCheck = new HealthCheckSpec(Type: "http", Path: null, Port: null),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("kafka-broker", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("httpPort", ex.Message, StringComparison.Ordinal);
+    }
+
+    // G-M3 (gatekeeper), third untested eager-validation branch — DELIBERATELY NOT TESTED,
+    // documented here rather than silently skipped: ApplyHealthCheck's own terminal
+    // "healthCheck.type not recognised" throw (the defensive fallback once the schema's
+    // closed tcp/http enum is in place) is UNREACHABLE through the public API. ApplyHealthCheck
+    // is private and only ever invoked from inside Map()'s own 'configure' closure, which is
+    // constructed and returned SYNCHRONOUSLY AFTER Map()'s eager validation loop above already
+    // ran (and would already have thrown its OWN ArgumentException — see
+    // Map_ServiceHealthCheckType_Unrecognised_ThrowsArgumentException above — for exactly the
+    // same condition, before 'configure' is ever built). Reaching ApplyHealthCheck's own throw
+    // would require reflection into a private method with a hand-built ServiceSpec/
+    // ContainerResource/IDistributedApplicationBuilder that bypasses Map() entirely — a pattern
+    // this test file does not use anywhere else (every test here drives the PUBLIC Map() API),
+    // and one that would test Aspire/reflection plumbing rather than this defensive fallback's
+    // own (trivial) logic. Left untested by design; revisit only if this file's own testing
+    // convention changes.
+
+    /// <summary>
+    /// REQ-009: omitting <c>healthCheck</c> on an <c>image:</c>-only HTTP service preserves
+    /// today's exact default (<c>WithHttpHealthCheck(path: "/", endpointName: "http")</c>) —
+    /// asserted here via Aspire's own deterministic health-check registration key format
+    /// (<c>"{resource}_{endpoint}_{path}_{statusCode}_check"</c>, confirmed empirically
+    /// against the pinned Aspire.Hosting 13.4.2 DLL), which is the only externally-observable
+    /// trace of the internally-closed-over path/status-code without starting Docker.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceNoHealthCheckDeclared_HttpOnlyShape_DefaultsToRootPathHealthCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "web");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+        Assert.Equal("web_http_/_200_check", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// REQ-009: <c>healthCheck: { type: http, path: "/healthz" }</c> is the explicit spelling
+    /// of today's default behaviour, with a caller-chosen path — asserted the same
+    /// key-format way as <see cref="Map_ServiceNoHealthCheckDeclared_HttpOnlyShape_DefaultsToRootPathHealthCheck"/>.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckHttp_WithCustomPath_UsesThatPathInHealthCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["web"] = new ServiceSpec(
+                    Image: "traefik/whoami",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                { HealthCheck = new HealthCheckSpec(Type: "http", Path: "/healthz", Port: null) },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "web");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+        Assert.Equal("web_http_/healthz_200_check", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// REQ-009 acceptance criterion, verified via the REAL YamlDocumentParser→EnvironmentMapper
+    /// pipeline (not hand-built records): <c>healthCheck: { type: tcp, port: 9093 }</c> parses
+    /// and maps to a resolvable, non-HTTP health check.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceHealthCheckTcp_ParsedFromRealYaml_RegistersHealthCheck()
+    {
+        const string yaml = """
+            metadata:
+              name: healthcheck-tcp-probe
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: tcp
+                    port: 9093
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        Assert.Equal(new List<int> { 9093 }, env.Services!["kafka-broker"].Ports);
+        Assert.Equal("tcp", env.Services!["kafka-broker"].HealthCheck!.Type);
+        Assert.Equal(9093, env.Services!["kafka-broker"].HealthCheck!.Port);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+
+        // Strong assertion (not merely "exactly one annotation exists", which the
+        // pre-REQ-008/009 code would ALSO satisfy via its unconditional default http check):
+        // the registered key must NOT be the Aspire-generated default-http-check shape
+        // ("{resource}_http_/_200_check", confirmed empirically above), and no "http" endpoint
+        // exists at all on this ports-only service for a health check to have targeted.
+        Assert.NotEqual("kafka-broker_http_/_200_check", healthCheck.Key);
+        Assert.DoesNotContain(
+            resource.Annotations.OfType<EndpointAnnotation>(), e => e.Name == "http");
     }
 
     // -----------------------------------------------------------------------
@@ -1992,6 +2512,419 @@ public sealed class EnvironmentMapperTests
         Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // -----------------------------------------------------------------------
+    // ${env:NAME} passthrough (services-generalisation spec, REQ-006/REQ-007/EDGE-008)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// REQ-006 happy path: a <c>${env:NAME}</c> reference resolves to the engine PROCESS's
+    /// own environment-variable value at topology-build time, spliced as a literal into the
+    /// started container's env — verified the same non-Docker way every other env: test in
+    /// this file verifies a resolved value (<see cref="ResolveEnvVarsAsync"/> +
+    /// <see cref="ValueExpressionOf"/>, no container ever actually starts).
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_EnvVarReference_ResolvesToProcessEnvironmentValue()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_EnvVarReference_ResolvesToProcessEnvironmentValue);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string> { ["REGION"] = $"${{env:{varName}}}" }),
+                },
+                Dependencies: null,
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal("eu-west-1", ValueExpressionOf(envVars["REGION"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// REQ-006: a <c>${env:NAME}</c> reference may sit alongside literal text and resolves
+    /// in place, mirroring the existing <c>${conn:...}</c>-alongside-literal-text coverage
+    /// elsewhere in this file.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_EnvVarReference_AlongsideLiteralText_ResolvesInPlace()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_EnvVarReference_AlongsideLiteralText_ResolvesInPlace);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string> { ["REGION"] = $"prefix-${{env:{varName}}}-suffix" }),
+                },
+                Dependencies: null,
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal("prefix-eu-west-1-suffix", ValueExpressionOf(envVars["REGION"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// m5 fix (fix round 2, PR #349 follow-up): a malformed or wrong-case <c>${env:...}</c>-
+    /// shaped token must be REJECTED, not silently pass through as opaque literal text. The
+    /// reviewer confirmed all four of these validated PASS before this fix — mirrors the
+    /// existing <c>${secret:...}</c> sigil-presence check's own rationale.
+    /// </summary>
+    [Theory]
+    [InlineData("${env:}")]
+    [InlineData("${env:2BAD}")]
+    [InlineData("${ENV:GOOD}")]
+    [InlineData("${env: SPACED }")]
+    public void Map_ServiceEnv_MalformedOrWrongCaseEnvSigil_ThrowsArgumentException(string malformedToken)
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["REGION"] = malformedToken }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("env:", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("well-formed", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// m5 fix — the SAME malformed-sigil rejection must not fire for the DOCUMENTED
+    /// <c>${OTHER_VAR}</c>-style self-expansion passthrough idiom, which shares the
+    /// <c>${</c>/<c>}</c> shape but never contains the literal <c>env:</c> sigil at all.
+    /// Regression-guards <see cref="Map_ServiceEnv_NonConnDollarBraceSigil_DeliveredVerbatim"/>'s
+    /// own scenario against a false positive from the new check.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_NonEnvDollarBraceSigil_NotFlaggedByEnvSigilCheck()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["P"] = "${ENV_VAR}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("${ENV_VAR}", ValueExpressionOf(envVars["P"]));
+    }
+
+    /// <summary>
+    /// EDGE-008: an UNSET <c>${env:NAME}</c> reference fails the suite eagerly (before any
+    /// builder mutation — same "thrown by Map() itself" discipline as
+    /// <see cref="Map_ServiceEnv_UnknownDependency_ThrowsArgumentException"/>), naming the
+    /// missing variable — never a silent empty-string substitution.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceEnv_EnvVarReference_UnsetVariable_ThrowsArgumentException_NamingVariable()
+    {
+        const string varName = "VOUCHFX_UNSET_VAR_XYZ";
+        // Defensive: guarantee the variable is genuinely unset for this process, regardless
+        // of the host shell's own environment.
+        Environment.SetEnvironmentVariable(varName, null);
+
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["REGION"] = $"${{env:{varName}}}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains(varName, ex.Message, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------------
+    // TokeniseEnvValue: ${conn:...} AND ${env:...} in the SAME value (m10 fix, fix round 2)
+    // -----------------------------------------------------------------------
+    // TokeniseEnvValue's rewrite from a single-pattern Matches() call to a leftmost-wins
+    // merge of TWO independent regexes (s_connRefPattern, s_envRefPattern) is the only
+    // structural change to this shared, previously-stable function — every test above
+    // exercises ONE reference kind at a time. These three tests pin both interleavings
+    // (conn-then-env, env-then-conn) plus the boundary case with no separating literal
+    // between the two tokens, proving the leftmost-wins merge picks the correct match at
+    // each position rather than, say, always preferring one pattern.
+
+    /// <summary>
+    /// m10 fix: <c>${conn:...}</c> followed by <c>${env:...}</c>, separated by literal text —
+    /// both resolve, in the written order.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            ["MIXED"] = "host=${conn:orders.host}-region=${env:" + varName + "}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "host={orders.bindings.tcp.host}-region=eu-west-1",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// m10 fix — the reverse ordering of
+    /// <see cref="Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder"/>: <c>${env:...}</c>
+    /// followed by <c>${conn:...}</c>, separated by literal text.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_EnvRefThenConnRef_BothResolveInOrder()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_EnvRefThenConnRef_BothResolveInOrder);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            ["MIXED"] = "region=${env:" + varName + "}-host=${conn:orders.host}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "region=eu-west-1-host={orders.bindings.tcp.host}",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    /// <summary>
+    /// m10 fix — the boundary case: the two reference kinds sit ADJACENT with NO separating
+    /// literal text between them, proving <c>TokeniseEnvValue</c>'s leftmost-wins merge
+    /// correctly re-evaluates both patterns from the position immediately after the first
+    /// match, rather than skipping ahead by a fixed or mismatched amount.
+    /// </summary>
+    [Fact]
+    public async Task Map_ServiceEnv_ConnRefAdjacentToEnvRef_NoSeparatingLiteral_BothResolve()
+    {
+        const string varName = "VOUCHFX_TEST_REGION_" + nameof(Map_ServiceEnv_ConnRefAdjacentToEnvRef_NoSeparatingLiteral_BothResolve);
+        Environment.SetEnvironmentVariable(varName, "eu-west-1");
+        try
+        {
+            var env = new EnvironmentSpec(
+                Services: new Dictionary<string, ServiceSpec>
+                {
+                    ["api"] = new ServiceSpec(
+                        Image: "myorg/api:1.0",
+                        Project: null,
+                        ImagePullPolicy: null,
+                        HttpPort: null,
+                        Env: new Dictionary<string, string>
+                        {
+                            // No literal text at all between the two references.
+                            ["MIXED"] = $"${{conn:orders.host}}${{env:{varName}}}",
+                        }),
+                },
+                Dependencies: new Dictionary<string, DependencySpec>
+                {
+                    ["orders"] = new DependencySpec(Type: "postgres", Version: null, Extra: null),
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var mapped = EnvironmentMapper.Map(env);
+            var builder = CreateBuilder();
+            mapped.Configure(builder);
+
+            var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+            var envVars = await ResolveEnvVarsAsync(apiResource);
+            Assert.Equal(
+                "{orders.bindings.tcp.host}eu-west-1",
+                ValueExpressionOf(envVars["MIXED"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    // NOTE (EDGE-008's "explicit empty value is honoured as-is" half): NOT independently
+    // exercised by a dedicated runtime fixture here. Confirmed empirically (red-first,
+    // against Environment.SetEnvironmentVariable itself, before writing this note) that
+    // passing an empty string collapses to REMOVING the variable rather than setting it to
+    // an empty value — matching that method's own documented contract ("If value is null or
+    // an empty string, ... variable is deleted") — so a test built on it would silently
+    // degenerate into re-proving the unset-variable path
+    // (Map_ServiceEnv_EnvVarReference_UnsetVariable_ThrowsArgumentException_NamingVariable,
+    // above) instead of the empty-value one. The only portable in-process alternative is
+    // OS-specific P/Invoke (raw kernel32!SetEnvironmentVariableW on Windows DOES set a
+    // genuinely empty value, confirmed separately; POSIX setenv on Linux, where this suite's
+    // CI actually runs, is unverifiable from this session's Windows host) — judged not worth
+    // shipping unverified platform-specific test code for. The claim itself is provable by
+    // inspection instead: ValidateEnvValue's guard is 'is null', deliberately never
+    // 'string.IsNullOrEmpty' (see that method's own remarks) — "" is null is unambiguously
+    // false in C#, so an explicitly-empty value can never take the throw branch.
+
+    /// <summary>
+    /// REQ-007: the pre-existing <c>${secret:...}</c> rejection message on a service's
+    /// <c>env:</c> value must stay BYTE-IDENTICAL after <c>${env:NAME}</c> support (REQ-006)
+    /// is added to the same value-parsing path — pinned here as the exact full string (not
+    /// merely a substring match, unlike the pre-existing
+    /// <see cref="Map_ServiceEnv_SecretReference_ThrowsArgumentException_CitingSecrets"/> /
+    /// <see cref="Map_ServiceEnv_MalformedSecretSigil_ThrowsArgumentException_CitingSecrets"/>
+    /// checks above), for both a well-formed and a malformed (missing '/path') secret token.
+    /// </summary>
+    [Theory]
+    [InlineData("${secret:vault/db-password}")]
+    [InlineData("${secret:env}")]
+    public void Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording(string secretToken)
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["P"] = secretToken }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+
+        // ArgumentException's own Message property appends " (Parameter 'paramName')" to
+        // whatever message text the constructor was given — captured here verbatim
+        // (red-first: this suffix was confirmed against the PRE-CHANGE code before this
+        // pin was written) so the pin matches ex.Message exactly, not just the constructor
+        // argument.
+        const string expected =
+            "Service 'api' env entry 'P' references a ${secret:...} value. " +
+            "Secrets resolve at step-execution time, never at container-build time (§17): " +
+            "baking a secret into a container's environment would expose it via 'docker " +
+            "inspect' and corrupt the reproducibility envelope (which hashes the reference, " +
+            "never the value). Configure the SUT to resolve the secret itself instead. " +
+            "(Parameter 'envValue')";
+
+        Assert.Equal(expected, ex.Message, StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// Regression guard (B1, BLOCKER, code-review-gatekeeper): an azureservicebus dependency
     /// has no <c>env:</c> resolution path in <c>ResolveDependencyEnvAccess</c>. Before this
@@ -3736,5 +4669,69 @@ public sealed class EnvironmentMapperTests
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
         Assert.Contains("orders-db", ex.Message, StringComparison.Ordinal);
         Assert.Contains("latest", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -----------------------------------------------------------------------
+    // GetDependencyServiceSidecarNames (m1 fix, fix round 2) — the declarative source
+    // ProviderPipeline's host-resource-vs-declared-name collision guard consults.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// m1 fix: a <c>mailpit</c> dependency unconditionally stages an SMTP sidecar into
+    /// <c>svc::&lt;name&gt;-smtp</c> — <see cref="EnvironmentMapper.GetDependencyServiceSidecarNames"/>
+    /// must report that name so the collision guard can reserve it.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_Mailpit_ReturnsSmtpSuffixedName()
+    {
+        var spec = new DependencySpec(Type: "mailpit", Version: null, Extra: null);
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("mail", spec).ToList();
+
+        Assert.Equal("mail-smtp", Assert.Single(names));
+    }
+
+    /// <summary>
+    /// m1 fix: a <c>kafka</c> dependency WITHOUT <c>schemaRegistry: true</c> stages no
+    /// sidecar at all — the collision guard must reserve nothing extra for it.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_KafkaWithoutSchemaRegistry_ReturnsEmpty()
+    {
+        var spec = new DependencySpec(Type: "kafka", Version: null, Extra: null);
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("bus", spec).ToList();
+
+        Assert.Empty(names);
+    }
+
+    /// <summary>
+    /// m1 fix: a <c>kafka</c> dependency WITH <c>schemaRegistry: true</c> stages a schema-
+    /// registry sidecar into <c>svc::&lt;name&gt;-sr</c> — the exact key the reviewer
+    /// confirmed a listener named <c>bus-sr</c> could previously shadow undetected.
+    /// </summary>
+    [Fact]
+    public void GetDependencyServiceSidecarNames_KafkaWithSchemaRegistry_ReturnsSrSuffixedName()
+    {
+        const string yaml = """
+            metadata:
+              name: sidecar-probe
+            environment:
+              dependencies:
+                bus:
+                  type: kafka
+                  schemaRegistry: true
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var env = ParseEnvironment(yaml);
+        var spec = env.Dependencies!["bus"];
+
+        var names = EnvironmentMapper.GetDependencyServiceSidecarNames("bus", spec).ToList();
+
+        Assert.Equal("bus-sr", Assert.Single(names));
     }
 }

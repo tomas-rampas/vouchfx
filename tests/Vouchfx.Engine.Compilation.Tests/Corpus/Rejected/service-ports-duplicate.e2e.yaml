@@ -1,0 +1,18 @@
+# expected-instance-location: /environment/services/kafka-broker/ports
+# expected-keyword: uniqueItems
+#
+# m6 fix (fix round 2, PR #349 follow-up): 'ports' previously had 'minItems: 1' but no
+# 'uniqueItems', so 'ports: [9093, 9093]' validated PASS and then 'WithEndpoint' threw at
+# Configure time ("an endpoint named 'tcp-9093' already exists" — the second WithEndpoint
+# call for the same duplicated port). Rejected at schema time instead.
+metadata:
+  name: rejected-service-ports-duplicate
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093, 9093]
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

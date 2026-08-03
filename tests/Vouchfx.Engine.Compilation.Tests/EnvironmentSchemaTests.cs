@@ -1407,4 +1407,300 @@ public sealed class EnvironmentSchemaTests
                 "(at security.serverArtifacts[0].bogus)",
                 System.StringComparison.Ordinal));
     }
+
+    // ── Part 3: environment.services.ports / healthCheck (services-generalisation, REQ-008/009) ──
+
+    /// <summary>
+    /// REQ-008: a service may declare one or more TCP ports as a bare array of integers.
+    /// </summary>
+    [Fact]
+    public void Service_Ports_ArrayOfIntegers_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093, 9094]
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// REQ-008 decision: 'ports' is declared with 'minItems: 1' — an empty array carries no
+    /// declared endpoint at all and is rejected rather than silently accepted as a no-op.
+    /// </summary>
+    [Fact]
+    public void Service_Ports_EmptyArray_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: []
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An empty 'ports' array must be rejected (minItems: 1).");
+        Assert.Contains(result.Errors, e => e.InstanceLocation == "/environment/services/kafka-broker/ports");
+    }
+
+    /// <summary>
+    /// REQ-008: each 'ports' entry is bounded to the real TCP port range, mirroring
+    /// 'httpPort''s own range check.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(70000)]
+    public void Service_Ports_PortOutOfRange_IsRejected(int port)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [{{port}}]
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, $"Port {port} is out of the real TCP port range and must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/ports/0");
+    }
+
+    /// <summary>
+    /// REQ-009: 'healthCheck: { type: tcp, port: N }' is accepted.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckTcp_WithPort_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: tcp
+                    port: 9093
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// REQ-009: 'type: tcp' REQUIRES 'port' — omitting it is rejected.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckTcp_MissingPort_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: tcp
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'healthCheck: { type: tcp }' with no 'port' must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/healthCheck" &&
+            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("in service 'kafka-broker' (at healthCheck)", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// REQ-009: 'type: http' with an explicit 'path' is accepted — the explicit spelling of
+    /// today's default behaviour.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckHttp_WithPath_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                web:
+                  image: traefik/whoami
+                  healthCheck:
+                    type: http
+                    path: /healthz
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// REQ-009 field-requiredness table: 'port' is not applicable to 'type: http' and is
+    /// rejected outright, mirroring $defs/security's own mode-conditional forbidden-field
+    /// idiom.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckHttp_WithPort_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                web:
+                  image: traefik/whoami
+                  healthCheck:
+                    type: http
+                    port: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'healthCheck: { type: http, port: ... }' must be rejected — 'port' is tcp-only.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/web/healthCheck/port");
+    }
+
+    /// <summary>
+    /// REQ-009 field-requiredness table: 'path' is not applicable to 'type: tcp' and is
+    /// rejected outright.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckTcp_WithPath_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: tcp
+                    port: 9093
+                    path: /healthz
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'healthCheck: { type: tcp, path: ... }' must be rejected — 'path' is http-only.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/healthCheck/path");
+    }
+
+    /// <summary>
+    /// An unrecognised key inside 'healthCheck' is rejected (additionalProperties: false).
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheck_UnknownKey_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: tcp
+                    port: 9093
+                    bogus: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An unrecognised key inside 'healthCheck' must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/healthCheck/bogus");
+    }
+
+    /// <summary>
+    /// 'healthCheck.type' is matched case-sensitively, like every other DSL vocabulary term.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheckType_WrongCase_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    type: TCP
+                    port: 9093
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'healthCheck.type: TCP' must be rejected — only the lower-case spelling is recognised.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/healthCheck/type");
+    }
+
+    /// <summary>
+    /// 'healthCheck' requires 'type'.
+    /// </summary>
+    [Fact]
+    public void Service_HealthCheck_MissingType_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                kafka-broker:
+                  image: myorg/kafka-broker:1.0
+                  ports: [9093]
+                  healthCheck:
+                    port: 9093
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'healthCheck' with no 'type' must be rejected.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/services/kafka-broker/healthCheck" &&
+            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("in service 'kafka-broker' (at healthCheck)", System.StringComparison.Ordinal));
+    }
 }

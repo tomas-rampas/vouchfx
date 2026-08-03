@@ -35,13 +35,20 @@ file sealed class StubProjectContext : IProjectContext
     /// <inheritdoc />
     public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
 
-    internal StubProjectContext(IReadOnlyDictionary<string, string>? deps = null)
+    internal StubProjectContext(
+        IReadOnlyDictionary<string, string>? deps = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? services = null)
     {
         DeclaredDependencies = deps
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        DeclaredServices = services
+            ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
     }
 
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaredServices { get; }
 }
 
 internal sealed class StubBindingContext : IBindingContext { }
@@ -52,6 +59,18 @@ public sealed class MetricsAssertPrometheusProviderTests
 {
     private readonly MetricsAssertPrometheusProvider _provider = new();
     private static readonly StubBindingContext s_bindCtx = new();
+
+    /// <summary>
+    /// A <see cref="StubProjectContext"/> declaring service <c>"sut"</c> — the target every
+    /// Validate test in this file uses (REQ-012: target reconciliation needs it declared as
+    /// a service or dependency to pass; these tests are about metric/path/expect shape, not
+    /// target reconciliation).
+    /// </summary>
+    private static readonly IProjectContext s_sutDeclaredContext = new StubProjectContext(
+        services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["sut"] = new List<string> { "http" },
+        });
 
     // ── 1. Bind: full YAML step ────────────────────────────────────────────────
 
@@ -146,7 +165,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
@@ -160,7 +179,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: null, Min: "1", Max: "10"));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
@@ -174,7 +193,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("target"));
@@ -189,7 +208,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("metric"));
@@ -204,7 +223,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: null, Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("expect"));
@@ -219,7 +238,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: null, Min: "10", Max: "1"));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("min") && e.Contains("max"));
@@ -234,9 +253,61 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: null, Min: "{expectedMin}", Max: "1"));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    // ── Target reconciliation (services-generalisation spec, REQ-012/EDGE-009) ──
+
+    /// <summary>
+    /// REQ-012/EDGE-009: a <c>target</c> naming neither a declared service nor a declared
+    /// dependency fails validation, naming the unknown target and listing what IS declared.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesNeitherServiceNorDependency_IsInvalid_ListsDeclaredSurfaces()
+    {
+        var model = new MetricsAssertPrometheusModel(
+            "does-not-exist", "/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, s_sutDeclaredContext);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("does-not-exist", StringComparison.Ordinal) &&
+            e.Contains("sut", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// DEPENDENCY (never a service) must be rejected — mirrors HttpRestProvider's own
+    /// identical fix and rationale. The message must name the dependency and list the
+    /// services it CAN reach.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesDeclaredDependency_IsInvalid_NamesDependencyAndListsServices()
+    {
+        var ctx = new StubProjectContext(
+            deps: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = "postgres",
+            },
+            services: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["sut"] = new List<string> { "http" },
+            });
+        var model = new MetricsAssertPrometheusModel(
+            "orders-db", "/metrics", "orders_total", null,
+            new MetricsExpectation(Value: "1", Min: null, Max: null));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("orders-db", StringComparison.Ordinal) &&
+            e.Contains("dependency", StringComparison.OrdinalIgnoreCase) &&
+            e.Contains("sut", StringComparison.Ordinal));
     }
 
     // ── 12. Registry: provider discoverable ──────────────────────────────────
@@ -295,7 +366,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "http://evil.example/metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
@@ -308,7 +379,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
@@ -321,7 +392,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "//evil.example/metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("rooted relative path"));
@@ -334,7 +405,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics\\..\\admin", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("backslash"));
@@ -347,7 +418,7 @@ public sealed class MetricsAssertPrometheusProviderTests
             "sut", "/metrics", "orders_total", null,
             new MetricsExpectation(Value: "1", Min: null, Max: null));
 
-        var result = _provider.Validate(model, new StubProjectContext());
+        var result = _provider.Validate(model, s_sutDeclaredContext);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
