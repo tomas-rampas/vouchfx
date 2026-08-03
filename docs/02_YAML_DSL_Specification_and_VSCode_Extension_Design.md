@@ -263,7 +263,7 @@ Additionally, image-form services automatically receive the Docker host gateway 
 
 #### 3.2.6a Raw TCP endpoints and health-check configuration
 
-Services may carry an optional **`ports`** list to declare raw TCP endpoints. Declaring `ports: [9093, ...]` exposes raw TCP listeners on the specified ports without an implicit HTTP health probe or HTTP endpoint, enabling non-HTTP systems under test to be declared (e.g. a customer-supplied Kafka broker, a proprietary binary service protocol). Each port is exposed via Aspire's generic endpoint (scheme `tcp`). Declaring `ports` suppresses the service's implicit HTTP endpoint unless `httpPort` is also declared alongside it — the opt-in hybrid shape that exposes both the raw TCP listeners and a named HTTP endpoint side by side.
+Services may carry an optional **`ports`** list to declare raw TCP endpoints. Declaring `ports: [9093, ...]` exposes raw TCP listeners on the specified ports without an implicit HTTP health probe or HTTP endpoint, enabling non-HTTP systems under test to be declared (e.g. a customer-supplied Kafka broker, a proprietary binary service protocol). Each port is exposed via Aspire's generic endpoint (scheme `tcp`). Declaring `ports` suppresses the service's implicit HTTP endpoint unless `httpPort` is also declared alongside it — the opt-in hybrid shape that exposes both the raw TCP listeners and a named HTTP endpoint side by side. Declaring `security` (§3.2.6b) suppresses it on the same terms.
 
 A service may also carry an optional **`healthCheck`** object to override or explicitly declare a health probe. The schema supports two forms:
 
@@ -272,7 +272,7 @@ A service may also carry an optional **`healthCheck`** object to override or exp
 | `{ type: tcp, port: N }` | A TCP-connect probe on the specified port (the raw port number from the container, not a named endpoint). No HTTP request is issued; the probe confirms a listener has accepted the connection and stayed open — it does **not** confirm the service behind that listener is ready to serve its own protocol (see the note below). Use this for non-HTTP services. |
 | `{ type: http, path: "/..." }` | An HTTP GET probe on the specified path (e.g. `path: "/"` or `path: "/health"`), issued against the service's declared HTTP endpoint. This is the explicit spelling of the default HTTP `/` health check applied to `image:`-form services. |
 
-The `type` values are case-sensitive (`tcp` and `http` only). Omitting `healthCheck` on an `image:`-form HTTP service — including the hybrid `ports` + `httpPort` shape described above, which *is* an image-form HTTP service — preserves today's default behaviour (HTTP probe on `/`). Omitting it on a `ports:`-only service (no sibling `httpPort`) defaults to a `tcp` probe against the first declared port, rather than no health check at all: a service with no health-check annotation is otherwise considered healthy the instant its container reaches the Running state, which does not prove anything is listening. Because `type: http` probes the service's HTTP endpoint, it is invalid on a `ports:`-only service that declares no `httpPort` — such a service exposes no HTTP endpoint for the probe to target.
+The `type` values are case-sensitive (`tcp` and `http` only). Omitting `healthCheck` on an `image:`-form HTTP service — including the hybrid `ports` + `httpPort` shape described above, which *is* an image-form HTTP service — preserves today's default behaviour (HTTP probe on `/`), unless that service also declares `security`: a secured service defaults to a `tcp` probe against its secured port whatever else it declares, for the reason given in §3.2.6b. Omitting it on a `ports:`-only service (no sibling `httpPort`) defaults to a `tcp` probe against the first declared port, rather than no health check at all: a service with no health-check annotation is otherwise considered healthy the instant its container reaches the Running state, which does not prove anything is listening. Because `type: http` probes the service's HTTP endpoint, it is invalid on a `ports:`-only service that declares no `httpPort` — such a service exposes no HTTP endpoint for the probe to target — and invalid, for the same reason, on a secured service whose `security` block has left it with no plaintext HTTP endpoint at all: either because it declares no separate `httpPort`, or because the `httpPort` it declares *is* the secured port (§3.2.6b).
 
 A `tcp` health check probes past a live-Docker subtlety worth calling out explicitly: the host-published address it connects to is proxied, and the proxy accepts the TCP connection before it has confirmed anything is listening on the backend. A bare successful connect therefore does not prove the service is alive; the engine additionally attempts a small bounded read immediately after connecting — a dead backend's connection is closed with zero bytes read, while a live backend (whether it speaks first or stays silent until spoken to) is distinguished by the connection remaining open. Authors do not configure this; it is inherent to the `tcp` probe's own implementation, described here so the health-gating behaviour of a non-HTTP system under test is not a mystery. Each poll therefore holds the connection open for up to one second before tearing it down, and — on a protocol whose server speaks first (e.g. SMTP, SSH) — reads and discards exactly one byte of the greeting before disconnecting; an operator watching the target's own connection logs will see a client connect, receive at most one byte, then disconnect, once per poll interval. This is expected behaviour of the probe, not a malfunctioning client.
 
@@ -289,6 +289,41 @@ environment:
       image: myorg/app:latest
       healthCheck: { type: http, path: "/readiness" }
 ```
+
+#### 3.2.6b Transport security: reaching a service over TLS or mutual TLS
+
+A service may carry an optional **`security`** block declaring that its endpoint speaks TLS and — under `profile: mtls` — the client certificate the engine must present to it. Two fields are required whenever the block is present. `profile` is `tls` or `mtls`, matched case-sensitively and resolved against the engine's registry of wired profiles rather than by the schema alone. `endpoint` selects *which* of the service's ports is the secured one, and accepts either a bare port number (decimal, 1–65535, no leading zero) or the name of an endpoint the service's own `ports:`/`httpPort:` declaration produces (`http`, or `tcp-<port>`). It is mandatory rather than defaulted on purpose: a system under test that keeps a plaintext listener open beside a secured one would otherwise be reachable through an implicit default that quietly resolved to the wrong one.
+
+The remaining fields are trust material, and every one of them is a path resolved relative to the directory containing the `.e2e.yaml` file. `caCert` is optional under both profiles; `clientCert` and `clientKey` are required together under `mtls` and forbidden under `tls`. Each declared path is checked for containment within the suite directory and then for existence at `vouchfx validate` time, before any container starts. An undeclared optional field is absent rather than missing — nothing is defaulted or synthesised in its place. A `serverArtifacts:` list of `{ source, target }` pairs is accepted and its `source` paths validated on the same terms, but nothing is copied into the container in this release.
+
+```yaml
+environment:
+  services:
+    orders-api:
+      image: myorg/orders-api:1.2.3
+      security:
+        profile: mtls
+        endpoint: 8443
+        caCert:     certs/ca.pem
+        clientCert: certs/client.pem
+        clientKey:  certs/client.key
+```
+
+Declaring the block changes five things about the service. None of them applies to a service that declares none.
+
+| Consequence | Behaviour |
+|---|---|
+| **Endpoint scheme** | The selected endpoint is declared with an `https` scheme and *replaces* the plaintext endpoint that port would otherwise have carried. |
+| **Target resolution** | That secured endpoint is what a step's `target` resolves to, in preference to any sibling plaintext endpoint the same service declares. `http.rest`, `http.soap` and `metrics-assert.prometheus` therefore issue a TLS request against it, presenting the declared client certificate under `profile: mtls` and validating the peer against the declared `caCert`. |
+| **The implicit HTTP endpoint** | Suppressed, exactly as declaring `ports` suppresses it (§3.2.6a), unless `httpPort` is declared alongside on a *different* port. An `httpPort` equal to `endpoint` is not a second endpoint — it is the secured one. |
+| **Default health check** | A `tcp` probe against the secured port, never an HTTP one. A container health check cannot present a client certificate, so an HTTP probe against a mutual-TLS listener holds a working topology unhealthy indefinitely. Declare an explicit `healthCheck` against a separate unsecured port for a stronger probe — the shape a real mutual-TLS service uses. |
+| **Service form** | A `project`-form service cannot be secured in this release and is rejected by `vouchfx validate`, not left to fail once containers are starting. Its endpoints are discovered from its own launch profile, so the engine has none of its own to give an `https` scheme; declare the system under test in the `image` form to secure it. |
+
+**A declared `caCert` is a pin, not additional trust.** The declared anchor is consulted on every path: a peer certificate that chains only to the machine's own trust store is rejected even though the platform on its own would have accepted it, and the peer must additionally carry the `serverAuth` extended key usage — or no extended key usage at all, which means unconstrained. The hostname is still checked; a declared CA says which issuer to trust, never which host. Two-tier certificate authorities work as expected: declare the offline root as `caCert` and let the server send its issuing intermediate alongside its own certificate, as TLS requires it to. Intermediates the peer supplies are used to build the path and never become trust anchors themselves, so a self-signed root offered as an "intermediate" is still rejected. Omitting `caCert` is a normal configuration rather than an incomplete one: no validation callback is installed at all, and the platform's own trust store applies exactly as it does for an unsecured service.
+
+**What mutual TLS here is, and what it is not.** It authenticates the *transport*: it proves the peer holds a key whose certificate chains to an issuer this suite declared, and it presents the suite's own certificate so a listener configured to demand one completes the handshake. It is **not** authentication of a principal to the system under test, and it is **not** authorisation. Any client certificate the declared CA issued is accepted, whatever it says about who the holder is, and the system under test's own access control is untouched by it. A suite that needs to be recognised as a particular caller still sends that identity itself — a bearer token, an API key — through the step's own `headers`, as `${secret:…}` references (§6.4).
+
+Finally, the engine does not *serve* TLS. Declaring `security` fixes the endpoint's scheme and the client's trust material; the system under test terminates TLS itself, with server-side material its author supplies to the container by their own means.
 
 #### 3.2.7 Test doubles
 
@@ -335,7 +370,7 @@ Together the eleven shipped families are sufficient to express the platform's re
 
 ### 5.1 The http family
 
-An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The family now has two Core providers: `http.rest` (the example below) and `http.soap` (§5.1's second subsection, below). `http.graphql` remains a planned future addition (section 5.7). Like every family, the dotted form is always required — this was already true before `http.soap` existed and remains unchanged now that it does.
+An `http` step issues an HTTP request to one of the services declared in the environment section and asserts properties of the response. The `target` field names a logical service rather than a URL, so the engine can resolve the real address through Aspire service discovery — the same test therefore works whether the service runs locally or in the cloud. The family now has two Core providers: `http.rest` (the example below) and `http.soap` (§5.1's second subsection, below). `http.graphql` remains a planned future addition (section 5.7). Like every family, the dotted form is always required — this was already true before `http.soap` existed and remains unchanged now that it does. The transport follows the target: when the named service declares a `security` block (§3.2.6b), both providers — and `metrics-assert.prometheus`, which addresses services the same way — issue the request over TLS, presenting the declared client certificate under `profile: mtls` and validating the peer against the declared `caCert`. A target that declares no `security` block is called exactly as before.
 
 | Field | Meaning |
 |---|---|
