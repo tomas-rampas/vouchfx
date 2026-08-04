@@ -2504,9 +2504,9 @@ public static class EnvironmentMapper
 
                 return bytesRead == 0
                     ? HealthCheckResult.Unhealthy(
-                        $"TCP connect to {host}:{port} succeeded, but the connection was closed " +
-                        "immediately (zero bytes read) — no backend is listening behind the " +
-                        "host-published proxy.")
+                        $"TCP connect to {AuthorityText.Format(host, port)} succeeded, but the " +
+                        "connection was closed immediately (zero bytes read) — no backend is " +
+                        "listening behind the host-published proxy.")
                     // >0 bytes: a server-speaks-first protocol greeted us unprompted.
                     : HealthCheckResult.Healthy();
             }
@@ -2527,7 +2527,14 @@ public static class EnvironmentMapper
             // re-throws only if the AMBIENT ct itself requested cancellation (the caller
             // genuinely cancelled the check), which HealthCheckService is expected to
             // observe rather than have swallowed into an Unhealthy result.
-            return HealthCheckResult.Unhealthy($"TCP probe of {host}:{port} failed: {ex.Message}");
+            // m3 (gatekeeper, fix round six): rendered through AuthorityText.Format, the same
+            // bracket rule SecuredEndpointProbe's observed-address messages use. `host` is
+            // bracket-free (it is the form TcpClient.ConnectAsync above needs), so a raw
+            // "{host}:{port}" renders an IPv6 literal as `::1:9093` — unparseable and ambiguous
+            // about where the address ends. Localhost/IPv4 today; the rule costs nothing and the
+            // branch should not close with a known-defective sibling of a defect it fixed.
+            return HealthCheckResult.Unhealthy(
+                $"TCP probe of {AuthorityText.Format(host, port)} failed: {ex.Message}");
         }
     }
 

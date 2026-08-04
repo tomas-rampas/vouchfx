@@ -373,6 +373,113 @@ public sealed class ProtocolTargetConflictValidationTests
         }
     }
 
+    // ── The MIXED shape: a conflicting scenario alongside a valid one ─────────────────────────
+    //
+    // The third shape, and the one that double-printed (gatekeeper MINOR-1 + spec-compliance
+    // minor-3, promoted to MAJOR-3 in fix round six). Scenario A addresses `broker` with BOTH
+    // families, so A ALONE conflicts and the per-scenario seam stores the conflict text verbatim as
+    // A's EarlyMessage. Scenario B addresses it with one family and compiles cleanly, so the
+    // all-early-verdict guard does not fire and the SUITE guard runs — printing the same text a
+    // second time when the completion path replayed A's preserved message.
+    //
+    // MEASURED: DIAGCOUNT was 2 before the fix, on a diagnostic the suite guard's own comment
+    // claimed was printed once.
+    //
+    // The fix is not "drop A's message": that message is A's cause, and a per-scenario record with
+    // no cause cannot explain itself to anything rendered from it. The suite-level text is instead
+    // stamped as the cause of every scenario that has none of its own, and the completion path is
+    // told which text the caller already wrote so it prints no duplicate.
+
+    private static readonly string[] s_mixedScenarioYamls = { BothStepsInOneScenario, HttpStepOnly };
+    private static readonly string[] s_mixedScenarioNames = { "conflicting-half", "valid-half" };
+
+    /// <summary>
+    /// A suite mixing a self-conflicting scenario with a cleanly-compiling one prints the conflict
+    /// diagnostic EXACTLY ONCE, and still writes the requested JUnit report for both scenarios.
+    /// </summary>
+    [Fact]
+    public async Task RunSuiteAsync_MixedConflictingAndValidScenarios_PrintsTheDiagnosticOnce()
+    {
+        var directory = Directory.CreateTempSubdirectory("vouchfx-protocol-conflict-mixed-");
+        try
+        {
+            var mixedJunit = Path.Combine(directory.FullName, "mixed.xml");
+            var mixed = await RunAndCaptureAsync(
+                s_mixedScenarioYamls, s_mixedScenarioNames, mixedJunit);
+
+            // The diagnostic is present and is the SAME one both other shapes produce…
+            Assert.NotEmpty(mixed.Diagnostic);
+            var single = await RunAndCaptureAsync(s_singleScenarioYamls, s_singleScenarioNames);
+            Assert.Equal(single.Diagnostic, mixed.Diagnostic);
+
+            // …and it appears exactly once, where it appeared twice before the fix.
+            Assert.Equal(1, CountOccurrences(mixed.Rendered, mixed.Diagnostic));
+
+            // The artefacts are written for BOTH scenarios, including the one that compiled.
+            Assert.True(File.Exists(mixedJunit));
+            AssertInconclusiveJunit(File.ReadAllText(mixedJunit), s_mixedScenarioNames);
+
+            // Classification is the shape's, not the conflicting scenario's alone.
+            Assert.Equal(Verdict.Inconclusive, mixed.Result.Verdict);
+            Assert.False(mixed.Result.SecurityConfirmationFailed);
+            Assert.Equal(2, mixed.Result.ScenarioVerdicts.Count);
+            Assert.All(mixed.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
+
+            // Nothing was staged: the topology build was never reached.
+            Assert.DoesNotContain(PreTopologyMarker, mixed.Rendered, StringComparison.Ordinal);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A scenario carrying a MORE SPECIFIC early message of its own is not silenced by the suite
+    /// -level suppression: only text byte-identical to what the caller already printed is skipped.
+    /// </summary>
+    /// <remarks>
+    /// The guard against over-suppressing. Scenario A here is schema-invalid (an unknown step
+    /// field), so its EarlyMessage is a schema diagnostic, NOT the conflict text — while scenario B
+    /// addresses the target over the other family, so the union still conflicts and the suite guard
+    /// still fires. Both messages must survive: the suite's fact once, and A's own fact once.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_ConflictingSuiteWithADistinctEarlyMessage_KeepsBothDiagnostics()
+    {
+        var yamls = new[] { SchemaInvalidKafkaHalf, HttpStepOnly };
+        var names = new[] { "schema-invalid-kafka-half", "http-half" };
+
+        var run = await RunAndCaptureAsync(yamls, names);
+
+        // The suite-level conflict, once.
+        Assert.NotEmpty(run.Diagnostic);
+        Assert.Equal(1, CountOccurrences(run.Rendered, run.Diagnostic));
+
+        // …and the schema-invalid scenario's own, more specific message, which is a different text
+        // and is therefore not suppressed.
+        Assert.Contains("bogusField", run.Rendered, StringComparison.Ordinal);
+
+        Assert.Equal(Verdict.Inconclusive, run.Result.Verdict);
+        Assert.Equal(2, run.Result.ScenarioVerdicts.Count);
+    }
+
+    /// <summary>
+    /// A Kafka-family scenario carrying an unknown step field: schema-invalid, so it never reaches
+    /// the per-scenario protocol check and carries a schema diagnostic as its early message — while
+    /// still contributing its Kafka target to the suite-level union.
+    /// </summary>
+    private const string SchemaInvalidKafkaHalf = ConflictSuiteEnvironment + """
+
+        steps:
+          - id: publish
+            type: mq-publish.kafka
+            target: broker
+            topic: orders
+            payload: "{}"
+            bogusField: nope
+        """;
+
     /// <summary>
     /// Asserts a JUnit document reports exactly <paramref name="scenarioNames"/>, each Inconclusive.
     /// </summary>

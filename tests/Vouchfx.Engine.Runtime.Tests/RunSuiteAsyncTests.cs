@@ -596,6 +596,135 @@ public sealed class RunSuiteAsyncTests
         Assert.True(result.SecurityConfirmationFailed);
     }
 
+    /// <summary>
+    /// The ARTEFACT half of the divergence refusal (gatekeeper MAJOR-1 + security MINOR-1, fix
+    /// round six): a CI job that asked for reports must get them from this seam too.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this is not cosmetic, and why it is worse here than at the sibling seam.</strong>
+    /// This guard sets <c>SecurityConfirmationFailed</c>, so the run exits NON-ZERO (REQ-018). Before
+    /// this fix it returned a bare <see cref="SuiteResult"/>: no scenario events, no live pump, no
+    /// terminal render and — the one that reaches CI — no
+    /// <c>FileReportWriter.WriteFileReports</c>. A pipeline running
+    /// <c>vouchfx run --junit results.xml --html report.html --events events.jsonl tests/</c>
+    /// therefore went red beside an EMPTY results directory, with the JUnit publisher reporting
+    /// "no test results" — the failure looks like a broken runner rather than a rejected suite.
+    /// </para>
+    /// <para>
+    /// MEASURED RED FIRST: with the bare return in place, all three
+    /// <see cref="File.Exists(string)"/> assertions below were <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// The single-print assertion is the other half: routing this seam through the shared
+    /// completion path must not make the divergence diagnostic appear twice, now that the same
+    /// text is also stamped as each unjudged scenario's own cause.
+    /// </para>
+    /// </remarks>
+    // Hoisted to fields (CA1861): constant-element arrays passed to a repeatedly-called method.
+    private static readonly string[] s_divergingScenarioNames = { "in-dir-a", "in-dir-b" };
+    private static readonly string?[] s_divergingScenarioDirectories = { "dir-a", "dir-b" };
+
+    [Fact]
+    public async Task RunSuiteAsync_SecuredSuiteWithDivergingScenarioDirectories_WritesEveryRequestedReport()
+    {
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  security:
+                    profile: tls
+                    endpoint: 8443
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+
+        var directory = Directory.CreateTempSubdirectory("vouchfx-divergence-reports-");
+        try
+        {
+            var junitPath = Path.Combine(directory.FullName, "results.xml");
+            var htmlPath = Path.Combine(directory.FullName, "report.html");
+            var eventsPath = Path.Combine(directory.FullName, "events.jsonl");
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: new[] { ast, ast },
+                scenarioNames: s_divergingScenarioNames,
+                yamlTexts: new[] { yaml, yaml },
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                scenarioBaseDirectories: s_divergingScenarioDirectories,
+                htmlReportPath: htmlPath,
+                junitReportPath: junitPath,
+                eventsReportPath: eventsPath);
+
+            Assert.True(
+                File.Exists(junitPath),
+                "The divergence guard must write the requested JUnit report — the run exits "
+                + "non-zero, so an empty results directory beside a red build is the worst shape.");
+            Assert.True(File.Exists(htmlPath), "The divergence guard must write the requested HTML report.");
+            Assert.True(File.Exists(eventsPath), "The divergence guard must write the requested events stream.");
+
+            // Both scenarios present, both Inconclusive, tallies agreeing with the scenario count.
+            var xml = File.ReadAllText(junitPath);
+            Assert.Contains("tests=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("skipped=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"in-dir-a\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"in-dir-b\"", xml, StringComparison.Ordinal);
+
+            // The events file carries the started/completed pair for each scenario.
+            var eventLines = File.ReadAllLines(eventsPath);
+            Assert.Equal(4, eventLines.Length);
+
+            // Classification unchanged by the reroute: still Inconclusive, still a security
+            // -confirmation failure (this guard IS about security material).
+            Assert.Equal(Verdict.Inconclusive, result.Verdict);
+            Assert.True(result.SecurityConfirmationFailed);
+            Assert.Equal(2, result.ScenarioVerdicts.Count);
+
+            // One print, not two — the diagnostic is one suite-level fact.
+            var rendered = sw.ToString();
+            var diagnostic = rendered
+                .Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .FirstOrDefault(line => line.StartsWith("RunSuiteAsync: this suite declares", StringComparison.Ordinal))
+                ?? string.Empty;
+            Assert.NotEmpty(diagnostic);
+            Assert.Equal(1, CountOccurrences(rendered, diagnostic));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        Assert.NotEmpty(needle);
+
+        var count = 0;
+        var index = haystack.IndexOf(needle, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            count++;
+            index = haystack.IndexOf(needle, index + needle.Length, StringComparison.Ordinal);
+        }
+
+        return count;
+    }
+
     // ── REQ-018's schema door: which instance locations ARE a security declaration ─────────
     //
     // The classifier that decides this ran as `InstanceLocation.Contains("/security")` for one fix

@@ -434,7 +434,7 @@ internal static class SecuredEndpointProbe
                 + "A secured target must be one the engine itself starts and publishes an endpoint for.");
         }
 
-        var observedAddress = FormatAuthority(host, port);
+        var observedAddress = AuthorityText.Format(host, port);
         var configuration = ResolveConfiguration(name, declaredProfile, declaredEndpoint, observedAddress, security);
         var certificates = configuration?.Certificates;
 
@@ -1227,9 +1227,18 @@ internal static class SecuredEndpointProbe
         // host and port and ignores user info, path, query and fragment, where TryParseBareAuthority
         // refuses a value carrying any of them. That asymmetry is intended, not an oversight — a URL
         // legitimately carries a path, so refusing one would refuse a well-formed staged endpoint,
-        // while a value with no scheme carrying a path is not an authority at all. The probe opens a
-        // TCP connection to host:port either way; nothing past the authority is consulted, so
-        // ignoring it here changes no address.
+        // while a value with no scheme carrying a path is not an authority at all.
+        //
+        // The two halves of "ignored" are not the same, and an earlier wording lumped them (m2,
+        // gatekeeper + security, fix round six). RFC 3986 §3.2 defines
+        // `authority = [ userinfo "@" ] host [ ":" port ]`, so USER INFO IS PART OF THE AUTHORITY,
+        // not something past it: it is discarded here by the URL parser itself, which yields host
+        // and port as separate components and never folds user info into either. MEASURED, on the
+        // pinned runtime: 'https://user@host.example:8443/p?q#f' gives DnsSafeHost 'host.example',
+        // Port 8443 and UserInfo 'user' — three separate components, so reading the first two picks
+        // up nothing of the third. Path, query and fragment are the components genuinely past the
+        // authority, and they are ignored because nothing past the authority is consulted when
+        // opening a TCP connection. Both roads lead to the same address; only the reasons differ.
         if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Port > 0 &&
             !string.IsNullOrEmpty(uri.DnsSafeHost))
         {
@@ -1244,29 +1253,12 @@ internal static class SecuredEndpointProbe
         return TryParseBareAuthority(value, out host, out port);
     }
 
-    /// <summary>
-    /// Renders a resolved host and port back into a readable authority, bracketing an IPv6 literal.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// m1 (gatekeeper, fix round five). <see cref="TryResolveAddress"/> deliberately yields the
-    /// BRACKET-FREE host, because that is the form <c>TcpClient.ConnectAsync</c> can use — but every
-    /// diagnostic in this file then interpolated it as <c>{host}:{port}</c>, which renders
-    /// <c>[::1]:9093</c> as <c>::1:9093</c>: not a parseable authority, and ambiguous about where
-    /// the address ends and the port begins. Round four fixed the CONNECT and regressed the
-    /// MESSAGE, which is the half that requirement's own framing names.
-    /// </para>
-    /// <para>
-    /// The discriminator is a colon in the host, which is exactly RFC 3986's own rule: a colon
-    /// cannot appear in a registered name or an IPv4 literal, so it identifies an IPv6 literal and
-    /// nothing else. Brackets are not re-added by <c>Uri</c> here because the host has already left
-    /// the parser as <c>DnsSafeHost</c>.
-    /// </para>
-    /// </remarks>
-    private static string FormatAuthority(string host, int port) =>
-        host.Contains(':', StringComparison.Ordinal)
-            ? FormattableString.Invariant($"[{host}]:{port}")
-            : FormattableString.Invariant($"{host}:{port}");
+    // The bracket rule this probe's observed-address rendering depends on (m1, gatekeeper, fix
+    // round five) now lives in AuthorityText.Format — hoisted out of this file in fix round six
+    // (m3) because EnvironmentMapper's TCP health-check diagnostics have the same bracket-free host
+    // and had the same raw {host}:{port} defect. TryResolveAddress deliberately yields the
+    // BRACKET-FREE host, because that is the form TcpClient.ConnectAsync can use; everything that
+    // renders it for a human goes through that one helper.
 
     /// <summary>
     /// The scheme synthesised in front of a bare <c>host:port</c> authority so
@@ -1314,12 +1306,15 @@ internal static class SecuredEndpointProbe
     /// </list>
     /// </para>
     /// <para>
-    /// <strong>Everything past the authority is refused, not ignored — in THIS half.</strong> The
-    /// rule is scoped to the bare-authority branch and does not govern the URL branch above it (m3,
-    /// gatekeeper, fix round five): a staged value with no scheme is an authority and nothing else,
-    /// so anything carrying user info, a path, a query or a fragment is not the thing this is
-    /// parsing, and reinterpreting it would be a silent guess in the one component that must not
-    /// guess. A staged URL legitimately carries a path, which is why that branch reads host and port
+    /// <strong>Anything beyond a bare host and port is refused, not ignored — in THIS half.</strong>
+    /// The rule is scoped to the bare-authority branch and does not govern the URL branch above it
+    /// (m3, gatekeeper, fix round five): a staged value with no scheme is a host and a port and
+    /// nothing else, so anything carrying user info, a path, a query or a fragment is not the thing
+    /// this is parsing, and reinterpreting it would be a silent guess in the one component that must
+    /// not guess. Note that user info is INSIDE the authority per RFC 3986 §3.2
+    /// (<c>authority = [ userinfo "@" ] host [ ":" port ]</c>) while path, query and fragment are
+    /// past it — the four are refused together here, but they are not one category (m2, fix round
+    /// six). A staged URL legitimately carries a path, which is why that branch reads host and port
     /// off the parsed <see cref="Uri"/> and lets the rest be — see the call site's own note.
     /// Measured: <c>user@host:9093</c> parses with <c>UserInfo</c> set (the previous split
     /// produced the host <c>user@host</c>), <c>host:9093/path</c> keeps its path, and
@@ -1327,10 +1322,13 @@ internal static class SecuredEndpointProbe
     /// is why the fragment is checked separately rather than folded into the path check.
     /// </para>
     /// <para>
-    /// <strong>The user-info test is on the delimiter, not on <c>UserInfo</c></strong> (m2 / NIT-1,
-    /// security review, fix round five). The rule above says "anything carrying user info"; asking
-    /// <c>authority.UserInfo.Length != 0</c> enforced something narrower, because an EMPTY user-info
-    /// component is still a user-info component. MEASURED, on the pinned runtime:
+    /// <strong>The user-info test is on the delimiter as well as on <c>UserInfo</c></strong>
+    /// (m2 / NIT-1, security review, fix round five; wording corrected in round six — the
+    /// <c>UserInfo.Length</c> check was RETAINED alongside the new <c>@</c> guard as belt and
+    /// braces, not replaced by it, and the previous "not on <c>UserInfo</c>" phrasing read as if it
+    /// had been). The rule above says "anything carrying user info"; asking
+    /// <c>authority.UserInfo.Length != 0</c> ALONE enforced something narrower, because an EMPTY
+    /// user-info component is still a user-info component. MEASURED, on the pinned runtime:
     /// <c>tcp://@host:9093</c> parses with <c>UserInfo</c> equal to <c>""</c>, <c>Host</c> equal to
     /// <c>host</c> and <c>Port</c> 9093 — so it passed every guard and resolved to a REACHABLE host
     /// that is not the text staged, where the split it replaced produced the unresolvable

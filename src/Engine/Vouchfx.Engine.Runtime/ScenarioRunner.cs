@@ -1036,17 +1036,43 @@ public static class ScenarioRunner
         // own. Both fail closed, so nothing passes on the wrong material — but the probe would no
         // longer be evidence about those steps, which is the whole basis of its verdict. Refused
         // rather than silently picked, and refused only for suites that declare security at all.
+        //
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
+        // MAJOR-1 + security MINOR-1, fix round six). This guard is 40 lines above the protocol
+        // -conflict seam that fix round five moved onto the shared completion path, and it had the
+        // SAME hole: a bare return skips the ScenarioStarted/Completed events, the --events-stream
+        // pump, the terminal render and FileReportWriter.WriteFileReports. MEASURED on the
+        // divergence shape with --junit/--html/--events all requested: `junit exists = False,
+        // html exists = False, events exists = False` — and unlike the conflict seam this one exits
+        // NON-ZERO (SecurityConfirmationFailed = true), so a CI job gets a red build beside an empty
+        // results directory and a JUnit publisher reporting "no test results". Verdict, flag and
+        // exit code are unchanged here; only the artefacts now exist.
+        //
+        // CLASSIFICATION UNCHANGED, deliberately: `securityConfirmationFailed: true` is passed
+        // literally rather than accumulated, because this guard is about security material — a
+        // suite whose declared 'caCert'/'clientCert'/'clientKey' would resolve to two different
+        // files is exactly a declaration the engine cannot confirm (REQ-018).
         if (TryFindSecurityBaseDirectoryDivergence(scenarios[0].Environment, compilations, out var divergence))
         {
+            // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
+            // Printed HERE, once, for the suite; the completion path is told what was printed so it
+            // does not repeat it when it walks the per-scenario messages (see MAJOR-3's note on
+            // StampInconclusiveWhereUnjudged).
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(divergence))
                 .ConfigureAwait(false);
 
-            return new SuiteResult(
-                Verdict.Inconclusive,
-                compilations.Select(c => (c.ScenarioName, Verdict.Inconclusive)).ToList())
-            {
-                SecurityConfirmationFailed = true,
-            };
+            return await CompleteWithoutTopologyAsync(
+                    StampInconclusiveWhereUnjudged(compilations, divergence),
+                    securityConfirmationFailed: true,
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    alreadyPrintedMessage: divergence)
+                .ConfigureAwait(false);
         }
 
         // REQ-023 (amended): the suite half of the both-families rejection (gatekeeper MAJOR, fix
@@ -1092,46 +1118,24 @@ public static class ScenarioRunner
             // YAML — sanitise before it reaches the terminal/CI log, exactly as the per-scenario
             // seam's own print site does.
             //
-            // Printed HERE, once, rather than stamped onto every compilation's EarlyMessage: the
-            // conflict is one suite-level fact, and CompleteWithoutTopologyAsync prints each
-            // compilation's own early message, so stamping it would print it once per scenario.
+            // Printed HERE, once for the suite. The conflict is ONE suite-level fact, so the
+            // terminal must show it once however many scenarios the suite has — but each scenario
+            // is Inconclusive BECAUSE of it, so each scenario's own record must carry it as its
+            // cause. Both properties are delivered together (MAJOR-3, fix round six): the stamp
+            // below puts the text on every scenario that has no more specific message of its own,
+            // and `alreadyPrintedMessage` tells the completion path that this exact text has
+            // already reached the terminal so it prints no duplicate.
+            //
+            // MEASURED, the shape that made this a defect: scenario A addresses the target with
+            // BOTH families (so A alone conflicts and the per-scenario seam stores the conflict
+            // text verbatim as A's EarlyMessage) alongside a valid scenario B. The all-early guard
+            // does not fire, this guard does, and the completion path then replayed A's preserved
+            // message — two byte-identical prints from one fact.
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(protocolConflict))
                 .ConfigureAwait(false);
 
-            // A scenario that ALREADY carries an early verdict keeps it and its own diagnostic —
-            // this branch is reachable with a mixed suite (a schema-invalid scenario addressing the
-            // target over one family alongside a valid one addressing it over the other), and that
-            // scenario's own preflight message is the more specific fact about it. Every other
-            // scenario is stamped Inconclusive with no message of its own: the conflict is the
-            // suite's, and it has already been printed.
-            var conflicted = new List<(
-                string ScenarioName,
-                ScenarioAst Ast,
-                PipelineResult? Pipeline,
-                Verdict? EarlyVerdict,
-                string? EarlyMessage,
-                string? ScenarioBaseDirectory)>(compilations.Count);
-
-            foreach (var compilation in compilations)
-            {
-                if (compilation.EarlyVerdict is not null)
-                {
-                    conflicted.Add(compilation);
-                }
-                else
-                {
-                    conflicted.Add((
-                        compilation.ScenarioName,
-                        compilation.Ast,
-                        compilation.Pipeline,
-                        Verdict.Inconclusive,
-                        null,
-                        compilation.ScenarioBaseDirectory));
-                }
-            }
-
             return await CompleteWithoutTopologyAsync(
-                    conflicted,
+                    StampInconclusiveWhereUnjudged(compilations, protocolConflict),
                     securityConfirmationFailed,
                     output,
                     decorate,
@@ -1139,7 +1143,8 @@ public static class ScenarioRunner
                     htmlReportPath,
                     junitReportPath,
                     eventsReportPath,
-                    eventsStreamPath)
+                    eventsStreamPath,
+                    alreadyPrintedMessage: protocolConflict)
                 .ConfigureAwait(false);
         }
 
@@ -1568,14 +1573,37 @@ public static class ScenarioRunner
     /// sees.
     /// </para>
     /// <para>
-    /// TWO CALLERS, and the second is why every scenario must be handed in already carrying a
-    /// verdict rather than that being read off the compilation loop: the all-early-verdict guard
-    /// above, and the suite-level protocol-conflict guard, which STAMPS Inconclusive onto the
-    /// scenarios that compiled cleanly before calling. A caller that leaves an
-    /// <c>EarlyVerdict</c> null gets a <see cref="NullReferenceException"/> here, deliberately —
-    /// a scenario with no verdict has no place in a completion that never runs anything.
+    /// THREE CALLERS, and the latter two are why every scenario must be handed in already carrying
+    /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
+    /// above, and the two suite-level guards — base-directory divergence and protocol conflict —
+    /// which STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
+    /// <see cref="StampInconclusiveWhereUnjudged"/>). A caller that leaves an <c>EarlyVerdict</c>
+    /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
+    /// is a <c>Nullable&lt;Verdict&gt;</c>, and <c>.Value</c> on an empty one throws
+    /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (m1,
+    /// gatekeeper, fix round six: the type was named wrongly here, which matters because it is the
+    /// exception a caller would have to catch or a maintainer would have to recognise in a stack
+    /// trace). A scenario with no verdict has no place in a completion that never runs anything.
+    /// </para>
+    /// <para>
+    /// The emitted <c>counts</c> are DERIVED from that verdict rather than hardcoded (security
+    /// NIT-3, same fix round): the previous form paired a parameterised
+    /// <c>Verdict = earlyVerdict.Value</c> with a fixed <c>Inconclusive = 1</c>, so the first caller
+    /// to stamp anything other than Inconclusive would have emitted a record whose verdict and
+    /// counts contradicted each other. Every stamp is Inconclusive today, so this changes no
+    /// emitted byte on any current path — it removes the trap rather than fixing a live defect.
     /// </para>
     /// </remarks>
+    /// <param name="alreadyPrintedMessage">
+    /// A suite-level diagnostic the CALLER has already written to <paramref name="output"/>, or
+    /// <see langword="null"/> when the caller printed nothing. Any scenario whose
+    /// <c>EarlyMessage</c> is ordinally equal to it is skipped for TERMINAL printing only — the
+    /// message stays on the scenario's own record, so it still reaches anything rendered from that
+    /// record. This is what lets a suite-level fact be stamped as every affected scenario's cause
+    /// while still appearing on the terminal exactly once (MAJOR-3, fix round six). The
+    /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
+    /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
+    /// </param>
     private static async Task<SuiteResult> CompleteWithoutTopologyAsync(
         IReadOnlyList<(
             string ScenarioName,
@@ -1591,7 +1619,8 @@ public static class ScenarioRunner
         string? htmlReportPath,
         string? junitReportPath,
         string? eventsReportPath,
-        string? eventsStreamPath)
+        string? eventsStreamPath,
+        string? alreadyPrintedMessage = null)
     {
         var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
         var suiteAggregate = Verdict.Pass;
@@ -1619,11 +1648,15 @@ public static class ScenarioRunner
                     Timestamp = now,
                     ScenarioId = name,
                     Verdict = earlyVerdict!.Value,
-                    Counts = new VerdictCounts { Inconclusive = 1 },
+                    Counts = CountsFor(earlyVerdict.Value),
                 }),
             };
 
-            if (!string.IsNullOrEmpty(earlyMessage))
+            // Terminal print, suppressed only for the exact text the caller has already written.
+            // The message is NOT cleared from the record — it is this scenario's cause, and
+            // suppressing the duplicate must not cost anything rendered from the record itself.
+            if (!string.IsNullOrEmpty(earlyMessage)
+                && !string.Equals(earlyMessage, alreadyPrintedMessage, StringComparison.Ordinal))
             {
                 // Issue #266, Item 4: earlyMessage carries a schema/pipeline/secret-reference
                 // diagnostic that may echo untrusted YAML content verbatim — sanitise.
@@ -1645,6 +1678,93 @@ public static class ScenarioRunner
         {
             SecurityConfirmationFailed = securityConfirmationFailed,
         };
+    }
+
+    /// <summary>
+    /// The per-verdict step counts emitted for a scenario that never ran a step, derived from the
+    /// verdict it was stamped with so the two can never contradict each other (security NIT-3).
+    /// </summary>
+    /// <remarks>
+    /// A scenario stopped before the topology ran no steps at all, so these counts are not a tally
+    /// of anything — they are the scenario's own single outcome expressed in the shape the wire
+    /// contract's <c>counts</c> object has. Every stamp is Inconclusive today, which is why
+    /// this reproduces the previously-hardcoded <c>{ Inconclusive = 1 }</c> byte for byte on every
+    /// live path.
+    /// </remarks>
+    private static VerdictCounts CountsFor(Verdict verdict) => verdict switch
+    {
+        Verdict.Pass => new VerdictCounts { Pass = 1 },
+        Verdict.Fail => new VerdictCounts { Fail = 1 },
+        Verdict.EnvironmentError => new VerdictCounts { EnvError = 1 },
+        _ => new VerdictCounts { Inconclusive = 1 },
+    };
+
+    /// <summary>
+    /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
+    /// every compilation that carries no early verdict of its own, leaving the ones that do
+    /// untouched — the shared preamble both suite-level guards run before
+    /// <see cref="CompleteWithoutTopologyAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EXTRACTED RATHER THAN COPIED (MAJOR-1, fix round six). The protocol-conflict guard grew this
+    /// loop in fix round five; the base-directory-divergence guard forty lines above it still
+    /// returned a bare <see cref="SuiteResult"/> and had to grow the same one. Two copies of a
+    /// completion preamble is precisely how those two seams diverged in the first place, so there
+    /// is one.
+    /// </para>
+    /// <para>
+    /// A scenario that ALREADY carries an early verdict keeps it AND its own message: that message
+    /// is the more specific fact about that scenario (a schema error, a secret-reference error, a
+    /// preflight rejection), and the suite-level cause would say less about it. Every other
+    /// scenario is Inconclusive BECAUSE of the suite-level fact, so it is stamped as that
+    /// scenario's own cause rather than left null — a per-scenario record with no cause cannot
+    /// explain itself to anything rendered from it.
+    /// </para>
+    /// <para>
+    /// Stamping the cause is what makes it a duplicate on the TERMINAL, which the caller resolves
+    /// by handing the same text to <c>CompleteWithoutTopologyAsync</c>'s
+    /// <c>alreadyPrintedMessage</c>. The two halves belong together and are documented together
+    /// for that reason.
+    /// </para>
+    /// </remarks>
+    private static List<(
+        string ScenarioName,
+        ScenarioAst Ast,
+        PipelineResult? Pipeline,
+        Verdict? EarlyVerdict,
+        string? EarlyMessage,
+        string? ScenarioBaseDirectory)> StampInconclusiveWhereUnjudged(
+        IReadOnlyList<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)> compilations,
+        string cause)
+    {
+        var stamped = new List<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)>(compilations.Count);
+
+        foreach (var compilation in compilations)
+        {
+            stamped.Add(compilation.EarlyVerdict is not null
+                ? compilation
+                : (compilation.ScenarioName,
+                   compilation.Ast,
+                   compilation.Pipeline,
+                   Verdict.Inconclusive,
+                   cause,
+                   compilation.ScenarioBaseDirectory));
+        }
+
+        return stamped;
     }
 
     /// <summary>

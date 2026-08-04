@@ -337,8 +337,19 @@ internal static class ProviderPipeline
         //     the AST — is built at the watch BUILD seam, and this method is not reached until the
         //     RUN seam (ScenarioRunner.RunScenarioAgainstKeptTopologyAsync). A conflicting suite
         //     under `--watch` therefore starts containers and is rejected against them, rather than
-        //     before them. It still fails closed with this same diagnostic and the topology is torn
-        //     down; what it costs is the container time the pre-topology stage exists to save.
+        //     before them. It still fails closed with this same diagnostic — but the containers are
+        //     NOT torn down with it, and the previous wording of this note claimed they were
+        //     (gatekeeper MAJOR-2 + spec-compliance, fix round six; fix round five deleted one false
+        //     `--watch` claim from this paragraph and replaced it with a different one).
+        //
+        //     MEASURED, three ways: WatchSession.OnChangeAsync disposes the kept topology ONLY on
+        //     the `!canReuse` path, and `canReuse` is decided on the ENVIRONMENT HASH alone
+        //     (WatchSession.cs — its own comment: "a steps-only edit keeps the hash"), while a
+        //     protocol conflict is a steps-level fact; the run seam RETURNS Inconclusive rather
+        //     than throwing; and WatchRunner.ProcessChangeGuardedAsync catches even a throw and
+        //     keeps watching. So the cost is not the container time to build and discard a
+        //     topology — it is that the topology stays up for the rest of the watch session, until
+        //     the session ends or a later save changes the environment hash.
         //     Moving the watch compile seam onto the full validation stage is a wider, pre-existing
         //     change (it runs no DocumentValidator.Validate either) and is tracked separately.
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
