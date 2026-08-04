@@ -105,7 +105,7 @@ public static class ParallelSuiteRunner
     /// </param>
     /// <param name="ct">Propagated to all async operations in the core.</param>
     /// <returns>The scenario's verdict and complete event buffer.</returns>
-    public delegate Task<(Verdict Verdict, List<string> Buffer)> ScenarioCoreFunc(
+    public delegate Task<ScenarioCoreResult> ScenarioCoreFunc(
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
@@ -362,6 +362,8 @@ public static class ParallelSuiteRunner
         // report and the per-scenario verdict list are byte-stable regardless of completion order.
         var slotVerdicts = new Verdict[count];
         var slotBuffers = new List<string>[count];
+        // REQ-018's per-scenario security signal, one slot each for the same determinism reason.
+        var slotSecurityFailures = new bool[count];
         // Each scenario writes its raw early-exit diagnostics to its OWN StringWriter; we flush
         // them to the real output in declaration order AFTER the gather (determinism point 2/3).
         var slotRawWriters = new StringWriter[count];
@@ -419,6 +421,7 @@ public static class ParallelSuiteRunner
                     index,
                     slotVerdicts,
                     slotBuffers,
+                    slotSecurityFailures,
                     livePump,
                     ct);
             }
@@ -437,8 +440,8 @@ public static class ParallelSuiteRunner
         // Determinism tail: flush each slot's raw early-exit text to the real output in declaration
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
-            scenarioNames, slotVerdicts, slotBuffers, slotRawWriters, output, diffLookup,
-            htmlReportPath, junitReportPath, eventsReportPath, decorate);
+            scenarioNames, slotVerdicts, slotBuffers, slotSecurityFailures, slotRawWriters, output,
+            diffLookup, htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
 
     /// <summary>
@@ -471,6 +474,7 @@ public static class ParallelSuiteRunner
         int index,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
+        bool[] slotSecurityFailures,
         LiveEventPump? livePump,
         CancellationToken ct)
     {
@@ -496,7 +500,7 @@ public static class ParallelSuiteRunner
 
         try
         {
-            var (verdict, buffer) = await runScenario(
+            var result = await runScenario(
                 registry,
                 yamlText,
                 scenarioName,
@@ -506,8 +510,14 @@ public static class ParallelSuiteRunner
                 livePump,
                 ct).ConfigureAwait(false);
 
-            slotVerdicts[index] = verdict;
-            slotBuffers[index] = buffer;
+            slotVerdicts[index] = result.Verdict;
+            slotBuffers[index] = result.Buffer;
+
+            // REQ-018: written into a fixed slot rather than folded into a shared bool, for the
+            // same reason every other per-scenario value here is — slots complete in arbitrary
+            // order and a shared read-modify-write across them would be a data race. The
+            // aggregation tail folds the array once the gather has joined.
+            slotSecurityFailures[index] = result.SecurityConfirmationFailed;
             // Issue #262: NO livePump?.PostRange(buffer) here. The real core
             // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
             // slot's lines live — as they happened — via the per-scenario LiveStepEventSink plus
@@ -566,6 +576,7 @@ public static class ParallelSuiteRunner
         IReadOnlyList<string> scenarioNames,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
+        bool[] slotSecurityFailures,
         StringWriter[] slotRawWriters,
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
@@ -577,6 +588,7 @@ public static class ParallelSuiteRunner
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
         var aggregate = Verdict.Pass;
+        var securityConfirmationFailed = false;
 
         for (var i = 0; i < scenarioNames.Count; i++)
         {
@@ -598,6 +610,11 @@ public static class ParallelSuiteRunner
             // (3) Fold the verdict in declaration order + record the per-scenario entry.
             perScenario.Add((scenarioNames[i], slotVerdicts[i]));
             aggregate = ScenarioRunner.Elevate(aggregate, slotVerdicts[i]);
+
+            // (4) REQ-018: fold the security signal AFTER the gather has joined, so this read of
+            //     the slot array is single-threaded. One scenario that could not have its declared
+            //     security confirmed is enough to break CI without --fail-on-env-error.
+            securityConfirmationFailed |= slotSecurityFailures[i];
         }
 
         // ONE render over the declaration-order concatenation — never per-scenario.  When
@@ -615,7 +632,10 @@ public static class ParallelSuiteRunner
         FileReportWriter.WriteFileReports(
             allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
-        return new SuiteResult(aggregate, perScenario);
+        return new SuiteResult(aggregate, perScenario)
+        {
+            SecurityConfirmationFailed = securityConfirmationFailed,
+        };
     }
 
     /// <summary>

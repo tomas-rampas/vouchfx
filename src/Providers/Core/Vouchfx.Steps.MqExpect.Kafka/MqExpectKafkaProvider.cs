@@ -458,8 +458,10 @@ public sealed class MqExpectKafkaProvider
         "    public static async System.Threading.Tasks.Task ExpectAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
+        "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
         "        string? payloadContainsTemplate,\n" +
@@ -476,7 +478,8 @@ public sealed class MqExpectKafkaProvider
         "        // consumer path runs, byte-identical to the committed slice.\n" +
         "        if (avro)\n" +
         "        {\n" +
-        "            await ExpectAvroAsync(vars, secrets, outcomeKey, connKey, topic,\n" +
+        "            await ExpectAvroAsync(vars, secrets, security, outcomeKey, connKey, targetName,\n" +
+        "                topic,\n" +
         "                expectKeyTemplate, payloadContainsTemplate, headerNames,\n" +
         "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey,\n" +
         "                ct, budgetGoverned)\n" +
@@ -537,6 +540,13 @@ public sealed class MqExpectKafkaProvider
         "                EnableAutoCommit = false,\n" +
         "                EnablePartitionEof = true,\n" +
         "            };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the consumer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, string>(config).Build();\n" +
         "            consumer.Subscribe(topic);\n" +
         "            int scanned = 0;\n" +
@@ -748,8 +758,10 @@ public sealed class MqExpectKafkaProvider
         "    private static async System.Threading.Tasks.Task ExpectAvroAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
+        "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
         "        string? payloadContainsTemplate,\n" +
@@ -820,6 +832,13 @@ public sealed class MqExpectKafkaProvider
         "                EnableAutoCommit = false,\n" +
         "                EnablePartitionEof = true,\n" +
         "            };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the consumer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueDeserializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncDeserializerExtensionMethods.AsSyncOverAsync(deserializer))\n" +
         "                .Build();\n" +
@@ -1054,8 +1073,10 @@ public sealed class MqExpectKafkaProvider
                 await MqExpectKafka_Helpers.ExpectAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{topicLiteral}},
                     {{keyTemplateLiteral}},
                     {{payloadContainsLiteral}},
@@ -1077,6 +1098,12 @@ public sealed class MqExpectKafkaProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+
+            // REQ-015. Spliced unconditionally, byte-identical to mq-publish.kafka's own splice —
+            // see that provider's note for why an Emit-time branch on "does this target declare
+            // security" is not available (ICompileContext carries no `environment` surface, and
+            // the v1 contract is additive-only). CsxAssembler dedupes the two to one copy.
+            KafkaSecurityHelper.Source,
         };
 
         return new CsxFragment(

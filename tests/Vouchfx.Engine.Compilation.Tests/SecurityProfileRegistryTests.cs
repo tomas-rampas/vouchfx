@@ -38,34 +38,47 @@ public sealed class SecurityProfileRegistryTests
     private static readonly string[] s_expectedBuiltInProfiles = { "mtls", "tls" };
 
     /// <summary>
-    /// Every profile this registry wires is named explicitly in the emitted
-    /// <c>Security_Helpers</c> profile switch, and no other — the guard that stops a future
-    /// wired profile from silently inheriting HTTPS client-certificate semantics.
+    /// Every profile this registry wires FOR THE TARGET KINDS A GIVEN EMITTED HELPER CAN SERVE is
+    /// named explicitly in that helper's profile switch, and no other — the guard that stops a
+    /// future wired profile from silently inheriting transport semantics nobody chose for it.
     /// </summary>
     /// <remarks>
     /// <para>
     /// These are two genuinely separate decisions and both have to be made. Registering an
-    /// <c>ISecurityProfileWiring</c> makes a profile DECLARABLE; it says nothing about what an
-    /// HTTP-family step should do when it meets one. <c>Security_Helpers.ConfigureHandler</c>
-    /// answers that second question, and it fails closed — a profile it does not name throws
-    /// rather than falling through to "present whatever certificates happen to be non-null".
+    /// <c>ISecurityProfileWiring</c> makes a profile DECLARABLE; it says nothing about what a step
+    /// should do when it meets one. <c>Security_Helpers.ConfigureHandler</c> (HTTP family) and
+    /// <c>KafkaSecurity_Helpers.ConfigureClient</c> (Kafka family) answer that second question,
+    /// and both fail closed — a profile they do not name throws rather than falling through to
+    /// "present whatever certificates happen to be non-null".
     /// </para>
     /// <para>
     /// Failing closed is what makes the drift SAFE, and this test is what makes it VISIBLE.
-    /// Without it, adding a wiring here and forgetting the helper produces a profile that
-    /// validates at authoring time and then errors at step-execution time — correct, but
-    /// discovered by an author rather than by the person who added the profile. The assertion
-    /// is on the exact SET in both directions, so removing a profile from the helper while it
-    /// is still wired fails too.
+    /// Without it, adding a wiring and forgetting the helper produces a profile that validates at
+    /// authoring time and then errors at step-execution time — correct, but discovered by an
+    /// author rather than by the person who added the profile. The assertion is on the exact SET
+    /// in both directions, so removing a profile from a helper while it is still wired fails too.
+    /// </para>
+    /// <para>
+    /// <strong>SCOPED BY TARGET KIND (issue #362, fixed in slice E).</strong> This guard used to
+    /// compare against the UNFILTERED registry, which was correct only while every wiring covered
+    /// every wired kind. It stopped being merely theoretical the moment a second helper existed:
+    /// a profile wired for <c>kafka</c> alone would have demanded a DEAD arm in the HTTP helper —
+    /// an arm no HTTP step could ever reach, since <c>http.rest</c>/<c>http.soap</c>/
+    /// <c>metrics-assert.prometheus</c> resolve <c>target</c> exclusively through
+    /// <c>DeclaredServices</c> — and the only way to satisfy it would be to write Kafka semantics
+    /// into an HTTP handler. Each helper is therefore held to the profiles wired for the kinds its
+    /// own providers can actually target, which is what the guard always meant.
     /// </para>
     /// </remarks>
-    [Fact]
-    public void EveryWiredProfile_IsNamedInTheEmittedSecurityHelperProfileSwitch()
+    [Theory]
+    [MemberData(nameof(EmittedSecurityHelpers))]
+    public void EveryWiredProfile_IsNamedInTheEmittedHelpersProfileSwitch(
+        string helperName, string helperSource, string[] servedTargetKinds)
     {
         // The helper's switch arms, read out of the emitted source rather than restated: a
         // second hand-maintained list here would be the very drift this test exists to catch.
         var named = System.Text.RegularExpressions.Regex
-            .Matches(SecurityHelper.Source, @"string\.Equals\(profile, ""(?<profile>[^""]+)""")
+            .Matches(helperSource, @"string\.Equals\(profile, ""(?<profile>[^""]+)""")
             .Select(m => m.Groups["profile"].Value)
             .Distinct(System.StringComparer.Ordinal)
             .OrderBy(p => p, System.StringComparer.Ordinal)
@@ -75,13 +88,45 @@ public sealed class SecurityProfileRegistryTests
         // report an empty set and compare equal to an empty registry.
         Assert.NotEmpty(named);
 
+        // Wired FOR THIS HELPER'S OWN REACHABLE KINDS — resolved through the registry's own
+        // TryResolve rather than by reading AppliesTo directly, so this asks exactly the question
+        // SecurityProfileWiringValidator asks when it decides whether a suite validates.
         var wired = SecurityProfileRegistry.BuiltIn.All
+            .Where(w => servedTargetKinds.Any(
+                kind => SecurityProfileRegistry.BuiltIn.TryResolve(w.Profile, kind, out _)))
             .Select(w => w.Profile)
             .OrderBy(p => p, System.StringComparer.Ordinal)
             .ToList();
 
         Assert.Equal(wired, named);
+        Assert.NotEmpty(helperName);
     }
+
+    /// <summary>
+    /// The emitted helpers that carry a profile switch, each with the target kinds its own
+    /// providers can actually resolve a <c>target</c> to.
+    /// </summary>
+    /// <remarks>
+    /// <c>Security_Helpers</c> serves the three HTTP-family providers, which resolve <c>target</c>
+    /// only through <c>IProjectContext.DeclaredServices</c> — a dependency target is rejected
+    /// outright (REQ-012 as narrowed), so no dependency kind is reachable from it.
+    /// <c>KafkaSecurity_Helpers</c> serves <c>mq-publish.kafka</c>/<c>mq-expect.kafka</c>, which
+    /// accept a <c>kafka</c> dependency OR a declared service (REQ-011), so both kinds are listed
+    /// even though the service form stages no connection string yet and fails closed at run time.
+    /// </remarks>
+    public static TheoryData<string, string, string[]> EmittedSecurityHelpers() => new()
+    {
+        {
+            "Security_Helpers",
+            SecurityHelper.Source,
+            new[] { SecurityProfileRegistry.ServiceTargetKind }
+        },
+        {
+            "KafkaSecurity_Helpers",
+            KafkaSecurityHelper.Source,
+            new[] { "kafka", SecurityProfileRegistry.ServiceTargetKind }
+        },
+    };
 
     [Fact]
     public void TryGet_RegisteredProfile_ReturnsTrue()

@@ -17,6 +17,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Model;
 
 namespace Vouchfx.Engine.Orchestration;
@@ -62,6 +63,13 @@ namespace Vouchfx.Engine.Orchestration;
 /// </remarks>
 public sealed class SuiteTopology : IAsyncDisposable
 {
+    /// <summary>
+    /// The "no step speaks a protocol the probe knows" set, shared so the common path allocates
+    /// nothing.
+    /// </summary>
+    private static readonly IReadOnlySet<string> EmptyTargets =
+        new HashSet<string>(StringComparer.Ordinal);
+
     private readonly HeadlessTopology _inner;
 
     // Retained so the seed can be RE-APPLIED against the kept topology between watch re-runs
@@ -78,7 +86,8 @@ public sealed class SuiteTopology : IAsyncDisposable
         IReadOnlyDictionary<string, object> discoveredServices,
         IReadOnlyList<string> dependencyNames,
         EnvironmentSpec? environment,
-        string seedBaseDirectory)
+        string seedBaseDirectory,
+        IReadOnlyList<SecurityConfirmation> securityConfirmations)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
@@ -86,7 +95,22 @@ public sealed class SuiteTopology : IAsyncDisposable
         DependencyTypes = BuildDependencyTypeMap(environment);
         _environment = environment;
         _seedBaseDirectory = seedBaseDirectory;
+        SecurityConfirmations = securityConfirmations;
     }
+
+    /// <summary>
+    /// Gets the declared-versus-observed record of REQ-005's secured-confirmation probe, one
+    /// entry per declared <c>security</c> block, or an empty list when the suite declares none.
+    /// </summary>
+    /// <remarks>
+    /// Reaching this property at all means every declared block was confirmed: a failure aborts
+    /// <see cref="StartAsync"/> with an <see cref="OrchestrationException"/> before any
+    /// <see cref="SuiteTopology"/> is constructed. It is surfaced so a run's own output can show
+    /// what was ASSERTED and what was CONFIRMED — a boolean would let a suite that confirmed only
+    /// the transport read identically to one that confirmed an authenticated round trip, and the
+    /// difference between those two is the entire subject of REQ-005.
+    /// </remarks>
+    public IReadOnlyList<SecurityConfirmation> SecurityConfirmations { get; }
 
     /// <summary>
     /// Gets the flat map of discovered service endpoints and managed-dependency connection strings.
@@ -170,9 +194,31 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// paths are resolved (S05-A-01).  Defaults to
     /// <see cref="Directory.GetCurrentDirectory"/> when <see langword="null"/>.
     /// </param>
+    /// <param name="securityConfiguration">
+    /// The resolved client security configuration (REQ-014) REQ-005's probe presents when
+    /// confirming each declared <c>security</c> block. <see langword="null"/> — the default — is
+    /// correct for a suite that declares no <c>security</c> at all and for every embedding caller
+    /// that predates this parameter.
+    /// <para>
+    /// <strong>A suite that DOES declare security must pass one, and this method now REFUSES to
+    /// start without it.</strong> Silently substituting the Null accessor is how a caller that
+    /// simply forgot the argument produced a run in which every secured suite failed closed blaming
+    /// the author's certificates — <c>vouchfx watch</c> did exactly that, and no test could see it,
+    /// because an omitted optional argument compiles and reads correctly. The check below turns the
+    /// omission into a loud engine fault naming the parameter, at the first suite that declares
+    /// security.
+    /// </para>
+    /// </param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
+    /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>.
+    /// They earn REQ-005's application-layer round trip even when declared as a SERVICE — the shape
+    /// REQ-011 exists for. <see langword="null"/> means "no Kafka step targets anything here", which
+    /// is correct for a suite with no Kafka steps and for every caller that predates this parameter.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to <see cref="HeadlessTopology.StartAsync"/>, to each
-    /// health-gate <c>WaitForResourceHealthyAsync</c> call, and to the seed
+    /// health-gate <c>WaitForResourceHealthyAsync</c> call, to REQ-005's probe, and to the seed
     /// applier.  Must be the last parameter (CA1068).
     /// </param>
     /// <returns>
@@ -182,7 +228,9 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <exception cref="OrchestrationException">
     /// Thrown (instead of the raw Aspire exception) when the topology fails to start,
     /// when a health gate times out or the resource enters a terminal unhealthy state,
-    /// or when service discovery fails.  The <see cref="OrchestrationException.Info"/>
+    /// when service discovery fails, or when a declared <c>security</c> block cannot be confirmed
+    /// (REQ-005; <c>Info.Kind</c> is <see cref="OrchestrationErrorKind.SecurityConfirmation"/>).
+    /// The <see cref="OrchestrationException.Info"/>
     /// property carries the structured diagnosis (kind, registry host, auth status, detail).
     /// This is always an Environment error (§12.1) — never a test Fail.
     /// </exception>
@@ -191,9 +239,40 @@ public sealed class SuiteTopology : IAsyncDisposable
         string? appHostAssemblyName,
         TimeSpan? startupTimeout = null,
         string? seedBaseDirectory = null,
+        ISecurityConfigurationAccessor? securityConfiguration = null,
+        IReadOnlySet<string>? kafkaSpeakingTargets = null,
         CancellationToken cancellationToken = default)
     {
         var gateTimeout = startupTimeout ?? TimeSpan.FromSeconds(120);
+
+        // ----------------------------------------------------------------
+        // Step 0: the guard that makes an omitted accessor impossible to ship silently.
+        //
+        // This runs BEFORE any container work, and it is deliberately a check on the DECLARATION
+        // rather than a required parameter. Making the parameter non-optional would force ~60
+        // pre-existing call sites — every store's Docker test — to pass
+        // NullSecurityConfigurationAccessor.Instance explicitly, asserting something the
+        // environment they hand in already states (they declare no security at all). That is
+        // ceremony carrying no information, and ceremony is copied without reading. The invariant
+        // that actually matters is narrower and is stated here directly: a suite that declares
+        // security must be handed the accessor for it.
+        // ----------------------------------------------------------------
+        if (securityConfiguration is null && DeclaresSecurity(environment))
+        {
+            throw new OrchestrationException(
+                new OrchestrationErrorInfo(
+                    Kind: OrchestrationErrorKind.SecurityConfirmation,
+                    ResourceName: "startup",
+                    RegistryHost: null,
+                    AuthStatus: null,
+                    Detail: "this suite declares a 'security' block, but the caller started the "
+                        + "topology without a resolved security configuration "
+                        + $"('{nameof(securityConfiguration)}' was null). REQ-005's probe presents the "
+                        + "same material a step will, and with no accessor it can present nothing: "
+                        + "every 'mtls' target would fail closed blaming the author's certificates "
+                        + "for an engine fault. This is a defect in the calling host, not in the "
+                        + "suite."));
+        }
 
         // ----------------------------------------------------------------
         // Step 1: Map the EnvironmentSpec → Configure callback + gate list + resolver.
@@ -202,7 +281,11 @@ public sealed class SuiteTopology : IAsyncDisposable
         // ArgumentExceptions, not OrchestrationExceptions — let them propagate as-is to
         // the caller.
         // ----------------------------------------------------------------
-        var mapped = EnvironmentMapper.Map(environment);
+        // seedBaseDirectory is resolved BEFORE Map (rather than at its own use site further down)
+        // because REQ-016's server-artefact paths resolve against the same base, and the two must
+        // not be able to disagree: one directory, computed once, used by both.
+        var resolvedSeedBaseDirectory = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+        var mapped = EnvironmentMapper.Map(environment, resolvedSeedBaseDirectory);
 
         // ----------------------------------------------------------------
         // Step 2: Start the headless Aspire host.
@@ -324,7 +407,33 @@ public sealed class SuiteTopology : IAsyncDisposable
             // reference data across scenarios is a future enhancement, OUT OF SCOPE
             // for A-01.
             // ----------------------------------------------------------------
-            var resolvedSeedBaseDirectory = seedBaseDirectory ?? Directory.GetCurrentDirectory();
+            // ----------------------------------------------------------------
+            // Step 4¾: REQ-005's fail-closed secured-confirmation probe — after the topology is
+            // health-gated and discovered, BEFORE the seed and therefore before any step.
+            //
+            // Placed ahead of the seed deliberately: a suite that cannot have its declared
+            // security confirmed should not first spend time writing rows into a database it is
+            // about to abandon, and the two failures must stay distinguishable — a seed failure
+            // is an ordinary environment error that still exits 0 by default, whereas this one is
+            // REQ-018's carve-out and exits non-zero unconditionally.
+            //
+            // NOT an Aspire health check, and that separation is the point (REQ-005): a container
+            // health check cannot present a client certificate, so no health-gating mechanism can
+            // confirm a mutual-TLS listener — only that something accepted a socket. Health-gate
+            // the container, then probe the security.
+            //
+            // Inside this try, so the outer catch disposes the topology on failure and containers
+            // do not leak — the same guarantee every other stage here has.
+            // ----------------------------------------------------------------
+            var securityConfirmations = await SecuredEndpointProbe.ConfirmAsync(
+                    environment,
+                    discoveredServices,
+                    securityConfiguration ?? NullSecurityConfigurationAccessor.Instance,
+                    kafkaSpeakingTargets ?? EmptyTargets,
+                    perTargetTimeout: gateTimeout,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
             await ApplySeedAsync(
                     environment,
                     discoveredServices,
@@ -337,7 +446,8 @@ public sealed class SuiteTopology : IAsyncDisposable
                 discoveredServices,
                 mapped.DependencyNames,
                 environment,
-                resolvedSeedBaseDirectory);
+                resolvedSeedBaseDirectory,
+                securityConfirmations);
         }
         catch
         {
@@ -549,6 +659,42 @@ public sealed class SuiteTopology : IAsyncDisposable
 
     private static readonly IReadOnlyDictionary<string, string> EmptyDependencyTypes =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True when any declared service or dependency carries a <c>security</c> block — the
+    /// condition under which <see cref="StartAsync"/> refuses to run without a resolved security
+    /// configuration.
+    /// </summary>
+    /// <remarks>
+    /// Reads the same declaration <c>SecuredEndpointProbe.EnumerateSecuredTargets</c> walks, so the
+    /// guard fires for exactly the suites the probe would otherwise probe with nothing in hand.
+    /// </remarks>
+    private static bool DeclaresSecurity(EnvironmentSpec? environment)
+    {
+        if (environment?.Services is { } services)
+        {
+            foreach (var (_, spec) in services)
+            {
+                if (spec.Security is not null)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (environment?.Dependencies is { } dependencies)
+        {
+            foreach (var (_, spec) in dependencies)
+            {
+                if (spec.Security is not null)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Disposes the inner <see cref="HeadlessTopology"/>, stopping all managed containers

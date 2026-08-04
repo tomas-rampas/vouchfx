@@ -291,6 +291,205 @@ public sealed class RunParallelAsyncTests
         }
     }
 
+    // ── (c2) REQ-018's security signal folds across slots ─────────────────────
+    //
+    // WHY THIS EXISTS. `ScenarioCoreResult` was introduced for exactly ONE reason: the tuple the
+    // fake cores here return cannot carry `SecurityConfirmationFailed`, and `ParallelSuiteRunner`'s
+    // fold is the only site that reads the per-slot array. Every fake below the fold still returns
+    // the tuple shape (via the implicit conversion, which defaults the flag to false), so before
+    // these two cases the ONE property the record exists for had no test on its ONE consumer — a
+    // seam the implicit conversion makes silently plausible either way.
+
+    /// <summary>
+    /// One scenario that could not have its declared security confirmed is enough to set the
+    /// suite-level signal, whichever slot it lands in and whatever the slots' completion order.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(4)]
+    public async Task RunParallelCoreAsync_OneSlotFailsSecurityConfirmation_FoldsToTheSuite(int failingSlot)
+    {
+        const int n = 5;
+        var (asts, names, yamls) = MakeInputs(n);
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            {
+                var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
+
+                // Reverse completion order against declaration order, so the fold cannot pass by
+                // reading whichever slot happened to finish first.
+                await Task.Delay((n - idx) * 5, ct).ConfigureAwait(false);
+
+                return idx == failingSlot
+                    ? new ScenarioCoreResult(
+                        Verdict.EnvironmentError, MakeBuffer(scenarioName, Verdict.EnvironmentError))
+                    {
+                        SecurityConfirmationFailed = true,
+                    }
+                    : (Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass));
+            };
+
+        var sw = new StringWriter();
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry, asts, names, yamls,
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 4,
+            runScenario: fake,
+            seedBaseDirectory: null,
+            ct: default);
+
+        Assert.True(result.SecurityConfirmationFailed);
+
+        // The verdict itself is unchanged by the carve-out (§12.1): a security-confirmation
+        // failure is still an ordinary EnvironmentError, and only the EXIT CODE differs.
+        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+    }
+
+    /// <summary>
+    /// The all-false mirror: with no slot reporting a security-confirmation failure the suite-level
+    /// signal stays off, even when scenarios genuinely fail. Without this, a fold hard-wired to
+    /// <see langword="true"/> would pass the case above — and REQ-018's carve-out would stop being
+    /// narrow, breaking CI on every ordinary environment error.
+    /// </summary>
+    [Fact]
+    public async Task RunParallelCoreAsync_NoSlotFailsSecurityConfirmation_LeavesTheSignalOff()
+    {
+        const int n = 4;
+        var (asts, names, yamls) = MakeInputs(n);
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            {
+                var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
+                var verdict = idx == 1 ? Verdict.EnvironmentError : Verdict.Pass;
+                return Task.FromResult<ScenarioCoreResult>((verdict, MakeBuffer(scenarioName, verdict)));
+            };
+
+        var sw = new StringWriter();
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry, asts, names, yamls,
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 4,
+            runScenario: fake,
+            seedBaseDirectory: null,
+            ct: default);
+
+        Assert.False(result.SecurityConfirmationFailed);
+        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+    }
+
+    /// <summary>
+    /// The REAL core — the one the fakes above stand in for — must set the flag the fold reads.
+    /// Two doors reach it before any container starts, and both are exercised here: a preflight
+    /// rejection of a declared artefact path (REQ-003/REQ-004) and a root-schema rejection of the
+    /// declaration itself (REQ-021's per-kind narrowing).
+    /// </summary>
+    /// <remarks>
+    /// Non-Docker by construction: both return from
+    /// <c>RunScenarioOwningTopologyAsync</c> before <c>SuiteTopology.StartAsync</c> is called at
+    /// all. Without this the fold's input was tested only through fakes that always supplied it.
+    /// </remarks>
+    // Both documents are written out in full rather than assembled from an interpolated
+    // `securityBlock` fragment. That assembly is how the first version of this test silently stopped
+    // testing anything: a MULTI-LINE interpolation value is spliced into a raw string literal
+    // VERBATIM — the compiler re-indents the literal's own lines to strip the common prefix, but
+    // never re-indents an interpolated value to its hole's column. The fragment therefore landed one
+    // level too shallow and declared a second service (and a second dependency) literally NAMED
+    // `security`, instead of a `security` block on `api`/`cache`. Measured: the suites produced
+    // errors at `/environment/services/security/profile` and `/environment/dependencies/security`,
+    // and NEITHER door this theory names was ever reached. It passed regardless, because the
+    // classifier it fed asked `InstanceLocation.Contains("/security")` — so a broken fixture and an
+    // over-matching classifier agreed, and each hid the other.
+
+    /// <summary>The preflight door: a declared <c>clientCert</c> that does not exist (REQ-003/004).</summary>
+    private const string ServiceWithAnAbsentClientCert = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+              security:
+                profile: mtls
+                endpoint: 8443
+                clientCert: ./certs/absent.pem
+                clientKey: ./certs/absent-key.pem
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    /// <summary>The schema door: <c>profile: mtls</c> on a redis dependency (REQ-021's narrowing).</summary>
+    private const string RedisDependencyDeclaringMtls = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+          dependencies:
+            cache:
+              type: redis
+              security:
+                profile: mtls
+                endpoint: 6380
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    [Theory]
+    // A declared clientCert that does not exist → EnvironmentSecurityValidator (preflight door).
+    [InlineData("services", "clientCert")]
+    // profile: mtls on a redis dependency → the root schema's per-kind narrowing (schema door).
+    [InlineData("dependencies", "redis")]
+    public async Task RunScenarioOwningTopologyAsync_SecurityDeclarationRejected_SetsTheSignal(
+        string section, string expectedInDiagnostic)
+    {
+        var yaml = section == "services"
+            ? ServiceWithAnAbsentClientCert
+            : RedisDependencyDeclaringMtls;
+
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-core-security").FullName;
+        try
+        {
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
+                Registry,
+                yaml,
+                "rejected-security",
+                appHostAssemblyName: null,
+                output: sw,
+                seedBaseDirectory: suiteDirectory,
+                livePump: null,
+                cancellationToken: default);
+
+            // Pin WHICH door opened, not merely that the flag is set. Without this the theory
+            // passes for any rejection whatsoever — which is exactly how the mis-indented fixture
+            // above went unnoticed while reaching neither door it names.
+            Assert.Contains(expectedInDiagnostic, sw.ToString(), StringComparison.Ordinal);
+
+            Assert.Equal(Verdict.Inconclusive, result.Verdict);
+            Assert.True(result.SecurityConfirmationFailed);
+        }
+        finally
+        {
+            Directory.Delete(suiteDirectory, recursive: true);
+        }
+    }
+
     // ── (d) Complete-all (no fail-fast) ───────────────────────────────────────
 
     /// <summary>
@@ -443,7 +642,7 @@ public sealed class RunParallelAsyncTests
                     throw new InvalidOperationException("boom from core");
                 }
 
-                return Task.FromResult((Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass)));
+                return Task.FromResult<ScenarioCoreResult>((Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass)));
             };
 
         var sw = new StringWriter();
@@ -498,7 +697,7 @@ public sealed class RunParallelAsyncTests
                     throw new InvalidOperationException("boom from core");
                 }
 
-                return Task.FromResult((Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass)));
+                return Task.FromResult<ScenarioCoreResult>((Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass)));
             };
 
         var sw = new StringWriter();

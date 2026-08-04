@@ -965,6 +965,7 @@ internal static class RunCommand
             : (eventsReportPath, false);
 
         Verdict suiteVerdict = Verdict.Pass;
+        var securityConfirmationFailed = false;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1038,6 +1039,12 @@ internal static class RunCommand
                     cancellationToken: runCancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
+
+            // REQ-018: the one cause of a non-Fail verdict that breaks CI without an opt-in flag.
+            // Read straight off the runner's own result rather than re-derived from the verdict or
+            // sniffed out of the event stream — the whole point of the carve-out is that the
+            // verdict is UNCHANGED and cannot distinguish this case.
+            securityConfirmationFailed = result.SecurityConfirmationFailed;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1054,7 +1061,9 @@ internal static class RunCommand
         // Fold the parse-failures into the suite verdict and map the result to a process exit
         // code — see ComputeExitCode for the issue #278 special case (an entirely-unparseable
         // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
-        return ComputeExitCode(parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive);
+        return ComputeExitCode(
+            parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
+            securityConfirmationFailed);
     }
 
     /// <summary>
@@ -1110,7 +1119,8 @@ internal static class RunCommand
         int parseFailureCount,
         Verdict suiteVerdict,
         bool failOnEnvironmentError,
-        bool failOnInconclusive)
+        bool failOnInconclusive,
+        bool securityConfirmationFailed = false)
     {
         if (parsedCount == 0 && parseFailureCount > 0)
         {
@@ -1118,7 +1128,8 @@ internal static class RunCommand
         }
 
         var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
-        return ExitCodes.FromVerdict(aggregate, failOnEnvironmentError, failOnInconclusive);
+        return ExitCodes.FromVerdict(
+            aggregate, failOnEnvironmentError, failOnInconclusive, securityConfirmationFailed);
     }
 
     /// <summary>

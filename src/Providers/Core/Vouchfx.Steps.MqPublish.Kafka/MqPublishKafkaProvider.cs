@@ -397,8 +397,10 @@ public sealed class MqPublishKafkaProvider
         "    public static async System.Threading.Tasks.Task PublishAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
+        "        string targetName,\n" +
         "        string topicTemplate,\n" +
         "        string? keyTemplate,\n" +
         "        string payloadTemplate,\n" +
@@ -416,7 +418,8 @@ public sealed class MqPublishKafkaProvider
         "        // Otherwise the PLAIN string path runs, byte-identical to the committed slice.\n" +
         "        if (avroSubject is not null)\n" +
         "        {\n" +
-        "            await PublishAvroAsync(vars, secrets, outcomeKey, connKey, topicTemplate,\n" +
+        "            await PublishAvroAsync(vars, secrets, security, outcomeKey, connKey, targetName,\n" +
+        "                topicTemplate,\n" +
         "                keyTemplate, headerNames, headerValueTemplates, avroRegistrySvcKey,\n" +
         "                avroSubject, avroSchemaJson, avroFieldNames, avroFieldValueTemplates,\n" +
         "                ct, budgetGoverned)\n" +
@@ -452,6 +455,13 @@ public sealed class MqPublishKafkaProvider
         "                : Secret_Helpers.ResolveTemplate(secrets, vars, keyTemplate);\n" +
         "            var payload = Secret_Helpers.ResolveTemplate(secrets, vars, payloadTemplate);\n" +
         "            var config = new Confluent.Kafka.ProducerConfig { BootstrapServers = bootstrap };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the producer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            producer = new Confluent.Kafka.ProducerBuilder<string, string>(config).Build();\n" +
         "            var msg = new Confluent.Kafka.Message<string, string>\n" +
         "            {\n" +
@@ -542,8 +552,10 @@ public sealed class MqPublishKafkaProvider
         "    private static async System.Threading.Tasks.Task PublishAvroAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
+        "        string targetName,\n" +
         "        string topicTemplate,\n" +
         "        string? keyTemplate,\n" +
         "        string[] headerNames,\n" +
@@ -617,6 +629,13 @@ public sealed class MqPublishKafkaProvider
         "            var serializer = new Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>(\n" +
         "                registry, new Confluent.SchemaRegistry.Serdes.AvroSerializerConfig());\n" +
         "            var config = new Confluent.Kafka.ProducerConfig { BootstrapServers = bootstrap };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the producer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            producer = new Confluent.Kafka.ProducerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueSerializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncSerializerExtensionMethods.AsSyncOverAsync(serializer))\n" +
         "                .Build();\n" +
@@ -855,8 +874,10 @@ public sealed class MqPublishKafkaProvider
                 await MqPublishKafka_Helpers.PublishAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{topicTemplateLiteral}},
                     {{keyTemplateLiteral}},
                     {{payloadTemplateLiteral}},
@@ -879,6 +900,16 @@ public sealed class MqPublishKafkaProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+
+            // REQ-015. Spliced unconditionally rather than only when the target declares
+            // `security`: the emitted helper's own call site is unconditional (it must be — the
+            // declaration is resolved at step-execution time, never at compile time, §17), and a
+            // provider cannot know at Emit time whether a target declares a security block at all.
+            // `ICompileContext` exposes StepId/SuiteNamespace/SuiteDirectory/Captures/CaptureExprs
+            // and nothing about `environment` — verified against the frozen v1 contract, which is
+            // additive-only and so cannot gain such a member here. CsxAssembler dedupes this source
+            // to one copy across every Kafka step in the suite.
+            KafkaSecurityHelper.Source,
         };
 
         return new CsxFragment(

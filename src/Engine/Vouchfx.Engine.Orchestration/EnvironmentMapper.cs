@@ -575,15 +575,29 @@ public static class EnvironmentMapper
     /// The environment declaration from the parsed <c>.e2e.yaml</c> file.
     /// May be <see langword="null"/> (treated as an empty environment).
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The directory containing the suite's own <c>.e2e.yaml</c> file — the base every declared
+    /// <c>security.serverArtifacts[].source</c> resolves against (REQ-003/REQ-016). Defaults to
+    /// <see cref="Directory.GetCurrentDirectory"/>, mirroring
+    /// <see cref="SuiteTopology.StartAsync"/>'s own <c>seedBaseDirectory</c> default.
+    /// <para>
+    /// It MUST be the same base <c>EnvironmentSecurityValidator</c> checked containment against.
+    /// A path resolved against a DIFFERENT base is still contained within THAT base, so
+    /// containment cannot detect the divergence — the run would simply copy a file the suite
+    /// never named. Callers pass the first scenario's own directory, which is also the directory
+    /// the one shared topology's <c>environment</c> block came from.
+    /// </para>
+    /// </param>
     /// <returns>
     /// A <see cref="MappedTopology"/> whose <see cref="MappedTopology.Configure"/> callback
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
     /// Thrown when a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, or when a dependency type is unrecognised.
+    /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
+    /// declared server artefact cannot be resolved (REQ-016).
     /// </exception>
-    public static MappedTopology Map(EnvironmentSpec? env)
+    public static MappedTopology Map(EnvironmentSpec? env, string? suiteDirectory = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -1037,6 +1051,29 @@ public static class EnvironmentMapper
             healthGateNames.Add(name);
 
         // ----------------------------------------------------------------
+        // REQ-016: resolve every declared security.serverArtifacts entry to an absolute host
+        // path NOW — eagerly, before any builder mutation — so a blank/rooted/escaping/missing
+        // source, or a target that is not an absolute in-container file path, fails Map() with a
+        // located diagnostic. Deferring it into the Configure closure would place the throw after
+        // earlier resources had already been added, which is the discipline every other eager
+        // check in this method observes.
+        // ----------------------------------------------------------------
+        var resolvedSuiteDirectory = ResolveSuiteDirectory(suiteDirectory);
+        var serviceArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in services)
+        {
+            serviceArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "services", name, resolvedSuiteDirectory);
+        }
+
+        var dependencyArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in dependencies)
+        {
+            dependencyArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "dependencies", name, resolvedSuiteDirectory);
+        }
+
+        // ----------------------------------------------------------------
         // Configure callback: builds the resource graph.
         // ----------------------------------------------------------------
         Action<IDistributedApplicationBuilder> configure = builder =>
@@ -1050,6 +1087,11 @@ public static class EnvironmentMapper
                     builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
+
+                // REQ-016: the customer's broker image finds its keystore because the engine put
+                // it there. Applied to the RETAINED builder — the dependency's own resource, not
+                // a sidecar — since that is the container whose entrypoint reads the artefact.
+                ServerArtifactInjection.Apply(retained, dependencyArtifacts[name], "dependencies", name);
             }
 
             // SUT configuration surface: build the per-dependency container-native accessor
@@ -1166,6 +1208,12 @@ public static class EnvironmentMapper
                         containerBuilder = containerBuilder.WaitFor(depBuilder);
 
                     ApplyEnv(name, containerBuilder, spec.Env, envAccessByDependency);
+
+                    // REQ-016: copy declared server artefacts into the system under test's own
+                    // container — the server certificate/key a TLS-terminating SUT presents, the
+                    // mirror of the client material REQ-024 gives the step.
+                    ServerArtifactInjection.Apply(
+                        containerBuilder, serviceArtifacts[name], "services", name);
 
                     // Stage the primary endpoint for svc::<name> resolution (ResolveServices /
                     // env: refs).
@@ -2228,6 +2276,36 @@ public static class EnvironmentMapper
         });
 
         return containerBuilder.WithHealthCheck(healthCheckKey);
+    }
+
+    /// <summary>
+    /// Resolves <see cref="Map(EnvironmentSpec?, string?)"/>'s <c>suiteDirectory</c> argument to
+    /// an absolute path, defaulting to the current directory (REQ-016).
+    /// </summary>
+    /// <remarks>
+    /// A malformed value fails HERE, with a message naming it, rather than inside
+    /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
+    /// base directory itself, not in any one author-declared field, and the two deserve different
+    /// diagnostics. Mirrors <c>EnvironmentSecurityValidator.Validate</c>'s own guard around the
+    /// same call.
+    /// </remarks>
+    private static string ResolveSuiteDirectory(string? suiteDirectory)
+    {
+        var candidate = string.IsNullOrWhiteSpace(suiteDirectory)
+            ? Directory.GetCurrentDirectory()
+            : suiteDirectory;
+
+        try
+        {
+            return Path.GetFullPath(candidate);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ArgumentException(
+                $"suite directory '{candidate}' is not a valid path ({ex.Message}).",
+                nameof(suiteDirectory),
+                ex);
+        }
     }
 
     /// <summary>

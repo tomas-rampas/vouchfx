@@ -26,16 +26,35 @@ a product defect:
 | **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – | `run` always; `plan` when no gaps or `--fail-on-gap` not set |
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
-| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
+| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in — **except** a rejected `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
-**One unconditional exception:** a `run` in which *every* discovered scenario fails to parse (malformed
-YAML, unknown step types across the board) is classified Inconclusive and exits 4 regardless of the
-opt-in flag, matching the behaviour of `vouchfx validate`.
+**Unconditional exceptions.** Two outcomes break CI whatever the opt-in flags say.
+
+A `run` in which *every* discovered scenario fails to parse (malformed YAML, unknown step types across
+the board) is classified Inconclusive and exits 4 regardless of the opt-in flag, matching the behaviour
+of `vouchfx validate`.
+
+A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
+`--fail-on-env-error` and no `--fail-on-inconclusive`. Two causes, each keeping the exit code its own
+verdict names:
+
+- the post-health-gate **secured-confirmation probe** fails — the declared endpoint refuses the
+  connection, does not speak TLS, presents a certificate that does not chain to the declared `caCert`,
+  or refuses the declared client certificate. The run aborts before any step executes and exits **3**;
+- a pre-topology **security preflight** rejects the declaration — a certificate path that escapes the
+  suite directory or does not exist, or a `profile` with no wiring for the target's kind. No container
+  starts and the run exits **4**.
+
+Every *other* cause of an environment error — an unhealthy container, an unpullable image, a seed
+failure unrelated to security — is unaffected and still exits 0 by default. The reasoning behind the
+carve-out: an unconfirmable security assertion is not an infrastructure flake the way a failed image
+pull is. It is an assertion the author explicitly wrote into the suite, and treating it as opt-in-only
+would hand a team that forgot a flag a green pipeline on a security suite that verified nothing.
 
 ### Artefacts
 
