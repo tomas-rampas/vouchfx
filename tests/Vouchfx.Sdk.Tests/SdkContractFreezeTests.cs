@@ -198,8 +198,19 @@ public sealed class SdkContractFreezeTests
     [Fact]
     public void DefaultImplementedInterfaceMembers_AreExactlyTheKnownSet()
     {
+        // NonPublic and Static are in the census flags deliberately (m4 — gatekeeper m3 /
+        // security NIT-2, fix round five). The census once read Public | Instance | DeclaredOnly,
+        // which left the same blind spot this gate exists to close, one axis over: a
+        // `static virtual` / `static abstract` member, or a non-public default implementation,
+        // added to a v1 interface would escape BOTH the byte-for-byte golden (whose emitter takes
+        // public members only) and this census, and a non-abstract one of either kind is a default
+        // implementation by any other name. Widened and the expected set RE-DERIVED by measurement
+        // rather than predicted: the widening added no member, so the v1 surface carries no static
+        // or non-public interface member at all today — which is itself the fact worth pinning,
+        // since the first one added must now be a deliberate, reviewed act.
         const BindingFlags flags =
-            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
 
         var compileContextGetter = typeof(ICompileContext)
             .GetProperty(nameof(ICompileContext.DeclaredServices), flags)?

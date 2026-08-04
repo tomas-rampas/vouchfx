@@ -313,17 +313,34 @@ internal static class ProviderPipeline
         // needs nothing from a bound model. This narrows nothing that ever worked; before REQ-023
         // was amended, a Kafka step naming a service failed as an EnvironmentError every time.
         //
-        // SCOPE: this method compiles ONE scenario, so this call sees one scenario's steps. That is
-        // the complete check on every path where one scenario IS the unit that gets a topology —
-        // the single-scenario `run`, `--watch` (one file), and `--parallel` (each scenario owns its
-        // own topology via RunScenarioOwningTopologyAsync) — and it is the only check `vouchfx
-        // validate` can make, since ScenarioValidator treats each file independently by design and
-        // never decides which files form a suite. The SHARED-topology `run` path is the exception:
-        // it stages from the union across every scenario, so it carries its OWN call to the same
-        // helper at its own seam (ScenarioRunner.RunSuiteAsync). A per-scenario check cannot see a
-        // suite that splits the two families across two scenarios; both seams therefore call this
-        // helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR, fix round
-        // four — before it, the message was written out at this call site alone).
+        // SCOPE: this method compiles ONE scenario, so this call sees one scenario's steps. Where
+        // one scenario IS the unit that gets a topology AND this method runs before that topology is
+        // built, that is the complete check: the single-scenario `run` and `--parallel` (each
+        // scenario owns its own topology via RunScenarioOwningTopologyAsync) — both MEASURED as
+        // ordered Compile-then-StartAsync in ScenarioRunner.RunScenarioOwningTopologyAsync. It is
+        // also the only check `vouchfx validate` can make, since ScenarioValidator treats each file
+        // independently by design and never decides which files form a suite.
+        //
+        // TWO PATHS THIS CALL DOES NOT COVER, corrected by measurement (MAJOR-2, fix round five —
+        // the previous wording claimed `--watch` among the complete-coverage set, which is false):
+        //
+        //   • The SHARED-topology `run` stages from the union across EVERY scenario, so a suite
+        //     splitting the two families across two files is individually innocent per scenario and
+        //     collectively in conflict. It therefore carries its OWN call to the same helper at its
+        //     own seam (ScenarioRunner.RunSuiteAsync). Both seams call this one helper, which owns
+        //     the single spelling of the diagnostic (gatekeeper MAJOR, fix round four — before it,
+        //     the message was written out at this call site alone).
+        //
+        //   • `--watch` runs this check AFTER the staging it protects rather than before it. The
+        //     watch compile seam (WatchRunner.Compile) is YamlDocumentParser.Parse +
+        //     AstBuilder.Build only; the topology — with kafkaSpeakingTargets already computed from
+        //     the AST — is built at the watch BUILD seam, and this method is not reached until the
+        //     RUN seam (ScenarioRunner.RunScenarioAgainstKeptTopologyAsync). A conflicting suite
+        //     under `--watch` therefore starts containers and is rejected against them, rather than
+        //     before them. It still fails closed with this same diagnostic and the topology is torn
+        //     down; what it costs is the container time the pre-topology stage exists to save.
+        //     Moving the watch compile seam onto the full validation stage is a wider, pre-existing
+        //     change (it runs no DocumentValidator.Validate either) and is tracked separately.
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
         if (protocolConflict is not null)
         {

@@ -446,7 +446,8 @@ internal sealed class SecurityProfileRegistry
 ///   </description></item>
 ///   <item><description>
 ///     <c>kafka</c> — <strong>WIRED (slice E, REQ-015).</strong> Both Kafka providers emit
-///     <c>KafkaSecurity_Helpers.Apply</c> onto their <c>ProducerConfig</c>/<c>ConsumerConfig</c>,
+///     <c>KafkaSecurity_Helpers.ConfigureClient</c> onto their
+///     <c>ProducerConfig</c>/<c>ConsumerConfig</c>,
 ///     setting <c>SecurityProtocol</c>, <c>SslCaLocation</c> and — under <c>mtls</c> — the
 ///     client certificate/key pair from the resolved configuration for the step's target.
 ///     Pinned by <c>KafkaSecurityWiringTests</c> in both provider test projects, and by this

@@ -2375,10 +2375,18 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// Resolves <see cref="Map(EnvironmentSpec?, string?)"/>'s <c>suiteDirectory</c> argument to
-    /// an absolute path, defaulting to the current directory (REQ-016).
+    /// Resolves <see cref="Map"/>'s <c>suiteDirectory</c> argument to an absolute path, defaulting
+    /// to the current directory (REQ-016).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The cref names the method WITHOUT a parameter list on purpose. It carried one —
+    /// <c>Map(EnvironmentSpec?, string?)</c> — which stopped matching the moment
+    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it: this
+    /// project sets no <c>GenerateDocumentationFile</c>, so crefs here are never resolved and
+    /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
+    /// cannot rot the same way again.
+    /// </para>
     /// A malformed value fails HERE, with a message naming it, rather than inside
     /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
     /// base directory itself, not in any one author-declared field, and the two deserve different

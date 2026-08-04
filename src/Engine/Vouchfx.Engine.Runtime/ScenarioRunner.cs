@@ -1075,20 +1075,72 @@ public static class ScenarioRunner
         // unconditional non-zero exit for a non-security reason — the very thing REQ-005's own text
         // warns against. The accumulated value is carried through unchanged, so a suite that ALSO
         // had a security-preflight rejection in a non-blocking scenario keeps it.
+        //
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
+        // MAJOR, fix round five). Parity between the two seams is what this whole guard is for, and
+        // an earlier form of this branch delivered it at the diagnostic layer only: a bare return
+        // skips the ScenarioStarted/Completed events, the --events-stream pump, the terminal render
+        // and — the one that reaches CI — FileReportWriter.WriteFileReports. MEASURED, red first:
+        // `--junit results.xml` over the SPLIT spelling produced exit 0 (Inconclusive, by design)
+        // and NO results.xml, so a JUnit publisher reported "no test results" and the build went
+        // green; the single-scenario spelling of the identical error wrote the file. Nothing about
+        // the verdict or the exit code changes here — Elevate(Pass, Inconclusive) is Inconclusive,
+        // which is what the bare return said — only that the artefacts now exist.
         if (SuiteProtocolTargets.DescribeProtocolConflict(scenarios) is { } protocolConflict)
         {
             // Issue #266, Item 4: the diagnostic splices target names straight from untrusted
             // YAML — sanitise before it reaches the terminal/CI log, exactly as the per-scenario
             // seam's own print site does.
+            //
+            // Printed HERE, once, rather than stamped onto every compilation's EarlyMessage: the
+            // conflict is one suite-level fact, and CompleteWithoutTopologyAsync prints each
+            // compilation's own early message, so stamping it would print it once per scenario.
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(protocolConflict))
                 .ConfigureAwait(false);
 
-            return new SuiteResult(
-                Verdict.Inconclusive,
-                compilations.Select(c => (c.ScenarioName, Verdict.Inconclusive)).ToList())
+            // A scenario that ALREADY carries an early verdict keeps it and its own diagnostic —
+            // this branch is reachable with a mixed suite (a schema-invalid scenario addressing the
+            // target over one family alongside a valid one addressing it over the other), and that
+            // scenario's own preflight message is the more specific fact about it. Every other
+            // scenario is stamped Inconclusive with no message of its own: the conflict is the
+            // suite's, and it has already been printed.
+            var conflicted = new List<(
+                string ScenarioName,
+                ScenarioAst Ast,
+                PipelineResult? Pipeline,
+                Verdict? EarlyVerdict,
+                string? EarlyMessage,
+                string? ScenarioBaseDirectory)>(compilations.Count);
+
+            foreach (var compilation in compilations)
             {
-                SecurityConfirmationFailed = securityConfirmationFailed,
-            };
+                if (compilation.EarlyVerdict is not null)
+                {
+                    conflicted.Add(compilation);
+                }
+                else
+                {
+                    conflicted.Add((
+                        compilation.ScenarioName,
+                        compilation.Ast,
+                        compilation.Pipeline,
+                        Verdict.Inconclusive,
+                        null,
+                        compilation.ScenarioBaseDirectory));
+                }
+            }
+
+            return await CompleteWithoutTopologyAsync(
+                    conflicted,
+                    securityConfirmationFailed,
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath)
+                .ConfigureAwait(false);
         }
 
         var probeSecurity = SecurityConfigurationAccessor.Build(
@@ -1504,15 +1556,25 @@ public static class ScenarioRunner
     }
 
     /// <summary>
-    /// Reports a suite in which EVERY scenario already carries an early verdict, without building
-    /// the topology (REQ-004's "pre-topology stage of <c>vouchfx run</c>", EDGE-010(a)).
+    /// Reports a suite in which every scenario carries an early verdict, without building the
+    /// topology (REQ-004's "pre-topology stage of <c>vouchfx run</c>", EDGE-010(a)).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Emits the same per-scenario started/completed pair, the same diagnostic line, the same live
     /// stream, the same terminal render and the same file reports the main loop's early-exit branch
     /// emits — the only difference being that no container was started to produce them. Extracted
     /// rather than duplicated so the two can never diverge in what a reader of the events stream
     /// sees.
+    /// </para>
+    /// <para>
+    /// TWO CALLERS, and the second is why every scenario must be handed in already carrying a
+    /// verdict rather than that being read off the compilation loop: the all-early-verdict guard
+    /// above, and the suite-level protocol-conflict guard, which STAMPS Inconclusive onto the
+    /// scenarios that compiled cleanly before calling. A caller that leaves an
+    /// <c>EarlyVerdict</c> null gets a <see cref="NullReferenceException"/> here, deliberately —
+    /// a scenario with no verdict has no place in a completion that never runs anything.
+    /// </para>
     /// </remarks>
     private static async Task<SuiteResult> CompleteWithoutTopologyAsync(
         IReadOnlyList<(

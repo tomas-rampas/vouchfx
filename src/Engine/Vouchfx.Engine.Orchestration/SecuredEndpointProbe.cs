@@ -270,6 +270,14 @@ internal static class SecuredEndpointProbe
         };
 
     /// <summary>
+    /// The recognised profiles, rendered for an author-facing diagnostic — derived from
+    /// <see cref="ProfilesPresentingAClientIdentity"/> rather than restated, so a profile added to
+    /// that map cannot leave the message naming a vocabulary the engine no longer has.
+    /// </summary>
+    private static readonly string SupportedProfiles =
+        string.Join(", ", ProfilesPresentingAClientIdentity.Keys.OrderBy(p => p, StringComparer.Ordinal));
+
+    /// <summary>
     /// How long to wait for an explicit TLS-layer rejection on a target whose application
     /// protocol is unknown. Measured: a Kafka broker refusing a client certificate raises the
     /// fatal alert within 17 ms, so 1 s is generous by roughly sixty times while costing an
@@ -359,26 +367,6 @@ internal static class SecuredEndpointProbe
         var declaredProfile = spec.Profile ?? string.Empty;
         var declaredEndpoint = spec.Endpoint ?? string.Empty;
 
-        if (!TryResolveAddress(name, discoveredServices, out var host, out var port))
-        {
-            throw Failure(
-                name,
-                $"declared security (profile '{declaredProfile}', endpoint '{declaredEndpoint}') but the "
-                + $"topology staged no reachable address for '{name}', so there is nothing to confirm. "
-                + "A secured target must be one the engine itself starts and publishes an endpoint for.");
-        }
-
-        var observedAddress = FormattableString.Invariant($"{host}:{port}");
-        var configuration = ResolveConfiguration(name, declaredProfile, declaredEndpoint, observedAddress, security);
-        var certificates = configuration?.Certificates;
-
-        // The SAME material a step will use, resolved through the SAME accessor — which is what
-        // makes a probe pass evidence about the step rather than about the probe. Reading these
-        // properties re-checks path containment (REQ-003) and loads the files, so a declared
-        // certificate that exists but is malformed surfaces HERE, before any container work is
-        // wasted, naming the declared path.
-        X509Certificate2? clientCertificate = null;
-
         // m3 (security review, fix round four): the map's third answer is USED. TryGetValue
         // returning false means "this probe has never heard of this profile" — a distinct fact from
         // ["tls"] = false, which is why this is an exhaustive map rather than a set of
@@ -393,27 +381,69 @@ internal static class SecuredEndpointProbe
         // identity" from "the broker accepts anybody" — cannot be run, and a confirmation that
         // silently skips it is worth less than no confirmation at all.
         //
-        // UNREACHABLE BY AN AUTHOR TODAY, DELIBERATELY: the root schema narrows `profile` to the
-        // registered set (REQ-021) and SecurityProfileWiringValidator rejects an unresolved
-        // (profile, target-kind) pair pre-topology (REQ-022), so no suite can reach this throw. It
-        // exists for the ENGINE-side drift it names — a profile registered without being taught to
-        // this probe — which SecurityProfileVocabularyDriftTests already turns into a red build at
-        // the moment of registration. This is the run-time backstop under that build-time guard,
-        // not a substitute for it: fail-closed here means a drift that somehow shipped costs a
-        // refused confirmation rather than a false one.
+        // FIRST, before the address is even resolved (m7, security review, fix round five). It
+        // depends on nothing but the declared profile, and running it after TryResolveAddress meant
+        // an unrecognised profile on a target with no staged address reported "staged no reachable
+        // address" — true, but not the fact that matters. Both orderings fail closed; this one names
+        // the cause. Free to move: no measurement below feeds it.
+        //
+        // REACHABILITY, corrected by measurement (MAJOR-2, fix round five; the previous note here
+        // claimed this throw was "UNREACHABLE BY AN AUTHOR TODAY", which is false on one path):
+        //
+        //   • The engine's profile VOCABULARY is closed at build time, and by a stronger route than
+        //     the schema. SecurityProfileRegistry and SecurityProfileWiringAttribute are `internal`
+        //     to Vouchfx.Engine.Compilation, whose InternalsVisibleTo names exactly
+        //     Vouchfx.Engine.Runtime plus two test assemblies — measured, in that project's csproj.
+        //     No out-of-tree assembly can contribute a profile at all, so the only way the registry
+        //     and this map disagree is an in-tree edit, and SecurityProfileVocabularyDriftTests
+        //     turns that into a red build at the moment of registration.
+        //
+        //   • On `vouchfx run` (single-scenario, shared-topology and --parallel alike) an author
+        //     cannot reach this throw: the root schema narrows `profile` to the registered set
+        //     (REQ-021) and SecurityProfileWiringValidator rejects an unresolved (profile,
+        //     target-kind) pair (REQ-022), both inside ProviderPipeline.Compile, which runs before
+        //     the topology is built.
+        //
+        //   • On `--watch` an author CAN. The watch compile seam (WatchRunner.Compile) is
+        //     YamlDocumentParser.Parse + AstBuilder.Build only — no DocumentValidator.Validate, no
+        //     ProviderPipeline.Compile — so `profile: kerbros` reaches the probe, and the run has
+        //     already started containers and passed the health gate by then. That is why the message
+        //     below is written for the AUTHOR, naming the profiles this engine actually has, with
+        //     the engine-maintainer instruction demoted to a parenthesis.
         if (!ProfilesPresentingAClientIdentity.TryGetValue(declaredProfile, out var presentsClientIdentity))
         {
             throw Failure(
                 name,
-                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', which this "
-                + "probe does not recognise. It therefore cannot tell whether that profile is meant "
-                + "to present a client identity, and cannot run the anonymous-client differential "
-                + "that separates 'the peer accepted this identity' from 'the peer accepts anybody' "
-                + "(REQ-005). Confirming at the transport-only level instead would report assurance "
-                + "the probe did not obtain. Register the profile in "
-                + "SecuredEndpointProbe.ProfilesPresentingAClientIdentity alongside its "
-                + "SecurityProfileRegistry wiring.");
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', which is "
+                + $"not a security profile this engine recognises. Supported profiles: {SupportedProfiles}. "
+                + "If that is a typo, correct it; nothing about this target was confirmed. The probe "
+                + "cannot tell whether an unknown profile is meant to present a client identity, so "
+                + "it cannot run the anonymous-client differential that separates 'the peer accepted "
+                + "this identity' from 'the peer accepts anybody' (REQ-005), and confirming at the "
+                + "transport-only level instead would report assurance it never obtained. (Engine "
+                + "maintainers: a profile added to SecurityProfileRegistry must also be added to "
+                + "SecuredEndpointProbe.ProfilesPresentingAClientIdentity.)");
         }
+
+        if (!TryResolveAddress(name, discoveredServices, out var host, out var port))
+        {
+            throw Failure(
+                name,
+                $"declared security (profile '{declaredProfile}', endpoint '{declaredEndpoint}') but the "
+                + $"topology staged no reachable address for '{name}', so there is nothing to confirm. "
+                + "A secured target must be one the engine itself starts and publishes an endpoint for.");
+        }
+
+        var observedAddress = FormatAuthority(host, port);
+        var configuration = ResolveConfiguration(name, declaredProfile, declaredEndpoint, observedAddress, security);
+        var certificates = configuration?.Certificates;
+
+        // The SAME material a step will use, resolved through the SAME accessor — which is what
+        // makes a probe pass evidence about the step rather than about the probe. Reading these
+        // properties re-checks path containment (REQ-003) and loads the files, so a declared
+        // certificate that exists but is malformed surfaces HERE, before any container work is
+        // wasted, naming the declared path.
+        X509Certificate2? clientCertificate = null;
 
         if (presentsClientIdentity)
         {
@@ -698,27 +728,46 @@ internal static class SecuredEndpointProbe
     ///   </description></item>
     ///   <item><description>
     ///     peer resets mid application exchange — an ABORTIVE close (RST), i.e.
-    ///     <c>LingerState = new LingerOption(true, 0)</c> then <c>Close()</c> → <c>IOException</c>
-    ///     wrapping a <c>SocketException(ConnectionReset)</c>, "An existing connection was forcibly
-    ///     closed…".
+    ///     <c>LingerState = new LingerOption(true, 0)</c> then closing the raw
+    ///     <see cref="System.Net.Sockets.Socket"/> → <c>IOException</c> wrapping a
+    ///     <c>SocketException(ConnectionReset)</c>, "An existing connection was forcibly closed…".
     ///   </description></item>
     ///   <item><description>
     ///     peer closes cleanly after the handshake — a GRACEFUL close (FIN), i.e.
-    ///     <c>Shutdown</c>/<c>Dispose</c> → <c>EndOfStreamException</c> (itself an
+    ///     <c>Shutdown</c> then <c>Close</c> → <c>EndOfStreamException</c> (itself an
     ///     <c>IOException</c>), "Unable to read beyond the end of the stream."
+    ///   </description></item>
+    ///   <item><description>
+    ///     peer DISPOSES its <c>SslStream</c> and nothing else — what a test double does →
+    ///     <c>EndOfStreamException</c>, the same as the graceful row.
     ///   </description></item>
     /// </list>
     /// <para>
-    /// <strong>Abortive versus graceful is the whole difference between those last two rows, and it
-    /// is spelled out because a review round disagreed about it.</strong> The security review of fix
-    /// round three reported the reset row as producing <c>EndOfStreamException</c>. RE-MEASURED
-    /// independently on .NET 8.0.29 / Windows 10.0.26200 — a loopback TLS listener that completes
-    /// the handshake, reads the framed request, and then closes each of the two ways, against the
-    /// same <c>ReadExactlyAsync</c> the exchange performs — the two ways produce the two DIFFERENT
-    /// results above, matching the rows as written. The most likely reconciliation is that a test
-    /// double closing its stream produces a FIN, which is the graceful row; nothing in either
-    /// measurement changes the filter, since both types satisfy "is an <c>IOException</c>". Both
-    /// readings are recorded rather than one being quietly chosen.
+    /// <strong>Abortive versus graceful is the whole difference between those rows, and it is
+    /// spelled out because a review round disagreed about it — a disagreement now CLOSED by
+    /// measurement rather than by hypothesis.</strong> The security review of fix round three
+    /// reported the reset row as producing <c>EndOfStreamException</c>. Round four re-measured the
+    /// abortive and graceful rows and got the two different results above; the security review of
+    /// round four independently reproduced both and WITHDREW its finding. What round four could only
+    /// offer as "the most likely reconciliation" — that a test double's close is a FIN — is now the
+    /// third row, MEASURED on .NET 8.0.29 / Windows 10.0.26200, three runs, unanimous, by both that
+    /// review and this one: a bare <c>SslStream.Dispose()</c> yields <c>EndOfStreamException</c>.
+    /// That is the whole reconciliation; the rows were right and so was the original report, about
+    /// different closes.
+    /// </para>
+    /// <para>
+    /// <strong>How to reproduce the abortive row, because the obvious spelling does not.</strong>
+    /// <c>LingerState = new LingerOption(true, 0)</c> followed by <c>TcpClient.Close()</c> produces
+    /// <c>EndOfStreamException</c>, not a reset — measured, three runs — because
+    /// <c>TcpClient.Close</c> disposes its <c>NetworkStream</c>, and <c>NetworkStream.Dispose</c>
+    /// shuts the socket down BEFORE closing it, so a FIN goes out and the linger option never
+    /// applies. Closing the raw <c>Socket</c> instead bypasses that shutdown and produces the RST.
+    /// A measurement of "abortive" that closes the <c>TcpClient</c> is therefore measuring the
+    /// graceful row under another name — the likeliest source of the original disagreement.
+    /// </para>
+    /// <para>
+    /// Nothing in any of this changes the filter: every type named satisfies "is an
+    /// <c>IOException</c>".
     /// </para>
     /// <para>
     /// <c>SocketException</c> is therefore DROPPED from the evidence filter — every post-connect
@@ -827,7 +876,13 @@ internal static class SecuredEndpointProbe
 
         throw Failure(
             name,
-            $"declared profile 'mtls' on endpoint '{declaredEndpoint}' and {observedAddress} answered "
+            // m5 (spec-compliance review, fix round five): the profile is INTERPOLATED, not the
+            // literal 'mtls' the round-four sweep left here while converting its three siblings.
+            // Correct either way today — only mtls presents a client identity, so only mtls reaches
+            // this method — but this sits on the path a future identity-presenting profile would
+            // take, and a message naming a profile the author did not declare is the kind of
+            // false detail that costs a reader an hour.
+            $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}' and {observedAddress} answered "
             + "a Kafka ApiVersions request with the declared client certificate — but it answered the "
             + "SAME request on a second connection presenting NO client certificate. The endpoint "
             + "therefore does not require a client certificate, so this is TLS wearing the word "
@@ -1167,6 +1222,14 @@ internal static class SecuredEndpointProbe
         // 'https://[::1]:8443' the framework reports Host='[::1]' (brackets retained, per RFC 3986)
         // and DnsSafeHost='::1'. Both MEASURED. Handing the bracketed text to TcpClient.ConnectAsync
         // makes it attempt a DNS lookup of the literal string '[::1]' instead of connecting.
+        //
+        // DELIBERATELY LAXER THAN THE BARE HALF (m3, gatekeeper, fix round five): this branch reads
+        // host and port and ignores user info, path, query and fragment, where TryParseBareAuthority
+        // refuses a value carrying any of them. That asymmetry is intended, not an oversight — a URL
+        // legitimately carries a path, so refusing one would refuse a well-formed staged endpoint,
+        // while a value with no scheme carrying a path is not an authority at all. The probe opens a
+        // TCP connection to host:port either way; nothing past the authority is consulted, so
+        // ignoring it here changes no address.
         if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Port > 0 &&
             !string.IsNullOrEmpty(uri.DnsSafeHost))
         {
@@ -1180,6 +1243,30 @@ internal static class SecuredEndpointProbe
         // hand (n7, fix round three, upgraded from "noted" to "fixed" by fix round four).
         return TryParseBareAuthority(value, out host, out port);
     }
+
+    /// <summary>
+    /// Renders a resolved host and port back into a readable authority, bracketing an IPv6 literal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// m1 (gatekeeper, fix round five). <see cref="TryResolveAddress"/> deliberately yields the
+    /// BRACKET-FREE host, because that is the form <c>TcpClient.ConnectAsync</c> can use — but every
+    /// diagnostic in this file then interpolated it as <c>{host}:{port}</c>, which renders
+    /// <c>[::1]:9093</c> as <c>::1:9093</c>: not a parseable authority, and ambiguous about where
+    /// the address ends and the port begins. Round four fixed the CONNECT and regressed the
+    /// MESSAGE, which is the half that requirement's own framing names.
+    /// </para>
+    /// <para>
+    /// The discriminator is a colon in the host, which is exactly RFC 3986's own rule: a colon
+    /// cannot appear in a registered name or an IPv4 literal, so it identifies an IPv6 literal and
+    /// nothing else. Brackets are not re-added by <c>Uri</c> here because the host has already left
+    /// the parser as <c>DnsSafeHost</c>.
+    /// </para>
+    /// </remarks>
+    private static string FormatAuthority(string host, int port) =>
+        host.Contains(':', StringComparison.Ordinal)
+            ? FormattableString.Invariant($"[{host}]:{port}")
+            : FormattableString.Invariant($"{host}:{port}");
 
     /// <summary>
     /// The scheme synthesised in front of a bare <c>host:port</c> authority so
@@ -1227,19 +1314,43 @@ internal static class SecuredEndpointProbe
     /// </list>
     /// </para>
     /// <para>
-    /// <strong>Everything past the authority is refused, not ignored.</strong> A staged value is an
-    /// authority; anything carrying user info, a path, a query or a fragment is not the thing this
-    /// is parsing, and reinterpreting it would be a silent guess in the one component that must not
-    /// guess. Measured: <c>user@host:9093</c> parses with <c>UserInfo</c> set (the previous split
+    /// <strong>Everything past the authority is refused, not ignored — in THIS half.</strong> The
+    /// rule is scoped to the bare-authority branch and does not govern the URL branch above it (m3,
+    /// gatekeeper, fix round five): a staged value with no scheme is an authority and nothing else,
+    /// so anything carrying user info, a path, a query or a fragment is not the thing this is
+    /// parsing, and reinterpreting it would be a silent guess in the one component that must not
+    /// guess. A staged URL legitimately carries a path, which is why that branch reads host and port
+    /// off the parsed <see cref="Uri"/> and lets the rest be — see the call site's own note.
+    /// Measured: <c>user@host:9093</c> parses with <c>UserInfo</c> set (the previous split
     /// produced the host <c>user@host</c>), <c>host:9093/path</c> keeps its path, and
     /// <c>host:9093#f</c> keeps its fragment while <c>PathAndQuery</c> still reads <c>/</c> — which
     /// is why the fragment is checked separately rather than folded into the path check.
+    /// </para>
+    /// <para>
+    /// <strong>The user-info test is on the delimiter, not on <c>UserInfo</c></strong> (m2 / NIT-1,
+    /// security review, fix round five). The rule above says "anything carrying user info"; asking
+    /// <c>authority.UserInfo.Length != 0</c> enforced something narrower, because an EMPTY user-info
+    /// component is still a user-info component. MEASURED, on the pinned runtime:
+    /// <c>tcp://@host:9093</c> parses with <c>UserInfo</c> equal to <c>""</c>, <c>Host</c> equal to
+    /// <c>host</c> and <c>Port</c> 9093 — so it passed every guard and resolved to a REACHABLE host
+    /// that is not the text staged, where the split it replaced produced the unresolvable
+    /// <c>@host</c>. Security's 74-value corpus found it to be the one input that retargets rather
+    /// than merely failing differently. Nothing stages such a value today; the guard is tightened to
+    /// the delimiter anyway, because this function decides what address a security probe connects
+    /// to, and "no author can produce it" is a property of today's staging, not of this function.
+    /// A <c>@</c> is illegal in a registered name, an IPv4 literal and an IPv6 literal alike, so
+    /// refusing it outright narrows nothing legitimate.
     /// </para>
     /// </remarks>
     private static bool TryParseBareAuthority(string value, out string host, out int port)
     {
         host = string.Empty;
         port = 0;
+
+        if (value.Contains('@', StringComparison.Ordinal))
+        {
+            return false;
+        }
 
         if (!Uri.TryCreate(BareAuthorityScheme + value, UriKind.Absolute, out var authority)
             || authority.Port <= 0

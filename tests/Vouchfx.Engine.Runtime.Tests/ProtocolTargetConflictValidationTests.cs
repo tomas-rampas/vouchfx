@@ -311,17 +311,115 @@ public sealed class ProtocolTargetConflictValidationTests
     }
 
     /// <summary>
+    /// The ARTEFACT half of the same parity: a CI job that asked for a JUnit file must get one from
+    /// both seams, carrying the same verdict the exit code reports.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this is not cosmetic.</strong> Verdict is Inconclusive, which exits 0 by default
+    /// (REQ-018 leaves the general mapping alone). A CI job running
+    /// <c>vouchfx run --junit results.xml tests/</c> over the SPLIT spelling therefore gets exit 0
+    /// AND — before this fix — no <c>results.xml</c> at all, so the JUnit publisher reports "no test
+    /// results" and the build goes green on a suite the engine rejected. The single-scenario
+    /// spelling of the identical authoring error wrote the file. Whatever the exit code says, the
+    /// two seams must leave the same artefacts behind.
+    /// </para>
+    /// <para>
+    /// MEASURED RED FIRST: with the suite seam returning a bare <c>SuiteResult</c>,
+    /// <c>File.Exists(splitJunit)</c> was <see langword="false"/> while <c>singleJunit</c> existed
+    /// and carried its <c>&lt;skipped&gt;</c> testcase.
+    /// </para>
+    /// <para>
+    /// The single-print assertion is the other half: routing the suite seam through the shared
+    /// completion path must not make the diagnostic appear twice (that path prints each
+    /// compilation's early message itself).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_BothFamiliesAddressOneTarget_WritesFileReportsFromBothSeams()
+    {
+        var directory = Directory.CreateTempSubdirectory("vouchfx-protocol-conflict-");
+        try
+        {
+            var singleJunit = Path.Combine(directory.FullName, "single.xml");
+            var splitJunit = Path.Combine(directory.FullName, "split.xml");
+
+            var single = await RunAndCaptureAsync(
+                s_singleScenarioYamls, s_singleScenarioNames, singleJunit);
+            var split = await RunAndCaptureAsync(
+                s_splitScenarioYamls, s_splitScenarioNames, splitJunit);
+
+            Assert.True(
+                File.Exists(singleJunit),
+                "The per-scenario seam must write the requested JUnit report.");
+            Assert.True(
+                File.Exists(splitJunit),
+                "The SUITE seam must write the requested JUnit report too — otherwise a CI job "
+                + "gets exit 0 and no results file for a suite the engine rejected.");
+
+            // Equivalent content: every scenario present as a <testcase>, every one carrying
+            // JUnit's `skipped` primitive and vouchfx's own INCONCLUSIVE verdict property, and the
+            // aggregate tallies agreeing with the scenario count.
+            AssertInconclusiveJunit(File.ReadAllText(singleJunit), s_singleScenarioNames);
+            AssertInconclusiveJunit(File.ReadAllText(splitJunit), s_splitScenarioNames);
+
+            // One print, not two.
+            Assert.Equal(1, CountOccurrences(single.Rendered, single.Diagnostic));
+            Assert.Equal(1, CountOccurrences(split.Rendered, split.Diagnostic));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Asserts a JUnit document reports exactly <paramref name="scenarioNames"/>, each Inconclusive.
+    /// </summary>
+    private static void AssertInconclusiveJunit(string xml, string[] scenarioNames)
+    {
+        Assert.Contains(
+            $"skipped=\"{scenarioNames.Length}\"", xml, StringComparison.Ordinal);
+        Assert.Contains(
+            $"tests=\"{scenarioNames.Length}\"", xml, StringComparison.Ordinal);
+        Assert.Equal(scenarioNames.Length, CountOccurrences(xml, "<skipped"));
+        Assert.Equal(
+            scenarioNames.Length,
+            CountOccurrences(xml, "<property name=\"vouchfx.verdict\" value=\"INCONCLUSIVE\"/>"));
+
+        foreach (var name in scenarioNames)
+        {
+            Assert.Contains($"<testcase name=\"{name}\"", xml, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        Assert.NotEmpty(needle);
+
+        var count = 0;
+        var index = haystack.IndexOf(needle, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            count++;
+            index = haystack.IndexOf(needle, index + needle.Length, StringComparison.Ordinal);
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// Runs one suite through <see cref="ScenarioRunner.RunSuiteAsync"/> and returns its result, the
     /// full rendered output, and the conflict diagnostic extracted from it.
     /// </summary>
     /// <remarks>
-    /// The two shapes render DIFFERENTLY overall — the single-scenario one returns through the
-    /// early-verdict path, which also runs the terminal renderer, while the suite seam returns
-    /// before it — so only the diagnostic line itself is comparable, and it is located by its own
-    /// opening token rather than by position.
+    /// Both shapes now return through the SAME completion path, so both run the terminal renderer
+    /// and both write the requested file reports. Only the diagnostic line itself is compared
+    /// between them, located by its own opening token rather than by position.
     /// </remarks>
     private static async Task<(SuiteResult Result, string Rendered, string Diagnostic)> RunAndCaptureAsync(
-        string[] yamls, string[] names)
+        string[] yamls, string[] names, string? junitReportPath = null)
     {
         var sw = new StringWriter();
 
@@ -331,7 +429,8 @@ public sealed class ProtocolTargetConflictValidationTests
             yamlTexts: yamls,
             providerAssemblies: s_providerAssemblies,
             appHostAssemblyName: "Vouchfx.Engine.Runtime.Tests",
-            output: sw);
+            output: sw,
+            junitReportPath: junitReportPath);
 
         var rendered = sw.ToString();
         var diagnostic = rendered

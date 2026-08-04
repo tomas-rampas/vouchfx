@@ -1212,11 +1212,19 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// the profile — it never degrades to the transport-only path.
     /// </summary>
     /// <remarks>
-    /// Unreachable from a suite (the root schema narrows <c>profile</c> to the registered set,
-    /// REQ-021, and the wiring validator rejects an unresolved pair pre-topology, REQ-022), so it is
-    /// driven through the probe's own internal entry point. The staged address points at a port
-    /// nothing serves: the guard must fire BEFORE any socket work, so if it did not, this would fail
-    /// with the connect diagnostic instead — which is what the final assertion pins.
+    /// <para>
+    /// Unreachable from a suite on <c>vouchfx run</c> (the root schema narrows <c>profile</c> to the
+    /// registered set, REQ-021, and the wiring validator rejects an unresolved pair pre-topology,
+    /// REQ-022 — both inside <c>ProviderPipeline.Compile</c>), so it is driven through the probe's
+    /// own internal entry point. It IS author-reachable under <c>--watch</c>, whose compile seam runs
+    /// neither of those (MAJOR-2, fix round five), which is why the message asserted below is
+    /// written for an author rather than for an engine maintainer.
+    /// </para>
+    /// <para>
+    /// The staged address points at a port nothing serves and the target is one with a resolvable
+    /// address: the guard must fire BEFORE any socket work, so if it did not, this would fail with
+    /// the connect diagnostic instead — which is what the penultimate assertion pins.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task Confirm_ProfileTheProbeDoesNotRecognise_FailsClosedNamingTheProfile()
@@ -1229,10 +1237,37 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
         Assert.Equal("sut", ex.Info.ResourceName);
         Assert.Contains("'kerberos'", ex.Info.Detail, StringComparison.Ordinal);
-        Assert.Contains("does not recognise", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.Contains("this engine recognises", ex.Info.Detail, StringComparison.Ordinal);
+
+        // AUTHOR-FACING: it names the vocabulary the author can choose from and tells them what a
+        // typo costs. Naming the set is the half a maintainer-only message left out.
+        Assert.Contains("Supported profiles: mtls, tls", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.Contains("typo", ex.Info.Detail, StringComparison.Ordinal);
 
         // The refusal happened before the socket, not after it.
         Assert.DoesNotContain("could not connect", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same refusal, on a target the topology staged NO address for: the profile is still what
+    /// gets named (m7, security review, fix round five).
+    /// </summary>
+    /// <remarks>
+    /// Both orderings fail closed, so this pins legibility rather than safety. With the guard sited
+    /// after <c>TryResolveAddress</c>, this suite reported "staged no reachable address" — true, but
+    /// the profile is the fact the author can act on, and it was never mentioned.
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_UnrecognisedProfileOnATargetWithNoStagedAddress_NamesTheProfile()
+    {
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("kerberos")),
+            new Dictionary<string, object>(StringComparer.Ordinal),
+            new FakeAccessor().With("sut", "kerberos", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains("'kerberos'", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
     }
 
     // ── nit (security review, fix round four): IPv6 authority parsing ────────────────────
@@ -1247,16 +1282,29 @@ public sealed class SecuredEndpointProbeTests : IDisposable
 
     /// <summary>
     /// A bracketed IPv6 authority resolves to the bracket-free address — the form
-    /// <c>ConnectAsync</c> can actually use — and the diagnostic says so.
+    /// <c>ConnectAsync</c> can actually use — and the diagnostic re-brackets it, so what a reader
+    /// sees is a parseable authority.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The port is one just released by a listener, so nothing serves it and the probe necessarily
     /// reports a failure naming the address it resolved. Robust to a host without IPv6: an
     /// unavailable <c>::1</c> fails at the same connect and produces the same address in the same
     /// message.
+    /// </para>
+    /// <para>
+    /// <strong>The assertion flipped in fix round five (m1), and the discrimination it carried was
+    /// kept.</strong> It used to assert <c>DoesNotContain("[::1]")</c> — which pinned the CONNECT
+    /// form, but in doing so pinned the diagnostic to <c>::1:9093</c>: not a parseable authority,
+    /// and ambiguous about where the address ends. The resolver still yields the bracket-free host;
+    /// <c>FormatAuthority</c> re-brackets it for display only. The single-versus-double bracket test
+    /// below is what still separates a correct parse from a pass-through: a parser that retained the
+    /// brackets would hand <c>FormatAuthority</c> the host <c>[::1]</c>, which contains a colon and
+    /// would therefore be bracketed AGAIN, rendering <c>[[::1]]</c>.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task Confirm_BracketedIpv6Authority_ResolvesWithoutTheBrackets()
+    public async Task Confirm_BracketedIpv6Authority_ResolvesWithoutTheBracketsAndReportsWithThem()
     {
         var probe = new TcpListener(IPAddress.Loopback, 0);
         probe.Start();
@@ -1269,8 +1317,42 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             new FakeAccessor().With("sut", "tls", null)));
 
         Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
-        Assert.Contains($"::1:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
-        Assert.DoesNotContain("[::1]", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.Contains($"[::1]:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
+
+        // The host that reached the formatter was bracket-free — a bracket-retaining parse would
+        // double up here.
+        Assert.DoesNotContain("[[::1]]", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A staged value carrying an <c>@</c> is REFUSED rather than reinterpreted (m2 / NIT-1,
+    /// security review, fix round five).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row that matters is the second. MEASURED on the pinned runtime:
+    /// <c>Uri.TryCreate("tcp://@host:9093", …)</c> succeeds with an EMPTY <c>UserInfo</c>, host
+    /// <c>host</c> and port 9093 — so the <c>UserInfo.Length != 0</c> guard let it through and the
+    /// probe would have connected to a REACHABLE host that is not the text staged. It is the one
+    /// input in security's 74-value corpus that retargets rather than merely failing differently.
+    /// </para>
+    /// <para>
+    /// Neither row is author-reachable today; the guard is on the delimiter anyway because this
+    /// parser decides what address a security probe connects to.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("user@host.invalid:9093")]
+    [InlineData("@host.invalid:9093")]
+    public async Task Confirm_BareAuthorityCarryingUserInfo_IsRefusedAsUnresolvable(string staged)
+    {
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("tls")),
+            new Dictionary<string, object>(StringComparer.Ordinal) { ["sut"] = staged },
+            new FakeAccessor().With("sut", "tls", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
     }
 
     /// <summary>
