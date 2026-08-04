@@ -120,7 +120,6 @@
 // something accepted a socket. Health-gate the container, then probe the security: separate
 // stages, separate mechanisms. That is why this lives in the engine at all.
 using System.Buffers.Binary;
-using System.Globalization;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -252,6 +251,16 @@ internal static class SecuredEndpointProbe
     /// cannot tell "this profile presents nothing" from "this probe has never heard of this
     /// profile", and only the second is a drift signal.
     /// </para>
+    /// <para>
+    /// m3 (fix round four) wired that third answer through to BEHAVIOUR, which round three left
+    /// undone: the call site folded "absent" into "presents nothing" via a
+    /// <c>TryGetValue(…) &amp;&amp; presents</c> short-circuit, so an unrecognised profile silently
+    /// took the no-client-identity path. <see cref="ConfirmOneAsync"/> now refuses it. The
+    /// build-time half — this map's key set pinned to the registry's, so the drift turns a build
+    /// red when the profile is ADDED rather than when a suite meets it — is
+    /// <c>SecurityProfileVocabularyDriftTests</c>, which round three already put in place; the two
+    /// halves are complementary, not alternatives.
+    /// </para>
     /// </remarks>
     internal static readonly IReadOnlyDictionary<string, bool> ProfilesPresentingAClientIdentity =
         new Dictionary<string, bool>(StringComparer.Ordinal)
@@ -369,8 +378,43 @@ internal static class SecuredEndpointProbe
         // certificate that exists but is malformed surfaces HERE, before any container work is
         // wasted, naming the declared path.
         X509Certificate2? clientCertificate = null;
-        var presentsClientIdentity =
-            ProfilesPresentingAClientIdentity.TryGetValue(declaredProfile, out var presents) && presents;
+
+        // m3 (security review, fix round four): the map's third answer is USED. TryGetValue
+        // returning false means "this probe has never heard of this profile" — a distinct fact from
+        // ["tls"] = false, which is why this is an exhaustive map rather than a set of
+        // identity-presenting profiles (see ProfilesPresentingAClientIdentity's own remarks). Folded
+        // into the same short-circuit, that distinction was recorded and then discarded: an
+        // unrecognised profile took the no-client-identity path and the run continued, confirming at
+        // the transport-only level a target whose declared profile may well have demanded more.
+        //
+        // Refused instead, before any socket work. This is fail-closed in the one component whose
+        // job is preventing a false pass: a profile the probe cannot reason about is a profile whose
+        // anonymous-client differential — the single control separating "the broker accepted THIS
+        // identity" from "the broker accepts anybody" — cannot be run, and a confirmation that
+        // silently skips it is worth less than no confirmation at all.
+        //
+        // UNREACHABLE BY AN AUTHOR TODAY, DELIBERATELY: the root schema narrows `profile` to the
+        // registered set (REQ-021) and SecurityProfileWiringValidator rejects an unresolved
+        // (profile, target-kind) pair pre-topology (REQ-022), so no suite can reach this throw. It
+        // exists for the ENGINE-side drift it names — a profile registered without being taught to
+        // this probe — which SecurityProfileVocabularyDriftTests already turns into a red build at
+        // the moment of registration. This is the run-time backstop under that build-time guard,
+        // not a substitute for it: fail-closed here means a drift that somehow shipped costs a
+        // refused confirmation rather than a false one.
+        if (!ProfilesPresentingAClientIdentity.TryGetValue(declaredProfile, out var presentsClientIdentity))
+        {
+            throw Failure(
+                name,
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', which this "
+                + "probe does not recognise. It therefore cannot tell whether that profile is meant "
+                + "to present a client identity, and cannot run the anonymous-client differential "
+                + "that separates 'the peer accepted this identity' from 'the peer accepts anybody' "
+                + "(REQ-005). Confirming at the transport-only level instead would report assurance "
+                + "the probe did not obtain. Register the profile in "
+                + "SecuredEndpointProbe.ProfilesPresentingAClientIdentity alongside its "
+                + "SecurityProfileRegistry wiring.");
+        }
+
         if (presentsClientIdentity)
         {
             try
@@ -381,8 +425,8 @@ internal static class SecuredEndpointProbe
             {
                 throw Failure(
                     name,
-                    $"declared profile 'mtls' on endpoint '{declaredEndpoint}', but its client identity "
-                    + $"could not be loaded: {ex.Message}",
+                    $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', but its "
+                    + $"client identity could not be loaded: {ex.Message}",
                     ex);
             }
 
@@ -390,7 +434,7 @@ internal static class SecuredEndpointProbe
             {
                 throw Failure(
                     name,
-                    $"declared profile 'mtls' on endpoint '{declaredEndpoint}', but no "
+                    $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', but no "
                     + "'clientCert'/'clientKey' pair resolved for it. Mutual TLS with no client identity "
                     + "is an unauthenticated connection wearing the word 'mutual'.");
             }
@@ -653,14 +697,29 @@ internal static class SecuredEndpointProbe
     ///     a <c>SocketException</c> — the genuine refusal this arm is looking for.
     ///   </description></item>
     ///   <item><description>
-    ///     peer resets mid application exchange → <c>IOException</c> wrapping a
-    ///     <c>SocketException</c>.
+    ///     peer resets mid application exchange — an ABORTIVE close (RST), i.e.
+    ///     <c>LingerState = new LingerOption(true, 0)</c> then <c>Close()</c> → <c>IOException</c>
+    ///     wrapping a <c>SocketException(ConnectionReset)</c>, "An existing connection was forcibly
+    ///     closed…".
     ///   </description></item>
     ///   <item><description>
-    ///     peer closes cleanly after the handshake → <c>EndOfStreamException</c> (itself an
-    ///     <c>IOException</c>).
+    ///     peer closes cleanly after the handshake — a GRACEFUL close (FIN), i.e.
+    ///     <c>Shutdown</c>/<c>Dispose</c> → <c>EndOfStreamException</c> (itself an
+    ///     <c>IOException</c>), "Unable to read beyond the end of the stream."
     ///   </description></item>
     /// </list>
+    /// <para>
+    /// <strong>Abortive versus graceful is the whole difference between those last two rows, and it
+    /// is spelled out because a review round disagreed about it.</strong> The security review of fix
+    /// round three reported the reset row as producing <c>EndOfStreamException</c>. RE-MEASURED
+    /// independently on .NET 8.0.29 / Windows 10.0.26200 — a loopback TLS listener that completes
+    /// the handshake, reads the framed request, and then closes each of the two ways, against the
+    /// same <c>ReadExactlyAsync</c> the exchange performs — the two ways produce the two DIFFERENT
+    /// results above, matching the rows as written. The most likely reconciliation is that a test
+    /// double closing its stream produces a FIN, which is the graceful row; nothing in either
+    /// measurement changes the filter, since both types satisfy "is an <c>IOException</c>". Both
+    /// readings are recorded rather than one being quietly chosen.
+    /// </para>
     /// <para>
     /// <c>SocketException</c> is therefore DROPPED from the evidence filter — every post-connect
     /// socket fault arrives wrapped, so nothing that was genuine refusal evidence is lost, which is
@@ -1078,16 +1137,18 @@ internal static class SecuredEndpointProbe
     /// way), and the diagnostic names both halves so the cause is legible.
     /// </para>
     /// <para>
-    /// <strong>IPv6 (n7, fix round three) — unreachable today, noted so a future fabric does not
-    /// get a misleading message.</strong> The authority split below is a <c>LastIndexOf(':')</c>,
-    /// which is correct for <c>host:port</c> and for a BRACKETED IPv6 authority's port
-    /// (<c>[::1]:9093</c> splits to <c>[::1]</c> + <c>9093</c>), but wrong for a BRACKETLESS one:
-    /// <c>fe80::1</c> with no port splits to host <c>fe80:</c> and port <c>1</c>. And the bracketed
-    /// form's host keeps its brackets, so <c>TcpClient.ConnectAsync</c> attempts a DNS lookup of
-    /// the literal text <c>[::1]</c> rather than connecting to the address. Both fail closed, with
-    /// a connect diagnostic naming the address — never a false confirmation — but the diagnostic
-    /// blames the connection rather than the parse. Nothing in this release stages an IPv6
-    /// authority: every host-published endpoint comes back as <c>localhost</c> or an IPv4 literal.
+    /// <strong>IPv6 (n7, fix round three; FIXED in fix round four).</strong> Both halves of this
+    /// method used to mishandle an IPv6 authority. The URL half read <c>Uri.Host</c>, which retains
+    /// the brackets (<c>https://[::1]:8443</c> → <c>[::1]</c>), so <c>TcpClient.ConnectAsync</c>
+    /// attempted a DNS lookup of that literal text; it now reads <c>Uri.DnsSafeHost</c>. The bare
+    /// half split on <c>LastIndexOf(':')</c>, which is right for <c>host:port</c>, keeps the
+    /// brackets on <c>[::1]:9093</c>, and is outright wrong for a bracketless form (<c>fe80::1</c>
+    /// became host <c>fe80:</c> port <c>1</c> — a plausible address that is not the target); it now
+    /// borrows the framework's own authority parser, per
+    /// <see cref="TryParseBareAuthority"/>'s measured notes. The old behaviour always failed CLOSED
+    /// — a connect diagnostic, never a false confirmation — and nothing in this release stages an
+    /// IPv6 authority (every host-published endpoint comes back as <c>localhost</c> or an IPv4
+    /// literal), so this is correctness of the MESSAGE, not of the verdict.
     /// </para>
     /// </remarks>
     private static bool TryResolveAddress(
@@ -1102,26 +1163,97 @@ internal static class SecuredEndpointProbe
             return false;
         }
 
+        // A scheme-carrying URL — REQ-023's HTTP-family staging. DnsSafeHost, not Host: for
+        // 'https://[::1]:8443' the framework reports Host='[::1]' (brackets retained, per RFC 3986)
+        // and DnsSafeHost='::1'. Both MEASURED. Handing the bracketed text to TcpClient.ConnectAsync
+        // makes it attempt a DNS lookup of the literal string '[::1]' instead of connecting.
         if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Port > 0 &&
-            !string.IsNullOrEmpty(uri.Host))
+            !string.IsNullOrEmpty(uri.DnsSafeHost))
         {
-            host = uri.Host;
+            host = uri.DnsSafeHost;
             port = uri.Port;
             return true;
         }
 
-        var separator = value.LastIndexOf(':');
-        if (separator > 0 && separator < value.Length - 1 &&
-            int.TryParse(
-                value[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) &&
-            parsed is >= 1 and <= 65535)
+        // A bare 'host:port' authority — REQ-023's Kafka-family staging, and every dependency
+        // connection string. Parsed by borrowing the framework's authority parser rather than by
+        // hand (n7, fix round three, upgraded from "noted" to "fixed" by fix round four).
+        return TryParseBareAuthority(value, out host, out port);
+    }
+
+    /// <summary>
+    /// The scheme synthesised in front of a bare <c>host:port</c> authority so
+    /// <see cref="Uri"/> will parse it. Never appears in any output.
+    /// </summary>
+    private const string BareAuthorityScheme = "tcp://";
+
+    /// <summary>
+    /// Parses a bare <c>host:port</c> authority into its host and port.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why not <c>Uri</c> directly, and why not a hand split.</strong> The obvious fix for
+    /// the bracket handling below is <c>Uri.DnsSafeHost</c> — but MEASURED,
+    /// <c>Uri.TryCreate("[::1]:9093", UriKind.Absolute, out _)</c> returns <see langword="false"/>:
+    /// the framework will not parse an authority with no scheme. So a scheme is synthesised purely
+    /// to reach the parser, and the result is validated to be exactly an authority and nothing
+    /// else. What this replaced was a <c>LastIndexOf(':')</c> split, which is correct for
+    /// <c>host:port</c> and wrong for every IPv6 spelling.
+    /// </para>
+    /// <para>
+    /// <strong>MEASURED, on the pinned runtime, against the split it replaces</strong> (n7 recorded
+    /// the first two as known-wrong-but-unreachable; the security review's fix round four resolved
+    /// them rather than re-recording them):
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>[::1]:9093</c> — split gave host <c>[::1]</c>, brackets and all, so
+    ///     <c>ConnectAsync</c> resolved the literal text as a DNS name. Now <c>::1</c> / 9093.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>::1</c> and <c>fe80::1</c> (bracketless, no port) — split gave host <c>:</c> port 1
+    ///     and host <c>fe80:</c> port 1 respectively: a plausible-looking address that is not the
+    ///     declared target. Now rejected outright, which reports "staged no reachable address"
+    ///     rather than a connect failure against a fabricated port.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>127.0.0.1:9093</c>, <c>localhost:9093</c>, <c>broker:9093</c> — unchanged, the shapes
+    ///     every fabric in this release actually stages.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Port bounds now come from the parser: <c>host:70000</c> and <c>host:-1</c> fail to parse,
+    ///     <c>host:65535</c> parses, and <c>host:0</c> parses with <c>Port == 0</c> and is rejected
+    ///     below — the same 1–65535 window the explicit range check enforced.
+    ///   </description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <strong>Everything past the authority is refused, not ignored.</strong> A staged value is an
+    /// authority; anything carrying user info, a path, a query or a fragment is not the thing this
+    /// is parsing, and reinterpreting it would be a silent guess in the one component that must not
+    /// guess. Measured: <c>user@host:9093</c> parses with <c>UserInfo</c> set (the previous split
+    /// produced the host <c>user@host</c>), <c>host:9093/path</c> keeps its path, and
+    /// <c>host:9093#f</c> keeps its fragment while <c>PathAndQuery</c> still reads <c>/</c> — which
+    /// is why the fragment is checked separately rather than folded into the path check.
+    /// </para>
+    /// </remarks>
+    private static bool TryParseBareAuthority(string value, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 0;
+
+        if (!Uri.TryCreate(BareAuthorityScheme + value, UriKind.Absolute, out var authority)
+            || authority.Port <= 0
+            || string.IsNullOrEmpty(authority.DnsSafeHost)
+            || authority.UserInfo.Length != 0
+            || authority.Fragment.Length != 0
+            || !string.Equals(authority.PathAndQuery, "/", StringComparison.Ordinal))
         {
-            host = value[..separator];
-            port = parsed;
-            return true;
+            return false;
         }
 
-        return false;
+        host = authority.DnsSafeHost;
+        port = authority.Port;
+        return true;
     }
 
     /// <summary>

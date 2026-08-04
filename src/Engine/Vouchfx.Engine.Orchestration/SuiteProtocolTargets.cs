@@ -162,6 +162,57 @@ public static class SuiteProtocolTargets
     }
 
     /// <summary>
+    /// The author-facing diagnostic for <see cref="BothHttpAndKafkaSpeaking"/>, or
+    /// <see langword="null"/> when no target is addressed by both families.
+    /// </summary>
+    /// <param name="scenarios">
+    /// The scenarios the rejection is about — ONE scenario at the per-scenario compile seam, the
+    /// whole suite at the suite seam. Both call sites must pass exactly the set whose staging they
+    /// are protecting; see the remarks.
+    /// </param>
+    /// <returns>
+    /// The diagnostic naming every conflicting target and both families, or <see langword="null"/>
+    /// when there is nothing to reject.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why the message lives here and not at the call sites.</strong> Two seams reject this
+    /// one authoring error — <c>ProviderPipeline.Compile</c> (per scenario: <c>vouchfx validate</c>,
+    /// <c>--parallel</c>, <c>--watch</c>, and the single-scenario <c>run</c>, where the one scenario
+    /// IS the suite) and <c>ScenarioRunner.RunSuiteAsync</c> (the shared-topology suite seam, whose
+    /// staging reads the union across every scenario). Two spellings of one rule is how the two
+    /// drift: an author would get different words, and later a different meaning, for the same
+    /// mistake depending on which door they came through. The detection already lived in one place;
+    /// this puts the wording there too.
+    /// </para>
+    /// <para>
+    /// <strong>The caller chooses the scope, and must match its own staging input.</strong> This
+    /// helper deliberately does not know which seam is calling. The suite seam stages from
+    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> over the whole scenario list, so it
+    /// must pass that same whole list here — a per-scenario call at that seam is blind to a suite
+    /// that splits the two families across two scenarios, which is precisely the hole this
+    /// overload's existence closed.
+    /// </para>
+    /// </remarks>
+    public static string? DescribeProtocolConflict(IEnumerable<ScenarioAst?>? scenarios)
+    {
+        var conflicts = BothHttpAndKafkaSpeaking(scenarios);
+        if (conflicts.Count == 0)
+        {
+            return null;
+        }
+
+        return $"Target(s) {string.Join(", ", conflicts.Select(n => $"'{n}'"))} are "
+            + "addressed by both an HTTP-family step (http.rest / http.soap / "
+            + "metrics-assert.prometheus) and a Kafka-family step (mq-publish.kafka / "
+            + "mq-expect.kafka). The engine stages one endpoint value per target, in the "
+            + "form that target's own clients consume — an 'https://host:port' URL for the "
+            + "HTTP family, a bare 'host:port' bootstrap for the Kafka families — and one "
+            + "string cannot be both. Declare the broker and the HTTP API as two separate "
+            + "entries under environment.services, each addressed by one family.";
+    }
+
+    /// <summary>
     /// The union of every target named by a step matching <paramref name="predicate"/>.
     /// </summary>
     private static HashSet<string> TargetsOf(

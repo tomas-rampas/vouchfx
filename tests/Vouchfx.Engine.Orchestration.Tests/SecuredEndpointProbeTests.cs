@@ -1197,4 +1197,143 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
+    // ── m3 (security review, fix round four): the unknown-profile branch is ARMED ─────────
+    //
+    // SecuredEndpointProbe.ProfilesPresentingAClientIdentity is an exhaustive map — profile → does
+    // it present a client identity — precisely so "absent" and "present but false" stay distinct.
+    // The call site used to fold them together with `TryGetValue(…) && presents`, so an
+    // unrecognised profile silently took the no-client-identity path, skipped the anonymous-client
+    // differential, and produced a transport-only confirmation. SecurityProfileVocabularyDriftTests
+    // (Vouchfx.Engine.Runtime.Tests, which sees both assemblies' internals) makes that drift a red
+    // build at the moment of registration; this is the run-time backstop under it.
+
+    /// <summary>
+    /// A <c>security.profile</c> the probe has no entry for fails the confirmation CLOSED, naming
+    /// the profile — it never degrades to the transport-only path.
+    /// </summary>
+    /// <remarks>
+    /// Unreachable from a suite (the root schema narrows <c>profile</c> to the registered set,
+    /// REQ-021, and the wiring validator rejects an unresolved pair pre-topology, REQ-022), so it is
+    /// driven through the probe's own internal entry point. The staged address points at a port
+    /// nothing serves: the guard must fire BEFORE any socket work, so if it did not, this would fail
+    /// with the connect diagnostic instead — which is what the final assertion pins.
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_ProfileTheProbeDoesNotRecognise_FailsClosedNamingTheProfile()
+    {
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("kerberos")),
+            Staged("sut", "127.0.0.1", 1),
+            new FakeAccessor().With("sut", "kerberos", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Equal("sut", ex.Info.ResourceName);
+        Assert.Contains("'kerberos'", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.Contains("does not recognise", ex.Info.Detail, StringComparison.Ordinal);
+
+        // The refusal happened before the socket, not after it.
+        Assert.DoesNotContain("could not connect", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    // ── nit (security review, fix round four): IPv6 authority parsing ────────────────────
+    //
+    // TryResolveAddress used to split a bare authority on LastIndexOf(':'). MEASURED on .NET 8:
+    // '[::1]:9093' kept its brackets, so TcpClient.ConnectAsync resolved the literal text '[::1]'
+    // as a DNS NAME; and a bracketless 'fe80::1' with no port split into host 'fe80:' port 1 — a
+    // plausible-looking address that is not the declared target. Both failed CLOSED, so this is
+    // correctness of the MESSAGE rather than of the verdict, and nothing in this release stages an
+    // IPv6 authority. Both are asserted through the diagnostic, which is where the parse is
+    // observable: the probe's private resolver has no other seam.
+
+    /// <summary>
+    /// A bracketed IPv6 authority resolves to the bracket-free address — the form
+    /// <c>ConnectAsync</c> can actually use — and the diagnostic says so.
+    /// </summary>
+    /// <remarks>
+    /// The port is one just released by a listener, so nothing serves it and the probe necessarily
+    /// reports a failure naming the address it resolved. Robust to a host without IPv6: an
+    /// unavailable <c>::1</c> fails at the same connect and produces the same address in the same
+    /// message.
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_BracketedIpv6Authority_ResolvesWithoutTheBrackets()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var freePort = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("tls")),
+            new Dictionary<string, object>(StringComparer.Ordinal) { ["sut"] = $"[::1]:{freePort}" },
+            new FakeAccessor().With("sut", "tls", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains($"::1:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("[::1]", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A bracketless IPv6 literal carrying no port is REFUSED as unresolvable rather than split
+    /// into a fabricated host and port.
+    /// </summary>
+    /// <remarks>
+    /// The old split turned <c>fe80::1</c> into host <c>fe80:</c> / port <c>1</c> and reported a
+    /// connect failure against it — blaming the connection for a parse. No socket is opened on this
+    /// path at all, so the test is entirely deterministic.
+    /// </remarks>
+    [Theory]
+    [InlineData("fe80::1")]
+    [InlineData("::1")]
+    public async Task Confirm_BracketlessIpv6LiteralWithNoPort_IsRefusedAsUnresolvable(string staged)
+    {
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("tls")),
+            new Dictionary<string, object>(StringComparer.Ordinal) { ["sut"] = staged },
+            new FakeAccessor().With("sut", "tls", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The shapes every fabric in this release actually stages still resolve — the regression guard
+    /// on the parser swap.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Asserted through the connect diagnostic, which names the resolved <c>host:port</c> verbatim:
+    /// a value that failed to resolve would produce "staged no reachable address" instead, and a
+    /// value that resolved WRONGLY would name something other than what went in.
+    /// </para>
+    /// <para>
+    /// The third row is the one that discriminates. A bare DNS name is a legal URI SCHEME, so
+    /// <c>Uri.TryCreate("broker.invalid:9093", UriKind.Absolute, …)</c> SUCCEEDS with that text as
+    /// the scheme and an empty host — measured — which is why the URL branch must require a non-empty
+    /// host and a real port before it claims the value, and why this row must reach the bare-authority
+    /// branch to pass. <c>.invalid</c> is RFC 6761-reserved and guaranteed never to resolve, so the
+    /// row cannot depend on the resolver it runs against (measured: 5 ms here, against 2.7 s for a
+    /// bare <c>broker</c> that reaches the network before failing).
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("127.0.0.1", "127.0.0.1")]
+    [InlineData("localhost", "localhost")]
+    [InlineData("broker.invalid", "broker.invalid")]
+    public async Task Confirm_OrdinaryBareAuthority_ResolvesUnchanged(string stagedHost, string expectedHost)
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var freePort = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+            ServiceEnv(Profile("tls")),
+            new Dictionary<string, object>(StringComparer.Ordinal) { ["sut"] = $"{stagedHost}:{freePort}" },
+            new FakeAccessor().With("sut", "tls", null)));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains($"{expectedHost}:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
+    }
 }

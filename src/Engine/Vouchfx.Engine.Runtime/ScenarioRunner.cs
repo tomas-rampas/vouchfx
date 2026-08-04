@@ -1049,6 +1049,48 @@ public static class ScenarioRunner
             };
         }
 
+        // REQ-023 (amended): the suite half of the both-families rejection (gatekeeper MAJOR, fix
+        // round four). ProviderPipeline.Compile already rejects a target addressed by both families
+        // — but it runs once PER SCENARIO, so it only ever sees one scenario's steps, while the
+        // staging it protects is suite-level: the StartAsync call below passes
+        // SuiteProtocolTargets.KafkaSpeaking(scenarios), the union across EVERY scenario, because
+        // ONE shared topology serves them all. A two-scenario suite whose first scenario addresses
+        // 'broker' over http.rest and whose second addresses it over mq-publish.kafka therefore
+        // passed both compilations (neither scenario alone addresses both families) and then staged
+        // the bare host:port bootstrap authority for 'broker' — handing the HTTP step a value with
+        // no scheme, which is exactly the outcome the requirement forbids, reached by exactly the
+        // route the per-scenario guard was written to close. MEASURED, red first, by
+        // ProtocolTargetConflictValidationTests' split row.
+        //
+        // The argument is `scenarios`, byte-for-byte the same list handed to KafkaSpeaking below,
+        // so the guard and the staging cannot disagree about which targets speak what — including
+        // for a scenario carrying an early verdict, which still contributes to that union today.
+        //
+        // CLASSIFICATION, measured rather than assumed: the per-scenario seam returns a plain
+        // ValidationFailure (IsSecurityPreflight stays false), which maps to Verdict.Inconclusive
+        // with REQ-018's carve-out OFF — exit 0 by default, exit 4 under --fail-on-inconclusive.
+        // This path reproduces that exactly. It deliberately does NOT set SecurityConfirmationFailed
+        // the way the divergence check above does: a protocol conflict is an authoring error, not a
+        // failure to confirm a security assertion, and setting the flag would fire REQ-018's
+        // unconditional non-zero exit for a non-security reason — the very thing REQ-005's own text
+        // warns against. The accumulated value is carried through unchanged, so a suite that ALSO
+        // had a security-preflight rejection in a non-blocking scenario keeps it.
+        if (SuiteProtocolTargets.DescribeProtocolConflict(scenarios) is { } protocolConflict)
+        {
+            // Issue #266, Item 4: the diagnostic splices target names straight from untrusted
+            // YAML — sanitise before it reaches the terminal/CI log, exactly as the per-scenario
+            // seam's own print site does.
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(protocolConflict))
+                .ConfigureAwait(false);
+
+            return new SuiteResult(
+                Verdict.Inconclusive,
+                compilations.Select(c => (c.ScenarioName, Verdict.Inconclusive)).ToList())
+            {
+                SecurityConfirmationFailed = securityConfirmationFailed,
+            };
+        }
+
         var probeSecurity = SecurityConfigurationAccessor.Build(
             scenarios[0], compilations.Count > 0 ? compilations[0].ScenarioBaseDirectory : seedBaseDirectory);
 

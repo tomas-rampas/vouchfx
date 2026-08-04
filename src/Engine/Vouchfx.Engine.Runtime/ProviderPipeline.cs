@@ -312,23 +312,27 @@ internal static class ProviderPipeline
         // stage as the two checks above and for the same reason: it reads only the raw steps and
         // needs nothing from a bound model. This narrows nothing that ever worked; before REQ-023
         // was amended, a Kafka step naming a service failed as an EnvironmentError every time.
-        var protocolConflicts = SuiteProtocolTargets.BothHttpAndKafkaSpeaking(new[] { (ScenarioAst?)ast });
-        if (protocolConflicts.Count > 0)
+        //
+        // SCOPE: this method compiles ONE scenario, so this call sees one scenario's steps. That is
+        // the complete check on every path where one scenario IS the unit that gets a topology —
+        // the single-scenario `run`, `--watch` (one file), and `--parallel` (each scenario owns its
+        // own topology via RunScenarioOwningTopologyAsync) — and it is the only check `vouchfx
+        // validate` can make, since ScenarioValidator treats each file independently by design and
+        // never decides which files form a suite. The SHARED-topology `run` path is the exception:
+        // it stages from the union across every scenario, so it carries its OWN call to the same
+        // helper at its own seam (ScenarioRunner.RunSuiteAsync). A per-scenario check cannot see a
+        // suite that splits the two families across two scenarios; both seams therefore call this
+        // helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR, fix round
+        // four — before it, the message was written out at this call site alone).
+        var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
+        if (protocolConflict is not null)
         {
             return new PipelineResult(
                 Assembled: null,
                 ResourcePlan: Array.Empty<ResourcePlanEntry>(),
                 CompileReferencePaths: Array.Empty<string>(),
                 HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: new ValidationFailure(
-                    $"Target(s) {string.Join(", ", protocolConflicts.Select(n => $"'{n}'"))} are "
-                    + "addressed by both an HTTP-family step (http.rest / http.soap / "
-                    + "metrics-assert.prometheus) and a Kafka-family step (mq-publish.kafka / "
-                    + "mq-expect.kafka). The engine stages one endpoint value per target, in the "
-                    + "form that target's own clients consume — an 'https://host:port' URL for the "
-                    + "HTTP family, a bare 'host:port' bootstrap for the Kafka families — and one "
-                    + "string cannot be both. Declare the broker and the HTTP API as two separate "
-                    + "entries under environment.services, each addressed by one family."));
+                Failure: new ValidationFailure(protocolConflict));
         }
 
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its

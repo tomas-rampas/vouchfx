@@ -12,6 +12,8 @@
 // environment error inside a step. It narrows nothing that ever worked: before the amendment, the
 // Kafka half of such a suite read `conn::<name>` — never staged for a service — and failed every
 // time with "kafka bootstrap not found".
+using System.IO;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Sdk;
@@ -178,5 +180,166 @@ public sealed class ProtocolTargetConflictValidationTests
         Assert.NotNull(result.Assembled);
         Assert.Contains("\"conn::events\"", result.Assembled!.CsxSource, StringComparison.Ordinal);
         Assert.DoesNotContain("\"svc::events\"", result.Assembled.CsxSource, StringComparison.Ordinal);
+    }
+
+    // ── The suite seam: the decision this guards is suite-level, so the guard must be too ─────
+    //
+    // `ProviderPipeline.Compile` runs ONCE PER SCENARIO, so the check above only ever sees one
+    // scenario's steps. The staging decision it protects is suite-level: `RunSuiteAsync` builds ONE
+    // shared topology and stages from `SuiteProtocolTargets.KafkaSpeaking(scenarios)` — the union
+    // across EVERY scenario. Split the two families across two scenarios and each compilation is
+    // individually innocent, while the union that actually drives staging is not.
+    //
+    // HOW THESE ROWS MEASURE "was the topology build attempted", without Docker: the shared
+    // environment declares `env: { FOO: "${conn:typo}" }`, a reference to a dependency that does not
+    // exist. `EnvironmentMapper.Map` rejects it EAGERLY inside `SuiteTopology.StartAsync`, long
+    // before DCP or any container, and `RunSuiteAsync` catches that as the distinctive line
+    // `PreTopologyMarker`. Present → the build was attempted; absent → the run returned before it.
+    // (Same technique, and the same marker string, as `RunSuiteAsyncTests`.)
+    //
+    // MEASURED RED FIRST: with the guard only at the per-scenario seam, the split row reached the
+    // topology build (marker present) and printed no diagnostic at all — the exact route the guard
+    // was written to close.
+
+    private const string PreTopologyMarker = "RunSuiteAsync: environment configuration error";
+
+    /// <summary>The environment both rows share, byte-identically, as a suite requires.</summary>
+    private const string ConflictSuiteEnvironment = """
+        environment:
+          services:
+            broker:
+              image: acme/broker:1
+              ports: [9093]
+              env:
+                FOO: "${conn:typo}"
+        """;
+
+    private const string HttpStepOnly = ConflictSuiteEnvironment + """
+
+        steps:
+          - id: get
+            type: http.rest
+            target: broker
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    private const string KafkaStepOnly = ConflictSuiteEnvironment + """
+
+        steps:
+          - id: publish
+            type: mq-publish.kafka
+            target: broker
+            topic: orders
+            payload: "{}"
+        """;
+
+    private const string BothStepsInOneScenario = ConflictSuiteEnvironment + """
+
+        steps:
+          - id: get
+            type: http.rest
+            target: broker
+            method: GET
+            path: /
+            expect:
+              status: 200
+          - id: publish
+            type: mq-publish.kafka
+            target: broker
+            topic: orders
+            payload: "{}"
+        """;
+
+    /// <summary>
+    /// The two spellings of the SAME authoring error — both families in one scenario, and the two
+    /// families split across two scenarios of one suite — must be rejected before the topology is
+    /// built, with the same verdict, the same REQ-018 carve-out state, and the same diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Written as ONE fact running both shapes rather than a theory over two rows, because the
+    /// load-bearing assertion is an EQUALITY BETWEEN them: the two seams must produce a diagnostic
+    /// that is character-for-character identical. A theory could only assert the same fragments
+    /// twice, which two texts can satisfy while still differing — and "two spellings of one rule is
+    /// how the two drift" is the reason the message was hoisted into
+    /// <c>SuiteProtocolTargets.DescribeProtocolConflict</c> in the first place. The diagnostic is
+    /// compared by extraction rather than against a literal restated here, since restating it would
+    /// re-create the third copy this fix removed.
+    /// </para>
+    /// </remarks>
+    // Hoisted to fields (CA1861): constant-element arrays passed to a repeatedly-called method.
+    private static readonly string[] s_singleScenarioYamls = { BothStepsInOneScenario };
+    private static readonly string[] s_singleScenarioNames = { "both-in-one" };
+    private static readonly string[] s_splitScenarioYamls = { HttpStepOnly, KafkaStepOnly };
+    private static readonly string[] s_splitScenarioNames = { "http-half", "kafka-half" };
+
+    [Fact]
+    public async Task RunSuiteAsync_BothFamiliesAddressOneTarget_IsRejectedIdenticallyByBothSeams()
+    {
+        var single = await RunAndCaptureAsync(s_singleScenarioYamls, s_singleScenarioNames);
+        var split = await RunAndCaptureAsync(s_splitScenarioYamls, s_splitScenarioNames);
+
+        // The one spelling: identical text from the per-scenario seam and from the suite seam.
+        Assert.NotEmpty(single.Diagnostic);
+        Assert.Equal(single.Diagnostic, split.Diagnostic);
+
+        // …and it says what it must, naming the target and both families.
+        Assert.Contains("'broker'", single.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("http.rest", single.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("mq-publish.kafka", single.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("one endpoint value per target", single.Diagnostic, StringComparison.Ordinal);
+
+        // Nothing was staged on either path: the topology build was never reached.
+        Assert.DoesNotContain(PreTopologyMarker, single.Rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(PreTopologyMarker, split.Rendered, StringComparison.Ordinal);
+
+        // Same classification. An authoring error is Inconclusive, and it is NOT a
+        // security-confirmation failure — setting that flag would fire REQ-018's unconditional
+        // non-zero exit for a non-security reason.
+        Assert.Equal(Verdict.Inconclusive, single.Result.Verdict);
+        Assert.Equal(Verdict.Inconclusive, split.Result.Verdict);
+        Assert.False(single.Result.SecurityConfirmationFailed);
+        Assert.False(split.Result.SecurityConfirmationFailed);
+
+        Assert.All(single.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
+        Assert.All(split.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
+        Assert.Single(single.Result.ScenarioVerdicts);
+        Assert.Equal(2, split.Result.ScenarioVerdicts.Count);
+    }
+
+    /// <summary>
+    /// Runs one suite through <see cref="ScenarioRunner.RunSuiteAsync"/> and returns its result, the
+    /// full rendered output, and the conflict diagnostic extracted from it.
+    /// </summary>
+    /// <remarks>
+    /// The two shapes render DIFFERENTLY overall — the single-scenario one returns through the
+    /// early-verdict path, which also runs the terminal renderer, while the suite seam returns
+    /// before it — so only the diagnostic line itself is comparable, and it is located by its own
+    /// opening token rather than by position.
+    /// </remarks>
+    private static async Task<(SuiteResult Result, string Rendered, string Diagnostic)> RunAndCaptureAsync(
+        string[] yamls, string[] names)
+    {
+        var sw = new StringWriter();
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: yamls.Select(Ast).ToArray(),
+            scenarioNames: names,
+            yamlTexts: yamls,
+            providerAssemblies: s_providerAssemblies,
+            appHostAssemblyName: "Vouchfx.Engine.Runtime.Tests",
+            output: sw);
+
+        var rendered = sw.ToString();
+        var diagnostic = rendered
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .FirstOrDefault(line => line.StartsWith("Target(s) ", StringComparison.Ordinal))
+            ?? string.Empty;
+
+        return (result, rendered, diagnostic);
     }
 }
