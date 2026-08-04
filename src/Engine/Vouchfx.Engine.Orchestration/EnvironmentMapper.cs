@@ -588,6 +588,17 @@ public static class EnvironmentMapper
     /// the one shared topology's <c>environment</c> block came from.
     /// </para>
     /// </param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
+    /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>. REQ-023 (as
+    /// amended 2026-08-04) makes this the discriminator for the FORM a service's endpoint is
+    /// staged in: a target the Kafka families address is staged as the bare bootstrap authority
+    /// those clients expect, and every other service keeps its scheme-carrying URL. See
+    /// <c>StageServiceEndpoint</c> for why the form — not merely the confirmation level — has to
+    /// follow the protocol.
+    /// <see langword="null"/> means "no Kafka step targets anything here", which is correct for a
+    /// suite with no Kafka steps and for every caller that predates this parameter.
+    /// </param>
     /// <returns>
     /// A <see cref="MappedTopology"/> whose <see cref="MappedTopology.Configure"/> callback
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
@@ -597,7 +608,10 @@ public static class EnvironmentMapper
     /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
     /// declared server artefact cannot be resolved (REQ-016).
     /// </exception>
-    public static MappedTopology Map(EnvironmentSpec? env, string? suiteDirectory = null)
+    public static MappedTopology Map(
+        EnvironmentSpec? env,
+        string? suiteDirectory = null,
+        IReadOnlySet<string>? kafkaSpeakingTargets = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -613,6 +627,11 @@ public static class EnvironmentMapper
                 HealthGateResourceNames: Array.Empty<string>(),
                 DependencyNames: Array.Empty<string>());
         }
+
+        // REQ-023 (amended): captured once here rather than read through the nullable parameter
+        // inside the resolver closure, so the staging rule is a plain set lookup at the one place
+        // it is applied.
+        var kafkaTargets = kafkaSpeakingTargets ?? EmptyProtocolTargets;
 
         // ----------------------------------------------------------------
         // Validate all service specs eagerly so Map() throws before any builder
@@ -1267,7 +1286,7 @@ public static class EnvironmentMapper
                 var result = new Dictionary<string, object>(StringComparer.Ordinal);
 
                 foreach (var (name, endpointRef) in serviceEndpoints)
-                    result[name] = endpointRef.Url;
+                    result[name] = StageServiceEndpoint(name, endpointRef, kafkaTargets);
 
                 // §4 invariant: never use app.GetConnectionString(name) — it does not exist on
                 // DistributedApplication in Aspire 13.4.2 (spike S01-A-03 finding).
@@ -1301,6 +1320,83 @@ public static class EnvironmentMapper
             HealthGateResourceNames: healthGateNames,
             DependencyNames: dependencies.Keys.ToList());
     }
+
+    /// <summary>
+    /// The "no Kafka step targets anything" default for <see cref="Map"/>'s
+    /// <c>kafkaSpeakingTargets</c> parameter.
+    /// </summary>
+    private static readonly IReadOnlySet<string> EmptyProtocolTargets =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Renders one resolved service endpoint into the form its own consumer can use (REQ-023, as
+    /// amended 2026-08-04).
+    /// </summary>
+    /// <param name="name">The declared service name.</param>
+    /// <param name="endpoint">The retained endpoint reference, resolved after <c>StartAsync</c>.</param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The names the suite's own <c>mq-publish.kafka</c>/<c>mq-expect.kafka</c> steps address.
+    /// </param>
+    /// <returns>
+    /// A bare <c>host:port</c> bootstrap authority for a Kafka-addressed target; the endpoint's
+    /// own scheme-carrying URL for every other service — byte-identical to what this method
+    /// replaced, which was <c>endpoint.Url</c> unconditionally.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The requirement this implements changed, and the reason is worth keeping.</strong>
+    /// REQ-023 originally mandated an <c>https://</c> scheme unconditionally. A Kafka broker
+    /// authored as a SERVICE — the shape REQ-011 records the target deployment actually uses — was
+    /// therefore staged as <c>https://host:port</c>, a scheme meaningless to a Kafka client, which
+    /// then had to strip it back off. Forcing a scheme the consumer must undo is not a convenience:
+    /// it is a transformation the engine imposes and every provider must reverse identically or
+    /// diverge. The amended rule is the consumer's form, and a provider rewriting the staged value
+    /// is now the proof that the engine staged the wrong one.
+    /// </para>
+    /// <para>
+    /// <strong>Why the protocol source is the suite's own steps.</strong> It is the same inference
+    /// <see cref="SuiteProtocolTargets"/> already performs to choose REQ-005's confirmation level,
+    /// deliberately reused rather than re-derived, so the staging form and the confirmation level
+    /// cannot disagree about what a target speaks.
+    /// </para>
+    /// <para>
+    /// <strong>What is NOT changed, and why.</strong> The endpoint ANNOTATION is untouched — a
+    /// secured endpoint keeps the <c>https</c> URI scheme <c>WithHttpsEndpoint</c> gives it, and an
+    /// unsecured one keeps <c>tcp</c>/<c>http</c>. The endpoint's NAME
+    /// (<c>ServiceEndpointNaming.HttpsEndpointName</c>) is a REQ-023 constant surfaced through
+    /// <c>IProjectContext.DeclaredServices</c> and resolvable by a <c>healthCheck</c> selector, so
+    /// making either the name or the scheme depend on which steps a suite happens to contain would
+    /// buy nothing and make two author-visible surfaces protocol-dependent. Only the STAGED VALUE
+    /// — the thing a step actually consumes — follows the protocol.
+    /// </para>
+    /// <para>
+    /// MEASURED against the pinned Aspire 13.4.2 rather than assumed, twice.
+    /// <c>EndpointReference</c> exposes <c>Host</c>, <c>Port</c>, <c>Scheme</c> and <c>Url</c> as
+    /// separate members, so the authority is read directly and is not a string-surgery pass over
+    /// <c>Url</c> — nothing here parses a URL apart in order to put it back together. And
+    /// <c>Url</c> for a service declaring <c>ports: [9092]</c> renders <c>tcp://localhost:60081</c>
+    /// (measured live, against a running container): the pre-existing staged value for a non-HTTP
+    /// service carried a <c>tcp</c> scheme, not a bare authority, so a Kafka client could no more
+    /// consume it than it could consume the <c>https</c> one a secured service received.
+    /// </para>
+    /// <para>
+    /// <strong>Every consumer of the staged value, and what changes for each.</strong>
+    /// <c>svc::&lt;name&gt;</c> in <c>Vars</c> is read by the three HTTP-family providers (unchanged
+    /// — a target of theirs is never in this set) and, since REQ-011's fix, by the two Kafka
+    /// providers for a service target (which is what this exists for). The same string is also the
+    /// entry in <c>ScriptGlobalVariables.Services</c>, so a <c>script.csharp</c> step reading
+    /// <c>Services["broker"]</c> for a Kafka-addressed service now sees <c>host:port</c> where it
+    /// previously saw <c>tcp://host:port</c> — the same rule applied consistently, and the shape
+    /// such a script wanted anyway. Nothing else reads it: <c>${conn:…}</c> in an <c>env:</c> block
+    /// is resolved from the dependency builders directly and never from this map, and
+    /// <c>{placeholder}</c> substitution cannot address a prefixed key at all.
+    /// </para>
+    /// </remarks>
+    private static string StageServiceEndpoint(
+        string name, EndpointReference endpoint, IReadOnlySet<string> kafkaSpeakingTargets) =>
+        kafkaSpeakingTargets.Contains(name)
+            ? FormattableString.Invariant($"{endpoint.Host}:{endpoint.Port}")
+            : endpoint.Url;
 
     // -----------------------------------------------------------------------
     // SUT configuration surface (`env:`) — validation and ReferenceExpression construction.

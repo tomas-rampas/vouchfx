@@ -14,11 +14,13 @@
 // WHY (b) IS PROVEN ON THE CONFIGURATION AND NOT ON THE EMITTED TEXT. REQ-015(b) asks for
 // SslCaLocation "absent from the emitted ProducerConfig initialiser, not merely set to null" when
 // caCert is undeclared. An emit-time branch on "did the author declare caCert" is not available:
-// ICompileContext exposes StepId, SuiteNamespace, SuiteDirectory, Captures and CaptureExprs and
-// carries no `environment` surface at all, and it is part of the frozen v1 provider contract,
-// which may only grow by NEW optional interfaces. Both variants therefore share one emitted text
-// and differ at run time — which is also what §17 requires, since a compile-time branch would bake
-// the declaration into the compiled-once script.
+// ICompileContext carries no `environment` security surface at all. (Corrected 2026-08-04: it now
+// also exposes DeclaredServices, added with a DEFAULT implementation so no existing stand-in
+// broke. That member answers "is this target a service", which decides the Vars KEY the step
+// reads, and says nothing about what the author declared under `security` — so the argument here
+// is unchanged.) Both variants therefore share one emitted text and differ at run time — which is
+// also what §17 requires, since a compile-time branch would bake the declaration into the
+// compiled-once script.
 //
 // The property that actually protects an author is that librdkafka never receives ssl.ca.location,
 // and that IS directly observable: Confluent.Kafka's ClientConfig is a keyed property bag, and

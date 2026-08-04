@@ -273,6 +273,74 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             }
         });
 
+    /// <summary>
+    /// A loopback listener that accepts exactly ONE connection and then STOPS listening, so any
+    /// further connection to that port is refused at the TCP layer.
+    /// </summary>
+    /// <remarks>
+    /// The deliberate opposite of <see cref="Listen"/>, and the only place in this file that wants
+    /// it (MAJOR-1, fix round three): it reproduces the shape the file header warns about — a
+    /// first connection that succeeds completely, followed by a second that fails before any TLS
+    /// — so the probe can be pinned to read that as UNCONFIRMED rather than as a certificate
+    /// refusal. <c>Stop()</c> is called before the accepted connection is served, which does not
+    /// affect it: an accepted socket is independent of the listening socket.
+    /// </remarks>
+    private (int Port, Task Serving, TcpListener Listener) ListenTlsOnce(
+        Func<SslStream, Task> afterHandshake, ClientAuth clientAuth)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        var serving = Task.Run(async () =>
+        {
+            TcpClient client;
+            try
+            {
+                client = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The test's finally block stopped the listener before anything connected.
+                return;
+            }
+
+            listener.Stop();
+
+            using (client)
+            {
+                var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+                try
+                {
+                    await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = _bed.ServerCertificate,
+                        ClientCertificateRequired = clientAuth == ClientAuth.Required,
+#pragma warning disable CA5359
+                        RemoteCertificateValidationCallback = clientAuth == ClientAuth.None
+                            ? null
+                            : (_, certificate, _, _) =>
+                                clientAuth != ClientAuth.Required || certificate is not null,
+#pragma warning restore CA5359
+                    }).ConfigureAwait(false);
+
+                    await afterHandshake(tls).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Same tolerance as Listen: a refused or aborted connection is an expected
+                    // outcome in the arms this helper serves.
+                }
+                finally
+                {
+                    tls.Dispose();
+                }
+            }
+        });
+
+        return (port, serving, listener);
+    }
+
     /// <summary>Holds the connection open, saying nothing — the client-speaks-first shape.</summary>
     private static async Task StayQuiet(SslStream tls)
     {
@@ -961,4 +1029,172 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             await serving;
         }
     }
+
+    // ── MAJOR-1 (fix round three): the differential's asymmetry stops at the connect ───────
+
+    /// <summary>
+    /// <strong>A connect-phase failure is not a certificate refusal.</strong> A listener that
+    /// serves the FIRST connection perfectly — TLS, declared anchor satisfied, a clean
+    /// <c>ApiVersions</c> round trip with the declared client certificate — and then refuses the
+    /// SECOND at the TCP layer must fail closed as UNCONFIRMED, never as "the broker requires an
+    /// identity".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the file-header defect turned outward. The header already records that a one-shot
+    /// listener would make the differential "pass" for the wrong reason, and every other listener
+    /// here serves in a loop to avoid it — but the mechanism was live in the PRODUCTION probe,
+    /// where the connect sat inside the try whose catch read any failure as a refusal. A
+    /// connection refused, a reset, a full backlog, an exhausted ephemeral-port range or a
+    /// container restarting between the two arms all happen before any TLS and say nothing about
+    /// <c>ssl.client.auth</c>.
+    /// </para>
+    /// <para>
+    /// MEASURED RED against the pre-fix source, not argued: with the second <c>ConnectAsync</c>
+    /// moved back inside the shared try and <c>SocketException</c> restored to the evidence
+    /// filter, this exact listener made the probe throw NOTHING and return
+    /// <c>Level = AuthenticatedRoundTrip</c> carrying, verbatim, "the broker answered a Kafka
+    /// ApiVersions request over this connection, and REFUSED the same request on a second
+    /// connection presenting no client certificate — so it both accepted the declared client
+    /// identity and requires one" — from a peer that had simply stopped listening.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_SecondConnectionRefusedAtTheTcpLayer_FailsAsUnconfirmedNotAsRefusal()
+    {
+        var (port, serving, listener) = ListenTlsOnce(
+            tls => ServeKafkaApiVersions(tls), ClientAuth.Required);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+                KafkaDependencyEnv(Profile("mtls")),
+                Staged("events", "localhost", port),
+                new FakeAccessor().With(
+                    "events", "mtls", new FakeMaterial(_bed, withClientIdentity: true, declareCa: true))));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Equal("events", ex.Info.ResourceName);
+            Assert.Contains(
+                "could not open a second connection", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(
+                "before any TLS", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("nothing is claimed", ex.Info.Detail, StringComparison.Ordinal);
+
+            // The claim the pre-fix implementation reached from this same listener.
+            Assert.DoesNotContain("REFUSED", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    // ── m4: the two cancellation branches, previously correct and untested ────────────────
+
+    /// <summary>
+    /// The outer token cancelling DURING the Kafka round trip on the FIRST connection fails closed
+    /// as a security-confirmation failure — the branch that keeps a cancelled probe from being
+    /// read as a confirmed one.
+    /// </summary>
+    [Fact]
+    public async Task Confirm_OuterTokenCancelledDuringTheKafkaRoundTrip_FailsAsSecurityConfirmation()
+    {
+        using var cts = new CancellationTokenSource();
+
+        // Cancellation is triggered from the SERVER once its own handshake has completed — the
+        // same pattern the post-handshake-read cancellation test uses, and for the same reason: a
+        // wall-clock timer lands in AuthenticateAsClientAsync often enough to test a different
+        // branch than the one intended. The server then never answers, so the client's
+        // ApiVersions read is what observes the cancellation.
+        var (port, serving, listener) = ListenTls(
+            async tls =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150)).ConfigureAwait(false);
+                await cts.CancelAsync().ConfigureAwait(false);
+                await StayQuiet(tls).ConfigureAwait(false);
+            },
+            ClientAuth.Required);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SecuredEndpointProbe.ConfirmAsync(
+                    KafkaDependencyEnv(Profile("mtls")),
+                    Staged("events", "localhost", port),
+                    new FakeAccessor().With(
+                        "events", "mtls", new FakeMaterial(_bed, withClientIdentity: true, declareCa: true)),
+                    new HashSet<string>(StringComparer.Ordinal),
+                    ProbeTimeout,
+                    cts.Token));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Contains(
+                "did not answer a Kafka ApiVersions request", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    /// <summary>
+    /// The outer token cancelling DURING the anonymous-client differential reports an UNFINISHED
+    /// check rather than a refusal — the distinction the differential exists to hold, since a
+    /// probe that ran out of time confirmed nothing.
+    /// </summary>
+    [Fact]
+    public async Task Confirm_OuterTokenCancelledDuringTheDifferential_FailsAsUnfinishedNotAsRefusal()
+    {
+        using var cts = new CancellationTokenSource();
+        var connections = 0;
+
+        // Connection 1 answers the round trip normally; connection 2 — the anonymous arm — waits,
+        // cancels the caller's token and then stays silent, so the differential is cancelled
+        // rather than refused. The listener accepts a null client certificate deliberately: if it
+        // refused one, the arm would take its refusal path and never reach the cancellation.
+        var (port, serving, listener) = ListenTls(
+            async tls =>
+            {
+                if (Interlocked.Increment(ref connections) == 1)
+                {
+                    await ServeKafkaApiVersions(tls).ConfigureAwait(false);
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(150)).ConfigureAwait(false);
+                await cts.CancelAsync().ConfigureAwait(false);
+                await StayQuiet(tls).ConfigureAwait(false);
+            },
+            ClientAuth.Requested);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SecuredEndpointProbe.ConfirmAsync(
+                    KafkaDependencyEnv(Profile("mtls")),
+                    Staged("events", "localhost", port),
+                    new FakeAccessor().With(
+                        "events", "mtls", new FakeMaterial(_bed, withClientIdentity: true, declareCa: true)),
+                    new HashSet<string>(StringComparer.Ordinal),
+                    ProbeTimeout,
+                    cts.Token));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Contains(
+                "could not finish confirming", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(
+                "an unfinished one is reported rather than assumed",
+                ex.Info.Detail,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
 }

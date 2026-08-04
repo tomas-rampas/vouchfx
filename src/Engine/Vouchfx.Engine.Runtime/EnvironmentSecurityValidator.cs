@@ -61,34 +61,13 @@ internal static class EnvironmentSecurityValidator
     /// <param name="environment">The suite's environment declaration, or <see langword="null"/>.</param>
     /// <remarks>
     /// The cheap question "does this suite claim any security at all", asked by callers that must
-    /// apply a security-only rule without paying for the full validation walk.
+    /// apply a security-only rule without paying for the full validation walk. A one-line forward
+    /// to <see cref="SecuredTargets.Any"/> (m5, fix round three), which is the single spelling of
+    /// this walk — kept as a name rather than deleted so this class's own callers and tests keep
+    /// reading in this class's idiom.
     /// </remarks>
-    internal static bool DeclaresSecurity(EnvironmentSpec? environment)
-    {
-        if (environment?.Services is { } services)
-        {
-            foreach (var (_, spec) in services)
-            {
-                if (spec.Security is not null)
-                {
-                    return true;
-                }
-            }
-        }
-
-        if (environment?.Dependencies is { } dependencies)
-        {
-            foreach (var (_, spec) in dependencies)
-            {
-                if (spec.Security is not null)
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    internal static bool DeclaresSecurity(EnvironmentSpec? environment) =>
+        SecuredTargets.Any(environment);
 
     /// <summary>
     /// Validates every declared <c>security</c> block's path-valued fields across

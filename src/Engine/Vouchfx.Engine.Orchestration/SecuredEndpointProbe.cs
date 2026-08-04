@@ -86,6 +86,17 @@
 // declared identity the SAME exchange against the SAME enforcing listener succeeds in ~5 ms. Cost
 // is one extra connection per `mtls` Kafka-speaking target, inside the same perTargetTimeout.
 //
+// AND THE ASYMMETRY STOPS AT THE CONNECT (MAJOR-1, peer review fix round three). "A failure of the
+// second arm is attributable to the one thing that changed" holds for the TLS and application
+// phases and FAILS for the connect phase, because the connect is not the thing that changed. A
+// refused connection, a reset, a full backlog, an exhausted ephemeral-port range or a container
+// restarting between the two arms all happen before any TLS and carry no information about
+// `ssl.client.auth` — yet each was being scored as a certificate refusal, so the probe could
+// announce that a broker "requires an identity" on the strength of a connection being refused. The
+// connect now has its own try and its own outcome: UNFINISHED, not refusal, failing closed in the
+// same direction cancellation already takes. See ConfirmAnonymousClientIsRefusedAsync's remarks for
+// the measured exception-type table that fixed the evidence filter.
+//
 // REJECTED, with the measurement that rejected it: `SslStream.IsMutuallyAuthenticated`. In the
 // `WITH cert / requested` arm above it reports **True** and the server genuinely did receive the
 // certificate — while the `NO cert / requested` arm proves the same listener would have accepted an
@@ -221,6 +232,35 @@ internal static class SecuredEndpointProbe
     private const short ApiVersionsApiKey = 18;
 
     /// <summary>
+    /// Every <c>security.profile</c> this probe knows how to reason about, and — for each — whether
+    /// it presents a CLIENT IDENTITY the peer could accept or refuse.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// m3 (peer review, fix round three). This was a bare <c>"mtls"</c> literal compared inline. It
+    /// degrades safely — an unrecognised profile takes the no-client-identity path — but the
+    /// degradation is exactly the wrong one for THIS component: a future registered profile that
+    /// DOES present a client identity (a SASL mechanism, a bearer token, Kerberos) would silently
+    /// skip both the certificate resolution and the anonymous-client differential, and the
+    /// differential is the one control in this feature whose entire job is preventing a false pass.
+    /// Both emitted helpers are already pinned to the registry by
+    /// <c>SecurityProfileRegistryTests.EveryWiredProfile_IsNamedInTheEmittedHelpersProfileSwitch</c>;
+    /// this dictionary is what lets the same drift guard cover the probe.
+    /// </para>
+    /// <para>
+    /// It is an EXHAUSTIVE map rather than a set of identity-presenting profiles on purpose: a set
+    /// cannot tell "this profile presents nothing" from "this probe has never heard of this
+    /// profile", and only the second is a drift signal.
+    /// </para>
+    /// </remarks>
+    internal static readonly IReadOnlyDictionary<string, bool> ProfilesPresentingAClientIdentity =
+        new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            ["tls"] = false,
+            ["mtls"] = true,
+        };
+
+    /// <summary>
     /// How long to wait for an explicit TLS-layer rejection on a target whose application
     /// protocol is unknown. Measured: a Kafka broker refusing a client certificate raises the
     /// fatal alert within 17 ms, so 1 s is generous by roughly sixty times while costing an
@@ -276,7 +316,11 @@ internal static class SecuredEndpointProbe
     {
         var confirmations = new List<SecurityConfirmation>();
 
-        foreach (var (name, kind, spec) in EnumerateSecuredTargets(environment))
+        // m5 (fix round three): the walk itself is SecuredTargets.Enumerate — the single spelling
+        // shared with EnvironmentSecurityValidator's cheap "does this suite claim anything" check
+        // and SuiteTopology's no-accessor guard, so the three cannot drift about which targets are
+        // secured or in what order they are reported.
+        foreach (var (name, kind, spec) in SecuredTargets.Enumerate(environment))
         {
             confirmations.Add(await ConfirmOneAsync(
                     name,
@@ -291,37 +335,6 @@ internal static class SecuredEndpointProbe
         }
 
         return confirmations;
-    }
-
-    /// <summary>
-    /// Yields every declared target carrying a <c>security</c> block: services first, then
-    /// dependencies — the same order <c>EnvironmentSecurityValidator</c> walks, so a suite with
-    /// two faults reports the same one at both stages.
-    /// </summary>
-    private static IEnumerable<(string Name, string Kind, SecuritySpec Spec)> EnumerateSecuredTargets(
-        EnvironmentSpec? environment)
-    {
-        if (environment?.Services is { } services)
-        {
-            foreach (var (name, spec) in services)
-            {
-                if (spec.Security is { } declared)
-                {
-                    yield return (name, "service", declared);
-                }
-            }
-        }
-
-        if (environment?.Dependencies is { } dependencies)
-        {
-            foreach (var (name, spec) in dependencies)
-            {
-                if (spec.Security is { } declared)
-                {
-                    yield return (name, spec.Type, declared);
-                }
-            }
-        }
     }
 
     private static async Task<SecurityConfirmation> ConfirmOneAsync(
@@ -356,7 +369,8 @@ internal static class SecuredEndpointProbe
         // certificate that exists but is malformed surfaces HERE, before any container work is
         // wasted, naming the declared path.
         X509Certificate2? clientCertificate = null;
-        var presentsClientIdentity = string.Equals(declaredProfile, "mtls", StringComparison.Ordinal);
+        var presentsClientIdentity =
+            ProfilesPresentingAClientIdentity.TryGetValue(declaredProfile, out var presents) && presents;
         if (presentsClientIdentity)
         {
             try
@@ -604,13 +618,59 @@ internal static class SecuredEndpointProbe
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Only a SUCCESS is evidence here.</strong> Any failure of this arm is read as "the
-    /// peer refused the anonymous client", and that asymmetry is deliberate: the first connection
-    /// has already proved, moments earlier and against the same address, that the server's
-    /// certificate satisfies the declared anchor and that the endpoint answers Kafka framing, so a
-    /// failure here is attributable to the one thing that changed. A cancellation is the exception
-    /// — it is not a refusal and is not read as one, because a probe that ran out of time confirmed
-    /// nothing.
+    /// <strong>Only a failure AT OR AFTER THE HANDSHAKE is evidence here</strong> — and the
+    /// qualifier is the whole of MAJOR-1 (peer review, fix round three). The asymmetry is
+    /// deliberate but it is narrower than "any failure of this arm": the first connection has
+    /// already proved, moments earlier and against the same address, that the server's certificate
+    /// satisfies the declared anchor and that the endpoint answers Kafka framing, so a failure
+    /// <em>from the handshake onwards</em> is attributable to the one thing that changed — the
+    /// absent client identity. The CONNECT is not the thing that changed. A connection refused, a
+    /// reset, a full backlog, an exhausted ephemeral-port range or a container restarting between
+    /// the two arms all happen BEFORE any TLS and carry no information whatever about
+    /// <c>ssl.client.auth</c>; scoring one of them as a refusal would let this probe announce that
+    /// a broker "requires an identity" on the strength of a connection being refused, which is the
+    /// exact over-claim the differential exists to destroy, reached through a different door.
+    /// </para>
+    /// <para>
+    /// So the connect gets its own <c>try</c> and its own outcome: <em>unfinished</em>, not
+    /// refusal, failing closed in the same direction cancellation already takes.
+    /// </para>
+    /// <para>
+    /// <strong>Which exception types remain refusal evidence, and the measurement that fixed the
+    /// list.</strong> Measured on .NET 8 / SChannel against loopback listeners, one arm per row:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>ConnectAsync</c> to a port nothing listens on → a BARE <c>SocketException</c>. This
+    ///     is the only arm that produces one.
+    ///   </description></item>
+    ///   <item><description>
+    ///     peer resets DURING the handshake → <c>IOException</c> wrapping a <c>SocketException</c>
+    ///     ("An existing connection was forcibly closed…"), never a bare <c>SocketException</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     no client certificate against a listener that requires one → <c>IOException</c> wrapping
+    ///     a <c>SocketException</c> — the genuine refusal this arm is looking for.
+    ///   </description></item>
+    ///   <item><description>
+    ///     peer resets mid application exchange → <c>IOException</c> wrapping a
+    ///     <c>SocketException</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     peer closes cleanly after the handshake → <c>EndOfStreamException</c> (itself an
+    ///     <c>IOException</c>).
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// <c>SocketException</c> is therefore DROPPED from the evidence filter — every post-connect
+    /// socket fault arrives wrapped, so nothing that was genuine refusal evidence is lost, which is
+    /// the risk the brief for this fix flagged. It is still CAUGHT, but as an unfinished
+    /// confirmation rather than a refusal: should some platform surface a bare one after the
+    /// connect, the safe reading is "nothing was confirmed" (a correct deployment aborts with a
+    /// legible message) rather than "the peer refused" (a false security claim).
+    /// <c>AuthenticationException</c> stays for a TLS-1.2-era listener that CAN fail the handshake
+    /// synchronously; <c>InvalidDataException</c> stays because it is this file's own verdict on a
+    /// reply that is not a clean <c>error_code = 0</c>.
     /// </para>
     /// <para>
     /// The peer's own certificate is judged by the SAME callback the first connection used, so this
@@ -631,7 +691,21 @@ internal static class SecuredEndpointProbe
         SslStream? tls = null;
         try
         {
-            await tcp.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await tcp.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is SocketException or OperationCanceledException)
+            {
+                throw Failure(
+                    name,
+                    $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine "
+                    + $"could not open a second connection to {observedAddress} to confirm it REQUIRES a "
+                    + $"client certificate: {Summarise(ex)}. That connection failed before any TLS, so it "
+                    + "says nothing about whether the endpoint demands an identity — nothing was "
+                    + "confirmed, so nothing is claimed.",
+                    ex);
+            }
 
             tls = new SslStream(
                 tcp.GetStream(), leaveInnerStreamOpen: false, BuildValidationCallback(certificates));
@@ -661,13 +735,29 @@ internal static class SecuredEndpointProbe
                 + "than assumed.",
                 ex);
         }
-        catch (Exception ex) when (ex is SocketException
-                                       or AuthenticationException
+        catch (SocketException ex)
+        {
+            // MEASURED unreachable on this stack — every post-connect socket fault arrives wrapped
+            // in an IOException (see this method's remarks) — and deliberately NOT read as a
+            // refusal if some other platform surfaces one. A bare socket fault is a transport
+            // event, not a statement about `ssl.client.auth`.
+            throw Failure(
+                name,
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the second "
+                + $"connection to {observedAddress} failed at the socket layer while confirming it "
+                + $"REQUIRES a client certificate: {Summarise(ex)}. A socket fault is not a "
+                + "certificate refusal, so nothing is claimed from it.",
+                ex);
+        }
+        catch (Exception ex) when (ex is AuthenticationException
                                        or IOException
                                        or EndOfStreamException
                                        or InvalidDataException)
         {
             // The outcome this arm is looking for: the peer refused a client with no identity.
+            // Reached only from AuthenticateAsClientAsync onwards — the connect has its own catch
+            // above — so "the one thing that changed" really is the absent client identity.
+            // EndOfStreamException is an IOException and is named for the reader, not the compiler.
             return;
         }
         finally
@@ -964,9 +1054,11 @@ internal static class SecuredEndpointProbe
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A SERVICE declaring <c>security</c> stages an <c>https://host:port</c> URL for its SECURED
-    /// endpoint (REQ-023), so the address is read straight off that URI — the probe and the step
-    /// therefore reach the same endpoint by construction.
+    /// A SERVICE declaring <c>security</c> stages its SECURED endpoint (REQ-023), in the form that
+    /// endpoint's own consumer uses: an <c>https://host:port</c> URL for a target the HTTP family
+    /// addresses, and a bare <c>host:port</c> bootstrap authority for one the Kafka families
+    /// address. Both shapes are handled below, and the probe and the step therefore reach the same
+    /// endpoint by construction whichever it is.
     /// </para>
     /// <para>
     /// A DEPENDENCY stages a connection string; for kafka that is a bare <c>host:port</c>
@@ -975,11 +1067,27 @@ internal static class SecuredEndpointProbe
     /// <c>security.endpoint</c> names a CONTAINER-side port, while the value staged here is the
     /// HOST-side published address for the dependency's own endpoint. Nothing in this release
     /// constructs a second, secured endpoint for a dependency the way REQ-023 does for a service —
-    /// measured: <c>EnvironmentMapper</c> never reads a dependency's <c>Security</c> — so a
-    /// dependency whose secured listener is on a container port other than the one its Aspire
+    /// measured (m1, fix round three; the previous wording said "<c>EnvironmentMapper</c> never
+    /// reads a dependency's <c>Security</c>", which this same commit falsified by adding REQ-016's
+    /// <c>ServerArtifactInjection.Plan(spec.Security, "dependencies", …)</c> call): the mapper
+    /// reads a dependency's <c>Security</c> only for its <c>serverArtifacts</c>, and constructs no
+    /// ENDPOINT from it — every dependency endpoint still comes from its own Aspire registration.
+    /// So a dependency whose secured listener is on a container port other than the one its Aspire
     /// resource targets is not reachable from the engine at all, and this probe fails closed
     /// against whatever IS published. That is the correct outcome (a step would fail the same
     /// way), and the diagnostic names both halves so the cause is legible.
+    /// </para>
+    /// <para>
+    /// <strong>IPv6 (n7, fix round three) — unreachable today, noted so a future fabric does not
+    /// get a misleading message.</strong> The authority split below is a <c>LastIndexOf(':')</c>,
+    /// which is correct for <c>host:port</c> and for a BRACKETED IPv6 authority's port
+    /// (<c>[::1]:9093</c> splits to <c>[::1]</c> + <c>9093</c>), but wrong for a BRACKETLESS one:
+    /// <c>fe80::1</c> with no port splits to host <c>fe80:</c> and port <c>1</c>. And the bracketed
+    /// form's host keeps its brackets, so <c>TcpClient.ConnectAsync</c> attempts a DNS lookup of
+    /// the literal text <c>[::1]</c> rather than connecting to the address. Both fail closed, with
+    /// a connect diagnostic naming the address — never a false confirmation — but the diagnostic
+    /// blames the connection rather than the parse. Nothing in this release stages an IPv6
+    /// authority: every host-published endpoint comes back as <c>localhost</c> or an IPv4 literal.
     /// </para>
     /// </remarks>
     private static bool TryResolveAddress(

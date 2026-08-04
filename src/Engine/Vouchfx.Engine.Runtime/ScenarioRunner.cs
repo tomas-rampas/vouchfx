@@ -1723,17 +1723,30 @@ public static class ScenarioRunner
         // before this, `--watch` showed a green run with no indication of which level was reached,
         // on both the build arm and the reuse arm.
         //
-        // Printed on EVERY re-run, not once per topology: the kept topology's confirmations are a
-        // property of the infrastructure this run just ran against, and each re-run's output block
-        // is read on its own. Emitted only when the suite declares security at all, so an ordinary
-        // watch session's output is unchanged. Placed before the reset+reseed below so a reset
-        // failure cannot swallow them — matching RunSuiteAsync, which prints before constructing
-        // isolation.
-        foreach (var confirmation in topology.SecurityConfirmations)
+        // Printed on EVERY re-run, not once per topology, because each re-run's output block is
+        // read on its own and a reader who cannot see the level cannot tell the two apart.
+        //
+        // n6 (peer review, fix round three): they are NOT re-measured per re-run, and they are
+        // printed BEFORE the run rather than after it, so describing them as "a property of the
+        // infrastructure this run just ran against" — as this comment previously did — over-claimed
+        // their freshness twice over. They are the build-time probe's output, replayed. The
+        // qualifying line below says so in the output itself rather than only here: a stale
+        // confirmation is only misleading if nothing tells the reader it is stale, and a watch
+        // session can hold one topology across many edits.
+        if (topology.SecurityConfirmations.Count > 0)
         {
             await output.WriteLineAsync(
-                    DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    "security: confirmed once when this topology was built, and replayed here — "
+                    + "the endpoints are not re-probed per re-run. Save a change to the "
+                    + "'environment' block to rebuild the topology and re-confirm.")
                 .ConfigureAwait(false);
+
+            foreach (var confirmation in topology.SecurityConfirmations)
+            {
+                await output.WriteLineAsync(
+                        DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
         }
 
         // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────

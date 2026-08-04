@@ -808,6 +808,18 @@ public sealed class MqPublishKafkaProvider
     {
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
 
+        // REQ-011 + REQ-023 (amended): `target` may name a kafka DEPENDENCY, staged at
+        // conn::<name>, or a declared SERVICE — the customer-supplied broker shape — staged at
+        // svc::<name>. Which one is a compile-time fact, read from the same DeclaredServices map
+        // Validate reconciled the target against, so the emitted lookup is the key the engine
+        // actually stages. This provider does NOT transform the staged value afterwards: the
+        // engine stages a Kafka-addressed target as the bare bootstrap authority librdkafka
+        // expects, and a provider rewriting that value would mean the engine staged the wrong
+        // form (REQ-023's own rule).
+        var bootstrapKey = ctx.DeclaredServices.ContainsKey(model.Target)
+            ? VarKeys.Service(model.Target)
+            : VarKeys.Connection(model.Target);
+
         // Expand the headers map into parallel name/value-template arrays.  Values are
         // emitted as RAW templates; the helper substitutes then secret-resolves each
         // at runtime, inside the guarded region.  No secret value is ever baked into
@@ -876,7 +888,7 @@ public sealed class MqPublishKafkaProvider
                     Secrets,
                     Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
-                    {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
+                    {{JsonSerializer.Serialize(bootstrapKey)}},
                     {{JsonSerializer.Serialize(model.Target)}},
                     {{topicTemplateLiteral}},
                     {{keyTemplateLiteral}},

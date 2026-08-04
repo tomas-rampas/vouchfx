@@ -112,7 +112,9 @@ public sealed class SecurityProfileRegistryTests
     /// outright (REQ-012 as narrowed), so no dependency kind is reachable from it.
     /// <c>KafkaSecurity_Helpers</c> serves <c>mq-publish.kafka</c>/<c>mq-expect.kafka</c>, which
     /// accept a <c>kafka</c> dependency OR a declared service (REQ-011), so both kinds are listed
-    /// even though the service form stages no connection string yet and fails closed at run time.
+    /// — and since REQ-023's amendment both are reachable at run time too: a service target is
+    /// staged as the bootstrap authority those clients consume and both providers emit the
+    /// <c>svc::</c> key for it.
     /// </remarks>
     public static TheoryData<string, string, string[]> EmittedSecurityHelpers() => new()
     {

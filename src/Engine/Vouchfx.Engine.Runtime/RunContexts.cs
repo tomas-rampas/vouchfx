@@ -131,6 +131,12 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
         new Dictionary<string, Vouchfx.Sdk.CaptureExpr>(StringComparer.Ordinal);
 
     /// <summary>
+    /// An empty declared-service map used as the default when a caller supplies none.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> s_emptyServices =
+        new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Initialises a new <see cref="RunCompileContext"/> with the given step
     /// identifier, suite namespace, capture map, and suite directory.
     /// </summary>
@@ -147,17 +153,26 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
     /// The step's <c>capture</c> map (varName → <see cref="Vouchfx.Sdk.CaptureExpr"/>).
     /// Pass <see langword="null"/> or omit to use an empty dictionary.
     /// </param>
+    /// <param name="declaredServices">
+    /// The suite's declared-service map — the SAME instance
+    /// <c>RunProjectContext.DeclaredServices</c> exposed to the step's own <c>Validate</c>, so
+    /// a provider that reconciled its <c>target</c> at validate time and one that picks the
+    /// <c>Vars</c> key for it at emit time read one map, never two derivations of it. Pass
+    /// <see langword="null"/> or omit for the empty map.
+    /// </param>
     public RunCompileContext(
         string stepId,
         string suiteNamespace,
         string suiteDirectory,
-        IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr>? captures = null)
+        IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr>? captures = null,
+        IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>? declaredServices = null)
     {
         StepId = stepId;
         SuiteNamespace = suiteNamespace;
         SuiteDirectory = suiteDirectory;
         CaptureExprs = captures ?? s_empty;
         Captures = ProjectExpressions(CaptureExprs);
+        DeclaredServices = declaredServices ?? s_emptyServices;
     }
 
     /// <inheritdoc />
@@ -174,6 +189,9 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr> CaptureExprs { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <summary>
     /// Projects a format-aware capture map to the back-compatible expression-string

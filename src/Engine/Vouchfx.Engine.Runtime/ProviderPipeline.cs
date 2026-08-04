@@ -304,6 +304,33 @@ internal static class ProviderPipeline
                 Failure: securityProfileWiringFailure);
         }
 
+        // REQ-023 (amended 2026-08-04): one target, one staged form. A target addressed by BOTH
+        // the HTTP family (which consumes an https:// URL) and the Kafka families (which consume
+        // a bare host:port bootstrap authority) cannot be staged correctly for both, and picking a
+        // winner would hand the loser a value it must transform to use — the thing that
+        // requirement forbids — silently, at run time. Rejected here, at the same pre-topology
+        // stage as the two checks above and for the same reason: it reads only the raw steps and
+        // needs nothing from a bound model. This narrows nothing that ever worked; before REQ-023
+        // was amended, a Kafka step naming a service failed as an EnvironmentError every time.
+        var protocolConflicts = SuiteProtocolTargets.BothHttpAndKafkaSpeaking(new[] { (ScenarioAst?)ast });
+        if (protocolConflicts.Count > 0)
+        {
+            return new PipelineResult(
+                Assembled: null,
+                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+                CompileReferencePaths: Array.Empty<string>(),
+                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+                Failure: new ValidationFailure(
+                    $"Target(s) {string.Join(", ", protocolConflicts.Select(n => $"'{n}'"))} are "
+                    + "addressed by both an HTTP-family step (http.rest / http.soap / "
+                    + "metrics-assert.prometheus) and a Kafka-family step (mq-publish.kafka / "
+                    + "mq-expect.kafka). The engine stages one endpoint value per target, in the "
+                    + "form that target's own clients consume — an 'https://host:port' URL for the "
+                    + "HTTP family, a bare 'host:port' bootstrap for the Kafka families — and one "
+                    + "string cannot be both. Declare the broker and the HTTP API as two separate "
+                    + "entries under environment.services, each addressed by one family."));
+        }
+
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
         // IHostResourceContributor contribution (M5 fix, fix round 2 — replaces the
         // previous speculative pre-pass that called Bind a SECOND time per step, purely
@@ -354,7 +381,16 @@ internal static class ProviderPipeline
             // (varName → CaptureExpr) into the compile context so providers can emit
             // capture logic into the CSX block.  The context exposes both the typed
             // CaptureExprs view and the back-compatible expression-string Captures view.
-            var compileCtx = new RunCompileContext(node.Id, suiteNamespace, resolvedSuiteDirectory, node.Capture);
+            // REQ-023 (amended): DeclaredServices reaches Emit as well as Validate, from the SAME
+            // projectCtx instance — a provider whose target may name a dependency or a service
+            // (mq-publish.kafka / mq-expect.kafka, REQ-011) decides WHICH Vars key to emit here,
+            // at compile time, rather than guessing at run time.
+            var compileCtx = new RunCompileContext(
+                node.Id,
+                suiteNamespace,
+                resolvedSuiteDirectory,
+                node.Capture,
+                projectCtx.DeclaredServices);
 
             // ── Validate ──────────────────────────────────────────────────────
             var validResult = ReflectValidate(instance, model, projectCtx);

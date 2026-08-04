@@ -212,8 +212,15 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <param name="kafkaSpeakingTargets">
     /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
     /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>.
-    /// They earn REQ-005's application-layer round trip even when declared as a SERVICE — the shape
-    /// REQ-011 exists for. <see langword="null"/> means "no Kafka step targets anything here", which
+    /// <para>
+    /// It decides TWO things, from one inference, so the two cannot disagree. They earn REQ-005's
+    /// application-layer round trip even when declared as a SERVICE — the shape REQ-011 exists for.
+    /// And (REQ-023, amended 2026-08-04) a SERVICE in this set is staged at <c>svc::&lt;name&gt;</c>
+    /// as the bare <c>host:port</c> bootstrap authority a Kafka client consumes, rather than the
+    /// scheme-carrying URL the HTTP family consumes — the value a step reads, not merely the level
+    /// a confirmation claims.
+    /// </para>
+    /// <see langword="null"/> means "no Kafka step targets anything here", which
     /// is correct for a suite with no Kafka steps and for every caller that predates this parameter.
     /// </param>
     /// <param name="cancellationToken">
@@ -285,7 +292,13 @@ public sealed class SuiteTopology : IAsyncDisposable
         // because REQ-016's server-artefact paths resolve against the same base, and the two must
         // not be able to disagree: one directory, computed once, used by both.
         var resolvedSeedBaseDirectory = seedBaseDirectory ?? Directory.GetCurrentDirectory();
-        var mapped = EnvironmentMapper.Map(environment, resolvedSeedBaseDirectory);
+
+        // kafkaSpeakingTargets reaches Map as well as the probe (REQ-023, amended): it decides the
+        // FORM a service endpoint is staged in, not only the confirmation level the probe claims.
+        // One set, computed once by the caller from the suite's own steps, so the value a Kafka
+        // step reads and the level the probe reports can never disagree about what a target speaks.
+        var kafkaTargets = kafkaSpeakingTargets ?? EmptyTargets;
+        var mapped = EnvironmentMapper.Map(environment, resolvedSeedBaseDirectory, kafkaTargets);
 
         // ----------------------------------------------------------------
         // Step 2: Start the headless Aspire host.
@@ -429,7 +442,7 @@ public sealed class SuiteTopology : IAsyncDisposable
                     environment,
                     discoveredServices,
                     securityConfiguration ?? NullSecurityConfigurationAccessor.Instance,
-                    kafkaSpeakingTargets ?? EmptyTargets,
+                    kafkaTargets,
                     perTargetTimeout: gateTimeout,
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
@@ -666,35 +679,13 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// configuration.
     /// </summary>
     /// <remarks>
-    /// Reads the same declaration <c>SecuredEndpointProbe.EnumerateSecuredTargets</c> walks, so the
-    /// guard fires for exactly the suites the probe would otherwise probe with nothing in hand.
+    /// Reads the same declaration the probe walks — literally the same code (m5, fix round three):
+    /// both are <see cref="SecuredTargets"/>, so the guard fires for exactly the suites the probe
+    /// would otherwise probe with nothing in hand, and that agreement is now structural rather
+    /// than asserted in prose.
     /// </remarks>
-    private static bool DeclaresSecurity(EnvironmentSpec? environment)
-    {
-        if (environment?.Services is { } services)
-        {
-            foreach (var (_, spec) in services)
-            {
-                if (spec.Security is not null)
-                {
-                    return true;
-                }
-            }
-        }
-
-        if (environment?.Dependencies is { } dependencies)
-        {
-            foreach (var (_, spec) in dependencies)
-            {
-                if (spec.Security is not null)
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    private static bool DeclaresSecurity(EnvironmentSpec? environment) =>
+        SecuredTargets.Any(environment);
 
     /// <summary>
     /// Disposes the inner <see cref="HeadlessTopology"/>, stopping all managed containers

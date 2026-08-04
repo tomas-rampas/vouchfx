@@ -8,6 +8,7 @@ class Vouchfx.Sdk.Testing.Contexts.TestCompileContext : Vouchfx.Sdk.ICompileCont
   .ctor(System.String stepId, System.String suiteNamespace, System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> captureExprs, System.String suiteDirectory)
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Captures { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> CaptureExprs { get }
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get; init }
   property System.String StepId { get }
   property System.String SuiteDirectory { get }
   property System.String SuiteNamespace { get }
