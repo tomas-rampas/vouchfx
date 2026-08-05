@@ -128,6 +128,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
+using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqExpect.Kafka;
@@ -185,6 +187,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// The material is short-lived by construction (the generated CA and leaves are valid for two
     /// days and one day respectively), and the key files are written 0600 where the platform has
     /// POSIX permissions — so this is defence in depth on a test fixture, not the only control.
+    /// </para>
+    /// <para>
+    /// Note the reach this acquired when the absent-material rows landed: those two are NOT
+    /// docker-gated, so an ordinary unit run — the one every contributor and every CI job makes —
+    /// now writes private keys into the system temp directory where before only a docker-gated run
+    /// did. Judged acceptable on the two controls above (throwaway per-run material, 0600 where
+    /// the platform allows it, swept at the next class init), and recorded because it is a change
+    /// in blast radius rather than a change in kind.
     /// </para>
     /// <para>
     /// Every failure is swallowed: a directory another process still holds open is not a reason to
@@ -251,7 +261,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         Assert.Contains(BrokerName, drill.AbortDetail, StringComparison.Ordinal);
 
         // ── Zero steps executed ───────────────────────────────────────────────────────────────
-        AssertNoStepRan(drill);
+        AssertNoStepRan(drill, NetworkArm.Connect | NetworkArm.Handshake);
 
         // ── The trap was real: the broker WAS serving TLS on the port the suite did not name ───
         // Without this the negative proves nothing — a broker with no SSL listener at all would
@@ -287,7 +297,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// actually fail.
     /// </para>
     /// </remarks>
-    private static void AssertNoStepRan(DrillOutcome drill)
+    private static void AssertNoStepRan(DrillOutcome drill, NetworkArm expectedArm)
     {
         // The abort came from REQ-005's PROBE, not from the pre-topology security preflight. Worth
         // pinning separately, because `SecurityConfirmationFailed` is set by BOTH — a preflight
@@ -296,9 +306,10 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // see. `SecurityConfirmation` is OrchestrationErrorKind's own name for the probe's arm.
         Assert.Equal("SecurityConfirmation", drill.AbortKind);
 
-        // …and from a network arm of it, so TLS was actually attempted. See
-        // AssertAbortedAtANetworkArm for the five pre-network arms this rules out.
-        AssertAbortedAtANetworkArm(drill.AbortDetail);
+        // …and from the network arm THIS row's edge belongs to, so TLS was actually attempted and
+        // the row has not drifted into a different edge's shape. See AssertAbortedAtANetworkArm
+        // for the five pre-network arms this rules out and why the arm set is per-row.
+        AssertAbortedAtANetworkArm(drill.AbortDetail, expectedArm);
 
         Assert.NotEmpty(drill.Result.Buffer);
         Assert.Equal(0, CountEvents(drill.Result.Buffer, EventTypes.StepStarted));
@@ -333,7 +344,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         Assert.Contains("on endpoint '9093'", drill.AbortDetail, StringComparison.Ordinal);
 
         // ── Zero steps executed ───────────────────────────────────────────────────────────────
-        AssertNoStepRan(drill);
+        AssertNoStepRan(drill, NetworkArm.Connect | NetworkArm.Handshake);
 
         // ── The artefact landed where it was DECLARED, and not where the broker looks ─────────
         // Both halves matter: the first shows REQ-016 did its job faithfully (this is not a failed
@@ -344,6 +355,114 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // ── And the broker really came up with no SSL listener ────────────────────────────────
         AssertListening(drill.Evidence, 9092);
         AssertNotListening(drill.Evidence, 9093);
+    }
+
+    /// <summary>
+    /// The declared client identity EXISTS but was issued by an unrelated authority. The existence
+    /// check passes, the topology comes up, and the LIVE broker refuses the presented certificate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Only a real broker can produce this row, and only a broker that DEMANDS an
+    /// identity.</strong> A peer that never asks for a certificate refuses nothing: against a
+    /// broker with client auth off, this suite's foreign certificate would be IGNORED and the
+    /// round trip would complete. The run would still not pass — the probe's anonymous-client
+    /// differential would then also complete and it fails CLOSED, aborting with "TLS wearing the
+    /// word 'mutual'" — but it would abort for the broker's misconfiguration, not for the
+    /// identity, and this row would be measuring something other than what it claims. That is why
+    /// the fixture's positive control asserts, on the same bed and the same trust store, that the
+    /// broker refuses an anonymous client: it is what makes THIS row's abort attributable to the
+    /// presented identity rather than to a broker that demands nothing.
+    /// </para>
+    /// <para>
+    /// The suite is byte-identical to the positive control's. The only difference on disk is the
+    /// CONTENT of the two client files.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task ClientIdentityFromAForeignAuthority_IsRefusedByTheBrokerBeforeAnyStep()
+    {
+        var drill = await RunDrillAsync(
+            "foreign-client-identity",
+            securedEndpoint: "9093",
+            keystoreTarget: CheckedKeystorePath,
+            afterMaterialise: TestCertificateAuthority.OverwriteWithForeignClientIdentity);
+
+        Assert.Equal(Verdict.EnvironmentError, drill.Result.Verdict);
+        Assert.True(drill.Result.SecurityConfirmationFailed);
+        Assert.Contains(BrokerName, drill.AbortDetail, StringComparison.Ordinal);
+        Assert.Contains("on endpoint '9093'", drill.AbortDetail, StringComparison.Ordinal);
+
+        AssertNoStepRan(drill, NetworkArm.RoundTrip);
+
+        // ── THE DISCRIMINATOR FOR THIS EDGE, and it is what separates it from the other two ───
+        // The other two negatives fail because TLS was ABSENT — a plaintext listener, or no
+        // listener. This one must fail because TLS was PRESENT and the peer rejected who we said
+        // we were. The probe reports exactly that shape: the handshake COMPLETED, and the broker
+        // then declined to answer over it.
+        //
+        // The refusal half carries the discrimination on its own: "did not answer a Kafka
+        // ApiVersions request" has exactly ONE throw site in the probe, and it sits after
+        // AuthenticateAsClientAsync returned — so it is unreachable unless TLS was served. A
+        // fixture whose SSL listener had disappeared produces the handshake-arm message instead,
+        // which this can never match, and AssertListening(9093) below fails independently.
+        //
+        // The completion half is therefore BELT-AND-BRACES, not load-bearing: it adds no
+        // discriminating power the line below lacks, and it is kept only because it states the
+        // edge's shape in the assertion rather than only in this comment.
+        Assert.Contains("completed", drill.AbortDetail, StringComparison.Ordinal);
+        Assert.Contains(
+            "did not answer a Kafka ApiVersions request",
+            drill.AbortDetail,
+            StringComparison.Ordinal);
+
+        // The broker really was serving TLS on the port the suite named — the same listener the
+        // positive control authenticates against.
+        AssertListening(drill.Evidence, 9093);
+
+        // ── AND THE BROKER'S OWN ACCOUNT OF IT ────────────────────────────────────────────────
+        // Everything above is the engine reporting on itself. These two read the peer's record:
+        // the broker refused a TLS peer at the certificate layer during this run, and it never
+        // authenticated the foreign principal. Together they prove the decision was the BROKER's
+        // and that it was taken AT PROBE TIME — a start-up capture could show neither — and they
+        // hold whichever TLS version negotiated, where the engine-side arm above does not.
+        AssertBrokerRefusedAPeer(drill.Evidence);
+        AssertBrokerAuthenticated(
+            drill.Evidence, TestCertificateAuthority.ForeignClientSubjectCommonName, expected: false);
+    }
+
+    /// <summary>
+    /// The foreign-identity suite as a plain <c>vouchfx run</c> with no gating flags.
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task ForeignClientIdentity_PlainVouchfxRunWithNoGatingFlags_ExitsWithTheSecurityConfirmationCode()
+    {
+        var cli = ResolveCliAssembly();
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            "foreign-client-identity-cli",
+            securedEndpoint: "9093",
+            keystoreTarget: CheckedKeystorePath);
+        TestCertificateAuthority.OverwriteWithForeignClientIdentity(suiteDirectory);
+
+        var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var (exitCode, output) = await RunCliAsync(cli, "run", suite, cts.Token);
+
+        _output.WriteLine($"exit code: {exitCode}");
+        _output.WriteLine("── CLI output ──\n" + output);
+
+        // 3, not the 4 the ABSENT variant exits with: this one reached a running topology and
+        // aborted at the probe with EnvironmentError, where that one never built a topology and
+        // stayed Inconclusive. Same carve-out, same flaglessness, different verdicts — so
+        // different codes, each its own verdict's.
+        Assert.Equal(3, exitCode);
+        Assert.Contains("SecurityConfirmation", output, StringComparison.Ordinal);
+        Assert.Contains(BrokerName, output, StringComparison.Ordinal);
+        Assert.Contains("on endpoint '9093'", output, StringComparison.Ordinal);
+        AssertAbortedAtANetworkArm(output, NetworkArm.RoundTrip);
+        Assert.DoesNotContain($"step '{StepId}'", output, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -393,6 +512,47 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             drill.Diagnostics,
             StringComparison.Ordinal);
 
+        // ── The handshake itself: a TLS session was negotiated and the declared identity was
+        //    CONFIGURED ON it. The sentence above is about the ROUND TRIP; these two fragments are
+        //    about the HANDSHAKE, and they are separate facts. A confirmation reporting
+        //    `observed None` or `client identity none declared` would still be a confirmation —
+        //    just not this one.
+        //
+        //    BELT-AND-BRACES: both are entailed by the round-trip sentence above, which only the
+        //    mtls AuthenticatedRoundTrip branch emits and which is unreachable without a completed
+        //    handshake and a resolved identity. Kept because they name the two facts separately,
+        //    so a future rewording of that one sentence cannot quietly drop either.
+        //
+        //    And note what `client identity resolved` does NOT say: it reports that a certificate
+        //    was RESOLVED and configured on the handshake, never that the platform put it on the
+        //    wire — measured on the foreign-identity row, where SChannel presented nothing and this
+        //    same fragment would still have been printed. The broker-side assertion at the end of
+        //    this test is what closes that gap.
+        Assert.Contains("; observed Tls", drill.Diagnostics, StringComparison.Ordinal);
+        Assert.Contains(", client identity resolved", drill.Diagnostics, StringComparison.Ordinal);
+
+        // ── …and it was validated against the anchor the SUITE declared, not the platform's.
+        //    Asserted on the suite text because the declaration is what carries it and no run
+        //    output names it.
+        //
+        //    The anchor is load-bearing, and the mechanism is what makes it so: with no `caCert`
+        //    declared the probe installs NO validation callback and the platform's own verdict
+        //    stands — and this bed's server certificate is issued by a per-run private CA no
+        //    platform trust store has ever heard of, so that verdict is a rejection. Drop the
+        //    field and AuthenticateAsClientAsync throws: no handshake, no confirmation line, no
+        //    step, and the security flag set. Nearly every other assertion in this test breaks
+        //    with it. The negative of this control is not a different message — it is no
+        //    handshake, which is also why a handshake that completes AT ALL is one the declared
+        //    file validated.
+        //
+        //    So this assertion is a CHANGE DETECTOR on the entailment's premise, not independent
+        //    evidence: it does not prove the chain was checked — the completed handshake does that
+        //    — it fails loudly if someone removes the field the entailment rests on.
+        Assert.Contains(
+            $"caCert: {TestCertificateAuthority.CaFileName}",
+            File.ReadAllText(Path.Combine(drill.SuiteDirectory, "drill.e2e.yaml")),
+            StringComparison.Ordinal);
+
         // ── And the run reached its step, which is exactly what the negatives did not ─────────
         // The step's own outcome is NOT asserted: see this file's header for the advertised-listener
         // limit that bounds it. What is asserted is the differential the drills are about — and it
@@ -413,6 +573,192 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // ── Both listeners were up, so the fixture is the EDGE-004 shape with the right port ──
         AssertListening(drill.Evidence, 9092);
         AssertListening(drill.Evidence, 9093);
+
+        // ── The BROKER's own account: it authenticated the declared client identity by name. ──
+        // This is the assertion that makes "the handshake completed presenting the declared
+        // identity" a fact about the PEER rather than a fact about what this side configured — and
+        // measured, it is the one thing SslStream cannot tell you: on the identity row above the
+        // platform silently presented nothing, and reported the same `client identity resolved`
+        // this row does. Only the broker knows who it authenticated.
+        AssertBrokerAuthenticated(
+            drill.Evidence, TestCertificateAuthority.ClientSubjectCommonName, expected: true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // The two transport negative controls: the declared client identity ABSENT, and PRESENT BUT
+    // ISSUED BY SOMEONE ELSE. Neither may let the passing suite pass, and each is caught at a
+    // different stage — which is the whole point of running both.
+    //
+    //   ABSENT           → the host-side preflight existence check, at VALIDATION time. No
+    //                      container is ever created, so this variant needs no Docker at all.
+    //   PRESENT-INVALID  → the existence check passes; the LIVE broker refuses the identity during
+    //                      the probe's own exchange. Only a running broker can produce this.
+    //
+    // Together they say: the engine refuses to proceed at all when it cannot authenticate at the
+    // transport layer, whichever way the material is wrong.
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The declared <c>clientCert</c> file is deleted. The suite must be refused before any
+    /// topology work, and no container may be created.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Driven through <c>RunSuiteAsync</c>, not the per-scenario core the docker rows
+    /// use</strong> — because that is the seam the CLI's own <c>run</c> takes, and this variant is
+    /// entirely about what happens BEFORE a topology exists. It is also the seam carrying the
+    /// all-early-verdict guard: when every scenario has a pre-topology verdict, the suite completes
+    /// without the topology being built at all.
+    /// </para>
+    /// <para>
+    /// <strong>NOT docker-gated, and that is the claim.</strong> This row is in the unit suite
+    /// because a correct engine never reaches Docker here. A regression that started a topology is
+    /// caught by the VERDICT assertion, not by the container snapshot: THIS suite is a single
+    /// scenario whose only verdict is a pre-topology one, so it takes <c>RunSuiteAsync</c>'s
+    /// all-early-verdict guard into <c>CompleteWithoutTopologyAsync</c>, and an engine that built a
+    /// topology instead would have to reach the probe, whose failures are <c>EnvironmentError</c>
+    /// rather than the <c>Inconclusive</c> asserted below. The snapshot cannot catch it — teardown
+    /// removes the container before the run returns (measured, and recorded at the container
+    /// watcher), so a regressed engine that built, probed, failed and tore down leaves before and
+    /// after equal.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AbsentClientCertificate_IsRefusedByThePreflightWithNoTopologyWork()
+    {
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            "absent-client-cert", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
+
+        // The ONE difference from the passing suite: its declared client certificate is gone.
+        File.Delete(Path.Combine(suiteDirectory, TestCertificateAuthority.ClientCertFileName));
+
+        var yaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), s_registry);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var containersBefore = await ListBrokerContainersAsync(cts.Token);
+
+        var scenarioNames = new List<string> { "absent-client-cert" };
+        var diagnostics = new StringWriter();
+        var result = await ScenarioRunner.RunSuiteAsync(
+            new[] { ast },
+            scenarioNames,
+            new[] { yaml },
+            s_providerAssemblies,
+            AppHostAssemblyName,
+            diagnostics,
+            seedBaseDirectory: suiteDirectory,
+            scenarioBaseDirectories: new string?[] { suiteDirectory },
+            cancellationToken: cts.Token);
+
+        var containersAfter = await ListBrokerContainersAsync(cts.Token);
+        var output = diagnostics.ToString();
+        _output.WriteLine($"verdict={result.Verdict} securityConfirmationFailed={result.SecurityConfirmationFailed}");
+        _output.WriteLine("── diagnostics ──\n" + output);
+
+        // ── The classification: a pre-topology security rejection ─────────────────────────────
+        // Inconclusive, NOT EnvironmentError: the scenario never ran, and an authoring error is not
+        // an infrastructure fault. The flag is what lifts it off exit 0 all the same.
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+        Assert.True(
+            result.SecurityConfirmationFailed,
+            "a declared-but-missing client certificate is a security rejection, so the flagless "
+            + "run must not exit 0 — see this test's exit-code derivation below.");
+
+        // ── NO TOPOLOGY WORK, argued structurally and then corroborated ───────────────────────
+        // The structural half is the stronger one, and it is scoped to THIS suite's shape rather
+        // than asserted as an engine invariant. "Every Inconclusive-with-the-flag result is
+        // pre-topology" is FALSE in general: a multi-scenario suite that builds a topology and
+        // completes normally still carries the flag forward from a scenario that failed preflight,
+        // and the parallel runner aggregates it the same way. What holds here is narrower and
+        // sufficient: this is a SINGLE scenario whose one verdict is pre-topology, so RunSuiteAsync
+        // takes its all-early-verdict guard and returns through CompleteWithoutTopologyAsync
+        // without building anything — and the only door that reaches a running topology, the
+        // confirmation probe, yields EnvironmentError rather than the Inconclusive asserted above.
+        // The message below says which pre-topology door it came through.
+        //
+        // The general form of that claim has now been wrong three times on this branch, in this
+        // file and in the engine's own comments; it is written scoped here for that reason.
+        Assert.Contains("clientCert", output, StringComparison.Ordinal);
+        Assert.Contains(
+            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
+            output,
+            StringComparison.Ordinal);
+
+        // The corroborating half, and it is WEAKER than it looks in two ways worth naming: on a
+        // host with no Docker at all both snapshots are empty and this compares nothing, and even
+        // with Docker it cannot see a topology that was built and torn down inside the call (see
+        // this test's own remarks). It is a cheap second opinion on the structural argument above,
+        // never the proof — what it does catch is a container LEFT BEHIND.
+        Assert.Equal(containersBefore, containersAfter);
+    }
+
+    /// <summary>
+    /// The same absent-material suite as a plain <c>vouchfx run</c> with no gating flags, and as
+    /// <c>vouchfx validate</c> — the two invocations an author actually makes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The expected code is DERIVED, not assumed, and the derivation is a committed
+    /// measurement rather than an argument made here.</strong> This door produces
+    /// <c>Verdict.Inconclusive</c> with the security signal set (asserted by the row above), and
+    /// <c>Vouchfx.Cli.Tests.SecurityConfirmationExitCodeTests.
+    /// FromVerdict_SecurityPreflightRejection_ExitsInconclusiveWithoutTheFlag</c> pins
+    /// <c>ExitCodes.FromVerdict(Verdict.Inconclusive, failOnEnvironmentError: false,
+    /// failOnInconclusive: false, securityConfirmationFailed: true) == ExitCodes.Inconclusive</c>.
+    /// So the code is <b>4</b>, and it is NOT the 3 the two probe-failure drills in this file
+    /// expect: those abort with <c>EnvironmentError</c> from a running topology, this one never
+    /// builds a topology at all. Two security rejections, two different codes, each keeping the
+    /// code its own verdict names — which is exactly the property the carve-out was written to
+    /// preserve, and the reason assuming 3 here would have been wrong.
+    /// </para>
+    /// <para>
+    /// Not docker-gated, for the same reason as the row above.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AbsentClientCertificate_PlainVouchfxRunAndValidate_BothRefuseWithTheInconclusiveCode()
+    {
+        var cli = ResolveCliAssembly();
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            "absent-client-cert-cli", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
+        File.Delete(Path.Combine(suiteDirectory, TestCertificateAuthority.ClientCertFileName));
+
+        var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+        var containersBefore = await ListBrokerContainersAsync(cts.Token);
+
+        var (runExit, runOutput) = await RunCliAsync(cli, "run", suite, cts.Token);
+        _output.WriteLine($"`run` exit code: {runExit}");
+        _output.WriteLine("── run output ──\n" + runOutput);
+
+        Assert.Equal(4, runExit);
+        Assert.Contains("clientCert", runOutput, StringComparison.Ordinal);
+        Assert.Contains(
+            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
+            runOutput,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain($"step '{StepId}'", runOutput, StringComparison.Ordinal);
+
+        // The author-facing half: the same fault is reachable without running anything, which is
+        // what makes it a VALIDATION-time check rather than a run-time one.
+        var (validateExit, validateOutput) = await RunCliAsync(cli, "validate", suite, cts.Token);
+        _output.WriteLine($"`validate` exit code: {validateExit}");
+        _output.WriteLine("── validate output ──\n" + validateOutput);
+
+        // 4, asserted exactly: `validate`'s code for an invalid document is deterministic, and this
+        // test's own name promises a number. It is NOT the carve-out's doing — `validate` never
+        // reaches a verdict to carve out of; the two invocations agreeing on 4 here is the
+        // taxonomy's Inconclusive code being reached by two different routes.
+        Assert.Equal(4, validateExit);
+        Assert.Contains(
+            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
+            validateOutput,
+            StringComparison.Ordinal);
+
+        var containersAfter = await ListBrokerContainersAsync(cts.Token);
+        Assert.Equal(containersBefore, containersAfter);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -473,7 +819,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var (exitCode, output) = await RunCliAsync(cli, suite, cts.Token);
+        var (exitCode, output) = await RunCliAsync(cli, "run", suite, cts.Token);
 
         _output.WriteLine($"exit code: {exitCode}");
         _output.WriteLine("── CLI output ──\n" + output);
@@ -531,7 +877,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         _output.WriteLine($"row '{row}': {cli} run {suite}");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var (exitCode, output) = await RunCliAsync(cli, suite, cts.Token);
+        var (exitCode, output) = await RunCliAsync(cli, "run", suite, cts.Token);
 
         _output.WriteLine($"exit code: {exitCode}");
         _output.WriteLine("── CLI output ──\n" + output);
@@ -554,7 +900,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // AssertAbortedAtANetworkArm. Applied to the whole output here, where the in-process rows
         // apply it to the decoded event detail: this path renders the message to the terminal
         // unescaped, so the phrase appears literally.
-        AssertAbortedAtANetworkArm(output);
+        AssertAbortedAtANetworkArm(output, NetworkArm.Connect | NetworkArm.Handshake);
 
         // And no step ran. Matched on the terminal renderer's own step line rather than on the bare
         // step id, because the id `publish` also occurs inside the phrase "host-published proxy" in
@@ -620,7 +966,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// </para>
     /// </remarks>
     private static async Task<(int ExitCode, string Output)> RunCliAsync(
-        string cliAssembly, string suitePath, CancellationToken cancellationToken)
+        string cliAssembly, string verb, string suitePath, CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -634,9 +980,9 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         };
 
         // NO --fail-on-env-error and NO --fail-on-inconclusive: the flagless invocation is the
-        // whole of what REQ-018 and both edges specify.
+        // whole of what the security-confirmation carve-out and both edges specify.
         startInfo.ArgumentList.Add(cliAssembly);
-        startInfo.ArgumentList.Add("run");
+        startInfo.ArgumentList.Add(verb);
         startInfo.ArgumentList.Add(suitePath);
 
         using var process = Process.Start(startInfo)!;
@@ -681,7 +1027,10 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// (measured: the abort travels as an <c>environment-error</c> EVENT, not as writer output).
     /// </param>
     /// <param name="Evidence">The container capture.</param>
-    private sealed record DrillOutcome(ScenarioCoreResult Result, string Diagnostics, string Evidence)
+    /// <param name="SuiteDirectory">The materialised suite this row ran, retained so a test can
+    /// assert on the declaration itself and not only on the run's output.</param>
+    private sealed record DrillOutcome(
+        ScenarioCoreResult Result, string Diagnostics, string Evidence, string SuiteDirectory)
     {
         /// <summary>
         /// The <c>environment-error</c> event line, which is where the probe's abort message
@@ -750,26 +1099,171 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// nothing about what the probe did.
     /// </para>
     /// <para>
-    /// <strong>Why a disjunction and not one arm.</strong> Which of the two fires is a property of
-    /// the port-publishing layer, not of the edge: measured against this fixture, a container
-    /// runtime's forwarding proxy ACCEPTS on the host whether or not anything listens behind it,
-    /// so an unsecured broker fails at the handshake; a target reached with no proxy in front of it
-    /// would fail at the connect. Pinning either one alone would make the drill a test of the
-    /// runtime's port publishing.
+    /// <strong>Why a disjunction and not one arm.</strong> Which arm fires is a property of the
+    /// deployment, not of the edge. Measured against this fixture: a container runtime's forwarding
+    /// proxy ACCEPTS on the host whether or not anything listens behind it, so an unsecured broker
+    /// fails at the HANDSHAKE where a directly-reached target would fail at the CONNECT; and a
+    /// broker that serves TLS but refuses the presented identity gets past both and fails at the
+    /// ROUND TRIP. Pinning any one alone would make the drill a test of the deployment shape.
     /// </para>
     /// <para>
-    /// Both texts are verified against the probe's own two throw sites, whose runtime messages read
-    /// <c>…, but the TLS handshake against &lt;address&gt; failed: …</c> and
-    /// <c>…, but the engine could not connect to &lt;address&gt;: …</c>.
+    /// <strong>The third arm was added by measurement, and its absence was a live defect in this
+    /// helper.</strong> The foreign-identity row failed here on its first run — the engine
+    /// behaving exactly as specified — because the round-trip arm's message is framed differently
+    /// from the other two: it reports what SUCCEEDED before saying what did not
+    /// (<c>…; the TLS handshake against &lt;address&gt; completed, but the broker did not
+    /// answer …</c>), so neither of the original two substrings appears in it. Two arms was a
+    /// statement about the two edges that existed when it was written, not about the probe.
+    /// </para>
+    /// <para>
+    /// Admitting the round-trip arm does not weaken the transport-absent rows that also call this.
+    /// Reaching it means a TLS session was ESTABLISHED, which a plaintext listener and an absent
+    /// listener cannot do — and that alone carries the conclusion. It does NOT additionally mean
+    /// the endpoint answered as a broker: the arm fires precisely when the endpoint did not, and
+    /// the probe's own header records a measured non-broker (nginx over TLS) reaching it. Both
+    /// transport-absent rows also pin their own endpoint, and the unsecured one the container's
+    /// listener table besides.
+    /// </para>
+    /// <para>
+    /// All three texts are verified against the probe's own throw sites, whose runtime messages
+    /// read <c>…, but the engine could not connect to &lt;address&gt;: …</c>,
+    /// <c>…, but the TLS handshake against &lt;address&gt; failed: …</c>, and
+    /// <c>…; the TLS handshake against &lt;address&gt; completed, but the broker did not answer a
+    /// Kafka ApiVersions request over it: …</c>. Only the probe's OWN framing is matched, never the
+    /// platform exception text it quotes: that varies run to run for one and the same cause —
+    /// measured here as "An established connection was aborted by the software in your host
+    /// machine", where the probe's own header records "The decryption operation failed" for the
+    /// same refusal.
     /// </para>
     /// </remarks>
-    private static void AssertAbortedAtANetworkArm(string detail)
+    private static void AssertAbortedAtANetworkArm(string detail, NetworkArm expected)
     {
+        var matched = NetworkArm.None;
+
+        if (detail.Contains("but the engine could not connect to", StringComparison.Ordinal))
+        {
+            matched |= NetworkArm.Connect;
+        }
+
+        if (detail.Contains("but the TLS handshake against", StringComparison.Ordinal))
+        {
+            matched |= NetworkArm.Handshake;
+        }
+
+        if (detail.Contains("did not answer a Kafka ApiVersions request", StringComparison.Ordinal))
+        {
+            matched |= NetworkArm.RoundTrip;
+        }
+
         Assert.True(
-            detail.Contains("but the TLS handshake against", StringComparison.Ordinal)
-            || detail.Contains("but the engine could not connect to", StringComparison.Ordinal),
-            "the abort did not come from either of the probe's network arms, so no TLS was "
-            + $"attempted and this row measured nothing about the endpoint. Detail: {detail}");
+            matched != NetworkArm.None && (matched & ~expected) == NetworkArm.None,
+            $"expected this row to abort at {expected} but it aborted at {matched}. A row that "
+            + "moves to a different arm is not a row that still measures its own edge. Detail: "
+            + detail);
+    }
+
+    /// <summary>
+    /// Which arm of the probe a row's abort is allowed to come from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Per-row rather than shared, and the reason is a live hole the shared version had.
+    /// </strong> A single three-arm disjunction admits any arm for any row, so a one-token drift in
+    /// this fixture — mapping 9092 to SSL in the protocol map — would move the plaintext row from
+    /// the handshake arm to the round-trip arm, leave every one of its assertions green, and leave
+    /// it measuring nothing whatever about a plaintext listener open beside a secured one. The
+    /// transport-absent rows and the identity row assert DISJOINT arms, so neither can drift into
+    /// the other's shape unnoticed.
+    /// </para>
+    /// <para>
+    /// The transport-absent rows still take TWO arms between them, and that pair is not laxity:
+    /// which of connect and handshake fires is decided by the deployment, not the edge — measured,
+    /// a container runtime's forwarding proxy accepts on the host whether or not anything listens
+    /// behind it, so an unsecured broker fails at the handshake where a directly-reached one would
+    /// fail at the connect.
+    /// </para>
+    /// </remarks>
+    [Flags]
+    private enum NetworkArm
+    {
+        /// <summary>No arm matched — the abort happened before any socket work.</summary>
+        None = 0,
+
+        /// <summary>The TCP connect failed: nothing listening, or nothing reachable.</summary>
+        Connect = 1,
+
+        /// <summary>The TLS handshake failed: the endpoint is not serving TLS the engine can use.</summary>
+        Handshake = 2,
+
+        /// <summary>
+        /// TLS was established and the application-layer exchange over it did not complete.
+        /// </summary>
+        RoundTrip = 4,
+    }
+
+    /// <summary>
+    /// Asserts the BROKER's own record shows it refused a TLS peer during this run, and names the
+    /// cause it recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why the broker's record and not only the engine's.</strong> Everything else a
+    /// negative row asserts is the engine reporting on itself. This is the peer's independent
+    /// account of the same event, and it closes two gaps at once: it proves the broker was alive
+    /// and making decisions AT PROBE TIME rather than merely at start-up, and it is indifferent to
+    /// which TLS version negotiated — a stack that refused mid-handshake instead of after it would
+    /// move the engine-side arm, and this line would read the same either way.
+    /// </para>
+    /// <para>
+    /// <strong>The cause is a DISJUNCTION, and the measurement behind it is uncomfortable enough
+    /// to state plainly.</strong> Measured on this host (.NET 8 / SChannel against
+    /// cp-kafka:7.6.1 with <c>ssl.client.auth=required</c>): when the declared client certificate
+    /// is issued by an authority the broker does not trust, SChannel filters it against the
+    /// <c>certificate_authorities</c> list in the server's CertificateRequest, finds no match, and
+    /// presents NOTHING — <c>SslStream.LocalCertificate</c> is null and
+    /// <c>IsMutuallyAuthenticated</c> is false. The broker therefore records
+    /// <c>Empty client certificate chain</c>, byte-identically to a connection that declared no
+    /// certificate at all. A platform that put the foreign chain on the wire would instead record a
+    /// path-building failure. Both are accepted here because both are the broker refusing the
+    /// identity this suite declared; asserting only the first would pin a platform quirk as the
+    /// contract.
+    /// </para>
+    /// </remarks>
+    private static void AssertBrokerRefusedAPeer(string evidence)
+    {
+        Assert.Contains("Failed authentication", evidence, StringComparison.Ordinal);
+        Assert.Contains("(SSL handshake failed)", evidence, StringComparison.Ordinal);
+
+        Assert.True(
+            evidence.Contains("Empty client certificate chain", StringComparison.Ordinal)
+            || evidence.Contains("PKIX path building failed", StringComparison.Ordinal)
+            || evidence.Contains("unable to find valid certification path", StringComparison.Ordinal),
+            "the broker refused a peer but recorded none of the certificate-layer causes this row "
+            + $"expects, so what it refused is unknown. Records:\n{evidence}");
+    }
+
+    /// <summary>
+    /// Asserts the broker's own record names <paramref name="commonName"/> as a principal it
+    /// authenticated — or, when <paramref name="expected"/> is <see langword="false"/>, that it
+    /// never did.
+    /// </summary>
+    /// <remarks>
+    /// <c>peerPrincipal</c> appears only on an SSL handshake the broker completed, so this reads
+    /// exclusively the secured listener and cannot be confused by traffic on the plaintext one that
+    /// the health gate generates.
+    /// </remarks>
+    private static void AssertBrokerAuthenticated(string evidence, string commonName, bool expected)
+    {
+        var fragment = $"peerPrincipal 'CN={commonName}'";
+
+        if (expected)
+        {
+            Assert.Contains(fragment, evidence, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.DoesNotContain(fragment, evidence, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -777,14 +1271,18 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// </summary>
     /// <param name="row">
     /// The row's name — used for the scenario id and the suite directory, so a failing run names
-    /// which of the four rows produced it.
+    /// which row produced it.
     /// </param>
     /// <param name="securedEndpoint">EDGE-004's variable: the port <c>security.endpoint</c> names.</param>
     /// <param name="keystoreTarget">EDGE-005's variable: where the keystore artefact is delivered.</param>
     private async Task<DrillOutcome> RunDrillAsync(
-        string row, string securedEndpoint, string keystoreTarget)
+        string row,
+        string securedEndpoint,
+        string keystoreTarget,
+        Action<string>? afterMaterialise = null)
     {
         var suiteDirectory = MaterialiseSuiteDirectory(row, securedEndpoint, keystoreTarget);
+        afterMaterialise?.Invoke(suiteDirectory);
         _output.WriteLine($"row '{row}': suite directory {suiteDirectory}");
 
         var yaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
@@ -838,7 +1336,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             "the container-evidence watcher captured nothing, so this row's listener and artefact "
             + "assertions would be vacuous.");
 
-        return new DrillOutcome(result, diagnostics.ToString(), evidence);
+        return new DrillOutcome(result, diagnostics.ToString(), evidence, suiteDirectory);
     }
 
     /// <summary>
@@ -900,7 +1398,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         + "fi\n";
 
     /// <summary>
-    /// The one suite the four rows share, with the two variables spliced in. Everything else —
+    /// The one suite every row shares, with the two variables spliced in. Everything else —
     /// image, ports, health check, profile, client material, steps — is identical across every
     /// row, which is what makes each pair a measurement of its own single variable.
     /// </summary>
@@ -962,13 +1460,42 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
                 KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
                 CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+                # Raises the broker's own authenticator logging so every row can read the BROKER's
+                # verdict on each TLS connection, not only the engine's. Measured against this
+                # image, with these two loggers at DEBUG:
+                #
+                #   success → SslTransportLayer: "SSL handshake completed successfully with
+                #             peerHost … peerPrincipal 'CN=<client>' protocol 'TLSv1.3' …"
+                #             Selector:           "Successfully authenticated with /<ip>"
+                #   failure → SslTransportLayer: "SSL Handshake failed" + the SSLHandshakeException
+                #             Selector:           "Failed authentication with /<ip> (SSL handshake
+                #                                 failed)"
+                #
+                # The Selector FAILURE line is emitted at INFO by the image's default level, so
+                # raising it is not what makes failures visible. What DEBUG adds is the two facts
+                # the assertions actually need: the peerPrincipal on success (which names WHO the
+                # broker authenticated) and the exception cause on failure (which names WHY it
+                # refused).
+                KAFKA_LOG4J_LOGGERS: "org.apache.kafka.common.network.SslTransportLayer=DEBUG,org.apache.kafka.common.network.Selector=DEBUG"
         steps:
           - id: {{StepId}}
             type: mq-publish.kafka
             target: {{BrokerName}}
             topic: orders
             payload: '{"id":"edge-drill"}'
-            timeout: 10s
+
+            # 5s, and it is mostly fixture cost rather than fixture meaning: on the two rows that
+            # reach this step it cannot pass anyway (see this file's header on advertised
+            # listeners). No assertion names the step's verdict — the only step evidence read
+            # anywhere is step-started, emitted before any budget can expire — but the CLI control
+            # asserts exit 0, and that DOES couple to the step's classification: a budget expiry
+            # resolves as Inconclusive, which exits 0 flaglessly, whereas a step that resolved as
+            # Fail would exit 1 and take that row red. So the value is free to move, and not free
+            # to move anywhere. Identical across every row, so it is never the variable under test.
+            # Lowered from 10s, at which the step was measured spending ~20s of wall clock; a
+            # smaller value is schema-legal and untried, so nothing here claims 5s is a floor.
+            timeout: 5s
         """;
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -1032,8 +1559,9 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <c>docker ps -a</c> lists no <c>mtls-broker-*</c> at all — and a removed container's log is
     /// gone with it, so a grace period could only help inside the stop-to-remove interval, whose
     /// length this fixture neither controls nor can observe. Buying an unquantifiable margin with
-    /// added complexity is worse than naming the window. Measured flake rate so far: 0 in 10
-    /// negative-row captures across five runs of the set.
+    /// added complexity is worse than naming the window. No lost capture has been observed in any
+    /// run of this set to date — deliberately not a count, because the number of rows and of runs
+    /// has changed with every round and a stale tally reads as a measurement.
     /// </para>
     /// </remarks>
     private static async Task<string> CaptureContainerEvidenceAsync(
@@ -1045,43 +1573,62 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             return string.Empty;
         }
 
+        // `log` is the whole log as it stood when the broker finished starting — the start-up facts
+        // (which listeners opened, which branch the entrypoint took) which never change afterwards.
+        // `recent` is the moving tail, refreshed to the end of the run, which is where everything
+        // about authentication appears.
         var log = string.Empty;
+        var recent = string.Empty;
         var filesystem = string.Empty;
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            // --tail for the READINESS poll, and the full log only once. The readiness marker is
-            // the broker's last line at the moment it appears, so a short tail always carries it,
-            // while a full `docker logs` costs tens of kilobytes per poll — and this loop polls
-            // fast on purpose (see the window note above), so the per-poll cost is what has to be
-            // small, not the cadence. The full fetch below is what the evidence is read from.
+            // --tail for the READINESS poll, and the full log only once ready. The readiness marker
+            // is the broker's last line at the moment it appears, so a short tail always carries
+            // it, while a full `docker logs` costs tens of kilobytes per poll — and this loop polls
+            // fast until it is ready (see the window note above), so the per-poll cost is what has
+            // to be small, not the cadence. The full fetch below is what the evidence is read from.
             var ready = await DockerAsync($"logs --tail 30 {container}", cancellationToken)
                 .ConfigureAwait(false);
 
             if (ready.Contains("Kafka Server started", StringComparison.Ordinal))
             {
-                log = await DockerAsync($"logs {container}", cancellationToken).ConfigureAwait(false);
+                var full = await DockerAsync($"logs {container}", cancellationToken).ConfigureAwait(false);
+                if (full.Length > 0)
+                {
+                    log = full;
+                }
             }
 
-            if (log.Contains("Kafka Server started", StringComparison.Ordinal))
+            if (log.Contains("Kafka Server started", StringComparison.Ordinal) && filesystem.Length == 0)
             {
-                if (filesystem.Length == 0)
-                {
-                    filesystem = await DockerExecAsync(
-                            container,
-                            $"(test -f {keystoreTarget} && echo DECLARED-TARGET-PRESENT || echo DECLARED-TARGET-ABSENT); "
-                            + $"(test -f {CheckedKeystorePath} && echo CHECKED-PATH-PRESENT || echo CHECKED-PATH-ABSENT); "
-                            + "echo '--- ls /etc/kafka/secrets ---'; ls -l /etc/kafka/secrets 2>&1; "
-                            + "echo '--- ls /etc/kafka/secret ---'; ls -l /etc/kafka/secret 2>&1; true",
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
-
-                if (filesystem.Length > 0)
-                {
-                    break;
-                }
+                filesystem = await DockerExecAsync(
+                        container,
+                        $"(test -f {keystoreTarget} && echo DECLARED-TARGET-PRESENT || echo DECLARED-TARGET-ABSENT); "
+                        + $"(test -f {CheckedKeystorePath} && echo CHECKED-PATH-PRESENT || echo CHECKED-PATH-ABSENT); "
+                        + "echo '--- ls /etc/kafka/secrets ---'; ls -l /etc/kafka/secrets 2>&1; "
+                        + "echo '--- ls /etc/kafka/secret ---'; ls -l /etc/kafka/secret 2>&1; true",
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
+
+            // DELIBERATELY NO `break` ONCE THE FILESYSTEM CAPTURE LANDS — this loop used to stop
+            // there, and stopping was a defect rather than an economy. Everything the broker
+            // records about AUTHENTICATION happens later than that: the probe runs after the
+            // health gate, so a capture frozen at start-up predates every TLS connection the run
+            // makes and can prove nothing about what the broker did with them.
+            //
+            // The refresh is a TAIL, and that shape was forced by measurement rather than chosen.
+            // A first attempt refreshed the WHOLE log at a 1s cadence and lost the negative rows'
+            // authentication records outright: a probe failure and its teardown occupy little more
+            // than a second, so the last in-loop fetch predated the record and the post-cancellation
+            // fetch found the container already removed. A 200-line tail costs little enough to
+            // re-read every 200ms, which is the cadence that wins that race — and the full log is
+            // fetched exactly once, for the start-up lines that never change.
+            recent = await DockerAsync($"logs --tail 200 {container}", cancellationToken)
+                .ConfigureAwait(false) is { Length: > 0 } refreshed
+                ? refreshed
+                : recent;
 
             try
             {
@@ -1090,6 +1637,20 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             catch (OperationCanceledException)
             {
                 break;
+            }
+        }
+
+        // One last attempt on the way out, on its own budget. Best-effort by construction — by the
+        // time a row's abort cancels this watcher the topology has already been disposed, so this
+        // usually finds the container gone and the retained tail is what stands (see the
+        // container-removal note above). It is kept for the rows that end without a teardown race.
+        using (var lastCall = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            var final = await DockerAsync($"logs --tail 200 {container}", lastCall.Token)
+                .ConfigureAwait(false);
+            if (final.Length > 0)
+            {
+                recent = final;
             }
         }
 
@@ -1105,9 +1666,24 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 .Where(l => l.Contains("vouchfx fixture", StringComparison.Ordinal))
                 .Distinct(StringComparer.Ordinal));
 
+        // The broker's own authentication record. Every line it wrote about a TLS peer, kept
+        // verbatim so a row can assert on the verdict the BROKER reached rather than only on the
+        // one the engine reported.
+        var authentication = string.Join(
+            "\n",
+            (log + "\n" + recent)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .Where(l =>
+                    l.Contains("Failed authentication", StringComparison.Ordinal)
+                    || l.Contains("Successfully authenticated", StringComparison.Ordinal)
+                    || l.Contains("peerPrincipal", StringComparison.Ordinal)
+                    || l.Contains("SSLHandshakeException", StringComparison.Ordinal)));
+
         return $"container: {container}\n"
             + $"listening ports: {string.Join(", ", bound)}\n"
             + $"entrypoint decision: {decisions}\n"
+            + $"broker authentication records:\n{authentication}\n"
             + $"filesystem (declared target {keystoreTarget}):\n{filesystem}";
     }
 
@@ -1159,7 +1735,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // Sorted, because two call sites compare two of these lists for equality and `docker ps`
+        // guarantees no ordering: an unsorted comparison would report a difference for a pair of
+        // identical sets that came back in a different order.
+        var names = listed.Split(
+            '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Array.Sort(names, StringComparer.Ordinal);
+        return names;
     }
 
     /// <summary>

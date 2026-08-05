@@ -57,6 +57,24 @@ public static class TestCertificateAuthority
     /// </summary>
     public const string BrokerTruststoreFileName = "kafka.truststore.pem";
 
+    /// <summary>
+    /// Common name of the FOREIGN root written by
+    /// <see cref="OverwriteWithForeignClientIdentity"/> — deliberately distinct from every other
+    /// subject this class mints.
+    /// </summary>
+    /// <remarks>
+    /// The distinctness is operational, not cosmetic. Chain building on Windows can leave issuer
+    /// certificates in the user's intermediate-CA store, and a stale entry sharing a subject with a
+    /// live fixture's issuer produces chain failures that look like defects in whatever ran next —
+    /// a trap this repository has already paid for once with a subject that WAS shared. A root
+    /// nobody trusts, whose whole purpose is to be rejected, is the last one that should be
+    /// confusable with the anchor a suite declares.
+    /// </remarks>
+    public const string ForeignCaSubjectCommonName = "Vouchfx Test Foreign Root CA";
+
+    /// <summary>Common name of the foreign client certificate.</summary>
+    public const string ForeignClientSubjectCommonName = "vouchfx-test-foreign-client";
+
     private static readonly Oid s_serverAuth = new("1.3.6.1.5.5.7.3.1");
     private static readonly Oid s_clientAuth = new("1.3.6.1.5.5.7.3.2");
 
@@ -331,6 +349,66 @@ public static class TestCertificateAuthority
 
         return new TestAiaBed(
             suiteDirectory, new X509Certificate2(root.Export(X509ContentType.Cert)), leaf.Certificate);
+    }
+
+    /// <summary>
+    /// Replaces an existing suite directory's <see cref="ClientCertFileName"/> and
+    /// <see cref="ClientKeyFileName"/> with a well-formed client identity issued by a SECOND,
+    /// unrelated certificate authority — leaving every other file, and the suite's own YAML,
+    /// untouched.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The point of the variant this serves: the declared files EXIST, so the host-side preflight
+    /// existence check passes and the run proceeds to build a topology and probe it. What is wrong
+    /// is only their CONTENT — an identity no broker trusting the suite's own anchor can accept.
+    /// The material is deliberately well-formed rather than corrupt: garbage bytes would be
+    /// rejected while loading, by this side, and would prove nothing about the peer. Only a valid
+    /// certificate from the wrong issuer forces the REMOTE end to make the decision.
+    /// </para>
+    /// <para>
+    /// The foreign root is self-signed with no intermediate — the shortest chain that can be
+    /// refused — and carries <see cref="ForeignCaSubjectCommonName"/>, which no other subject this
+    /// class mints shares.
+    /// </para>
+    /// </remarks>
+    /// <param name="suiteDirectory">
+    /// A directory already populated by <see cref="WriteKafkaBrokerSuiteDirectory"/>; only the two
+    /// client files are rewritten.
+    /// </param>
+    public static void OverwriteWithForeignClientIdentity(string suiteDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(suiteDirectory);
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var foreignCaKey = RSA.Create(2048);
+        var foreignCaRequest = new CertificateRequest(
+            $"CN={ForeignCaSubjectCommonName}",
+            foreignCaKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        AddCaExtensions(foreignCaRequest);
+        using var foreignCa = foreignCaRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var client = IssueLeaf(
+            foreignCa, ForeignClientSubjectCommonName, includeLocalhostSans: false, now);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(suiteDirectory, ClientCertFileName),
+                client.Certificate.ExportCertificatePem() + "\n");
+
+            var keyPath = Path.Combine(suiteDirectory, ClientKeyFileName);
+            File.WriteAllText(keyPath, client.PrivateKeyPem);
+            RestrictToOwner(keyPath);
+        }
+        finally
+        {
+            client.Certificate.Dispose();
+            client.Loadable.Dispose();
+        }
     }
 
     /// <summary>
