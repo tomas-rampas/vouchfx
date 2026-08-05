@@ -1458,18 +1458,24 @@ public sealed class SecuredEndpointProbeTests : IDisposable
 
     // ── nit (security review, fix round four): IPv6 authority parsing ────────────────────
     //
-    // TryResolveAddress used to split a bare authority on LastIndexOf(':'). MEASURED on .NET 8:
-    // '[::1]:9093' kept its brackets, so TcpClient.ConnectAsync resolved the literal text '[::1]'
-    // as a DNS NAME; and a bracketless 'fe80::1' with no port split into host 'fe80:' port 1 — a
-    // plausible-looking address that is not the declared target. Both failed CLOSED, so this is
-    // correctness of the MESSAGE rather than of the verdict, and nothing in this release stages an
-    // IPv6 authority. Both are asserted through the diagnostic, which is where the parse is
-    // observable: the probe's private resolver has no other seam.
+    // TryResolveAddress used to split a bare authority on LastIndexOf(':'), which produced two
+    // different old rows — and this note used to describe the first one wrongly, asserting AS
+    // MEASURED that the retained brackets made TcpClient.ConnectAsync resolve '[::1]' as a DNS
+    // NAME. That is FALSE, and it contradicted the production file it is meant to pin. MEASURED on
+    // net8.0: IPAddress.TryParse("[::1]") returns true yielding ::1, and ConnectAsync("[::1]",
+    // port) against an IPv6 loopback listener connects (4 ms). So:
+    //   • '[::1]:9093' kept its brackets — harmless to the CONNECT, wrong only in the rendered
+    //     message, which is what these rows actually pin.
+    //   • a bracketless 'fe80::1' with no port split into host 'fe80:' port 1 — a plausible-looking
+    //     address that is not the declared target, and the row that genuinely failed CLOSED.
+    // Nothing in this release stages an IPv6 authority either way. Both are asserted through the
+    // diagnostic, which is where the parse is observable: the probe's private resolver has no
+    // other seam.
 
     /// <summary>
-    /// A bracketed IPv6 authority resolves to the bracket-free address — the form
-    /// <c>ConnectAsync</c> can actually use — and the diagnostic re-brackets it, so what a reader
-    /// sees is a parseable authority.
+    /// A bracketed IPv6 authority resolves to the bracket-free address — the form the framework's
+    /// own authority parser yields — and the diagnostic re-brackets it, so what a reader sees is a
+    /// parseable authority.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1503,9 +1509,10 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// ONE access modifier: <c>TryResolveAddress</c> is <c>private static</c> on
     /// <c>SecuredEndpointProbe</c>, and this test project already sees that assembly's internals —
     /// <c>AuthorityTextTests</c> reaches <c>internal static AuthorityText</c> in exactly this way.
-    /// It is deferred not because it is expensive but because the failure direction is closed: a
-    /// bracket-retaining parse produces a connect diagnostic, never a false confirmation, and
-    /// nothing in this release stages an IPv6 authority at all. Widening a production type's
+    /// It is deferred not because it is expensive but because nothing rides on it: a
+    /// bracket-retaining parse connects to the same endpoint (measured — see the note above this
+    /// test), so its only consequence is a worse rendered message, and nothing in this release
+    /// stages an IPv6 authority at all. Widening a production type's
     /// visibility to observe a property whose only failure mode is a worse message is the trade
     /// being declined; if the resolver ever gains a branch that could confirm rather than refuse,
     /// the seam is a one-line change away.

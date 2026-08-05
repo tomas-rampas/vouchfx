@@ -28,10 +28,15 @@ internal static class AuthorityText
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The callers deliberately hold the BRACKET-FREE host, because that is the form
-    /// <c>TcpClient.ConnectAsync</c> can use — but interpolating it as <c>{host}:{port}</c> renders
+    /// The callers are intended to hold the BRACKET-FREE host, because that is the form the
+    /// engine's own authority parsers yield (<c>Uri.DnsSafeHost</c>) — NOT because
+    /// <c>TcpClient.ConnectAsync</c> requires it. That second reason was asserted across this
+    /// branch and is false: MEASURED on net8.0, <c>IPAddress.TryParse("[::1]")</c> returns
+    /// <see langword="true"/> and <c>ConnectAsync("[::1]", port)</c> against an IPv6 loopback
+    /// listener connects. Interpolating the bracket-free host as <c>{host}:{port}</c> renders
     /// <c>[::1]:9093</c> as <c>::1:9093</c>: not a parseable authority, and ambiguous about where
-    /// the address ends and the port begins.
+    /// the address ends and the port begins. That — a reader's parse, and any consumer that does
+    /// not share .NET's tolerance — is what this helper is for.
     /// </para>
     /// <para>
     /// The discriminator is a colon in the host, which is exactly RFC 3986's own rule: a colon

@@ -186,8 +186,9 @@ public sealed class ProtocolTargetConflictValidationTests
     //
     // `ProviderPipeline.Compile` runs ONCE PER SCENARIO, so the check above only ever sees one
     // scenario's steps. The staging decision it protects is suite-level: `RunSuiteAsync` builds ONE
-    // shared topology and stages from `SuiteProtocolTargets.KafkaSpeaking(scenarios)` — the union
-    // across EVERY scenario. Split the two families across two scenarios and each compilation is
+    // shared topology and stages from `SuiteProtocolTargets.KafkaSpeaking(runnableScenarios)` — the
+    // union across the scenarios carrying no early verdict, which is the same list its own guard
+    // reads. Split the two families across two runnable scenarios and each compilation is
     // individually innocent, while the union that actually drives staging is not.
     //
     // HOW THESE ROWS MEASURE "was the topology build attempted", without Docker: the shared

@@ -121,14 +121,33 @@ public static class SuiteProtocolTargets
     /// exactly the set whose staging you are protecting.
     /// </param>
     /// <returns>An ordinal set of target names; never <see langword="null"/>.</returns>
-    public static IReadOnlySet<string> HttpSpeaking(IEnumerable<ScenarioAst?>? scenarios) =>
+    /// <remarks>
+    /// <strong>Internal where its <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> sibling is
+    /// public, and the asymmetry is measured rather than stylistic</strong> (the critic's residual,
+    /// closed in the slice F hygiene pass). <c>KafkaSpeaking</c> has a production caller outside
+    /// this assembly's <c>InternalsVisibleTo</c> grants — <c>Vouchfx.Cli</c>'s
+    /// <c>WatchRunner</c> — so it cannot narrow. This one has no consumer outside the class at all
+    /// beyond <c>SuiteProtocolTargetsTests</c>, which sits in <c>Vouchfx.Engine.Runtime.Tests</c>
+    /// and is already granted internals by this project's own csproj; every production read goes
+    /// through <see cref="BothHttpAndKafkaSpeaking"/> in this same class. Narrowing costs nothing
+    /// to reverse: this assembly is not packable (the root <c>Directory.Build.props</c> sets
+    /// <c>IsPackable=false</c> and this project does not opt in) and no golden freeze gate
+    /// snapshots its public surface, so the visibility is an ordinary design choice rather than a
+    /// contract.
+    /// </remarks>
+    internal static IReadOnlySet<string> HttpSpeaking(IEnumerable<ScenarioAst?>? scenarios) =>
         TargetsOf(scenarios, IsHttpStep);
 
     /// <summary>
     /// The declared target names addressed by BOTH an HTTP-family step and a Kafka-family step —
     /// each of which needs the staged value in a different, mutually exclusive form.
     /// </summary>
-    /// <param name="scenarios">The suite's scenarios.</param>
+    /// <param name="scenarios">
+    /// The scenarios whose staging this rejection is about — the same scoping rule as
+    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/>, and NOT "every scenario the suite
+    /// declares": at the suite seam that means the RUNNABLE ones. This parameter used to read "the
+    /// suite's scenarios", which was the whole-list rule the m7 fix retired.
+    /// </param>
     /// <returns>
     /// The conflicting names, ordinally sorted so a diagnostic reads the same on every run; empty
     /// when no target is addressed by both.
@@ -189,10 +208,10 @@ public static class SuiteProtocolTargets
     /// one authoring error — <c>ProviderPipeline.Compile</c> (per scenario: <c>vouchfx validate</c>,
     /// <c>--parallel</c>, <c>--watch</c>, and the single-scenario <c>run</c>, where the one scenario
     /// IS the suite) and <c>ScenarioRunner.RunSuiteAsync</c> (the shared-topology suite seam, whose
-    /// staging reads the union across its RUNNABLE scenarios). Two spellings of one rule is how the two
-    /// drift: an author would get different words, and later a different meaning, for the same
-    /// mistake depending on which door they came through. The detection already lived in one place;
-    /// this puts the wording there too.
+    /// staging reads the union across its RUNNABLE scenarios). Two spellings of one rule is how
+    /// the two drift: an author would get different words, and later a different meaning, for the
+    /// same mistake depending on which door they came through. The detection already lived in one
+    /// place; this puts the wording there too.
     /// </para>
     /// <para>
     /// <strong>The caller chooses the scope, and must match its own staging input — that is the

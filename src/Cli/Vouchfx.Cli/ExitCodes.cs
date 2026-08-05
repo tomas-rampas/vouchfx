@@ -143,21 +143,40 @@ internal static class ExitCodes
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <paramref name="securityConfirmationFailed"/> forces the verdict's OWN opt-in code rather
-    /// than substituting a single fixed one, so the code a pipeline reads still identifies the
-    /// outcome: a failed probe aborts the topology and aggregates to
-    /// <see cref="Verdict.EnvironmentError"/> → 3, while a pre-topology security preflight
-    /// rejection is an authoring error that aggregates to <see cref="Verdict.Inconclusive"/> → 4.
-    /// Both are non-zero, which is the whole of what REQ-018 requires.
+    /// <paramref name="securityConfirmationFailed"/> can arrive with THREE verdicts, and forces
+    /// the verdict's OWN opt-in code rather than substituting a single fixed one on the two that
+    /// have one, so the code a pipeline reads still identifies the outcome: a failed probe aborts
+    /// the topology and aggregates to <see cref="Verdict.EnvironmentError"/> → 3, while a
+    /// pre-topology security preflight rejection is an authoring error that aggregates to
+    /// <see cref="Verdict.Inconclusive"/> → 4. Both are non-zero, which is the whole of what
+    /// REQ-018 requires.
     /// </para>
     /// <para>
-    /// The <see cref="Verdict.Pass"/> arm is unreachable with the flag set — the verdict
-    /// precedence <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c> means any
-    /// scenario carrying a security failure elevates the aggregate above Pass — and it is
-    /// nonetheless written to fail CLOSED rather than to fall through to
-    /// <see cref="Success"/>. A combination that cannot occur is exactly the one a later refactor
-    /// makes occur, and reporting 0 for it would be the false assurance this whole requirement
-    /// exists to destroy.
+    /// <see cref="Verdict.Fail"/> is the third, and the flag is IGNORED there because Fail is
+    /// already unconditionally non-zero. It is reachable rather than theoretical: a mixed suite
+    /// whose one scenario carries a schema error inside its <c>security</c> block sets the flag
+    /// (<c>ScenarioRunner.RunSuiteAsync</c>'s <c>RejectsASecurityDeclaration</c>) and folds in as
+    /// <see cref="Verdict.Inconclusive"/>, while a runnable sibling whose step fails folds in as
+    /// <see cref="Verdict.Fail"/> — and <c>Elevate</c> ranks Fail (precedence rank 2) above
+    /// Inconclusive (precedence rank 1), so the suite returns Fail carrying a true flag. Those
+    /// ranks are <c>VerdictPrecedence</c>'s ordering only: they are neither the enum's values nor
+    /// the exit codes named elsewhere in this file. REQ-018 is satisfied by the Fail arm's own
+    /// code; nothing is lost by not consulting the flag.
+    /// </para>
+    /// <para>
+    /// The DISCARD arm (<c>_ =&gt;</c>) is the one place the flag DOES substitute a fixed code —
+    /// <see cref="EnvironmentError"/> (3) — and it is the exception that proves the own-code rule
+    /// rather than a contradiction of it, because nothing it covers is reachable with the flag set.
+    /// It covers <see cref="Verdict.Pass"/> and, deliberately, anything else that is not a declared
+    /// enum member (an out-of-range cast, or a member a later release adds) — and that breadth is
+    /// the point rather than an accident, since a fail-closed default is worth exactly as much as
+    /// the set of unforeseen inputs it catches. For Pass the unreachability is structural: the
+    /// precedence <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c> means any scenario
+    /// carrying a security failure elevates the aggregate above Pass, and Pass has no opt-in code
+    /// to prefer in any case. It is nonetheless written to fail CLOSED rather than to fall through
+    /// to <see cref="Success"/>. A combination that cannot occur is exactly the one a later
+    /// refactor makes occur, and reporting 0 for it would be the false assurance this whole
+    /// requirement exists to destroy.
     /// </para>
     /// </remarks>
     public static int FromVerdict(

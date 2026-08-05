@@ -324,12 +324,14 @@ internal static class ProviderPipeline
         // TWO PATHS THIS CALL DOES NOT COVER, corrected by measurement (MAJOR-2, fix round five —
         // the previous wording claimed `--watch` among the complete-coverage set, which is false):
         //
-        //   • The SHARED-topology `run` stages from the union across EVERY scenario, so a suite
-        //     splitting the two families across two files is individually innocent per scenario and
-        //     collectively in conflict. It therefore carries its OWN call to the same helper at its
-        //     own seam (ScenarioRunner.RunSuiteAsync). Both seams call this one helper, which owns
-        //     the single spelling of the diagnostic (gatekeeper MAJOR, fix round four — before it,
-        //     the message was written out at this call site alone).
+        //   • The SHARED-topology `run` stages from the union across the RUNNABLE scenarios — those
+        //     carrying no early verdict, since a scenario that executes nothing stages nothing — so
+        //     a suite splitting the two families across two files is individually innocent per
+        //     scenario and collectively in conflict. It therefore carries its OWN call to the same
+        //     helper at its own seam (ScenarioRunner.RunSuiteAsync), from the SAME local it stages
+        //     from, so the guard and the staging cannot disagree about the set. Both seams call
+        //     this one helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR,
+        //     fix round four — before it, the message was written out at this call site alone).
         //
         //   • `--watch` runs this check AFTER the staging it protects rather than before it. The
         //     watch compile seam (WatchRunner.Compile) is YamlDocumentParser.Parse +

@@ -1395,9 +1395,11 @@ public static class EnvironmentMapper
     /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong> (m1,
     /// peer-review critic, fix round eight), not by raw interpolation. That helper exists to
     /// eliminate exactly the <c>$"{host}:{port}"</c> spelling that used to stand here, and this is
-    /// the one value in the assembly whose bracket-freeness is INFERRED — it comes from Aspire's
-    /// <c>EndpointReference.Host</c> — rather than proven by test, which is precisely the caller
-    /// <c>AuthorityText</c>'s own idempotency guard was written for. Byte-identical for every shape
+    /// one of the values whose bracket-freeness is INFERRED rather than measured — it comes from
+    /// Aspire's <c>EndpointReference.Host</c> — which is precisely the kind of caller
+    /// <c>AuthorityText</c>'s own idempotency guard was written for. (No caller is proven
+    /// bracket-free, including the probe's own resolver; see <c>AuthorityText</c>'s remarks, which
+    /// this note previously contradicted by implying the others were.) Byte-identical for every shape
     /// reachable today (every host-published endpoint comes back as <c>localhost</c> or an IPv4
     /// literal); it changes only what an IPv6 host would produce, and there it produces the
     /// bracketed form a Kafka bootstrap actually parses instead of the ambiguous <c>::1:9093</c>.
@@ -2540,10 +2542,13 @@ public static class EnvironmentMapper
             // observe rather than have swallowed into an Unhealthy result.
             // m3 (gatekeeper, fix round six): rendered through AuthorityText.Format, the same
             // bracket rule SecuredEndpointProbe's observed-address messages use. `host` is
-            // bracket-free (it is the form TcpClient.ConnectAsync above needs), so a raw
-            // "{host}:{port}" renders an IPv6 literal as `::1:9093` — unparseable and ambiguous
-            // about where the address ends. Localhost/IPv4 today; the rule costs nothing and the
-            // branch should not close with a known-defective sibling of a defect it fixed.
+            // bracket-free — that is what the caller above holds, NOT something the ConnectAsync
+            // above requires (that reason was asserted across this branch and is refuted: measured
+            // on net8.0, ConnectAsync accepts the bracketed literal and connects). It matters
+            // HERE because a raw "{host}:{port}" renders an IPv6 literal as `::1:9093` —
+            // unparseable and ambiguous about where the address ends. Localhost/IPv4 today; the
+            // rule costs nothing and the branch should not close with a known-defective sibling
+            // of a defect it fixed.
             return HealthCheckResult.Unhealthy(
                 $"TCP probe of {AuthorityText.Format(host, port)} failed: {ex.Message}");
         }

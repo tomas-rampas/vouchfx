@@ -490,14 +490,38 @@ internal static class SecuredEndpointProbe
         // catch: a stack trace instead of a verdict, with no report artefacts and a non-taxonomy
         // exit code.
         //
-        // WHAT THIS FIX CLOSES, AND WHAT IT DOES NOT (m-B1-scope, gatekeeper, fix round nine).
-        // Classifying the failure closes two of those three: the run now yields a verdict, and
-        // REQ-018's taxonomy exit code, instead of a stack trace. It does NOT close the artefact
-        // gap, and saying it did would be the same over-claim this file exists to prevent — the
-        // classified path lands in ScenarioRunner's `catch (OrchestrationException)`, which returns
-        // a bare SuiteResult and so writes no JUnit, HTML or events file (verified on the current
-        // tree). That is issue #373, shared with the divergence guard: a suite failing here gets
-        // PARITY with every other probe failure, not artefacts none of them produce.
+        // WHAT THIS FIX CLOSES, AND WHAT IT DOES NOT (m-B1-scope, gatekeeper, fix round nine;
+        // scoped by measurement in the slice F hygiene pass, which found the artefact claim true of
+        // one runner path and false of the other). Classifying the failure closes two of those
+        // three on every path: the run yields a verdict, and REQ-018's taxonomy exit code, instead
+        // of a stack trace. The artefact gap is where the two runner paths diverge, and saying
+        // otherwise would be the same over-claim this file exists to prevent.
+        //
+        //   • SHARED-TOPOLOGY `run` — the CLI default — writes no JUnit, HTML or events file EVEN
+        //     WHEN THEY WERE REQUESTED, which is the real differential: the paths are set and
+        //     nothing arrives. The classified failure lands in the `catch (OrchestrationException)`
+        //     attached to ScenarioRunner.RunSuiteAsync's StartAsync try, which returns a
+        //     SuiteResult built right there — carrying the aggregate verdict, a per-scenario verdict
+        //     list and the security flag, but NO event buffer — ahead of that method's own
+        //     TerminalRenderer.Render and FileReportWriter.WriteFileReports. (RunSuiteAsync's
+        //     all-early-verdict guard delegates to CompleteWithoutTopologyAsync, which renders and
+        //     writes reports of its own; a probe failure can never reach it, because reaching the
+        //     probe means the topology was being built and so not every scenario had an early
+        //     verdict.) The operator sees that catch's own diagnostic line ("RunSuiteAsync:
+        //     topology failed to start — …"), not rendered events.
+        //
+        //   • `--parallel` DOES write whichever of them were requested — FileReportWriter guards
+        //     each artefact on its own path being non-empty, so this is a differential about
+        //     content, not about turning reporting on. Each scenario owns its topology there, so
+        //     the same classified failure is caught in
+        //     ScenarioRunner.RunScenarioOwningTopologyAsync's `catch (OrchestrationException)`,
+        //     which buffers three lines: ScenarioStarted, the environment-error line built by the
+        //     EnvironmentErrorEvents helper's ToLine, and ScenarioCompleted. ParallelSuiteRunner
+        //     concatenates every slot's buffer and calls FileReportWriter.WriteFileReports over it.
+        //
+        // Issue #373 tracks the shared-topology gap, shared with the divergence guard: a suite
+        // failing here gets PARITY with every other probe failure on that path, not artefacts none
+        // of them produce.
         //
         // Reachable by ordinary authoring error, which is what makes it a blocker rather than a
         // theoretical one: REQ-004's preflight checks containment and File.Exists and never parses,
@@ -534,12 +558,12 @@ internal static class SecuredEndpointProbe
         // MEASURED throwing "An unknown chain building error occurred." on this host during fix
         // round eight, against the two-tier test bed, reproducibly and outside any test host.
         //
-        // WHERE THE CATCH LIVES: on each of the two arms that consume the handshake — beside the
-        // AuthenticateAsClientAsync call below, and in ConfirmAnonymousClientIsRefusedAsync — never
-        // at this call site and never inside TrustsRemoteCertificate. The reason is measured rather
-        // than stylistic, and is recorded in full at the anonymous arm's catch: collapsing the fault
-        // to a `false` return (the tidy source-level fix) makes the anonymous connection's failure
-        // indistinguishable from a genuine refusal, and was measured awarding
+        // WHERE THE CATCH LIVES: one per arm, each spanning the WHOLE of its arm's use of the
+        // connection — the outer try below, and the body of ConfirmAnonymousClientIsRefusedAsync —
+        // never at this call site and never inside TrustsRemoteCertificate. The reason is measured
+        // rather than stylistic, and is recorded in full at the anonymous arm's catch: collapsing
+        // the fault to a `false` return (the tidy source-level fix) makes the anonymous
+        // connection's failure indistinguishable from a genuine refusal, and was measured awarding
         // AuthenticatedRoundTrip against a broker that required nothing. The two arms give the same
         // fault opposite meanings, so only the arms can classify it; a boolean cannot carry the
         // difference across that boundary.
@@ -613,40 +637,6 @@ internal static class SecuredEndpointProbe
             try
             {
                 await tls.AuthenticateAsClientAsync(options, timeout.Token).ConfigureAwait(false);
-            }
-            catch (CryptographicException ex)
-            {
-                // B1's SIBLING (peer-review critic, fix round nine): the validation callback's own
-                // machinery failing, as distinct from the peer failing it. MEASURED on .NET 8.0.29 /
-                // Windows 10.0.26200, three runs, unanimous: a CryptographicException thrown from a
-                // RemoteCertificateValidationCallback propagates RAW out of AuthenticateAsClientAsync
-                // — not AuthenticationException, not IOException — so before this catch it took B1's
-                // escape route out of the probe entirely (measured end to end through ConfirmAsync:
-                // `is OrchestrationException: False`).
-                //
-                // Two reachable sources, both measured on this host: X509Chain.Build inside
-                // TrustsRemoteCertificate ("An unknown chain building error occurred.", observed
-                // during fix round eight against the two-tier bed — a polluted CurrentUser\CA store
-                // is the known trigger; and "A null or disposed certificate was present in
-                // CustomTrustStore." for a disposed anchor, with the throw confirmed to come from
-                // Build and not from CustomTrustStore.Add), and the X509Certificate2 copy fallback in
-                // BuildValidationCallback ("m_safeCertContext is an invalid handle." over a disposed
-                // base certificate). Both take this same route, so both are classified here.
-                //
-                // A DISTINCT catch rather than `or CryptographicException` on the filter below,
-                // because that filter's message names two PEER-side causes ("may not be running TLS
-                // at all", "its certificate may not satisfy the declared trust anchor") and this
-                // fault is the test host's own. Reporting a local chain-builder failure as a verdict
-                // on the peer is the same class of false detail this file spends its length refusing.
-                throw Failure(
-                    name,
-                    $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine's "
-                    + "own certificate validation failed with a cryptographic fault while connecting to "
-                    + $"{observedAddress}: {Summarise(ex)}. That is a fault in this host's certificate "
-                    + "handling — a stale or corrupt entry in the host's certificate stores is the usual "
-                    + "cause — and NOT a verdict on the peer, so nothing was confirmed and nothing is "
-                    + "claimed.",
-                    ex);
             }
             catch (Exception ex)
                 when (ex is AuthenticationException or IOException or OperationCanceledException)
@@ -750,6 +740,55 @@ internal static class SecuredEndpointProbe
                       + "and a completed TLS 1.3 handshake carries no acceptance signal."
                     : "TLS and the server's trust chain are confirmed. No client identity is declared "
                       + "for this profile.");
+        }
+        catch (CryptographicException ex)
+        {
+            // B1's SIBLING (peer-review critic, fix round nine): the validation callback's own
+            // machinery failing, as distinct from the peer failing it. MEASURED on .NET 8.0.29 /
+            // Windows 10.0.26200, three runs, unanimous: a CryptographicException thrown from a
+            // RemoteCertificateValidationCallback propagates RAW out of AuthenticateAsClientAsync
+            // — not AuthenticationException, not IOException — so before this catch it took B1's
+            // escape route out of the probe entirely (measured end to end through ConfirmAsync:
+            // `is OrchestrationException: False`).
+            //
+            // Two reachable sources, both measured on this host: X509Chain.Build inside
+            // TrustsRemoteCertificate ("An unknown chain building error occurred.", observed
+            // during fix round eight against the two-tier bed — a polluted CurrentUser\CA store
+            // is the known trigger; and "A null or disposed certificate was present in
+            // CustomTrustStore." for a disposed anchor, with the throw confirmed to come from
+            // Build and not from CustomTrustStore.Add), and the X509Certificate2 copy fallback in
+            // BuildValidationCallback ("m_safeCertContext is an invalid handle." over a disposed
+            // base certificate). Both take this same route, so both are classified here.
+            //
+            // A DISTINCT catch rather than `or CryptographicException` on the handshake filter
+            // above, because that filter's message names two PEER-side causes ("may not be running
+            // TLS at all", "its certificate may not satisfy the declared trust anchor") and this
+            // fault is the test host's own. Reporting a local chain-builder failure as a verdict on
+            // the peer is the same class of false detail this file spends its length refusing.
+            //
+            // ON THE OUTER TRY, NOT BESIDE AuthenticateAsClientAsync (the critic's residual, closed
+            // in the slice F hygiene pass). This arm's catch used to wrap the handshake call ALONE
+            // while the anonymous arm's wrapped connect + handshake + exchange, and the asymmetry
+            // was not merely untidy: the validation callback can be re-entered AFTER the handshake
+            // by a peer-initiated TLS 1.2 renegotiation, and neither door is shut here — the
+            // options built above pin no protocol version (EnabledSslProtocols = SslProtocols.None)
+            // so a 1.2 session is not excluded, and AllowRenegotiation was MEASURED defaulting to
+            // True on the pinned runtime (net8.0, a bare SslClientAuthenticationOptions). A fault
+            // raised during ConfirmKafkaRoundTripAsync or ReadForRejectionAsync therefore left by
+            // B1's raw-escape route. No reachability was demonstrated — it needs a peer that
+            // renegotiates mid-exchange AND a coincident host crypto fault — so this is symmetry
+            // restored cheaply, not an observed defect fixed. Widening recaptures nothing that
+            // already had a verdict: the anonymous arm converts its own cryptographic fault to an
+            // OrchestrationException before returning here, which this catch does not match.
+            throw Failure(
+                name,
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine's "
+                + "own certificate validation failed with a cryptographic fault while confirming "
+                + $"{observedAddress}: {Summarise(ex)}. That is a fault in this host's certificate "
+                + "handling — a stale or corrupt entry in the host's certificate stores is the usual "
+                + "cause — and NOT a verdict on the peer, so nothing was confirmed and nothing is "
+                + "claimed.",
+                ex);
         }
         finally
         {
@@ -1367,16 +1406,26 @@ internal static class SecuredEndpointProbe
     /// <para>
     /// <strong>IPv6 (n7, fix round three; FIXED in fix round four).</strong> Both halves of this
     /// method used to mishandle an IPv6 authority. The URL half read <c>Uri.Host</c>, which retains
-    /// the brackets (<c>https://[::1]:8443</c> → <c>[::1]</c>), so <c>TcpClient.ConnectAsync</c>
-    /// attempted a DNS lookup of that literal text; it now reads <c>Uri.DnsSafeHost</c>. The bare
+    /// the brackets (<c>https://[::1]:8443</c> → <c>[::1]</c>); it now reads
+    /// <c>Uri.DnsSafeHost</c>. Earlier rounds justified that with a connect failure, and the
+    /// justification was wrong — MEASURED on net8.0: <c>IPAddress.TryParse("[::1]")</c> returns
+    /// <see langword="true"/> yielding <c>::1</c>, which the socket layer consults before it would
+    /// build any DNS endpoint, and <c>TcpClient.ConnectAsync("[::1]", port)</c> against an IPv6
+    /// loopback listener CONNECTED (4 ms, parameterless ctor; 0 ms, <c>InterNetworkV6</c> ctor). No
+    /// lookup of the literal occurs. What the normalisation is actually for: the bracketed text is
+    /// wrong in a rendered diagnostic, it is not the form the authority parser below yields, and
+    /// .NET's leniency is not shared by every consumer of a value the engine hands on. The bare
     /// half split on <c>LastIndexOf(':')</c>, which is right for <c>host:port</c>, keeps the
     /// brackets on <c>[::1]:9093</c>, and is outright wrong for a bracketless form (<c>fe80::1</c>
     /// became host <c>fe80:</c> port <c>1</c> — a plausible address that is not the target); it now
     /// borrows the framework's own authority parser, per
-    /// <see cref="TryParseBareAuthority"/>'s measured notes. The old behaviour always failed CLOSED
-    /// — a connect diagnostic, never a false confirmation — and nothing in this release stages an
-    /// IPv6 authority (every host-published endpoint comes back as <c>localhost</c> or an IPv4
-    /// literal), so this is correctness of the MESSAGE, not of the verdict.
+    /// <see cref="TryParseBareAuthority"/>'s measured notes. The two old rows failed differently,
+    /// and lumping them (as this note did) is what carried the refuted claim: the BRACKETED row
+    /// did not fail at all — it connects, per the measurement above, so only its rendered message
+    /// was wrong — while the BRACKETLESS row genuinely mis-split and failed CLOSED, producing a
+    /// connect diagnostic against a fabricated port rather than a false confirmation. Nothing in
+    /// this release stages an IPv6 authority either way (every host-published endpoint comes back
+    /// as <c>localhost</c> or an IPv4 literal), so neither row changes a verdict reachable today.
     /// </para>
     /// </remarks>
     private static bool TryResolveAddress(
@@ -1394,7 +1443,10 @@ internal static class SecuredEndpointProbe
         // A scheme-carrying URL — REQ-023's HTTP-family staging. DnsSafeHost, not Host: for
         // 'https://[::1]:8443' the framework reports Host='[::1]' (brackets retained, per RFC 3986)
         // and DnsSafeHost='::1'. Both MEASURED. Handing the bracketed text to TcpClient.ConnectAsync
-        // makes it attempt a DNS lookup of the literal string '[::1]' instead of connecting.
+        // does NOT break the connect — that consequence was asserted here for several rounds and is
+        // false (see this method's remarks for the measurement). '::1' is taken because it is the
+        // form the bare-authority half yields, the form a diagnostic should render, and the form
+        // safe to hand to a consumer that does not share .NET's tolerance of the brackets.
         //
         // DELIBERATELY LAXER THAN THE BARE HALF (m3, gatekeeper, fix round five): this branch reads
         // host and port and ignores user info, path, query and fragment, where TryParseBareAuthority
@@ -1430,8 +1482,10 @@ internal static class SecuredEndpointProbe
     // round five) now lives in AuthorityText.Format — hoisted out of this file in fix round six
     // (m3) because EnvironmentMapper's TCP health-check diagnostics have the same bracket-free host
     // and had the same raw {host}:{port} defect. TryResolveAddress deliberately yields the
-    // BRACKET-FREE host, because that is the form TcpClient.ConnectAsync can use; everything that
-    // renders it for a human goes through that one helper.
+    // BRACKET-FREE host because that is what Uri.DnsSafeHost gives and what a consumer with no
+    // obligation to match .NET's leniency can take — NOT because TcpClient.ConnectAsync requires
+    // it, which is refuted (see TryResolveAddress's own remarks for the measurement). Everything
+    // that renders it for a human goes through that one helper.
 
     /// <summary>
     /// The scheme synthesised in front of a bare <c>host:port</c> authority so
@@ -1458,8 +1512,9 @@ internal static class SecuredEndpointProbe
     /// them rather than re-recording them):
     /// <list type="bullet">
     ///   <item><description>
-    ///     <c>[::1]:9093</c> — split gave host <c>[::1]</c>, brackets and all, so
-    ///     <c>ConnectAsync</c> resolved the literal text as a DNS name. Now <c>::1</c> / 9093.
+    ///     <c>[::1]:9093</c> — split gave host <c>[::1]</c>, brackets and all. That connects
+    ///     anyway (measured; see <see cref="TryResolveAddress"/>'s remarks), so this row is a
+    ///     normalisation, not a repair. Now <c>::1</c> / 9093.
     ///   </description></item>
     ///   <item><description>
     ///     <c>::1</c> and <c>fe80::1</c> (bracketless, no port) — split gave host <c>:</c> port 1

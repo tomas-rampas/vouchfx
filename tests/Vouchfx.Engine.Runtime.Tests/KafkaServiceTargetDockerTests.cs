@@ -147,7 +147,28 @@ public sealed class KafkaServiceTargetDockerTests
         // rather than driven through Confluent.Kafka for the same reason SecuredEndpointProbe
         // hand-frames its own: an AdminClient follows advertised.listeners and would measure the
         // broker's deployment configuration instead of the engine's staging.
-        var errorCode = await KafkaApiVersionsAsync(host, port, cts.Token);
+        //
+        // Splitting the authority into a host and a port is not one of those rewrites — it is what
+        // any client does before it opens a socket — but the split above is ad hoc where the
+        // engine's is not, and it stops one step short. SecuredEndpointProbe.TryParseBareAuthority
+        // hands the value to Uri and reads DnsSafeHost, which yields '::1' for '[::1]:9093';
+        // LastIndexOf(':') keeps the brackets.
+        //
+        // The brackets would NOT break this connect, and claiming they would is a false consequence
+        // this branch has carried before. MEASURED on net8.0: IPAddress.TryParse("[::1]") returns
+        // true yielding ::1, and TcpClient.ConnectAsync("[::1]", port) against an IPv6 loopback
+        // listener connected in 4 ms. The reasons to normalise anyway are display correctness,
+        // parity with the form the engine's own parser produces, and that a staged value is
+        // ultimately consumed by clients with no obligation to match .NET's leniency — librdkafka
+        // takes the bootstrap string verbatim.
+        //
+        // Nothing in the runs observed here stages an IPv6 literal (the recorded live measurement is
+        // 'tcp://localhost:60081'), so this branch is not exercised today; a host whose orchestrator
+        // published an IPv6 loopback endpoint would exercise it. The STAGED value itself is
+        // untouched: it is what REQ-023 pins, and the assertions above read it in exactly the form
+        // the engine produced.
+        var connectHost = host.Length >= 2 && host[0] == '[' && host[^1] == ']' ? host[1..^1] : host;
+        var errorCode = await KafkaApiVersionsAsync(connectHost, port, cts.Token);
         _output.WriteLine($"ApiVersions against the staged value: error_code={errorCode}");
         Assert.Equal(0, errorCode);
 

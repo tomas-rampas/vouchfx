@@ -56,12 +56,16 @@ public sealed class AuthorityTextTests
     /// bracketed literal still contains a colon, so the colon test alone fired on it.
     /// </para>
     /// <para>
-    /// <strong>Why this row exists when no caller is proven to reach it.</strong> The probe caller
-    /// is proven bracket-free by <c>SecuredEndpointProbeTests</c>. The
-    /// <c>EnvironmentMapper</c> caller is not: its host is Aspire's
+    /// <strong>Why this row exists when no caller is proven to reach it.</strong> NEITHER caller is
+    /// proven bracket-free, and the heading is literal. This paragraph used to claim the probe
+    /// caller was proven by <c>SecuredEndpointProbeTests</c>; it is not, and that test's own
+    /// remarks say so — the round-seven idempotency guard is what dissolved the proof, because the
+    /// assertion that used to discriminate a bracket-retaining parse is now satisfied by either
+    /// parse. The <c>EnvironmentMapper</c> caller was never proven either: its host is Aspire's
     /// <c>EndpointReference.Host</c>, whose bracket-freeness is inferred from the framework rather
-    /// than measured here, and it is the unmeasured caller that could produce the double. The
-    /// guard is display-only and costs a length check.
+    /// than measured here. Both are therefore callers that could produce the double, which is the
+    /// argument for guarding here instead of auditing them. The guard is display-only and costs a
+    /// length check.
     /// </para>
     /// </remarks>
     [Theory]

@@ -92,7 +92,7 @@ public static class KafkaSecurityHelper
     /// text); this is the library's text, not the engine's.
     /// </para>
     /// <para>
-    /// The two remediations reachable from THIS seam were measured, and neither is mechanical —
+    /// The two remediations considered at THIS seam were measured, and neither is mechanical —
     /// which is why the gap is recorded here rather than half-closed. The list is not the whole
     /// inventory and is deliberately not counted as one: see #375, which holds the inventory,
     /// including a third shape (scrub at the sink) measured there rather than here.
