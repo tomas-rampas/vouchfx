@@ -282,6 +282,7 @@ jobs:
             redis:7 \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
+            confluentinc/cp-kafka:7.6.1 \
             traefik/whoami:latest \
             hashicorp/vault:latest \
             axllent/mailpit:v1.21 \

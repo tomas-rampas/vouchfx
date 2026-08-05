@@ -45,6 +45,18 @@ public static class TestCertificateAuthority
     /// <summary>File name of the client private-key PEM inside the suite directory.</summary>
     public const string ClientKeyFileName = "client-key.pem";
 
+    /// <summary>
+    /// File name of the broker's PEM key store — the server private key followed by its
+    /// certificate, the single-file layout Kafka's <c>ssl.keystore.type=PEM</c> expects.
+    /// </summary>
+    public const string BrokerKeystoreFileName = "kafka.keystore.pem";
+
+    /// <summary>
+    /// File name of the broker's PEM trust store — the CA the broker validates presented client
+    /// certificates against, which is the same anchor <see cref="CaFileName"/> holds.
+    /// </summary>
+    public const string BrokerTruststoreFileName = "kafka.truststore.pem";
+
     private static readonly Oid s_serverAuth = new("1.3.6.1.5.5.7.3.1");
     private static readonly Oid s_clientAuth = new("1.3.6.1.5.5.7.3.2");
 
@@ -113,6 +125,104 @@ public static class TestCertificateAuthority
             clientCertificate.Loadable.Dispose();
             clientAuthOnlyLeaf.Loadable.Dispose();
             noEkuLeaf.Loadable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Writes into <paramref name="suiteDirectory"/> (created if absent) everything a mutual-TLS
+    /// Kafka broker fixture needs on BOTH sides of the connection: the client material a suite
+    /// declares under <c>security:</c> (<see cref="CaFileName"/>, <see cref="ClientCertFileName"/>,
+    /// <see cref="ClientKeyFileName"/>) and the server material it delivers into the broker's own
+    /// container under <c>security.serverArtifacts</c> (<see cref="BrokerKeystoreFileName"/>,
+    /// <see cref="BrokerTruststoreFileName"/>) — all issued by ONE generated CA.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The directory is a PARAMETER, where <see cref="CreateSuiteDirectory"/> names its own: a
+    /// fixture built here has to be runnable by path from outside the process that wrote it — a
+    /// CLI drill against the suite a test materialised — and a randomly-named directory cannot be
+    /// named afterwards.
+    /// </para>
+    /// <para>
+    /// It returns NOTHING, where <see cref="CreateSuiteDirectory"/> returns a bed, and that is the
+    /// consequence of the same difference: the caller supplied the directory, so it already knows
+    /// the only thing a bed could tell it, and the file NAMES are the constants above — read by
+    /// this method and by the caller's own suite YAML, which is where the single source of truth
+    /// for them already lives. A bed exposing <c>BrokerKeystorePath</c> beside those constants
+    /// would be a second spelling of the same fact, not a consolidation of it.
+    /// </para>
+    /// <para>
+    /// <strong>Why PEM rather than a Java key store.</strong> Kafka has accepted
+    /// <c>ssl.keystore.type=PEM</c> since 2.7, and <c>confluentinc/cp-kafka:7.6.1</c> ships Kafka
+    /// 3.6, so the broker reads exactly the format .NET can write. A JKS would need
+    /// <c>keytool</c> — a JDK on the test host, or a throwaway container per run — to produce
+    /// material this method emits in <strong>~200 ms</strong> (measured warm: 178–206 ms for the
+    /// three RSA-2048 key generations, issuance and PEM export) with no external tooling at all.
+    /// Nothing about the engine path under test changes: <c>ServerArtifactInjection</c> copies
+    /// bytes through the container runtime's own API and never inspects them (EDGE-007 is why it
+    /// sets <c>SourcePath</c> and never <c>Contents</c>), so a PEM store exercises the same copy a
+    /// JKS would.
+    /// </para>
+    /// <para>
+    /// <strong>Line endings are LF, deliberately.</strong> Both files are read by a JVM inside a
+    /// Linux container, and the broker's key store is additionally concatenated by hand here.
+    /// .NET's own PEM writer emits <c>\n</c> and <see cref="File.WriteAllText(string,string)"/>
+    /// performs no translation, so the only way CRLF could appear is a separator written as
+    /// <see cref="Environment.NewLine"/> — which is why every separator below is an explicit
+    /// <c>"\n"</c>.
+    /// </para>
+    /// <para>
+    /// The server leaf carries <c>localhost</c>/<c>127.0.0.1</c> subject alternative names,
+    /// because the address the engine reaches an engine-started container on is the published
+    /// loopback endpoint and the probe does not relax hostname verification (REQ-024).
+    /// </para>
+    /// </remarks>
+    public static void WriteKafkaBrokerSuiteDirectory(string suiteDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(suiteDirectory);
+        Directory.CreateDirectory(suiteDirectory);
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var caKey = RSA.Create(2048);
+        var caRequest = new CertificateRequest(
+            $"CN={CaSubjectCommonName}", caKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(caRequest);
+        using var ca = caRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var server = IssueLeaf(ca, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        var client = IssueLeaf(ca, ClientSubjectCommonName, includeLocalhostSans: false, now);
+
+        try
+        {
+            var caPem = ca.ExportCertificatePem() + "\n";
+
+            File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), caPem);
+            File.WriteAllText(
+                Path.Combine(suiteDirectory, ClientCertFileName),
+                client.Certificate.ExportCertificatePem() + "\n");
+
+            var clientKeyPath = Path.Combine(suiteDirectory, ClientKeyFileName);
+            File.WriteAllText(clientKeyPath, client.PrivateKeyPem);
+            RestrictToOwner(clientKeyPath);
+
+            // Kafka's PEM key store is one file: the private key, then the certificate chain.
+            var keystorePath = Path.Combine(suiteDirectory, BrokerKeystoreFileName);
+            File.WriteAllText(
+                keystorePath,
+                server.PrivateKeyPem + "\n" + server.Certificate.ExportCertificatePem() + "\n");
+            RestrictToOwner(keystorePath);
+
+            // The broker's trust store is the same anchor the suite declares as caCert, which is
+            // what makes ssl.client.auth=required accept the client certificate above.
+            File.WriteAllText(Path.Combine(suiteDirectory, BrokerTruststoreFileName), caPem);
+        }
+        finally
+        {
+            server.Certificate.Dispose();
+            server.Loadable.Dispose();
+            client.Certificate.Dispose();
+            client.Loadable.Dispose();
         }
     }
 
@@ -221,6 +331,28 @@ public static class TestCertificateAuthority
 
         return new TestAiaBed(
             suiteDirectory, new X509Certificate2(root.Export(X509ContentType.Cert)), leaf.Certificate);
+    }
+
+    /// <summary>
+    /// Narrows a private-key file to owner read/write where the platform has POSIX permissions.
+    /// </summary>
+    /// <remarks>
+    /// These files sit in a world-readable system temp directory and outlive the run that wrote
+    /// them, so the default mode is worth narrowing even for throwaway test material — the habit is
+    /// what stops a copy of this fixture from leaking a real key. No-op on Windows, where
+    /// <see cref="File.SetUnixFileMode(string, UnixFileMode)"/> throws
+    /// <see cref="PlatformNotSupportedException"/>; the equivalent there is an ACL edit this
+    /// fixture deliberately does not attempt, because a test that starts rewriting ACLs is a larger
+    /// hazard than the one it closes.
+    /// </remarks>
+    private static void RestrictToOwner(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
     private static void AddCaExtensions(CertificateRequest request)

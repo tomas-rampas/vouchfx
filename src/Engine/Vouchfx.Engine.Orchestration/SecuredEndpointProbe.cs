@@ -598,9 +598,31 @@ internal static class SecuredEndpointProbe
             }
             catch (Exception ex) when (ex is SocketException or OperationCanceledException)
             {
-                // EDGE-005 reaches here when the broker came up with no SSL listener at all: the
-                // port its entrypoint would have opened is simply refused, while the container
-                // itself reports healthy and no ordinary infrastructure signal ever failed.
+                // A secured endpoint that refuses the connection outright — nothing listening
+                // behind it, or nothing reachable.
+                //
+                // EDGE-005 WAS NAMED HERE, AND THE ATTRIBUTION WAS WRONG (slice F acceptance
+                // drills). The reasoning was that a broker whose entrypoint found no keystore never
+                // opens the secured port, so the connect is refused. The premise holds; the
+                // conclusion does not, because the engine does not connect to the container port —
+                // it connects to the HOST-PUBLISHED one, and a container runtime's port-forwarding
+                // proxy accepts on the host whether or not anything listens behind it.
+                //
+                // MEASURED, against a live cp-kafka broker brought up healthy with its keystore at
+                // an unchecked path — precisely EDGE-005 — with 9092 and 9094 listening and 9093
+                // not: the connect SUCCEEDS and the failure lands in the handshake catch below, as
+                // `IOException` ("Received an unexpected EOF or 0 bytes from the transport stream",
+                // and on a repeat run "An established connection was aborted by the software in
+                // your host machine"). Both runs are in
+                // Vouchfx.Engine.Runtime.Tests.KafkaSecurityConfirmationDrillDockerTests, which
+                // asserts the abort and the absent listener together.
+                //
+                // Nothing about the OUTCOME changes — both catches raise the same
+                // SecurityConfirmation failure, so the verdict and REQ-018's exit code are
+                // identical either way — but a comment that points a reader at the wrong branch
+                // costs them the debugging session it was written to save. Which branch an
+                // unsecured broker reaches is a property of the port-publishing layer, not of the
+                // edge: a target reached directly, with no proxy in front of it, would arrive here.
                 throw Failure(
                     name,
                     $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', but the "
@@ -645,6 +667,13 @@ internal static class SecuredEndpointProbe
                 // the infrastructure keeps open alongside the secured one. Measured against a
                 // Kafka PLAINTEXT listener — IOException "Received an unexpected EOF or 0 bytes
                 // from the transport stream" in 27 ms. A plaintext port cannot fake a handshake.
+                //
+                // AND SO DOES EDGE-005, wherever the target's port is published through a
+                // forwarding proxy — which is every engine-started container. See the connect
+                // catch above for the measurement that moved it here: the proxy accepts on the
+                // host, so a broker that opened no secured listener fails at the HANDSHAKE rather
+                // than at the connect. Both edges therefore arrive at this message, and it holds
+                // for both as written: "may not be running TLS at all" is exactly EDGE-005's case.
                 throw Failure(
                     name,
                     $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', but the TLS "
