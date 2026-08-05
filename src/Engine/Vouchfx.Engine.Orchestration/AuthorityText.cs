@@ -42,19 +42,29 @@ internal static class AuthorityText
     /// <para>
     /// <strong>Idempotent on an already-bracketed host</strong> (m5, gatekeeper, fix round seven).
     /// The colon test alone rendered <c>[::1]</c> as <c>[[::1]]:9093</c>, because a bracketed IPv6
-    /// literal still contains a colon. Both callers are believed to hold the bracket-free form —
-    /// the probe's is PROVEN so by test, but <c>EnvironmentMapper</c>'s comes from Aspire's
-    /// <c>EndpointReference.Host</c> and is only INFERRED — so the one unmeasured caller was the
-    /// one that could produce the double. Guarding here costs a length check and removes the
-    /// question; it is not a fix for a defect anyone has observed.
+    /// literal still contains a colon.
     /// </para>
     /// <para>
-    /// <strong>No longer display-only</strong> (m1, peer-review critic, fix round eight). Two of
-    /// the three callers render a diagnostic, but <c>EnvironmentMapper.StageServiceEndpoint</c>
-    /// stages the Kafka bootstrap authority a step's own client then CONNECTS to. That does not
-    /// change the rule — the bracketed form is what a bootstrap parser expects, and it is the
-    /// unbracketed <c>::1:9093</c> that would be ambiguous to a client as well as to a reader —
-    /// but it does mean a change here is a change to behaviour, not merely to a message.
+    /// <strong>NO caller is proven to hold the bracket-free form</strong> — which is the argument
+    /// for guarding here rather than for auditing callers, and it is stated without a count for the
+    /// reason the header gives. <c>EnvironmentMapper</c>'s callers take their host from Aspire's
+    /// <c>EndpointReference.Host</c>: inferred from that type's contract, never measured. The
+    /// probe's own resolver was described here as PROVEN by test and is not — the round-seven
+    /// idempotency guard is itself what dissolved that proof, because the test that used to
+    /// discriminate a bracket-retaining parse
+    /// (<c>Confirm_BracketedIpv6Authority_ResolvesWithoutTheBracketsAndReportsWithThem</c>) is
+    /// satisfied by either parse once <c>Format</c> is idempotent. That test's own remarks record
+    /// the same finding and price restoring the coverage at one access modifier. Guarding here
+    /// costs a length check and removes the question for every caller at once; it is not a fix for
+    /// a defect anyone has observed.
+    /// </para>
+    /// <para>
+    /// <strong>No longer display-only</strong> (m1, peer-review critic, fix round eight). Most
+    /// callers render a diagnostic, but <c>EnvironmentMapper.StageServiceEndpoint</c> stages the
+    /// Kafka bootstrap authority a step's own client then CONNECTS to. That does not change the
+    /// rule — the bracketed form is what a bootstrap parser expects, and it is the unbracketed
+    /// <c>::1:9093</c> that would be ambiguous to a client as well as to a reader — but it does
+    /// mean a change here is a change to behaviour, not merely to a message.
     /// </para>
     /// </remarks>
     /// <param name="host">

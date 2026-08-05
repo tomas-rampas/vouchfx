@@ -27,6 +27,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Vouchfx.Engine.Abstractions.Security;
@@ -1702,6 +1703,174 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         {
             listener.Stop();
             await serving;
+        }
+    }
+
+    // ── B1's SIBLING (peer-review critic, fix round nine): a CRYPTOGRAPHIC fault in the ────────
+    //    validation callback itself, as distinct from a peer that fails validation.
+    //
+    // Same escape route as B1, different traveller. MEASURED end to end through ConfirmAsync
+    // BEFORE the fix, against a real loopback TLS listener: the probe threw a bare
+    // CryptographicException, `is OrchestrationException: False` — a stack trace instead of a
+    // verdict, exactly the shape B1 closed for the anchor LOAD.
+    //
+    // Two reachable sources on this host, both measured:
+    //   • X509Chain.Build in TrustsRemoteCertificate — "An unknown chain building error occurred."
+    //     (observed in fix round eight against the two-tier bed; a polluted CurrentUser\CA store is
+    //     the known trigger) and "A null or disposed certificate was present in CustomTrustStore."
+    //   • the X509Certificate2 copy fallback in BuildValidationCallback — "m_safeCertContext is an
+    //     invalid handle."
+    //
+    // Both leave the callback by the same route, so both rows below cover both sources; the fault
+    // is injected at TrustsRemoteCertificate because that is the seam a fake can reach.
+
+    /// <summary>
+    /// A material whose validation callback throws <see cref="CryptographicException"/> fails the
+    /// MAIN arm as a classified <see cref="OrchestrationErrorKind.SecurityConfirmation"/> naming
+    /// the target — never as a raw escape.
+    /// </summary>
+    /// <remarks>
+    /// The detail must attribute the fault to this HOST, not to the peer. The obvious
+    /// implementation — folding <c>CryptographicException</c> into the existing handshake filter —
+    /// would have reported "the endpoint may not be running TLS at all" for a local chain-builder
+    /// failure, so the two negative assertions are load-bearing rather than decorative.
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_ValidationCallbackThrowsCryptographicFault_FailsAsSecurityConfirmation()
+    {
+        var material = new ChainFaultMaterial(_bed, faultOnConnection: 1);
+        var (port, serving, listener) = ListenTls(tls => ServeKafkaApiVersions(tls), ClientAuth.Required);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+                KafkaDependencyEnv(Profile("mtls")),
+                Staged("events", "localhost", port),
+                new FakeAccessor().With("events", "mtls", material)));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Equal("events", ex.Info.ResourceName);
+            Assert.Contains(ChainFaultMaterial.FaultText, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("nothing is claimed", ex.Info.Detail, StringComparison.Ordinal);
+
+            // Attributed to this host, and explicitly NOT to the peer.
+            Assert.Contains("this host's certificate handling", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("may not be running TLS", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "may not satisfy the declared trust anchor", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    /// <summary>
+    /// The same fault on the ANONYMOUS arm's connection is NOT refusal evidence: against a broker
+    /// that requires nothing, the probe reports an unfinished confirmation rather than awarding
+    /// <see cref="SecurityConfirmationLevel.AuthenticatedRoundTrip"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This row is why the fix is not the obvious one, and it is a MEASUREMENT rather than
+    /// a preference.</strong> The tidy remedy for the raw escape is to catch at the source and
+    /// return <c>false</c> from <c>TrustsRemoteCertificate</c> — a chain that cannot be built is
+    /// not a chain that is trusted. Run against THIS arrangement, that shape was measured
+    /// producing:
+    /// </para>
+    /// <para>
+    /// <c>level=AuthenticatedRoundTrip</c>, "…REFUSED the same request on a second connection
+    /// presenting no client certificate — so it both accepted the declared client identity and
+    /// requires one."
+    /// </para>
+    /// <para>
+    /// The listener here is <see cref="ClientAuth.Requested"/> — it requires nothing and answers
+    /// everyone. A local chain-builder fault would have been laundered into the strongest assurance
+    /// the probe can award, on the one arm whose purpose is to destroy false assurance, and would
+    /// have been strictly worse than the crash it replaced. This test fails if anyone reintroduces
+    /// that shape.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_AnonymousArmCryptographicFault_IsNotReadAsRefusal()
+    {
+        var material = new ChainFaultMaterial(_bed, faultOnConnection: 2);
+        var (port, serving, listener) = ListenTls(tls => ServeKafkaApiVersions(tls), ClientAuth.Requested);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+                KafkaDependencyEnv(Profile("mtls")),
+                Staged("events", "localhost", port),
+                new FakeAccessor().With("events", "mtls", material)));
+
+            // Both connections really happened: the first completed its round trip, and the fault
+            // landed on the second. Without this the test could pass for the wrong reason.
+            Assert.Equal(2, material.Decisions);
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Contains("second connection", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("not a refusal by the peer", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("nothing is claimed", ex.Info.Detail, StringComparison.Ordinal);
+
+            // The over-claim this arm exists to prevent, in the words it would have used.
+            Assert.DoesNotContain("requires one", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("REFUSED", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    /// <summary>
+    /// A material that trusts the peer normally but whose chain build throws a
+    /// <see cref="CryptographicException"/> on one chosen connection — the platform fault of
+    /// <c>X509Chain.Build</c>, injected at the seam a fake can reach.
+    /// </summary>
+    /// <remarks>
+    /// The connection is selected by call ordinal because the two arms of a mutual-TLS probe must
+    /// be driven independently: the anonymous arm is only reached when the FIRST connection has
+    /// completed its round trip, so a material that faulted unconditionally could never exercise
+    /// it. One validation callback runs per handshake, so ordinal and connection coincide.
+    /// </remarks>
+    private sealed class ChainFaultMaterial : ISecurityCertificateMaterial
+    {
+        internal const string FaultText = "An unknown chain building error occurred.";
+
+        private readonly int _faultOn;
+
+        internal ChainFaultMaterial(TestCertificateBed bed, int faultOnConnection)
+        {
+            _faultOn = faultOnConnection;
+            CaCertificatePath = bed.CaPath;
+            CaCertificate = bed.CaCertificate;
+            ClientCertificatePath = bed.ClientCertPath;
+            ClientKeyPath = bed.ClientKeyPath;
+            using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
+            ClientCertificate = new X509Certificate2(pemPair.Export(X509ContentType.Pkcs12));
+        }
+
+        /// <summary>How many handshakes reached the trust decision.</summary>
+        internal int Decisions { get; private set; }
+
+        public string? CaCertificatePath { get; }
+
+        public string? ClientCertificatePath { get; }
+
+        public string? ClientKeyPath { get; }
+
+        public X509Certificate2? CaCertificate { get; }
+
+        public X509Certificate2? ClientCertificate { get; }
+
+        public bool TrustsRemoteCertificate(
+            X509Certificate2? remoteCertificate, X509Chain? platformBuiltChain, SslPolicyErrors sslPolicyErrors)
+        {
+            Decisions++;
+            return Decisions == _faultOn ? throw new CryptographicException(FaultText) : true;
         }
     }
 }

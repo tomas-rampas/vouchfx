@@ -123,12 +123,33 @@ public sealed record SuiteResult(
     ///     producer whose verdict is not <c>Inconclusive</c>.
     ///   </description></item>
     ///   <item><description>
-    ///     <strong>The base-directory divergence guard.</strong> A suite that declares
-    ///     <c>security</c> and whose scenarios resolve their declared paths against different
-    ///     directories is refused before the topology is built, and passes the flag as a LITERAL
+    ///     <strong>The base-directory divergence guard — TWO arms, and this is the site that must
+    ///     carry both.</strong> A suite that declares <c>security</c> is refused before the topology
+    ///     is built when either arm fires, and passes the flag as a LITERAL
     ///     <see langword="true"/> rather than through the accumulating local — see that guard's
     ///     own note, and <c>RunSuiteAsync</c>'s note over the local, for why. Aggregates to
     ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
+    ///     <list type="bullet">
+    ///       <item><description>
+    ///         <strong>Scenario against scenario.</strong> Its scenarios resolve their declared
+    ///         paths against different directories. Requires <c>compilations.Count &gt;= 2</c>, so
+    ///         only a multi-scenario suite reaches it — which is why the published surfaces
+    ///         (<c>docs/ci-integration.md</c>, <c>ExitCodes</c>' own summary) describe the refusal
+    ///         as a multi-scenario one.
+    ///       </description></item>
+    ///       <item><description>
+    ///         <strong>Scenario against seed root</strong> (m4, fix round eight). The scenarios'
+    ///         base directory is not the directory the topology resolves
+    ///         <c>security.serverArtifacts</c> against, so client and server material split across
+    ///         two roots. This arm is a property of the two PARAMETERS, not of scenario count, and
+    ///         fires at <c>compilations.Count == 1</c> as readily — so the "multi-scenario" scoping
+    ///         above does NOT describe it. Those surfaces are nevertheless correct as written,
+    ///         because this arm is CLI-UNREACHABLE: <c>RunCommand</c> derives
+    ///         <c>suiteBaseDirectory</c> as <c>scenarioBaseDirectories[0]</c>, literally the same
+    ///         string, so the pair is equal by construction on every CLI path. It is reachable only
+    ///         by a direct engine embedder passing the two independently.
+    ///       </description></item>
+    ///     </list>
     ///   </description></item>
     /// </list>
     /// <para>
@@ -1102,6 +1123,19 @@ public static class ScenarioRunner
         // literally rather than accumulated, because this guard is about security material — a
         // suite whose declared 'caCert'/'clientCert'/'clientKey' would resolve to two different
         // files is exactly a declaration the engine cannot confirm (REQ-018).
+        //
+        // WHY THIS ONE ITERATES ALL COMPILATIONS WHILE ITS NEIGHBOUR FILTERS TO RUNNABLE
+        // (m-runnability, gatekeeper, fix round nine). Two adjacent guards apply opposite
+        // runnability rules to the same list, both correctly, and the difference is what each one
+        // protects. The protocol-conflict guard below protects STAGING — what the shared topology
+        // puts in front of steps that will actually execute — so a scenario that runs nothing
+        // stages nothing and must not veto one that does. This guard protects the DECLARATION: a
+        // secured suite must be single-rooted whatever subset of it runs, because the material a
+        // divergent scenario declares is evidence about what this suite's security means, and the
+        // probe presents one root's material on behalf of whatever executes. It therefore fails
+        // closed over the whole declaration, including scenarios carrying an early verdict — and
+        // note that `compilations[0]`, the baseline both arms compare against, may itself carry
+        // one, so filtering here would also change which directory is the reference.
         if (TryFindSecurityBaseDirectoryDivergence(
                 scenarios[0].Environment, compilations, seedBaseDirectory, out var divergence))
         {
@@ -1130,8 +1164,11 @@ public static class ScenarioRunner
         // round four). ProviderPipeline.Compile already rejects a target addressed by both families
         // — but it runs once PER SCENARIO, so it only ever sees one scenario's steps, while the
         // staging it protects is suite-level: the StartAsync call below passes
-        // SuiteProtocolTargets.KafkaSpeaking(scenarios), the union across EVERY scenario, because
-        // ONE shared topology serves them all. A two-scenario suite whose first scenario addresses
+        // SuiteProtocolTargets.KafkaSpeaking over the union of the RUNNABLE scenarios (see m7
+        // below for why runnable and not all), because ONE shared topology serves them all. When
+        // this guard was written that union was taken across every scenario; the rule it enforces
+        // is unchanged by the narrowing, since both reads come from the one local built below.
+        // A two-scenario suite whose first scenario addresses
         // 'broker' over http.rest and whose second addresses it over mq-publish.kafka therefore
         // passed both compilations (neither scenario alone addresses both families) and then staged
         // the bare host:port bootstrap authority for 'broker' — handing the HTTP step a value with

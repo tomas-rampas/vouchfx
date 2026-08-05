@@ -123,6 +123,7 @@ using System.Buffers.Binary;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Vouchfx.Engine.Abstractions.Security;
@@ -489,6 +490,15 @@ internal static class SecuredEndpointProbe
         // catch: a stack trace instead of a verdict, with no report artefacts and a non-taxonomy
         // exit code.
         //
+        // WHAT THIS FIX CLOSES, AND WHAT IT DOES NOT (m-B1-scope, gatekeeper, fix round nine).
+        // Classifying the failure closes two of those three: the run now yields a verdict, and
+        // REQ-018's taxonomy exit code, instead of a stack trace. It does NOT close the artefact
+        // gap, and saying it did would be the same over-claim this file exists to prevent — the
+        // classified path lands in ScenarioRunner's `catch (OrchestrationException)`, which returns
+        // a bare SuiteResult and so writes no JUnit, HTML or events file (verified on the current
+        // tree). That is issue #373, shared with the divergence guard: a suite failing here gets
+        // PARITY with every other probe failure, not artefacts none of them produce.
+        //
         // Reachable by ordinary authoring error, which is what makes it a blocker rather than a
         // theoretical one: REQ-004's preflight checks containment and File.Exists and never parses,
         // so an empty file, a mangled PEM, a private key pasted where the certificate belongs, or a
@@ -514,21 +524,27 @@ internal static class SecuredEndpointProbe
         // but it is a pure path computation whose containment verdict cannot change between two
         // calls in the same probe.
         //
-        // The residue that IS left, recorded rather than guarded: X509Chain.Build inside
-        // TrustsRemoteCertificate, and the X509Certificate2 copy fallback in
-        // BuildValidationCallback, can throw a CryptographicException, which would take the same
-        // raw-escape route this block closes.
+        // B1's SIBLING — the other traveller on this same raw-escape route — IS NOW CLOSED, and
+        // not here. X509Chain.Build inside TrustsRemoteCertificate, and the X509Certificate2 copy
+        // fallback in BuildValidationCallback, can each throw a CryptographicException from inside
+        // the validation callback; both were escaping exactly as the load above used to.
         //
         // NOT HYPOTHETICAL — stated precisely because the obvious wording ("has never been
         // observed") was written here first and was wrong within the hour. `X509Chain.Build` was
         // MEASURED throwing "An unknown chain building error occurred." on this host during fix
-        // round eight, against the two-tier test bed, reproducibly and outside any test host. It is
-        // still not guarded here, and that is a judgement rather than an oversight: it is a
-        // platform fault on material this block has already loaded successfully, not the "right
-        // filename, wrong bytes" authoring error B1 was about, and it arises INSIDE
-        // TrustsRemoteCertificate — where a catch belongs to that method's own contract, not to
-        // this call site. A blanket catch here would convert a legible platform failure into a
-        // swallowed one while closing no route an author can reach.
+        // round eight, against the two-tier test bed, reproducibly and outside any test host.
+        //
+        // WHERE THE CATCH LIVES: on each of the two arms that consume the handshake — beside the
+        // AuthenticateAsClientAsync call below, and in ConfirmAnonymousClientIsRefusedAsync — never
+        // at this call site and never inside TrustsRemoteCertificate. The reason is measured rather
+        // than stylistic, and is recorded in full at the anonymous arm's catch: collapsing the fault
+        // to a `false` return (the tidy source-level fix) makes the anonymous connection's failure
+        // indistinguishable from a genuine refusal, and was measured awarding
+        // AuthenticatedRoundTrip against a broker that required nothing. The two arms give the same
+        // fault opposite meanings, so only the arms can classify it; a boolean cannot carry the
+        // difference across that boundary.
+        //
+        // This block therefore stays about the LOAD, which is the fault it can name honestly.
         try
         {
             // The path view first (containment, REQ-003) and then the object view (the load), in
@@ -597,6 +613,40 @@ internal static class SecuredEndpointProbe
             try
             {
                 await tls.AuthenticateAsClientAsync(options, timeout.Token).ConfigureAwait(false);
+            }
+            catch (CryptographicException ex)
+            {
+                // B1's SIBLING (peer-review critic, fix round nine): the validation callback's own
+                // machinery failing, as distinct from the peer failing it. MEASURED on .NET 8.0.29 /
+                // Windows 10.0.26200, three runs, unanimous: a CryptographicException thrown from a
+                // RemoteCertificateValidationCallback propagates RAW out of AuthenticateAsClientAsync
+                // — not AuthenticationException, not IOException — so before this catch it took B1's
+                // escape route out of the probe entirely (measured end to end through ConfirmAsync:
+                // `is OrchestrationException: False`).
+                //
+                // Two reachable sources, both measured on this host: X509Chain.Build inside
+                // TrustsRemoteCertificate ("An unknown chain building error occurred.", observed
+                // during fix round eight against the two-tier bed — a polluted CurrentUser\CA store
+                // is the known trigger; and "A null or disposed certificate was present in
+                // CustomTrustStore." for a disposed anchor, with the throw confirmed to come from
+                // Build and not from CustomTrustStore.Add), and the X509Certificate2 copy fallback in
+                // BuildValidationCallback ("m_safeCertContext is an invalid handle." over a disposed
+                // base certificate). Both take this same route, so both are classified here.
+                //
+                // A DISTINCT catch rather than `or CryptographicException` on the filter below,
+                // because that filter's message names two PEER-side causes ("may not be running TLS
+                // at all", "its certificate may not satisfy the declared trust anchor") and this
+                // fault is the test host's own. Reporting a local chain-builder failure as a verdict
+                // on the peer is the same class of false detail this file spends its length refusing.
+                throw Failure(
+                    name,
+                    $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine's "
+                    + "own certificate validation failed with a cryptographic fault while connecting to "
+                    + $"{observedAddress}: {Summarise(ex)}. That is a fault in this host's certificate "
+                    + "handling — a stale or corrupt entry in the host's certificate stores is the usual "
+                    + "cause — and NOT a verdict on the peer, so nothing was confirmed and nothing is "
+                    + "claimed.",
+                    ex);
             }
             catch (Exception ex)
                 when (ex is AuthenticationException or IOException or OperationCanceledException)
@@ -918,6 +968,45 @@ internal static class SecuredEndpointProbe
                 + "than assumed.",
                 ex);
         }
+        catch (CryptographicException ex)
+        {
+            // THE MEASUREMENT THAT CHOSE THIS SHAPE, and it overturned the obvious fix. The tidy
+            // remedy for the raw escape is to catch at the source and return false from
+            // TrustsRemoteCertificate — "a chain that cannot be BUILT is not a chain that is
+            // TRUSTED". On the main arm that reads correctly. HERE it is a false security claim,
+            // measured end to end against a PERMISSIVE loopback broker (ssl.client.auth=requested)
+            // with the fault injected on the SECOND connection only:
+            //
+            //     callback returns false on connection 2
+            //       -> AuthenticationException -> the refusal filter below -> return
+            //       -> SecurityConfirmationLevel.AuthenticatedRoundTrip, "REFUSED the same request
+            //          on a second connection presenting no client certificate — so it both
+            //          accepted the declared client identity and requires one."
+            //
+            // The broker required nothing. A local chain-builder fault had been laundered into the
+            // STRONGEST assurance this probe can award, on the arm whose entire purpose is to
+            // destroy false assurance. That is strictly worse than the raw escape it would have
+            // replaced: a crash is loud, a false green is not.
+            //
+            // So the exception is kept as the SIGNAL rather than collapsed into a boolean, and is
+            // classified here — above the refusal filter, with the connect fault and the budget
+            // expiry, in the "nothing was confirmed" direction. The distinction that must survive
+            // is between "the peer rejected this connection" and "we could not judge the peer",
+            // and `false` is precisely the value that erases it.
+            //
+            // The step-side consumer needs nothing equivalent: Security_Helpers installs the same
+            // decision on an HttpClientHandler, and a CryptographicException from THAT callback was
+            // measured arriving as HttpRequestException wrapping the cryptographic fault (three
+            // runs) — already closed, already legible, and with no differential to over-claim on.
+            throw Failure(
+                name,
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine's own "
+                + "certificate validation failed with a cryptographic fault on the second connection to "
+                + $"{observedAddress}, before it could confirm that the endpoint REQUIRES a client "
+                + $"certificate: {Summarise(ex)}. A fault in this host's certificate handling is not a "
+                + "refusal by the peer, so nothing is claimed from it.",
+                ex);
+        }
         catch (SocketException ex)
         {
             // MEASURED unreachable on this stack — every post-connect socket fault arrives wrapped
@@ -1173,6 +1262,15 @@ internal static class SecuredEndpointProbe
             // fallback for a runtime that does not, and it is DISPOSED — this callback runs once
             // per handshake and an undisposed certificate here would hold an unmanaged handle for
             // the life of the run.
+            //
+            // The copy CAN throw — measured, `new X509Certificate2(X509Certificate)` over a disposed
+            // base gives CryptographicException "m_safeCertContext is an invalid handle." — and it is
+            // deliberately NOT guarded here. A CryptographicException raised anywhere in this lambda
+            // (this copy, or TrustsRemoteCertificate's own chain build) leaves the callback by the
+            // same route and is classified by whichever ARM drove the handshake, which is the only
+            // place that knows whether "could not judge the peer" means a failed confirmation or a
+            // withheld one. Guarding it here would have to invent a boolean answer and would erase
+            // that distinction — see the anonymous arm's catch for the measurement.
             if (certificate is X509Certificate2 typed)
             {
                 return certificates.TrustsRemoteCertificate(typed, chain, errors);

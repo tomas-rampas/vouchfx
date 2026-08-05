@@ -78,9 +78,14 @@ public static class SuiteProtocolTargets
     /// scenario supplied.
     /// </summary>
     /// <param name="scenarios">
-    /// The suite's scenarios. A multi-scenario suite shares ONE topology, so the union across all
-    /// of them is the right set: a target any scenario will speak Kafka to is a target the one
-    /// shared probe should confirm as a broker.
+    /// The scenarios whose staging this set is about to drive — NOT necessarily every scenario the
+    /// suite declares. A multi-scenario suite shares ONE topology, so a target any of these will
+    /// speak Kafka to is a target the one shared probe must confirm as a broker; but a scenario
+    /// carrying an early verdict stages nothing, because it executes nothing. At the suite seam the
+    /// right input is therefore the RUNNABLE scenarios (<c>EarlyVerdict is null</c>), and passing
+    /// every scenario instead lets one that cannot run veto one that can — the defect m7 (fix round
+    /// eight) closed. The rule that survives both spellings: pass exactly the set whose staging you
+    /// are protecting.
     /// </param>
     /// <returns>
     /// An ordinal set of target names, empty when no scenario carries a Kafka step. Never
@@ -110,7 +115,11 @@ public static class SuiteProtocolTargets
     /// (<c>http.rest</c>, <c>http.soap</c>, <c>metrics-assert.prometheus</c>) across every
     /// scenario supplied.
     /// </summary>
-    /// <param name="scenarios">The suite's scenarios; a multi-scenario suite shares ONE topology.</param>
+    /// <param name="scenarios">
+    /// The scenarios whose staging this set is about to drive; a multi-scenario suite shares ONE
+    /// topology. Same scoping rule as <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> — pass
+    /// exactly the set whose staging you are protecting.
+    /// </param>
     /// <returns>An ordinal set of target names; never <see langword="null"/>.</returns>
     public static IReadOnlySet<string> HttpSpeaking(IEnumerable<ScenarioAst?>? scenarios) =>
         TargetsOf(scenarios, IsHttpStep);
@@ -167,8 +176,8 @@ public static class SuiteProtocolTargets
     /// </summary>
     /// <param name="scenarios">
     /// The scenarios the rejection is about — ONE scenario at the per-scenario compile seam, the
-    /// whole suite at the suite seam. Both call sites must pass exactly the set whose staging they
-    /// are protecting; see the remarks.
+    /// suite's RUNNABLE scenarios at the suite seam. Both call sites must pass exactly the set whose
+    /// staging they are protecting; see the remarks.
     /// </param>
     /// <returns>
     /// The diagnostic naming every conflicting target and both families, or <see langword="null"/>
@@ -180,18 +189,22 @@ public static class SuiteProtocolTargets
     /// one authoring error — <c>ProviderPipeline.Compile</c> (per scenario: <c>vouchfx validate</c>,
     /// <c>--parallel</c>, <c>--watch</c>, and the single-scenario <c>run</c>, where the one scenario
     /// IS the suite) and <c>ScenarioRunner.RunSuiteAsync</c> (the shared-topology suite seam, whose
-    /// staging reads the union across every scenario). Two spellings of one rule is how the two
+    /// staging reads the union across its RUNNABLE scenarios). Two spellings of one rule is how the two
     /// drift: an author would get different words, and later a different meaning, for the same
     /// mistake depending on which door they came through. The detection already lived in one place;
     /// this puts the wording there too.
     /// </para>
     /// <para>
-    /// <strong>The caller chooses the scope, and must match its own staging input.</strong> This
-    /// helper deliberately does not know which seam is calling. The suite seam stages from
-    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> over the whole scenario list, so it
-    /// must pass that same whole list here — a per-scenario call at that seam is blind to a suite
-    /// that splits the two families across two scenarios, which is precisely the hole this
-    /// overload's existence closed.
+    /// <strong>The caller chooses the scope, and must match its own staging input — that is the
+    /// whole rule, and it is NOT "pass every scenario".</strong> This helper deliberately does not
+    /// know which seam is calling. The suite seam stages from
+    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> over its RUNNABLE scenarios, so it must
+    /// pass that same list here — and it does so from ONE shared local, so the guard and the staging
+    /// cannot disagree. Two failure directions, and this branch has been on both: a per-scenario
+    /// call at the suite seam is blind to a suite that splits the two families across two scenarios,
+    /// which is the hole this overload's existence closed; and widening it back to EVERY scenario
+    /// lets a scenario that cannot run veto one that can, which is the defect m7 closed. Neither is
+    /// fixed by counting scenarios — only by handing this helper the set whose staging it guards.
     /// </para>
     /// </remarks>
     public static string? DescribeProtocolConflict(IEnumerable<ScenarioAst?>? scenarios)
