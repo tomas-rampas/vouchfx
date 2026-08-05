@@ -296,7 +296,7 @@ A service may carry an optional **`security`** block declaring that its endpoint
 
 The remaining fields are trust material, and every one of them is a path resolved relative to the directory containing the `.e2e.yaml` file. `caCert` is optional under both profiles; `clientCert` and `clientKey` are required together under `mtls` and forbidden under `tls`. Each declared path is checked for containment within the suite directory and then for existence at `vouchfx validate` time, before any container starts. An undeclared optional field is absent rather than missing — nothing is defaulted or synthesised in its place.
 
-A **`serverArtifacts:`** list of `{ source, target }` pairs declares host files the engine copies **into that target's own container** at topology-build time — typically the server-side keystore or certificate the container's own entrypoint expects to find, since the engine never serves TLS itself. Each `source` is a host path validated on exactly the terms above (containment first, then existence, before any container starts). Each `target` is an absolute path inside the container naming a **file**, not a directory: `/etc/kafka/secrets/kafka.keystore.jks`, never `/etc/kafka/secrets/`; and two artefacts on the same target may not claim the same in-container path. Only a file path is accepted — there is no inline `contents:` alternative, because binary keystore material cannot survive as YAML text. The bytes are streamed into the container through the container runtime's own API rather than bind-mounted, so a remote daemon or Docker-in-Docker behaves the same as a local one; a bind mount would silently present an empty directory there, and a broker entrypoint that only tests for the file's existence would then come up healthy with no secured listener at all.
+A **`serverArtifacts:`** list of `{ source, target }` pairs declares host files the engine copies **into that target's own container** at topology-build time — typically the server-side keystore or certificate the container's own entrypoint expects to find, since the engine never serves TLS itself. Each `source` is a host path validated on exactly the terms above (containment first, then existence, before any container starts). Each `target` is an absolute path inside the container naming a **file**, not a directory: `/etc/kafka/secrets/kafka.keystore.jks`, never `/etc/kafka/secrets/`; and two artefacts declared on the same service or dependency may not claim the same in-container path. Only a file path is accepted — there is no inline `contents:` alternative, because binary keystore material cannot survive as YAML text. The bytes are streamed into the container through the container runtime's own API rather than bind-mounted, so a remote daemon or Docker-in-Docker behaves the same as a local one; a bind mount would silently present an empty directory there, and a broker entrypoint that only tests for the file's existence would then come up healthy with no secured listener at all.
 
 ```yaml
 environment:
@@ -311,7 +311,7 @@ environment:
         clientKey:  certs/client.key
 ```
 
-Declaring the block on a **service** changes five things. None of them applies to a service that declares none, and none of them applies to a `kafka` dependency — see *Kafka targets*, below.
+Declaring the block on a **service** has the consequences tabulated below. None of them applies to a service that declares none, and none of them applies to a `kafka` dependency — see *Kafka targets*, below.
 
 | Consequence | Behaviour |
 |---|---|

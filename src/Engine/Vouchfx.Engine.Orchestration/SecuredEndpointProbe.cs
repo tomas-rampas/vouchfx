@@ -470,6 +470,81 @@ internal static class SecuredEndpointProbe
             }
         }
 
+        // The TRUST ANCHOR, loaded here for the same reason the client identity above is — and this
+        // one was a DEFECT until fix round eight (B1, peer-review critic), not merely a tidiness.
+        //
+        // BuildValidationCallback reads only CaCertificatePath (containment, no load), so the anchor
+        // used to load LAZILY on the first line of TrustsRemoteCertificate — i.e. INSIDE the
+        // RemoteCertificateValidationCallback, during AuthenticateAsClientAsync.
+        //
+        // MEASURED on .NET 8.0.29 / Windows 11 with a throwing callback against an in-process TLS
+        // listener: an exception thrown from that callback propagates RAW out of
+        // AuthenticateAsClientAsync — NOT AuthenticationException, NOT IOException. (An IOException
+        // thrown from the callback does arrive as IOException, and a callback RETURNING false gives
+        // AuthenticationException; those are the two shapes that made this invisible.)
+        // SecurityMaterialException derives directly from Exception, so it matched neither evidence
+        // filter — not the handshake filter below, not the anonymous arm's — escaped ConfirmAsync,
+        // was rethrown raw by SuiteTopology's dispose-and-throw catch, passed ScenarioRunner's
+        // ArgumentException/OrchestrationException seams and reached a RunCommand with no broad
+        // catch: a stack trace instead of a verdict, with no report artefacts and a non-taxonomy
+        // exit code.
+        //
+        // Reachable by ordinary authoring error, which is what makes it a blocker rather than a
+        // theoretical one: REQ-004's preflight checks containment and File.Exists and never parses,
+        // so an empty file, a mangled PEM, a private key pasted where the certificate belongs, or a
+        // file the runner cannot read all pass preflight and used to detonate in the handshake.
+        // "Right filename, wrong bytes" is routine in a bank PKI rollout.
+        //
+        // BOTH PROFILES, deliberately: a `tls` probe verifies the peer's chain against the declared
+        // anchor exactly as an `mtls` one does, so it loads the anchor on the same path.
+        //
+        // It also keeps the diagnostic honest. Summarise() takes the INNERMOST message, which for
+        // the escaping load is the platform's own — free to name the RESOLVED path, against this
+        // branch's declared-path-only rule for anything archived into the §14 stream.
+        // SecurityMaterialException's own message names the DECLARED path, and reporting it from
+        // here is what puts it in front of Summarise rather than behind it.
+        //
+        // THE ANONYMOUS ARM NEEDS NOTHING FURTHER, and that is a property of the accessor rather
+        // than an assumption: the production material memoises the anchor in a
+        // Lazy<X509Certificate2?>(ExecutionAndPublication), so once this load succeeds every later
+        // read — including the second connection's callback — returns the cached instance and
+        // cannot re-enter the loader even if the file changes underneath the run. Measured by
+        // SecurityConfigurationAccessorTests.For_ResolvedTwice_ReturnsTheSameCertificateInstances
+        // (Assert.Same over both certificate views). The CaCertificatePath view is not memoised,
+        // but it is a pure path computation whose containment verdict cannot change between two
+        // calls in the same probe.
+        //
+        // The residue that IS left, recorded rather than guarded: X509Chain.Build inside
+        // TrustsRemoteCertificate, and the X509Certificate2 copy fallback in
+        // BuildValidationCallback, can throw a CryptographicException, which would take the same
+        // raw-escape route this block closes.
+        //
+        // NOT HYPOTHETICAL — stated precisely because the obvious wording ("has never been
+        // observed") was written here first and was wrong within the hour. `X509Chain.Build` was
+        // MEASURED throwing "An unknown chain building error occurred." on this host during fix
+        // round eight, against the two-tier test bed, reproducibly and outside any test host. It is
+        // still not guarded here, and that is a judgement rather than an oversight: it is a
+        // platform fault on material this block has already loaded successfully, not the "right
+        // filename, wrong bytes" authoring error B1 was about, and it arises INSIDE
+        // TrustsRemoteCertificate — where a catch belongs to that method's own contract, not to
+        // this call site. A blanket catch here would convert a legible platform failure into a
+        // swallowed one while closing no route an author can reach.
+        try
+        {
+            // The path view first (containment, REQ-003) and then the object view (the load), in
+            // the order the callback itself would have touched them.
+            _ = certificates?.CaCertificatePath;
+            _ = certificates?.CaCertificate;
+        }
+        catch (SecurityMaterialException ex)
+        {
+            throw Failure(
+                name,
+                $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}', but its "
+                + $"declared trust anchor could not be loaded: {ex.Message}",
+                ex);
+        }
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(perTargetTimeout);
 

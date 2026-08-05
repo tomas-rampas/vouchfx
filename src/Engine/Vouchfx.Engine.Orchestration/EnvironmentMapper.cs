@@ -1391,11 +1391,22 @@ public static class EnvironmentMapper
     /// is resolved from the dependency builders directly and never from this map, and
     /// <c>{placeholder}</c> substitution cannot address a prefixed key at all.
     /// </para>
+    /// <para>
+    /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong> (m1,
+    /// peer-review critic, fix round eight), not by raw interpolation. That helper exists to
+    /// eliminate exactly the <c>$"{host}:{port}"</c> spelling that used to stand here, and this is
+    /// the one value in the assembly whose bracket-freeness is INFERRED — it comes from Aspire's
+    /// <c>EndpointReference.Host</c> — rather than proven by test, which is precisely the caller
+    /// <c>AuthorityText</c>'s own idempotency guard was written for. Byte-identical for every shape
+    /// reachable today (every host-published endpoint comes back as <c>localhost</c> or an IPv4
+    /// literal); it changes only what an IPv6 host would produce, and there it produces the
+    /// bracketed form a Kafka bootstrap actually parses instead of the ambiguous <c>::1:9093</c>.
+    /// </para>
     /// </remarks>
     private static string StageServiceEndpoint(
         string name, EndpointReference endpoint, IReadOnlySet<string> kafkaSpeakingTargets) =>
         kafkaSpeakingTargets.Contains(name)
-            ? FormattableString.Invariant($"{endpoint.Host}:{endpoint.Port}")
+            ? AuthorityText.Format(endpoint.Host, endpoint.Port)
             : endpoint.Url;
 
     // -----------------------------------------------------------------------

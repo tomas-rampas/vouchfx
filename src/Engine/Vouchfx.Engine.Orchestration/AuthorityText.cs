@@ -1,15 +1,19 @@
 // Shared host:port rendering for orchestration diagnostics (m1 fix round five / m3 fix round six).
 //
-// WHY THIS EXISTS AS ITS OWN TYPE. Two places in this assembly hold a bracket-free host and a port
-// and render them back into a readable authority for a human: SecuredEndpointProbe's declared-
-// versus-observed messages, and EnvironmentMapper's TCP health-check diagnostics. Fix round five
-// fixed the first by adding a private FormatAuthority to SecuredEndpointProbe and left the second
-// interpolating "{host}:{port}" raw, which is the same defect one file over. Both callers live in
-// THIS assembly and THIS namespace (measured: src/Engine/Vouchfx.Engine.Orchestration/
+// WHY THIS EXISTS AS ITS OWN TYPE. Several places in this assembly hold a bracket-free host and a
+// port and render them back into an authority: SecuredEndpointProbe's declared-versus-observed
+// messages, EnvironmentMapper's TCP health-check diagnostics, and — since fix round eight —
+// EnvironmentMapper.StageServiceEndpoint's Kafka bootstrap value. Fix round five fixed the first by
+// adding a private FormatAuthority to SecuredEndpointProbe and left the second interpolating
+// "{host}:{port}" raw, which was the same defect one file over; round eight found the third, which
+// had been missed because it stages a value rather than printing one. Every caller lives in THIS
+// assembly and THIS namespace (measured: src/Engine/Vouchfx.Engine.Orchestration/
 // SecuredEndpointProbe.cs and .../EnvironmentMapper.cs), so hoisting the rule costs no project
 // reference and no public surface — the alternative the brief allowed, duplicating the three-line
-// bracket rule with a comment naming its origin, would have shipped the branch with two copies of a
+// bracket rule with a comment naming its origin, would have shipped the branch with copies of a
 // rule whose whole point is that there be one.
+//
+// The caller list is not counted here on purpose. It has grown twice.
 
 namespace Vouchfx.Engine.Orchestration;
 
@@ -45,8 +49,12 @@ internal static class AuthorityText
     /// question; it is not a fix for a defect anyone has observed.
     /// </para>
     /// <para>
-    /// Display only. Nothing connects to this string; it is the human-readable rendering of an
-    /// address the caller has already resolved.
+    /// <strong>No longer display-only</strong> (m1, peer-review critic, fix round eight). Two of
+    /// the three callers render a diagnostic, but <c>EnvironmentMapper.StageServiceEndpoint</c>
+    /// stages the Kafka bootstrap authority a step's own client then CONNECTS to. That does not
+    /// change the rule — the bracketed form is what a bootstrap parser expects, and it is the
+    /// unbracketed <c>::1:9093</c> that would be ambiguous to a client as well as to a reader —
+    /// but it does mean a change here is a change to behaviour, not merely to a message.
     /// </para>
     /// </remarks>
     /// <param name="host">

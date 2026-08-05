@@ -46,9 +46,15 @@ verdict names:
 - the post-health-gate **secured-confirmation probe** fails — the declared endpoint refuses the
   connection, does not speak TLS, presents a certificate that does not chain to the declared `caCert`,
   or refuses the declared client certificate. The run aborts before any step executes and exits **3**;
-- a pre-topology **security preflight** rejects the declaration — a certificate path that escapes the
-  suite directory or does not exist, or a `profile` with no wiring for the target's kind. No container
+- a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
+  escapes the suite directory or does not exist, an artefact `target` that is not an absolute
+  in-container file path, or a `profile` with no wiring for the target's kind. No container
   starts and the run exits **4**;
+- the **schema** rejects it first — the per-kind narrowing of `profile` is enforced by the root schema,
+  so a `profile` the target's kind has no wiring for is refused there before the preflight sees it; and
+  more broadly *any* schema error located at or inside a declared `security:` block counts, not only
+  the causes listed above. A mistyped field name, a scalar where a list belongs, or `caCert: [a, b]`
+  all qualify. No container starts and the run exits **4**;
 - a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
   different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
   file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.

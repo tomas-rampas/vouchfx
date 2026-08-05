@@ -118,11 +118,16 @@ internal static class ExitCodes
     /// </param>
     /// <param name="securityConfirmationFailed">
     /// REQ-018's narrow carve-out. <see langword="true"/> when the run aborted because a declared
-    /// <c>security</c> block could not be confirmed — REQ-005's probe failed, a security
-    /// preflight (REQ-003/REQ-004 artefact paths, REQ-022 profile wiring) rejected the
-    /// declaration before any container started, or a secured multi-scenario suite was refused
-    /// because its scenarios resolve their declared security paths against different directories,
-    /// which likewise starts no container. Defaulted to <see langword="false"/> so every
+    /// <c>security</c> block could not be confirmed — REQ-005's probe failed; a security
+    /// preflight (REQ-003/REQ-004 certificate and artefact paths, REQ-016 artefact
+    /// <c>target</c> shape, REQ-022 profile wiring) rejected the declaration before any container
+    /// started; the root schema rejected it earlier still, which is where REQ-021's per-kind
+    /// narrowing of <c>profile</c> lives and which covers any schema error located at or inside a
+    /// declared <c>security</c> block, not only the causes listed here; or a secured
+    /// multi-scenario suite was refused because its scenarios resolve their declared security
+    /// paths against different directories, which likewise starts no container.
+    /// <c>ScenarioRunner.SuiteResult.SecurityConfirmationFailed</c> carries the maintained
+    /// enumeration; this is a summary of it. Defaulted to <see langword="false"/> so every
     /// existing call site and every existing parameterised test case keeps compiling and keeps
     /// its current result — that default is what makes the carve-out provably narrow.
     /// </param>

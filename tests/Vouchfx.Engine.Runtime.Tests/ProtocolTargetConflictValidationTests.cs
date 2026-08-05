@@ -390,8 +390,17 @@ public sealed class ProtocolTargetConflictValidationTests
     // stamped as the cause of every scenario that has none of its own, and the completion path is
     // told which text the caller already wrote so it prints no duplicate.
 
-    private static readonly string[] s_mixedScenarioYamls = { BothStepsInOneScenario, HttpStepOnly };
-    private static readonly string[] s_mixedScenarioNames = { "conflicting-half", "valid-half" };
+    // THREE scenarios since fix round eight (m7). The suite-level union is taken over the RUNNABLE
+    // scenarios only, so the self-conflicting one no longer contributes its own targets to it — the
+    // two valid halves supply the split conflict, and the self-conflicting one supplies the
+    // byte-identical early message whose duplicate printing is the property under test. Before m7 a
+    // two-scenario fixture sufficed because the self-conflicting scenario fed the union itself; the
+    // property being guarded is unchanged, only the shape that reaches it.
+    private static readonly string[] s_mixedScenarioYamls =
+        { BothStepsInOneScenario, HttpStepOnly, KafkaStepOnly };
+
+    private static readonly string[] s_mixedScenarioNames =
+        { "conflicting-half", "valid-http-half", "valid-kafka-half" };
 
     /// <summary>
     /// A suite mixing a self-conflicting scenario with a cleanly-compiling one prints the conflict
@@ -422,7 +431,7 @@ public sealed class ProtocolTargetConflictValidationTests
             // Classification is the shape's, not the conflicting scenario's alone.
             Assert.Equal(Verdict.Inconclusive, mixed.Result.Verdict);
             Assert.False(mixed.Result.SecurityConfirmationFailed);
-            Assert.Equal(2, mixed.Result.ScenarioVerdicts.Count);
+            Assert.Equal(s_mixedScenarioNames.Length, mixed.Result.ScenarioVerdicts.Count);
             Assert.All(mixed.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
 
             // Nothing was staged: the topology build was never reached.
@@ -439,16 +448,22 @@ public sealed class ProtocolTargetConflictValidationTests
     /// -level suppression: only text byte-identical to what the caller already printed is skipped.
     /// </summary>
     /// <remarks>
-    /// The guard against over-suppressing. Scenario A here is schema-invalid (an unknown step
-    /// field), so its EarlyMessage is a schema diagnostic, NOT the conflict text — while scenario B
-    /// addresses the target over the other family, so the union still conflicts and the suite guard
-    /// still fires. Both messages must survive: the suite's fact once, and A's own fact once.
+    /// The guard against over-suppressing. The schema-invalid scenario's EarlyMessage is a schema
+    /// diagnostic, NOT the conflict text, while the two valid halves split the families across
+    /// themselves so the union conflicts and the suite guard still fires. Both messages must
+    /// survive: the suite's fact once, and the schema-invalid scenario's own fact once.
+    /// </remarks>
+    /// <remarks>
+    /// Three scenarios since fix round eight (m7): the schema-invalid one no longer feeds the
+    /// suite-level union, so the conflict it used to supply now comes from the two runnable halves.
+    /// The property under test — a distinct early message is not suppressed by the suite-level
+    /// print — is exactly the same one, reached the same way.
     /// </remarks>
     [Fact]
     public async Task RunSuiteAsync_ConflictingSuiteWithADistinctEarlyMessage_KeepsBothDiagnostics()
     {
-        var yamls = new[] { SchemaInvalidKafkaHalf, HttpStepOnly };
-        var names = new[] { "schema-invalid-kafka-half", "http-half" };
+        var yamls = new[] { SchemaInvalidKafkaHalf, HttpStepOnly, KafkaStepOnly };
+        var names = new[] { "schema-invalid-kafka-half", "http-half", "kafka-half" };
 
         var run = await RunAndCaptureAsync(yamls, names);
 
@@ -461,13 +476,64 @@ public sealed class ProtocolTargetConflictValidationTests
         Assert.Contains("bogusField", run.Rendered, StringComparison.Ordinal);
 
         Assert.Equal(Verdict.Inconclusive, run.Result.Verdict);
-        Assert.Equal(2, run.Result.ScenarioVerdicts.Count);
+        Assert.Equal(names.Length, run.Result.ScenarioVerdicts.Count);
+    }
+
+    // ── m7 (peer-review critic, fix round eight): an unrunnable scenario cannot veto a runnable one ──
+
+    /// <summary>
+    /// A scenario that cannot run must not contribute its targets to the suite-level protocol union:
+    /// a schema-invalid Kafka scenario beside a valid HTTP one addressing the same target leaves the
+    /// suite RUNNABLE, rather than converting it into a suite-wide protocol-conflict refusal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The union decides what the ONE shared topology stages, and a scenario carrying an early
+    /// verdict stages nothing because it executes nothing. Before this change the fixture below was
+    /// refused outright and the valid HTTP scenario never ran — while the shape one typo away (fix
+    /// <c>bogusField</c>, and both scenarios become runnable) is a genuine conflict that is still
+    /// refused, which the sibling tests above pin.
+    /// </para>
+    /// <para>
+    /// MEASURED WITHOUT DOCKER by this file's own established technique: the shared environment
+    /// declares <c>env: { FOO: "${conn:typo}" }</c>, which <c>EnvironmentMapper.Map</c> rejects
+    /// eagerly inside <c>SuiteTopology.StartAsync</c>. The presence of
+    /// <see cref="PreTopologyMarker"/> therefore proves the topology build was ATTEMPTED — i.e. the
+    /// suite was NOT refused at the pre-topology guard — which is the whole of what this test needs
+    /// to distinguish. Its absence is what the refusal rows above assert.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_UnrunnableKafkaScenarioBesideAValidHttpOne_DoesNotRefuseTheSuite()
+    {
+        var yamls = new[] { SchemaInvalidKafkaHalf, HttpStepOnly };
+        var names = new[] { "schema-invalid-kafka-half", "http-half" };
+
+        var run = await RunAndCaptureAsync(yamls, names);
+
+        // No suite-level protocol conflict: the only Kafka step belongs to a scenario that cannot run.
+        Assert.Empty(run.Diagnostic);
+
+        // …and the suite went ON to build the topology, which is what "the valid scenario is not
+        // vetoed" means at this seam. Before m7 this marker was absent: the suite was refused before
+        // it, and the valid HTTP scenario never had the chance to run.
+        Assert.Contains(PreTopologyMarker, run.Rendered, StringComparison.Ordinal);
+
+        // MEASURED and deliberately NOT asserted here: the schema-invalid scenario's own
+        // 'bogusField' message does not reach the terminal on this path. That is a property of the
+        // ArgumentException catch around StartAsync — it returns a bare SuiteResult and so skips the
+        // render and the file reports entirely, the same shape rounds five and six fixed at the two
+        // pre-topology guards — and it is unchanged by m7, which is why this row does not pin it.
+        // The sibling test above pins that message on the path that does render.
+        Assert.Equal(Verdict.Inconclusive, run.Result.Verdict);
+        Assert.Equal(names.Length, run.Result.ScenarioVerdicts.Count);
     }
 
     /// <summary>
     /// A Kafka-family scenario carrying an unknown step field: schema-invalid, so it never reaches
-    /// the per-scenario protocol check and carries a schema diagnostic as its early message — while
-    /// still contributing its Kafka target to the suite-level union.
+    /// the per-scenario protocol check and carries a schema diagnostic as its early message. Since
+    /// fix round eight (m7) it contributes NOTHING to the suite-level union either — a scenario that
+    /// cannot run stages nothing.
     /// </summary>
     private const string SchemaInvalidKafkaHalf = ConflictSuiteEnvironment + """
 

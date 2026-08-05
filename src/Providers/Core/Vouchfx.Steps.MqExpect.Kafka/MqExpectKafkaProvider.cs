@@ -460,7 +460,7 @@ public sealed class MqExpectKafkaProvider
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
         "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
-        "        string connKey,\n" +
+        "        string bootstrapKey,\n" +
         "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
@@ -478,7 +478,7 @@ public sealed class MqExpectKafkaProvider
         "        // consumer path runs, byte-identical to the committed slice.\n" +
         "        if (avro)\n" +
         "        {\n" +
-        "            await ExpectAvroAsync(vars, secrets, security, outcomeKey, connKey, targetName,\n" +
+        "            await ExpectAvroAsync(vars, secrets, security, outcomeKey, bootstrapKey, targetName,\n" +
         "                topic,\n" +
         "                expectKeyTemplate, payloadContainsTemplate, headerNames,\n" +
         "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey,\n" +
@@ -487,17 +487,19 @@ public sealed class MqExpectKafkaProvider
         "            return;\n" +
         "        }\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
-        "        // Read the bootstrap-servers string staged by the orchestrator\n" +
-        "        // (VarKeys.Connection pattern).  A null or empty string means the\n" +
-        "        // dependency was not discovered → EnvironmentError (§12.1).\n" +
-        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        // Read the bootstrap-servers string staged by the orchestrator under the key\n" +
+        "        // this step's Emit chose at COMPILE time — VarKeys.Connection for a dependency\n" +
+        "        // target, VarKeys.Service for a service one (REQ-011), never guessed here and\n" +
+        "        // never resolved by trying one and falling back to the other.  A null or empty\n" +
+        "        // string means the target was not discovered → EnvironmentError (§12.1).\n" +
+        "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(bootstrap))\n" +
         "        {\n" +
         "            sw.Stop();\n" +
         "            vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "                Vouchfx.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + bootstrapKey + \"'\") + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -760,7 +762,7 @@ public sealed class MqExpectKafkaProvider
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
         "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
-        "        string connKey,\n" +
+        "        string bootstrapKey,\n" +
         "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
@@ -777,14 +779,14 @@ public sealed class MqExpectKafkaProvider
         "        // the assembler's late supersession are the bound (#232).\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
-        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(bootstrap))\n" +
         "        {\n" +
         "            sw.Stop();\n" +
         "            vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "                Vouchfx.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + bootstrapKey + \"'\") + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        // Schema-registry URL staged under svc::<sr>-sr; checked BEFORE any client build\n" +

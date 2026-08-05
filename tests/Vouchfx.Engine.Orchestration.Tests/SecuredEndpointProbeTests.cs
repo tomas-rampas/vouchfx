@@ -88,7 +88,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     {
         private readonly Dictionary<string, ISecurityConfiguration> _byTarget = new(StringComparer.Ordinal);
 
-        internal FakeAccessor With(string target, string profile, FakeMaterial? material)
+        internal FakeAccessor With(string target, string profile, ISecurityCertificateMaterial? material)
         {
             _byTarget[target] = new FakeConfiguration(profile, material);
             return this;
@@ -98,7 +98,8 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             _byTarget.TryGetValue(targetName, out var configuration) ? configuration : null;
     }
 
-    private sealed record FakeConfiguration(string Profile, FakeMaterial? Material) : ISecurityConfiguration
+    private sealed record FakeConfiguration(string Profile, ISecurityCertificateMaterial? Material)
+        : ISecurityConfiguration
     {
         ISecurityCertificateMaterial? ISecurityConfiguration.Certificates => Material;
     }
@@ -150,6 +151,97 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         /// that skipped the round trip would make every mutual-TLS arm here fail at the handshake
         /// and prove nothing about the probe.
         /// </remarks>
+        private static X509Certificate2 LoadPresentableClientCertificate(TestCertificateBed bed)
+        {
+            using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
+            return new X509Certificate2(pemPair.Export(X509ContentType.Pkcs12));
+        }
+    }
+
+    /// <summary>
+    /// A material whose declared <c>caCert</c> PATH is present and contained, but whose CONTENT is
+    /// not a certificate — the B1 shape (peer-review critic, fix round eight).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this is not simply a throwing stub.</strong> It reproduces
+    /// <c>SecurityConfigurationAccessor.LoadCa</c>'s exact observable shape, which is what the
+    /// defect turned on: the path view SUCCEEDS (so <c>BuildValidationCallback</c> installs a
+    /// callback and the probe proceeds to a handshake), the OBJECT view throws a real
+    /// <see cref="SecurityMaterialException"/> — a direct <see cref="Exception"/> subclass, not an
+    /// <see cref="IOException"/> — whose own message names the DECLARED path while its inner
+    /// exception names the RESOLVED one. Both halves matter: the first is why the probe's two
+    /// evidence filters missed it, the second is why <c>Summarise</c> (which takes the INNERMOST
+    /// message) would have archived a host path had the load stayed inside the callback.
+    /// </para>
+    /// <para>
+    /// The file really is read: <c>Load</c> calls the same <c>new X509Certificate2(path)</c>
+    /// constructor production does and wraps the same three exception types, so this stays honest
+    /// if the platform's failure classification for a malformed PEM ever moves.
+    /// </para>
+    /// </remarks>
+    private sealed class MalformedCaMaterial : ISecurityCertificateMaterial
+    {
+        private const string FieldPathPrefix = "environment.services.sut.security";
+
+        private readonly string _declared;
+        private readonly string _resolved;
+
+        internal MalformedCaMaterial(TestCertificateBed bed, string declared, bool withClientIdentity)
+        {
+            _declared = declared;
+            _resolved = Path.Combine(bed.SuiteDirectory, declared.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(_resolved)!);
+            File.WriteAllText(_resolved, "not a certificate");
+
+            ClientCertificatePath = withClientIdentity ? bed.ClientCertPath : null;
+            ClientKeyPath = withClientIdentity ? bed.ClientKeyPath : null;
+            ClientCertificate = withClientIdentity ? LoadPresentableClientCertificate(bed) : null;
+        }
+
+        /// <summary>The declared (relative) text — what a diagnostic may name.</summary>
+        internal string Declared => _declared;
+
+        /// <summary>The resolved absolute path — what a diagnostic may NOT name.</summary>
+        internal string Resolved => _resolved;
+
+        public string? CaCertificatePath => _resolved;
+
+        public string? ClientCertificatePath { get; }
+
+        public string? ClientKeyPath { get; }
+
+        public X509Certificate2? CaCertificate => Load();
+
+        public X509Certificate2? ClientCertificate { get; }
+
+        public bool TrustsRemoteCertificate(
+            X509Certificate2? remoteCertificate, X509Chain? platformBuiltChain, SslPolicyErrors sslPolicyErrors)
+        {
+            // Production's first line, and the whole point: the anchor is loaded INSIDE the
+            // validation callback unless something loaded it earlier.
+            _ = CaCertificate;
+            return true;
+        }
+
+        private X509Certificate2 Load()
+        {
+            try
+            {
+                return new X509Certificate2(_resolved);
+            }
+            catch (Exception ex)
+                when (ex is System.Security.Cryptography.CryptographicException
+                          or IOException
+                          or UnauthorizedAccessException)
+            {
+                throw new SecurityMaterialException(
+                    $"{FieldPathPrefix}.caCert: '{_declared}' could not be read as a certificate "
+                    + $"({ex.Message}).",
+                    ex);
+            }
+        }
+
         private static X509Certificate2 LoadPresentableClientCertificate(TestCertificateBed bed)
         {
             using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
@@ -1197,6 +1289,99 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// n4 (peer-review critic, fix round eight): the outer token cancelling during the anonymous
+    /// arm's TLS HANDSHAKE — not its post-handshake read — is likewise reported as an UNFINISHED
+    /// check, never as the refusal the differential is looking for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sibling row above cancels after the second connection's handshake has completed, so the
+    /// cancellation lands in the ApiVersions read. This row cancels BEFORE it: the second connection
+    /// is accepted at the TCP layer and then never answered, so the client is still waiting for the
+    /// server's first handshake message.
+    /// </para>
+    /// <para>
+    /// <strong>Why the distinction is worth a row of its own rather than being "the same catch".</strong>
+    /// <c>ConfirmAnonymousClientIsRefusedAsync</c> has TWO arms that can see a failed handshake, and
+    /// they mean opposite things: <c>catch (OperationCanceledException)</c> reports an unfinished
+    /// check, while the arm below it treats <c>AuthenticationException</c>/<c>IOException</c> as the
+    /// peer REFUSING an anonymous client — which is a positive confirmation. Cancellation arriving
+    /// inside the handshake as an I/O fault rather than as a cancellation would therefore be read as
+    /// proof that the broker enforces mutual TLS, on a connection that proved nothing. The clause
+    /// ordering is what prevents that, and nothing pinned it until this row.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_OuterTokenCancelledDuringTheDifferentialHandshake_FailsAsUnfinishedNotAsRefusal()
+    {
+        using var cts = new CancellationTokenSource();
+        var connections = 0;
+
+        var (port, serving, listener) = Listen(async client =>
+        {
+            if (Interlocked.Increment(ref connections) == 1)
+            {
+                // Connection 1: the ordinary enforcing-broker arm, answered in full.
+                var tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+                try
+                {
+#pragma warning disable CA5359
+                    await tls.AuthenticateAsServerAsync(
+                            new SslServerAuthenticationOptions
+                            {
+                                ServerCertificate = _bed.ServerCertificate,
+                                ClientCertificateRequired = true,
+                                RemoteCertificateValidationCallback =
+                                    (_, certificate, _, _) => certificate is not null,
+                            })
+                        .ConfigureAwait(false);
+#pragma warning restore CA5359
+
+                    await ServeKafkaApiVersions(tls).ConfigureAwait(false);
+                }
+                finally
+                {
+                    tls.Dispose();
+                }
+
+                return;
+            }
+
+            // Connection 2 — the anonymous arm. The socket is accepted and then NEVER spoken to:
+            // no AuthenticateAsServerAsync at all, so the client stays blocked waiting for the
+            // server's first handshake message while its token is cancelled underneath it.
+            await Task.Delay(TimeSpan.FromMilliseconds(150)).ConfigureAwait(false);
+            await cts.CancelAsync().ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        });
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
+                SecuredEndpointProbe.ConfirmAsync(
+                    KafkaDependencyEnv(Profile("mtls")),
+                    Staged("events", "localhost", port),
+                    new FakeAccessor().With(
+                        "events", "mtls", new FakeMaterial(_bed, withClientIdentity: true, declareCa: true)),
+                    new HashSet<string>(StringComparer.Ordinal),
+                    ProbeTimeout,
+                    cts.Token));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Contains("could not finish confirming", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains(
+                "an unfinished one is reported rather than assumed",
+                ex.Info.Detail,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
     // ── m3 (security review, fix round four): the unknown-profile branch is ARMED ─────────
     //
     // SecuredEndpointProbe.ProfilesPresentingAClientIdentity is an exhaustive map — profile → does
@@ -1309,7 +1494,20 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// both assertions. <c>AuthorityTextTests</c> pins the formatter's own rule directly, but the
     /// probe's private resolver has no seam other than this message (see the note above this test),
     /// so nothing currently pins IT to the bracket-free form. The assertion is kept as a cheap
-    /// rendering guard; restoring the parse coverage would mean giving that resolver a test seam.
+    /// rendering guard.
+    /// </para>
+    /// <para>
+    /// <strong>What restoring the parse coverage would actually cost</strong> (m5 reconciliation,
+    /// fix round eight — the earlier wording priced it as though a seam had to be invented). It is
+    /// ONE access modifier: <c>TryResolveAddress</c> is <c>private static</c> on
+    /// <c>SecuredEndpointProbe</c>, and this test project already sees that assembly's internals —
+    /// <c>AuthorityTextTests</c> reaches <c>internal static AuthorityText</c> in exactly this way.
+    /// It is deferred not because it is expensive but because the failure direction is closed: a
+    /// bracket-retaining parse produces a connect diagnostic, never a false confirmation, and
+    /// nothing in this release stages an IPv6 authority at all. Widening a production type's
+    /// visibility to observe a property whose only failure mode is a worse message is the trade
+    /// being declined; if the resolver ever gains a branch that could confirm rather than refuse,
+    /// the seam is a one-line change away.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1425,5 +1623,85 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
         Assert.Contains($"{expectedHost}:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
         Assert.DoesNotContain("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    // ── B1 (peer-review critic, fix round eight): a malformed trust anchor FAILS, not CRASHES ──
+    //
+    // The client identity has always been loaded EAGERLY here, inside a guarded region that turns a
+    // SecurityMaterialException into a classified SecurityConfirmation failure. The trust anchor was
+    // not: BuildValidationCallback read only CaCertificatePath (containment, no load), and the first
+    // line of TrustsRemoteCertificate loaded the anchor INSIDE the TLS validation callback.
+    //
+    // MEASURED on this host (.NET 8.0.29 / Windows 11), with a throwing callback and an in-process
+    // TLS listener, three cases:
+    //   • callback throws an Exception-derived type  → propagates RAW out of AuthenticateAsClientAsync
+    //     (is AuthenticationException: False, is IOException: False)
+    //   • callback throws an IOException             → arrives as IOException (the existing filter
+    //     WOULD have caught this shape — which is why the defect was invisible)
+    //   • callback returns false                     → AuthenticationException (the ordinary path)
+    // SecurityMaterialException is `: Exception`, so it took the first row: past the handshake
+    // filter, past the anonymous arm's filter, out of ConfirmAsync, rethrown raw by SuiteTopology's
+    // dispose-and-throw catch, past ScenarioRunner's ArgumentException/OrchestrationException seams,
+    // and out of a RunCommand that deliberately has no broad catch — a stack trace with no verdict,
+    // no artefacts and a non-taxonomy exit code.
+    //
+    // REACHABLE BY ORDINARY AUTHORING ERROR: REQ-004's preflight checks containment and
+    // File.Exists, never content. An empty file, a mangled PEM or a private key pasted where the
+    // certificate belongs all pass preflight.
+
+    /// <summary>
+    /// A declared <c>caCert</c> that exists but is not a certificate fails CLOSED as a classified
+    /// <see cref="OrchestrationErrorKind.SecurityConfirmation"/> — on both profiles, since a
+    /// <c>tls</c> probe verifies the chain against the declared anchor too.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The detail names the DECLARED (relative) path and never the resolved one. That is not
+    /// cosmetic: this message is archived into the §14 event stream, where no scrubber redacts a
+    /// host path. Eager loading is what keeps it so — <see cref="SecurityMaterialException"/>'s own
+    /// message carries the declared text, whereas the raw escape's innermost message (the one
+    /// <c>Summarise</c> would have taken) is the platform's, naming the resolved path.
+    /// </para>
+    /// <para>
+    /// A real TLS listener is used deliberately, even though the fix now refuses before any socket
+    /// work: without one, the red-first form of this test would have failed on a connect diagnostic
+    /// rather than on the raw escape it exists to pin. The two negative assertions record that the
+    /// refusal now happens before both the connect and the handshake.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("mtls", true)]
+    [InlineData("tls", false)]
+    public async Task Confirm_DeclaredCaCertificateThatIsNotACertificate_FailsAsSecurityConfirmation(
+        string profile, bool withClientIdentity)
+    {
+        var material = new MalformedCaMaterial(_bed, "certs/broken-ca.pem", withClientIdentity);
+        var (port, serving, listener) = ListenTls(tls => ServeKafkaApiVersions(tls), ClientAuth.Required);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<OrchestrationException>(() => ProbeAsync(
+                KafkaDependencyEnv(Profile(profile)),
+                Staged("events", "localhost", port),
+                new FakeAccessor().With("events", profile, material)));
+
+            Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+            Assert.Equal("events", ex.Info.ResourceName);
+            Assert.Contains("trust anchor could not be loaded", ex.Info.Detail, StringComparison.Ordinal);
+
+            // The declared path, and ONLY the declared path.
+            Assert.Contains(material.Declared, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain(material.Resolved, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain(_bed.SuiteDirectory, ex.Info.Detail, StringComparison.Ordinal);
+
+            // Refused before any socket work, so neither transport diagnostic can be the cause.
+            Assert.DoesNotContain("could not connect", ex.Info.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("TLS handshake against", ex.Info.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
     }
 }
