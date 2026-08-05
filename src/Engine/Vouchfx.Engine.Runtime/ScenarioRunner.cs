@@ -907,9 +907,18 @@ public static class ScenarioRunner
             }
         }
 
-        // REQ-018's narrow signal, accumulated across both of its producers: a pre-topology
-        // security-preflight rejection in the loop below, and REQ-005's probe raising a
-        // SecurityConfirmation OrchestrationException from StartAsync. Kept as a local rather
+        // REQ-018's narrow signal. THIS LOCAL accumulates three producers: a schema rejection that
+        // locates a declared `security` block, and a security-preflight failure from the provider
+        // pipeline (both in the compilation loop below), plus REQ-005's probe raising a
+        // SecurityConfirmation OrchestrationException from StartAsync.
+        //
+        // It is NOT the whole account of the flag the CLI finally reads (gatekeeper MAJOR, fix
+        // round seven — the earlier form said "both of its producers" and read as exhaustive). The
+        // base-directory-divergence guard below bypasses this local entirely and passes
+        // `securityConfirmationFailed: true` to CompleteWithoutTopologyAsync LITERALLY, because
+        // that refusal is unconditional rather than accumulated — see its own note there.
+        //
+        // Kept as a local rather
         // than derived from the verdict, because the verdict is exactly what must NOT change:
         // an ordinary environment error and an unconfirmable security assertion produce the same
         // Verdict.EnvironmentError and must keep doing so (§12.1) — they differ only in whether
@@ -1599,7 +1608,10 @@ public static class ScenarioRunner
     /// <see langword="null"/> when the caller printed nothing. Any scenario whose
     /// <c>EarlyMessage</c> is ordinally equal to it is skipped for TERMINAL printing only — the
     /// message stays on the scenario's own record, so it still reaches anything rendered from that
-    /// record. This is what lets a suite-level fact be stamped as every affected scenario's cause
+    /// record (none today: <c>EarlyMessage</c> has exactly one consumer, the suppression check
+    /// below, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel
+    /// carries a scenario-level message — see #372). This is what lets a suite-level fact be
+    /// stamped as every affected scenario's cause
     /// while still appearing on the terminal exactly once (MAJOR-3, fix round six). The
     /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
     /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
@@ -1720,6 +1732,15 @@ public static class ScenarioRunner
     /// scenario is Inconclusive BECAUSE of the suite-level fact, so it is stamped as that
     /// scenario's own cause rather than left null — a per-scenario record with no cause cannot
     /// explain itself to anything rendered from it.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing renders it today</strong> (m4, gatekeeper + spec-compliance, fix round
+    /// seven — the paragraph above implied delivery). Measured: the stamped <c>EarlyMessage</c> has
+    /// exactly one consumer, <see cref="CompleteWithoutTopologyAsync"/>'s terminal-print suppression
+    /// check, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel —
+    /// JUnit, HTML or the event stream — carries a scenario-level message at all (see #372). The
+    /// stamp is therefore correct-by-construction rather than load-bearing: it puts the cause where
+    /// a renderer would read it once one exists, and costs nothing until then.
     /// </para>
     /// <para>
     /// Stamping the cause is what makes it a duplicate on the TERMINAL, which the caller resolves

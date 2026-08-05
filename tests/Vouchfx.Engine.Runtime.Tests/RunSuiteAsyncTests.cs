@@ -596,6 +596,18 @@ public sealed class RunSuiteAsyncTests
         Assert.True(result.SecurityConfirmationFailed);
     }
 
+    // Hoisted to fields: CA1861 fires on an array of literal constants in an argument position,
+    // regardless of how often the method is actually called — RunSuiteAsync is called ONCE below.
+    // The rule's own message names a "repeatedly called" method and an earlier form of this comment
+    // repeated that as if it described this test, which it does not (m6, gatekeeper, fix round
+    // seven). MEASURED, same round: inlining these two back produced CA1861 at both argument
+    // positions and, under TreatWarningsAsErrors, failed the build. The sibling
+    // `new[] { ast, ast }` and `new[] { yaml, yaml }` arguments stay inline because neither trips
+    // the rule in that same build — `ast` is a runtime-built local, and `yaml`, though a
+    // `const string`, reaches the array as a REFERENCE rather than as a literal.
+    private static readonly string[] s_divergingScenarioNames = { "in-dir-a", "in-dir-b" };
+    private static readonly string?[] s_divergingScenarioDirectories = { "dir-a", "dir-b" };
+
     /// <summary>
     /// The ARTEFACT half of the divergence refusal (gatekeeper MAJOR-1 + security MINOR-1, fix
     /// round six): a CI job that asked for reports must get them from this seam too.
@@ -621,10 +633,6 @@ public sealed class RunSuiteAsyncTests
     /// text is also stamped as each unjudged scenario's own cause.
     /// </para>
     /// </remarks>
-    // Hoisted to fields (CA1861): constant-element arrays passed to a repeatedly-called method.
-    private static readonly string[] s_divergingScenarioNames = { "in-dir-a", "in-dir-b" };
-    private static readonly string?[] s_divergingScenarioDirectories = { "dir-a", "dir-b" };
-
     [Fact]
     public async Task RunSuiteAsync_SecuredSuiteWithDivergingScenarioDirectories_WritesEveryRequestedReport()
     {

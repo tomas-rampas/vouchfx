@@ -118,9 +118,11 @@ internal static class ExitCodes
     /// </param>
     /// <param name="securityConfirmationFailed">
     /// REQ-018's narrow carve-out. <see langword="true"/> when the run aborted because a declared
-    /// <c>security</c> block could not be confirmed — REQ-005's probe failed, or a security
+    /// <c>security</c> block could not be confirmed — REQ-005's probe failed, a security
     /// preflight (REQ-003/REQ-004 artefact paths, REQ-022 profile wiring) rejected the
-    /// declaration before any container started. Defaulted to <see langword="false"/> so every
+    /// declaration before any container started, or a secured multi-scenario suite was refused
+    /// because its scenarios resolve their declared security paths against different directories,
+    /// which likewise starts no container. Defaulted to <see langword="false"/> so every
     /// existing call site and every existing parameterised test case keeps compiling and keeps
     /// its current result — that default is what makes the carve-out provably narrow.
     /// </param>

@@ -40,7 +40,7 @@ the board) is classified Inconclusive and exits 4 regardless of the opt-in flag,
 of `vouchfx validate`.
 
 A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
-`--fail-on-env-error` and no `--fail-on-inconclusive`. Two causes, each keeping the exit code its own
+`--fail-on-env-error` and no `--fail-on-inconclusive`. Each cause keeps the exit code its own
 verdict names:
 
 - the post-health-gate **secured-confirmation probe** fails — the declared endpoint refuses the
@@ -48,7 +48,12 @@ verdict names:
   or refuses the declared client certificate. The run aborts before any step executes and exits **3**;
 - a pre-topology **security preflight** rejects the declaration — a certificate path that escapes the
   suite directory or does not exist, or a `profile` with no wiring for the target's kind. No container
-  starts and the run exits **4**.
+  starts and the run exits **4**;
+- a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
+  different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
+  file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.
+  No container starts and the run exits **4**. Suites declaring no `security:` block are unaffected,
+  as is `--parallel`, where each scenario owns its own topology and its own directory.
 
 Every *other* cause of an environment error — an unhealthy container, an unpullable image, a seed
 failure unrelated to security — is unaffected and still exits 0 by default. The reasoning behind the

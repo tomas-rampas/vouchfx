@@ -190,8 +190,27 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <see cref="MappedTopology.HealthGateResourceNames"/>.
     /// </param>
     /// <param name="seedBaseDirectory">
-    /// The base directory against which relative <c>environment.seed</c> SQL file
-    /// paths are resolved (S05-A-01).  Defaults to
+    /// The SUITE directory — the base every relative path this method resolves is measured from.
+    /// Despite the name it has TWO consumers, not one (Copilot, fix round seven: the doc named only
+    /// the first, and an embedder who passed a seed-only directory would silently break artefact
+    /// containment):
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     relative <c>environment.seed</c> SQL and fixture paths (S05-A-01) — its original job, and
+    ///     retained on the instance so a per-scenario reset re-seeds from the same base;
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>security.serverArtifacts[].source</c> on every declared service AND dependency
+    ///     (REQ-016), since slice E — this value reaches <c>EnvironmentMapper.Map</c> as its
+    ///     <c>suiteDirectory</c>, which is also the root the artefact CONTAINMENT check measures
+    ///     escape from. A wrong value here therefore does not merely mis-resolve a path; it moves
+    ///     the boundary deciding which paths are legal at all.
+    ///   </description></item>
+    /// </list>
+    /// Deliberately NOT the base for the probe's own client material: <c>caCert</c>,
+    /// <c>clientCert</c> and <c>clientKey</c> arrive already resolved on the
+    /// <paramref name="securityConfiguration"/> accessor, which the caller builds against the
+    /// SCENARIO's directory (#268). Defaults to
     /// <see cref="Directory.GetCurrentDirectory"/> when <see langword="null"/>.
     /// </param>
     /// <param name="securityConfiguration">

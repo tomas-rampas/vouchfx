@@ -1293,14 +1293,23 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// message.
     /// </para>
     /// <para>
-    /// <strong>The assertion flipped in fix round five (m1), and the discrimination it carried was
-    /// kept.</strong> It used to assert <c>DoesNotContain("[::1]")</c> — which pinned the CONNECT
-    /// form, but in doing so pinned the diagnostic to <c>::1:9093</c>: not a parseable authority,
-    /// and ambiguous about where the address ends. The resolver still yields the bracket-free host;
-    /// <c>FormatAuthority</c> re-brackets it for display only. The single-versus-double bracket test
-    /// below is what still separates a correct parse from a pass-through: a parser that retained the
-    /// brackets would hand <c>FormatAuthority</c> the host <c>[::1]</c>, which contains a colon and
-    /// would therefore be bracketed AGAIN, rendering <c>[[::1]]</c>.
+    /// <strong>The assertion flipped in fix round five (m1).</strong> It used to assert
+    /// <c>DoesNotContain("[::1]")</c> — which pinned the CONNECT form, but in doing so pinned the
+    /// diagnostic to <c>::1:9093</c>: not a parseable authority, and ambiguous about where the
+    /// address ends. The resolver still yields the bracket-free host;
+    /// <c>AuthorityText.Format</c> re-brackets it for display only.
+    /// </para>
+    /// <para>
+    /// <strong>The double-bracket assertion below no longer discriminates a bracket-retaining
+    /// parse</strong> (m5, fix round seven — recorded here rather than left for a reader to
+    /// discover). It used to: a parser that retained the brackets would have handed
+    /// <c>AuthorityText.Format</c> the host <c>[::1]</c>, which contains a colon and was therefore
+    /// bracketed AGAIN, rendering <c>[[::1]]</c>. That round made <c>Format</c> idempotent on an
+    /// already-bracketed host, so such a parse would now render <c>[::1]:9093</c> here and satisfy
+    /// both assertions. <c>AuthorityTextTests</c> pins the formatter's own rule directly, but the
+    /// probe's private resolver has no seam other than this message (see the note above this test),
+    /// so nothing currently pins IT to the bracket-free form. The assertion is kept as a cheap
+    /// rendering guard; restoring the parse coverage would mean giving that resolver a test seam.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1319,8 +1328,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
         Assert.Contains($"[::1]:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
 
-        // The host that reached the formatter was bracket-free — a bracket-retaining parse would
-        // double up here.
+        // A rendering guard, no longer a parse discriminator — see the remarks above (m5).
         Assert.DoesNotContain("[[::1]]", ex.Info.Detail, StringComparison.Ordinal);
     }
 

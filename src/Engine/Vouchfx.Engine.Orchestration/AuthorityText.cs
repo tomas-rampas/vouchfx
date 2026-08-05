@@ -36,15 +36,37 @@ internal static class AuthorityText
     /// already left the parser as <c>DnsSafeHost</c>.
     /// </para>
     /// <para>
+    /// <strong>Idempotent on an already-bracketed host</strong> (m5, gatekeeper, fix round seven).
+    /// The colon test alone rendered <c>[::1]</c> as <c>[[::1]]:9093</c>, because a bracketed IPv6
+    /// literal still contains a colon. Both callers are believed to hold the bracket-free form —
+    /// the probe's is PROVEN so by test, but <c>EnvironmentMapper</c>'s comes from Aspire's
+    /// <c>EndpointReference.Host</c> and is only INFERRED — so the one unmeasured caller was the
+    /// one that could produce the double. Guarding here costs a length check and removes the
+    /// question; it is not a fix for a defect anyone has observed.
+    /// </para>
+    /// <para>
     /// Display only. Nothing connects to this string; it is the human-readable rendering of an
     /// address the caller has already resolved.
     /// </para>
     /// </remarks>
-    /// <param name="host">The bracket-free host (a registered name, IPv4 literal, or IPv6 literal).</param>
+    /// <param name="host">
+    /// The host (a registered name, IPv4 literal, or IPv6 literal). Normally bracket-free; an
+    /// already-bracketed IPv6 literal is accepted and passed through unchanged rather than doubled.
+    /// </param>
     /// <param name="port">The port.</param>
-    /// <returns><c>host:port</c>, or <c>[host]:port</c> when <paramref name="host"/> is an IPv6 literal.</returns>
+    /// <returns>
+    /// <c>host:port</c>, or <c>[host]:port</c> when <paramref name="host"/> is an IPv6 literal that
+    /// is not already bracketed.
+    /// </returns>
     public static string Format(string host, int port) =>
-        host.Contains(':', StringComparison.Ordinal)
+        NeedsBrackets(host)
             ? FormattableString.Invariant($"[{host}]:{port}")
             : FormattableString.Invariant($"{host}:{port}");
+
+    /// <summary>
+    /// True when <paramref name="host"/> is an IPv6 literal that is not already bracketed.
+    /// </summary>
+    private static bool NeedsBrackets(string host) =>
+        host.Contains(':', StringComparison.Ordinal)
+        && !(host.Length >= 2 && host[0] == '[' && host[^1] == ']');
 }
