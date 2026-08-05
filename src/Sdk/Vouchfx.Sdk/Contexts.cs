@@ -175,10 +175,59 @@ public interface IProjectContext
 /// named member on <see cref="IProjectContext"/> so a provider's <c>Emit</c>
 /// stage can resolve the same external file it validated at bind/validate
 /// time (e.g. <c>script.csharp</c>'s <c>file</c> field).
+/// authenticated-infrastructure-mtls addition: <see cref="DeclaredServices"/>,
+/// mirroring <see cref="IProjectContext.DeclaredServices"/> for the same reason —
+/// a provider whose <c>target</c> may name EITHER a dependency or a service must
+/// emit the corresponding <c>Vars</c> key, and which key that is can only be
+/// decided at compile time.
 /// </para>
 /// </remarks>
 public interface ICompileContext
 {
+    /// <summary>
+    /// The <see cref="DeclaredServices"/> default: the empty map, meaning "this context knows of
+    /// no declared services", which is what every pre-existing implementation was already saying
+    /// by not having the member at all.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, DeclaredServiceInfo> NoDeclaredServices =
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets the map of service names to their declared shape — the same map
+    /// <see cref="IProjectContext.DeclaredServices"/> exposes at validate time, exposed here
+    /// too because <c>Emit</c> runs in a separate stage and must reach the same fact.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// See <see cref="IProjectContext.DeclaredServices"/> for what the map contains (it is not
+    /// limited to <c>environment.services</c> entries: it carries every name the engine stages
+    /// under a <c>svc::</c> key). The engine's own context exposes the identical instance, so a
+    /// provider that reconciled a <c>target</c> against it in <c>Validate</c> reads the same
+    /// membership in <c>Emit</c>.
+    /// </para>
+    /// <para>
+    /// <strong>What it is for.</strong> A provider whose <c>target</c> may name either kind —
+    /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> accept a <c>kafka</c> dependency OR a
+    /// declared service (REQ-011) — must emit <c>VarKeys.Connection(target)</c> for the first
+    /// and <c>VarKeys.Service(target)</c> for the second. Emitting one key and hoping, or
+    /// emitting both and letting the helper try each in turn, is the "provider guessing" that
+    /// REQ-023 forbids; membership of this map is the answer, and it is known at compile time.
+    /// </para>
+    /// <para>
+    /// <strong>Why a DEFAULT implementation rather than a plain new member.</strong> This
+    /// interface's own remarks say adding a member is non-breaking because the engine is its
+    /// single in-tree implementor — which is true of PRODUCTION code and false of test doubles:
+    /// this repository alone carries some eighty <c>StubCompileContext</c> stand-ins, and every
+    /// provider outside it is free to carry more. A default returning the empty map keeps all of
+    /// them compiling and behaving EXACTLY as before (an unknown name is not a service, so a
+    /// provider emits the <c>conn::</c> key it emitted before this member existed), while the
+    /// engine's own context overrides it with the real map. Adding a member with a default is
+    /// additive in the strongest available sense; adding one without would have been a
+    /// source-breaking change dressed as an additive one.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices => NoDeclaredServices;
+
     /// <summary>
     /// Gets the identifier of the step currently being compiled.
     /// Providers must sanitise this value via <see cref="CsxFragment.SanitiseId"/>

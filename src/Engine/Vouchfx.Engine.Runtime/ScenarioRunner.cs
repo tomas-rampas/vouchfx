@@ -79,7 +79,162 @@ namespace Vouchfx.Engine.Runtime;
 /// </param>
 public sealed record SuiteResult(
     Verdict Verdict,
-    IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts);
+    IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
+{
+    /// <summary>
+    /// <see langword="true"/> when at least one scenario in this suite could not have a declared
+    /// <c>security</c> block confirmed (authenticated-infrastructure-mtls, REQ-018).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every producer means the same thing — "the author asserted security and the engine could not
+    /// satisfy the assertion" — and they are enumerated rather than counted, deliberately: the
+    /// earlier form here said "Two producers" over a two-item list and was left behind by the two
+    /// added since, on the surface three other doc sites designate as the full contract. The
+    /// producers currently in the code are:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <strong>The schema door.</strong> A schema-validation error located at or inside a
+    ///     declared <c>security</c> block — <c>RejectsASecurityDeclaration</c>, which covers
+    ///     REQ-021's per-kind narrowing of <c>profile</c> and any other schema error inside the
+    ///     block. Aggregates to
+    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>The preflight door.</strong> A pre-topology security preflight rejected the
+    ///     declaration — a certificate or artefact path that escapes the suite directory or does
+    ///     not exist (REQ-003/REQ-004), an artefact <c>target</c> that is not an absolute
+    ///     in-container file path (REQ-016), or a <c>(profile, target-kind)</c> pair with no
+    ///     registered wiring (REQ-022), among others: <c>EnvironmentSecurityValidator</c> and
+    ///     <c>SecurityProfileWiringValidator</c> are the authority for the full set, and this is
+    ///     an illustration of it rather than a copy — surfacing as a <c>ValidationFailure</c>
+    ///     carrying <c>IsSecurityPreflight</c> and aggregating to
+    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>. EDGE-010(a) requires
+    ///     this path to exit non-zero too: the suite whose <c>clientCert</c> file was deleted
+    ///     must not report a clean pipeline.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>The probe.</strong> REQ-005's post-health-gate probe raised an
+    ///     <c>OrchestrationException</c> whose <c>Info.Kind</c> is
+    ///     <c>OrchestrationErrorKind.SecurityConfirmation</c> — the run aborted before any step
+    ///     executed, and the aggregate verdict is
+    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.EnvironmentError"/>. This is the one
+    ///     producer whose verdict is not <c>Inconclusive</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>The base-directory divergence guard — TWO arms, and this is the site that must
+    ///     carry both.</strong> A suite that declares <c>security</c> is refused before the topology
+    ///     is built when either arm fires, and passes the flag as a LITERAL
+    ///     <see langword="true"/> rather than through the accumulating local — see that guard's
+    ///     own note, and <c>RunSuiteAsync</c>'s note over the local, for why. Aggregates to
+    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
+    ///     <list type="bullet">
+    ///       <item><description>
+    ///         <strong>Scenario against scenario.</strong> Its scenarios resolve their declared
+    ///         paths against different directories. Requires <c>compilations.Count &gt;= 2</c>, so
+    ///         only a multi-scenario suite reaches it — which is why the published surfaces
+    ///         (<c>docs/ci-integration.md</c>, <c>ExitCodes</c>' own summary) describe the refusal
+    ///         as a multi-scenario one.
+    ///       </description></item>
+    ///       <item><description>
+    ///         <strong>Scenario against seed root</strong> (m4, fix round eight). The scenarios'
+    ///         base directory is not the directory the topology resolves
+    ///         <c>security.serverArtifacts</c> against, so client and server material split across
+    ///         two roots. This arm is a property of the two PARAMETERS, not of scenario count, and
+    ///         fires at <c>compilations.Count == 1</c> as readily — so the "multi-scenario" scoping
+    ///         above does NOT describe it. Those surfaces are nevertheless correct as written,
+    ///         because this arm is CLI-UNREACHABLE: <c>RunCommand</c> derives
+    ///         <c>suiteBaseDirectory</c> as <c>scenarioBaseDirectories[0]</c>, literally the same
+    ///         string, so the pair is equal by construction on every CLI path. It is reachable only
+    ///         by a direct engine embedder passing the two independently.
+    ///       </description></item>
+    ///     </list>
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The list is OPEN. A producer added later must appear here, and must not be counted in prose
+    /// anywhere: the mechanics live beside the accumulating local in <c>RunSuiteAsync</c>, which is
+    /// the single place that states which producers reach the local and which bypass it.
+    /// </para>
+    /// <para>
+    /// Init-only rather than a positional parameter, so every existing
+    /// <c>new SuiteResult(verdict, verdicts)</c> call site — and every test constructing one —
+    /// keeps compiling and defaults to <see langword="false"/>. It carries NO verdict semantics
+    /// of its own: it is read by the CLI's exit-code decision alone
+    /// (<c>ExitCodes.FromVerdict</c>'s own <c>securityConfirmationFailed</c> parameter) and never
+    /// by the taxonomy, the renderers or the event stream.
+    /// </para>
+    /// </remarks>
+    public bool SecurityConfirmationFailed { get; init; }
+}
+
+// ---------------------------------------------------------------------------
+// ScenarioCoreResult
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// What one topology-owning scenario run produced: its verdict, its complete event buffer, and
+/// REQ-018's narrow security signal.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Replaces the <c>(Verdict, List&lt;string&gt;)</c> tuple this seam used before slice E, because
+/// the parallel runner needs the security signal to reach its own
+/// <see cref="SuiteResult.SecurityConfirmationFailed"/> — otherwise REQ-018's carve-out would
+/// silently not apply under <c>--parallel</c>, which is the same green-pipeline-on-an-unverified-
+/// security-suite failure the requirement exists to prevent, reached through an opt-in flag.
+/// </para>
+/// <para>
+/// The implicit conversion from the old tuple shape is deliberate and is what keeps the change
+/// narrow: every <c>return (verdict, buffer);</c> in the long core method, and every existing test
+/// double built against the old shape, compiles unchanged and defaults the flag to
+/// <see langword="false"/>. Only the sites that can actually observe a security failure spell the
+/// flag out — the schema-rejection, security-preflight and probe returns, and no others. (This
+/// sentence said "the two sites" until fix round eight, when it had already been three for two
+/// rounds: it is the sixth counting surface this signal grew, and the reason none of them counts
+/// any more.) This is the same "additive, init-only, defaults to false" shape
+/// <c>ValidationFailure.IsSecurityPreflight</c> already established for the same signal one layer
+/// down.
+/// </para>
+/// </remarks>
+/// <param name="Verdict">The scenario's aggregate verdict.</param>
+/// <param name="Buffer">
+/// The complete JSON Lines event buffer for the chosen path; non-empty, and always containing a
+/// scenario-completed event.
+/// </param>
+public sealed record ScenarioCoreResult(Verdict Verdict, List<string> Buffer)
+{
+    /// <summary>
+    /// <see langword="true"/> when this scenario failed because a declared <c>security</c> block
+    /// could not be confirmed. See <see cref="SuiteResult.SecurityConfirmationFailed"/> for the
+    /// enumeration of producers, which is where that list is maintained.
+    /// </summary>
+    /// <remarks>
+    /// Three producers reach THIS type — the schema door, the preflight door and REQ-005's probe
+    /// — and they are named here only to say that the set is open and lives on
+    /// <see cref="SuiteResult.SecurityConfirmationFailed"/>. The suite-level base-directory
+    /// divergence guard is inherently not one of them: it is a property of a multi-scenario suite,
+    /// and it sets the suite flag directly without producing a scenario result. An earlier form of
+    /// this summary read "REQ-005's probe, or a pre-topology security preflight", whose "X, or Y"
+    /// shape reads closed and was already one short.
+    /// </remarks>
+    public bool SecurityConfirmationFailed { get; init; }
+
+    /// <summary>
+    /// Converts the pre-slice-E <c>(Verdict, Buffer)</c> tuple shape, defaulting
+    /// <see cref="SecurityConfirmationFailed"/> to <see langword="false"/>.
+    /// </summary>
+    public static implicit operator ScenarioCoreResult((Verdict Verdict, List<string> Buffer) result) =>
+        new(result.Verdict, result.Buffer);
+
+    /// <summary>
+    /// The named alternative to the implicit conversion operator, for callers and analysers that
+    /// prefer one (CA2225).
+    /// </summary>
+    public static ScenarioCoreResult FromValueTuple((Verdict Verdict, List<string> Buffer) result) =>
+        new(result.Verdict, result.Buffer);
+}
 
 // ---------------------------------------------------------------------------
 // ScenarioRunner
@@ -320,7 +475,7 @@ public static class ScenarioRunner
     /// for the chosen path; the buffer is non-empty and always contains a
     /// scenario-completed event.
     /// </returns>
-    internal static async Task<(Verdict Verdict, List<string> Buffer)> RunScenarioOwningTopologyAsync(
+    internal static async Task<ScenarioCoreResult> RunScenarioOwningTopologyAsync(
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
@@ -368,7 +523,14 @@ public static class ScenarioRunner
             // live streaming (no topology, no compiled script, no steps), so the caller must
             // still post it explicitly for a live tail to observe it.
             livePump?.PostRange(buffer);
-            return (Verdict.Inconclusive, buffer);
+
+            // REQ-018, matching RunSuiteAsync's own schema branch: a rejected `security`
+            // declaration exits non-zero with no flag, whether the rejection came from the
+            // preflight or — as REQ-021's per-kind narrowing does — from the root schema.
+            return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
+            {
+                SecurityConfirmationFailed = RejectsASecurityDeclaration(validationResult.Errors),
+            };
         }
 
         // ── Step 3: Parse YAML → E2eDocument → ScenarioAst ───────────────────
@@ -431,7 +593,13 @@ public static class ScenarioRunner
                 DisplaySanitiser.SanitiseForDisplay(pipelineResult.Failure.Message))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
-            return (Verdict.Inconclusive, buffer);
+
+            // REQ-018 / EDGE-010(a): a security-preflight rejection is still an authoring error
+            // and still Inconclusive, but it must not exit 0 — see SuiteResult's own remarks.
+            return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
+            {
+                SecurityConfirmationFailed = pipelineResult.Failure.IsSecurityPreflight,
+            };
         }
 
         // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
@@ -465,6 +633,16 @@ public static class ScenarioRunner
         }
 
         // ── Step 6: Start Aspire topology ─────────────────────────────────────
+        // REQ-005's probe runs inside StartAsync (after the health gate, before the seed) and
+        // needs the SAME client security configuration a step would use, so it is built here and
+        // handed in. Disposed in this method's own finally rather than inside StartAsync: the
+        // accessor owns the X509Certificate2 instances it loads, and the topology does not own the
+        // accessor's lifetime. A scenario declaring no `security` block gets the shared Null
+        // accessor, which allocates nothing and has nothing to dispose.
+        // seedBaseDirectory is this path's only base directory — RunScenarioOwningTopologyAsync
+        // already hands the same value to ProviderPipeline.Compile above, so the probe resolves
+        // each declared path to exactly the file EnvironmentSecurityValidator checked.
+        var probeSecurity = SecurityConfigurationAccessor.Build(ast, seedBaseDirectory);
         SuiteTopology suite;
         try
         {
@@ -473,6 +651,12 @@ public static class ScenarioRunner
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
                 seedBaseDirectory: seedBaseDirectory,
+                securityConfiguration: probeSecurity,
+
+                // REQ-005/REQ-011: which targets this scenario's own steps will speak Kafka to, so
+                // a customer-supplied broker declared as a SERVICE earns the same authenticated
+                // round trip a `kafka` dependency does. Derived from the AST, never declared.
+                kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -542,11 +726,43 @@ public static class ScenarioRunner
                 Counts = new VerdictCounts { EnvError = 1 },
             }));
             livePump?.PostRange(buffer);
-            return (Verdict.EnvironmentError, buffer);
+
+            // REQ-018: exactly ONE cause of an Environment error exits non-zero without
+            // --fail-on-env-error. The discriminator is the classified kind on the exception, not
+            // the verdict and not the message — an unhealthy container, an unpullable image and an
+            // unrelated seed failure all reach this same catch and still exit 0 by default.
+            return new ScenarioCoreResult(Verdict.EnvironmentError, buffer)
+            {
+                SecurityConfirmationFailed =
+                    oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation,
+            };
+        }
+        finally
+        {
+            // The probe is this accessor's only consumer and it has finished, on every path
+            // including the two that return from a catch above. Disposing here rather than at the
+            // end of the method releases each loaded client certificate's key-store entry as soon
+            // as the topology is up, instead of holding it for the whole run alongside the
+            // separate per-scenario accessor built below.
+            (probeSecurity as IDisposable)?.Dispose();
         }
 
         await using (suite.ConfigureAwait(false))
         {
+            // REQ-005's declared-versus-observed report, on THIS path too — it is the core the
+            // `--parallel` runner drives, and without it an operator running in parallel saw
+            // enforcement fire but never saw what was confirmed, so a TransportConfirmed run read
+            // identically to an AuthenticatedRoundTrip one. That indistinguishability is the exact
+            // outcome REQ-005 gives named levels instead of a boolean to prevent. Written to this
+            // scenario's own writer, which ParallelSuiteRunner flushes in declaration order ahead
+            // of the rendered report — the same position RunSuiteAsync prints it in.
+            foreach (var confirmation in suite.SecurityConfirmations)
+            {
+                await output.WriteLineAsync(
+                        DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
             // Use NullScenarioIsolation for single-scenario RunAsync — no state reset needed.
             IScenarioIsolation isolation = new NullScenarioIsolation();
             var verdict = await RunScenarioAgainstTopologyAsync(
@@ -753,6 +969,24 @@ public static class ScenarioRunner
             }
         }
 
+        // REQ-018's narrow signal. THIS LOCAL accumulates, without counting them: a schema
+        // rejection that locates a declared `security` block, and a security-preflight failure
+        // from the provider pipeline (both in the compilation loop below), plus REQ-005's probe
+        // raising a SecurityConfirmation OrchestrationException from StartAsync.
+        //
+        // It is NOT the whole account of the flag the CLI finally reads (gatekeeper MAJOR, fix
+        // round seven — the earlier form said "both of its producers" and read as exhaustive). The
+        // base-directory-divergence guard below bypasses this local entirely and passes
+        // `securityConfirmationFailed: true` to CompleteWithoutTopologyAsync LITERALLY, because
+        // that refusal is unconditional rather than accumulated — see its own note there.
+        //
+        // Kept as a local rather
+        // than derived from the verdict, because the verdict is exactly what must NOT change:
+        // an ordinary environment error and an unconfirmable security assertion produce the same
+        // Verdict.EnvironmentError and must keep doing so (§12.1) — they differ only in whether
+        // CI is broken without an opt-in flag.
+        var securityConfirmationFailed = false;
+
         // ── Per-scenario compilation (pre-topology) ───────────────────────────
         // Validate + compile each scenario's YAML before we pay the topology build cost.
         var compilations = new List<(
@@ -781,6 +1015,16 @@ public static class ScenarioRunner
             var validationResult = DocumentValidator.Validate(yaml, registry);
             if (!validationResult.IsValid)
             {
+                // REQ-018, and the half of its carve-out the code had not yet delivered. Both
+                // ExitCodes' own remarks and docs/ci-integration.md name "a `profile` with no
+                // wiring for the target's kind" as an unconditional non-zero case — but REQ-021's
+                // narrowing is enforced by the ROOT SCHEMA (the per-kind `allOf`), so it arrives
+                // here rather than through EnvironmentSecurityValidator, and this branch set no
+                // flag. Measured: `profile: mtls` on a redis dependency reported the right message
+                // and exited 0. A documented exception that does not exist is the same defect as an
+                // undocumented one, on the surface whose entire job is to refuse false assurance.
+                securityConfirmationFailed |= RejectsASecurityDeclaration(validationResult.Errors);
+
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
                     string.Join("; ", validationResult.Errors.Select(e => e.Message)),
                     scenarioBaseDirectory));
@@ -800,6 +1044,15 @@ public static class ScenarioRunner
             var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, scenarioBaseDirectory);
             if (pipelineResult.Failure is not null)
             {
+                // REQ-018 / EDGE-010(a): a SECURITY-preflight rejection — a certificate path that
+                // escapes the suite directory or does not exist (REQ-003/REQ-004), or a
+                // (profile, target-kind) pair with no registered wiring (REQ-022) — is still an
+                // authoring error and still Inconclusive, but it must not exit 0. A team whose
+                // clientCert file went missing would otherwise get a green pipeline on a security
+                // suite that verified nothing, which is the exact failure REQ-005 exists to
+                // prevent, reached through the validation door instead of the probe's.
+                securityConfirmationFailed |= pipelineResult.Failure.IsSecurityPreflight;
+
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
                     pipelineResult.Failure.Message, scenarioBaseDirectory));
                 continue;
@@ -808,7 +1061,205 @@ public static class ScenarioRunner
             compilations.Add((name, ast, pipelineResult, null, null, scenarioBaseDirectory));
         }
 
+        // ── Stop here when NO scenario can run ─────────────────────────────────
+        // REQ-004's acceptance names "the pre-topology stage of `vouchfx run`", and EDGE-010(a)
+        // says the suite "never reaches topology build". Without this guard neither held on the
+        // `run` path: every scenario could carry an early verdict and the topology was still
+        // built, health-gated and torn down, so a suite whose clientCert file is missing spent two
+        // minutes starting containers and then reported a health-gate timeout — burying the
+        // preflight message the engine had already computed and turning an exit 4 into an exit 3.
+        //
+        // The single-scenario core (RunScenarioOwningTopologyAsync, which `--parallel` drives)
+        // already returns before StartAsync on a pipeline failure; this brings the shared-topology
+        // path into line with it rather than inventing a new behaviour.
+        //
+        // MIXED SUITES ARE UNAFFECTED BY CONSTRUCTION: the condition is "EVERY scenario has an
+        // early verdict". One valid scenario alongside one that failed preflight leaves this false,
+        // the topology builds exactly as before, and the valid scenario runs.
+        if (compilations.Count > 0 && compilations.TrueForAll(c => c.EarlyVerdict is not null))
+        {
+            return await CompleteWithoutTopologyAsync(
+                    compilations,
+                    securityConfirmationFailed,
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath)
+                .ConfigureAwait(false);
+        }
+
         // ── Build topology once ────────────────────────────────────────────────
+        // REQ-005's probe runs inside StartAsync (after the health gate, before the seed) and
+        // presents the SAME client security configuration a step will, which is what makes its
+        // verdict evidence about the step rather than about the probe. Built from scenarios[0] —
+        // the scenario the ONE shared topology is built from, and whose environment block every
+        // other scenario in the suite is already required to match exactly — against that same
+        // scenario's own directory, so the probe resolves each declared path to the same file
+        // EnvironmentSecurityValidator checked.
+        //
+        // …and that last clause is only true while every scenario shares one directory. Scenarios
+        // are required to share a byte-identical `environment` block, NOT a folder (#268), so
+        // `caCert: ./certs/ca.pem` in two scenarios one directory apart names two different files:
+        // the probe would present scenarios[0]'s copy while a later scenario's steps present their
+        // own. Both fail closed, so nothing passes on the wrong material — but the probe would no
+        // longer be evidence about those steps, which is the whole basis of its verdict. Refused
+        // rather than silently picked, and refused only for suites that declare security at all.
+        //
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
+        // MAJOR-1 + security MINOR-1, fix round six). This guard is 40 lines above the protocol
+        // -conflict seam that fix round five moved onto the shared completion path, and it had the
+        // SAME hole: a bare return skips the ScenarioStarted/Completed events, the --events-stream
+        // pump, the terminal render and FileReportWriter.WriteFileReports. MEASURED on the
+        // divergence shape with --junit/--html/--events all requested: `junit exists = False,
+        // html exists = False, events exists = False` — and unlike the conflict seam this one exits
+        // NON-ZERO (SecurityConfirmationFailed = true), so a CI job gets a red build beside an empty
+        // results directory and a JUnit publisher reporting "no test results". Verdict, flag and
+        // exit code are unchanged here; only the artefacts now exist.
+        //
+        // CLASSIFICATION UNCHANGED, deliberately: `securityConfirmationFailed: true` is passed
+        // literally rather than accumulated, because this guard is about security material — a
+        // suite whose declared 'caCert'/'clientCert'/'clientKey' would resolve to two different
+        // files is exactly a declaration the engine cannot confirm (REQ-018).
+        //
+        // WHY THIS ONE ITERATES ALL COMPILATIONS WHILE ITS NEIGHBOUR FILTERS TO RUNNABLE
+        // (m-runnability, gatekeeper, fix round nine). Two adjacent guards apply opposite
+        // runnability rules to the same list, both correctly, and the difference is what each one
+        // protects. The protocol-conflict guard below protects STAGING — what the shared topology
+        // puts in front of steps that will actually execute — so a scenario that runs nothing
+        // stages nothing and must not veto one that does. This guard protects the DECLARATION: a
+        // secured suite must be single-rooted whatever subset of it runs, because the material a
+        // divergent scenario declares is evidence about what this suite's security means, and the
+        // probe presents one root's material on behalf of whatever executes. It therefore fails
+        // closed over the whole declaration, including scenarios carrying an early verdict — and
+        // note that `compilations[0]`, the baseline both arms compare against, may itself carry
+        // one, so filtering here would also change which directory is the reference.
+        if (TryFindSecurityBaseDirectoryDivergence(
+                scenarios[0].Environment, compilations, seedBaseDirectory, out var divergence))
+        {
+            // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
+            // Printed HERE, once, for the suite; the completion path is told what was printed so it
+            // does not repeat it when it walks the per-scenario messages (see MAJOR-3's note on
+            // StampInconclusiveWhereUnjudged).
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(divergence))
+                .ConfigureAwait(false);
+
+            return await CompleteWithoutTopologyAsync(
+                    StampInconclusiveWhereUnjudged(compilations, divergence),
+                    securityConfirmationFailed: true,
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    alreadyPrintedMessage: divergence)
+                .ConfigureAwait(false);
+        }
+
+        // REQ-023 (amended): the suite half of the both-families rejection (gatekeeper MAJOR, fix
+        // round four). ProviderPipeline.Compile already rejects a target addressed by both families
+        // — but it runs once PER SCENARIO, so it only ever sees one scenario's steps, while the
+        // staging it protects is suite-level: the StartAsync call below passes
+        // SuiteProtocolTargets.KafkaSpeaking over the union of the RUNNABLE scenarios (see m7
+        // below for why runnable and not all), because ONE shared topology serves them all. When
+        // this guard was written that union was taken across every scenario; the rule it enforces
+        // is unchanged by the narrowing, since both reads come from the one local built below.
+        // A two-scenario suite whose first scenario addresses
+        // 'broker' over http.rest and whose second addresses it over mq-publish.kafka therefore
+        // passed both compilations (neither scenario alone addresses both families) and then staged
+        // the bare host:port bootstrap authority for 'broker' — handing the HTTP step a value with
+        // no scheme, which is exactly the outcome the requirement forbids, reached by exactly the
+        // route the per-scenario guard was written to close. MEASURED, red first, by
+        // ProtocolTargetConflictValidationTests' split row.
+        //
+        // THE INPUT IS THE RUNNABLE SCENARIOS, NOT ALL OF THEM (m7, peer-review critic, fix round
+        // eight), and it is ONE LOCAL passed to both this guard and the KafkaSpeaking staging call
+        // below — so the two literally cannot disagree about which targets speak what. That parity
+        // is the invariant this slice re-broke five times; binding it to a single variable is what
+        // makes it structural rather than a convention two call sites have to keep.
+        //
+        // WHY RUNNABLE ONLY. The union decides what the ONE shared topology stages, and a scenario
+        // carrying an early verdict stages nothing because it executes nothing. Including it meant a
+        // scenario that cannot run could veto one that can: a malformed `mq-publish.kafka` scenario
+        // beside a valid `http.rest` one addressing the same target produced a suite-level protocol
+        // conflict and refused the whole suite, so the valid scenario never ran — while the shape
+        // one field away (fix the typo, and both scenarios are runnable) is a genuine conflict that
+        // still refuses. This restores the rule the all-early guard above already states: a suite
+        // mixing one broken scenario with one good one runs the good one, and reports the broken one
+        // on its own terms.
+        //
+        // NOT A NARROWING OF THE GUARD'S REACH for any suite that could run. Two runnable scenarios
+        // that split the families across themselves are exactly as rejected as before — that is the
+        // split row this guard was written for, and both its scenarios are runnable by construction.
+        //
+        // CLASSIFICATION, measured rather than assumed: the per-scenario seam returns a plain
+        // ValidationFailure (IsSecurityPreflight stays false), which maps to Verdict.Inconclusive
+        // with REQ-018's carve-out OFF — exit 0 by default, exit 4 under --fail-on-inconclusive.
+        // This path reproduces that exactly. It deliberately does NOT set SecurityConfirmationFailed
+        // the way the divergence check above does: a protocol conflict is an authoring error, not a
+        // failure to confirm a security assertion, and setting the flag would fire REQ-018's
+        // unconditional non-zero exit for a non-security reason — the very thing REQ-005's own text
+        // warns against. The accumulated value is carried through unchanged, so a suite that ALSO
+        // had a security-preflight rejection in a non-blocking scenario keeps it.
+        //
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
+        // MAJOR, fix round five). Parity between the two seams is what this whole guard is for, and
+        // an earlier form of this branch delivered it at the diagnostic layer only: a bare return
+        // skips the ScenarioStarted/Completed events, the --events-stream pump, the terminal render
+        // and — the one that reaches CI — FileReportWriter.WriteFileReports. MEASURED, red first:
+        // `--junit results.xml` over the SPLIT spelling produced exit 0 (Inconclusive, by design)
+        // and NO results.xml, so a JUnit publisher reported "no test results" and the build went
+        // green; the single-scenario spelling of the identical error wrote the file. Nothing about
+        // the verdict or the exit code changes here — Elevate(Pass, Inconclusive) is Inconclusive,
+        // which is what the bare return said — only that the artefacts now exist.
+        var runnableScenarios = compilations
+            .Where(c => c.EarlyVerdict is null)
+            .Select(c => (ScenarioAst?)c.Ast)
+            .ToList();
+
+        if (SuiteProtocolTargets.DescribeProtocolConflict(runnableScenarios) is { } protocolConflict)
+        {
+            // Issue #266, Item 4: the diagnostic splices target names straight from untrusted
+            // YAML — sanitise before it reaches the terminal/CI log, exactly as the per-scenario
+            // seam's own print site does.
+            //
+            // Printed HERE, once for the suite. The conflict is ONE suite-level fact, so the
+            // terminal must show it once however many scenarios the suite has — but each scenario
+            // is Inconclusive BECAUSE of it, so each scenario's own record must carry it as its
+            // cause. Both properties are delivered together (MAJOR-3, fix round six): the stamp
+            // below puts the text on every scenario that has no more specific message of its own,
+            // and `alreadyPrintedMessage` tells the completion path that this exact text has
+            // already reached the terminal so it prints no duplicate.
+            //
+            // MEASURED, the shape that made this a defect: scenario A addresses the target with
+            // BOTH families (so A alone conflicts and the per-scenario seam stores the conflict
+            // text verbatim as A's EarlyMessage) alongside a valid scenario B. The all-early guard
+            // does not fire, this guard does, and the completion path then replayed A's preserved
+            // message — two byte-identical prints from one fact.
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(protocolConflict))
+                .ConfigureAwait(false);
+
+            return await CompleteWithoutTopologyAsync(
+                    StampInconclusiveWhereUnjudged(compilations, protocolConflict),
+                    securityConfirmationFailed,
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    alreadyPrintedMessage: protocolConflict)
+                .ConfigureAwait(false);
+        }
+
+        var probeSecurity = SecurityConfigurationAccessor.Build(
+            scenarios[0], compilations.Count > 0 ? compilations[0].ScenarioBaseDirectory : seedBaseDirectory);
+
         SuiteTopology suite;
         try
         {
@@ -817,6 +1268,15 @@ public static class ScenarioRunner
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
                 seedBaseDirectory: seedBaseDirectory,
+                securityConfiguration: probeSecurity,
+
+                // REQ-005/REQ-011: the union across every RUNNABLE scenario, because the ONE shared
+                // topology serves all of them — a target any of them speaks Kafka to is a target the
+                // one probe must confirm as a broker. Exactly the list the protocol-conflict guard
+                // above was handed, by construction: see that guard's own note (m7) for why the
+                // scenarios carrying an early verdict are excluded, and why the two must share one
+                // variable rather than two equal expressions.
+                kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(runnableScenarios),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -842,7 +1302,10 @@ public static class ScenarioRunner
             var inconclusiveVerdicts = compilations
                 .Select(c => (c.ScenarioName, Verdict.Inconclusive))
                 .ToList();
-            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts);
+            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts)
+            {
+                SecurityConfirmationFailed = securityConfirmationFailed,
+            };
         }
         catch (OrchestrationException oex)
         {
@@ -853,15 +1316,47 @@ public static class ScenarioRunner
                     $"RunSuiteAsync: topology failed to start — {oex.Message}"))
                 .ConfigureAwait(false);
 
+            // REQ-018: exactly ONE cause of an Environment error exits non-zero without
+            // --fail-on-env-error, and this is where it is distinguished from every other. The
+            // discriminator is the classified kind on the exception itself, not the message text
+            // and not the verdict — an unhealthy container, an unpullable image and an unrelated
+            // seed failure all still reach this same catch and still exit 0 by default.
+            securityConfirmationFailed |=
+                oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation;
+
             // Every scenario receives EnvironmentError.
             var errVerdicts = compilations
                 .Select(c => (c.ScenarioName, Verdict.EnvironmentError))
                 .ToList();
-            return new SuiteResult(Verdict.EnvironmentError, errVerdicts);
+            return new SuiteResult(Verdict.EnvironmentError, errVerdicts)
+            {
+                SecurityConfirmationFailed = securityConfirmationFailed,
+            };
+        }
+        finally
+        {
+            // The probe is this accessor's only consumer and has finished on every path,
+            // including the two catches that return above. Each scenario builds its own accessor
+            // for its own steps inside RunScenarioAgainstTopologyAsync.
+            (probeSecurity as IDisposable)?.Dispose();
         }
 
         await using (suite.ConfigureAwait(false))
         {
+            // REQ-005: report declared-versus-observed, so a run's own output shows what was
+            // ASSERTED and what was CONFIRMED. Emitted only when the suite declares security at
+            // all, so an ordinary run's output is unchanged. Reaching here means every declared
+            // block passed — a failure aborted StartAsync above — but "passed" is not one thing:
+            // an authenticated application-layer round trip and a transport-only confirmation are
+            // different assurances, and printing a bare "confirmed" for both would recreate the
+            // over-claim this requirement exists to remove.
+            foreach (var confirmation in suite.SecurityConfirmations)
+            {
+                await output.WriteLineAsync(
+                        DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
             // ── Construct isolation ────────────────────────────────────────────
             // Resets EVERY resettable dependency the topology declares (composed
             // when there is more than one). NullScenarioIsolation preserves the
@@ -1059,7 +1554,512 @@ public static class ScenarioRunner
             FileReportWriter.WriteFileReports(
                 allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
-            return new SuiteResult(suiteAggregate, results);
+            return new SuiteResult(suiteAggregate, results)
+            {
+                // Threaded on the normal-completion path too, and REACHABLE with a true value —
+                // corrected in fix round eight (m3, peer-review critic). This note twice claimed
+                // the opposite, and the reasoning is recorded rather than the conclusion, because
+                // "unreachable" is what licenses a later reader to delete the assignment.
+                //
+                // The old argument ran: a `security` block lives in the `environment`, every
+                // scenario in a suite must declare a byte-identical one, so a security rejection
+                // takes all of a suite's scenarios or none — and the all-of-them case returns
+                // above, before the topology is built.
+                //
+                // What it misses is that the byte-identical gate compares the parsed AST
+                // (SerialiseEnvironment over ScenarioAst.Environment), not the YAML. The SCHEMA
+                // producer fires on a shape the AST cannot carry: `$defs/security` closes with
+                // `unevaluatedProperties: false`, so an unknown key inside ONE scenario's
+                // `security` block is a schema error located inside that block — while SecuritySpec
+                // has no catch-all member, so the key is dropped and both scenarios' ASTs serialise
+                // identically. The environment gate therefore passes, that scenario alone takes an
+                // early verdict at the schema branch of the compilation loop (setting the local),
+                // the all-early guard does not fire because a sibling scenario is still runnable,
+                // and the suite runs to this return carrying a true flag. The same holds for any
+                // other schema error inside the block that AstBuilder tolerates.
+                //
+                // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
+                // and dropping it would report exit 0 on a rejected security declaration.
+                SecurityConfirmationFailed = securityConfirmationFailed,
+            };
+        }
+    }
+
+    /// <summary>
+    /// True when any schema-validation error is located inside a declared <c>security</c> block —
+    /// REQ-018's carve-out reached through the schema door rather than the preflight one.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the JSON Pointer rather than on message text, which is the structural half of the
+    /// error and the half a reworded diagnostic does not move. The classification fails CLOSED: a
+    /// false positive costs a non-zero exit on a suite that was already invalid, while a false
+    /// negative is a green pipeline on a rejected security declaration — the outcome REQ-018 exists
+    /// to prevent. Failing closed is not, however, a licence to over-match: see
+    /// <see cref="LocatesADeclaredSecurityBlock"/> for the measured cost of the substring test this
+    /// once used.
+    /// </remarks>
+    private static bool RejectsASecurityDeclaration(IReadOnlyList<SchemaValidationError> errors)
+    {
+        foreach (var error in errors)
+        {
+            if (LocatesADeclaredSecurityBlock(error.InstanceLocation))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="instanceLocation"/> points AT, or inside, a declared
+    /// <c>security</c> block — the one structural shape the language gives that block:
+    /// <c>/environment/{services|dependencies}/&lt;name&gt;/security</c> and anything beneath it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Segment equality, never a substring.</strong> An earlier form asked
+    /// <c>InstanceLocation.Contains("/security")</c>, which also matched a NAME segment merely
+    /// beginning with those characters. Measured, one pair of suites differing only in the service
+    /// name, neither declaring any <c>security</c> block, both carrying the same ordinary
+    /// <c>additionalProperties</c> error: a service called <c>security-gateway</c> exited 4 and one
+    /// called <c>gateway</c> exited 0. That made an unrelated naming choice decide REQ-018's
+    /// carve-out on a suite with ZERO security surface — a direct violation of the requirement's own
+    /// mechanism clause ("MUST NOT alter the general Verdict-to-exit-code mapping used for ordinary
+    /// environment errors"), and a bank naming a service <c>security-api</c> is precisely the
+    /// target deployment. The block's location is fixed by the schema (<c>$defs/security</c> is
+    /// referenced from <c>$defs/service</c> and <c>$defs/dependency</c> and nowhere else), so the
+    /// shape can be anchored exactly rather than approximated.
+    /// </para>
+    /// <para>
+    /// <strong>Form follows <see cref="SchemaErrorCollector.TryGetStepScope"/></strong>, which
+    /// parses <c>/steps/&lt;N&gt;</c> out of the same kind of pointer for the same kind of decision:
+    /// split, length-guard, then compare fixed segments by index. The one deliberate difference is
+    /// the split option — <c>None</c> here, where that method uses
+    /// <see cref="StringSplitOptions.RemoveEmptyEntries"/>. An EMPTY pointer segment is legal
+    /// (RFC 6901) and reachable: <c>environment.services</c> and <c>environment.dependencies</c> are
+    /// open objects declaring no <c>propertyNames</c> constraint, so a service named <c>""</c> is
+    /// schema-legal and yields <c>/environment/services//security</c>. Dropping that empty segment
+    /// would shift every index left and classify a GENUINE security block as unrelated — a false
+    /// negative, the one direction this predicate must never fail in. Keeping empty segments costs
+    /// nothing elsewhere: a rooted pointer's leading <c>/</c> always yields the empty
+    /// <c>segments[0]</c> the guard below requires.
+    /// </para>
+    /// <para>
+    /// <strong>Split the RAW pointer, before any RFC 6901 decoding.</strong> A name containing
+    /// <c>/</c> arrives ESCAPED as <c>~1</c> (and <c>~</c> as <c>~0</c>) — JsonSchema.Net escapes
+    /// the names it reports, which is exactly the defect slice C fixed in
+    /// <c>DocumentValidator</c> — so a slash inside a name can never introduce a spurious segment
+    /// here. Comparing the still-escaped segment against the literal <c>"security"</c> is
+    /// nonetheless exact in both directions, because RFC 6901 escaping is injective and
+    /// <c>security</c> contains no escapable character: the only name whose escaped form is
+    /// <c>security</c> is <c>security</c> itself. Decoding first would BREAK that — measured, a
+    /// service named <c>a/b</c> is reported as the single segment <c>a~1b</c> (and one named
+    /// <c>c~d</c> as <c>c~0d</c>); decoding <c>a~1b</c> back to <c>a/b</c> before splitting would
+    /// turn that one segment into two and shift every index after it.
+    /// </para>
+    /// </remarks>
+    /// <param name="instanceLocation">
+    /// A <see cref="SchemaValidationError.InstanceLocation"/>: an RFC 6901 JSON Pointer, rooted
+    /// (leading <c>/</c>) unless it is the empty document-root pointer.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> for <c>/environment/services/app/security</c>,
+    /// <c>/environment/dependencies/events-kafka/security/serverArtifacts/0/bogus</c>, and every
+    /// pointer between; <see langword="false"/> for <c>/environment/services/security-gateway/bogus</c>
+    /// and <c>/environment/services/security/bogus</c> — a service NAMED <c>security</c> that
+    /// declares no such block is not a security declaration.
+    /// </returns>
+    internal static bool LocatesADeclaredSecurityBlock(string instanceLocation)
+    {
+        var segments = instanceLocation.Split('/');
+
+        return segments.Length >= 5
+            && segments[0].Length == 0
+            && string.Equals(segments[1], "environment", StringComparison.Ordinal)
+            && (string.Equals(segments[2], "services", StringComparison.Ordinal) ||
+                string.Equals(segments[2], "dependencies", StringComparison.Ordinal))
+            // segments[3] is the owner's own NAME — deliberately unconstrained, and deliberately
+            // not compared against anything: it is the segment the substring form conflated with
+            // the block below it.
+            && string.Equals(segments[4], "security", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Reports a suite in which every scenario carries an early verdict, without building the
+    /// topology (REQ-004's "pre-topology stage of <c>vouchfx run</c>", EDGE-010(a)).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Emits the same per-scenario started/completed pair, the same diagnostic line, the same live
+    /// stream, the same terminal render and the same file reports the main loop's early-exit branch
+    /// emits — the only difference being that no container was started to produce them. Extracted
+    /// rather than duplicated so the two can never diverge in what a reader of the events stream
+    /// sees.
+    /// </para>
+    /// <para>
+    /// THREE CALLERS, and the latter two are why every scenario must be handed in already carrying
+    /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
+    /// above, and the two suite-level guards — base-directory divergence and protocol conflict —
+    /// which STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
+    /// <see cref="StampInconclusiveWhereUnjudged"/>). A caller that leaves an <c>EarlyVerdict</c>
+    /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
+    /// is a <c>Nullable&lt;Verdict&gt;</c>, and <c>.Value</c> on an empty one throws
+    /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (m1,
+    /// gatekeeper, fix round six: the type was named wrongly here, which matters because it is the
+    /// exception a caller would have to catch or a maintainer would have to recognise in a stack
+    /// trace). A scenario with no verdict has no place in a completion that never runs anything.
+    /// </para>
+    /// <para>
+    /// The emitted <c>counts</c> are DERIVED from that verdict rather than hardcoded (security
+    /// NIT-3, same fix round): the previous form paired a parameterised
+    /// <c>Verdict = earlyVerdict.Value</c> with a fixed <c>Inconclusive = 1</c>, so the first caller
+    /// to stamp anything other than Inconclusive would have emitted a record whose verdict and
+    /// counts contradicted each other. Every stamp is Inconclusive today, so this changes no
+    /// emitted byte on any current path — it removes the trap rather than fixing a live defect.
+    /// </para>
+    /// </remarks>
+    /// <param name="alreadyPrintedMessage">
+    /// A suite-level diagnostic the CALLER has already written to <paramref name="output"/>, or
+    /// <see langword="null"/> when the caller printed nothing. Any scenario whose
+    /// <c>EarlyMessage</c> is ordinally equal to it is skipped for TERMINAL printing only — the
+    /// message stays on the scenario's own record, so it still reaches anything rendered from that
+    /// record (none today: <c>EarlyMessage</c> has exactly one consumer, the suppression check
+    /// below, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel
+    /// carries a scenario-level message — see #372). This is what lets a suite-level fact be
+    /// stamped as every affected scenario's cause
+    /// while still appearing on the terminal exactly once (MAJOR-3, fix round six). The
+    /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
+    /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
+    /// </param>
+    private static async Task<SuiteResult> CompleteWithoutTopologyAsync(
+        IReadOnlyList<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)> compilations,
+        bool securityConfirmationFailed,
+        TextWriter output,
+        bool decorate,
+        Func<string, JsonElement, string?> diffLookup,
+        string? htmlReportPath,
+        string? junitReportPath,
+        string? eventsReportPath,
+        string? eventsStreamPath,
+        string? alreadyPrintedMessage = null)
+    {
+        var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
+        var suiteAggregate = Verdict.Pass;
+        var allBuffers = new List<string>();
+
+        await using var livePump = eventsStreamPath is not null
+            ? new LiveEventPump(eventsStreamPath, output)
+            : null;
+
+        foreach (var (name, _, _, earlyVerdict, earlyMessage, _) in compilations)
+        {
+            var runId = Guid.NewGuid().ToString("n");
+            var now = DateTimeOffset.UtcNow;
+            var buffer = new List<string>
+            {
+                EventStreamJson.ToLine(new ScenarioStartedEvent
+                {
+                    RunId = runId,
+                    Timestamp = now,
+                    ScenarioId = name,
+                }),
+                EventStreamJson.ToLine(new ScenarioCompletedEvent
+                {
+                    RunId = runId,
+                    Timestamp = now,
+                    ScenarioId = name,
+                    Verdict = earlyVerdict!.Value,
+                    Counts = CountsFor(earlyVerdict.Value),
+                }),
+            };
+
+            // Terminal print, suppressed only for the exact text the caller has already written.
+            // The message is NOT cleared from the record — it is this scenario's cause, and
+            // suppressing the duplicate must not cost anything rendered from the record itself.
+            if (!string.IsNullOrEmpty(earlyMessage)
+                && !string.Equals(earlyMessage, alreadyPrintedMessage, StringComparison.Ordinal))
+            {
+                // Issue #266, Item 4: earlyMessage carries a schema/pipeline/secret-reference
+                // diagnostic that may echo untrusted YAML content verbatim — sanitise.
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(earlyMessage))
+                    .ConfigureAwait(false);
+            }
+
+            results.Add((name, earlyVerdict.Value));
+            suiteAggregate = Elevate(suiteAggregate, earlyVerdict.Value);
+            allBuffers.AddRange(buffer);
+            livePump?.PostRange(buffer);
+        }
+
+        TerminalRenderer.Render(allBuffers, output, decorate, diffLookup);
+        FileReportWriter.WriteFileReports(
+            allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
+
+        return new SuiteResult(suiteAggregate, results)
+        {
+            SecurityConfirmationFailed = securityConfirmationFailed,
+        };
+    }
+
+    /// <summary>
+    /// The per-verdict step counts emitted for a scenario that never ran a step, derived from the
+    /// verdict it was stamped with so the two can never contradict each other (security NIT-3).
+    /// </summary>
+    /// <remarks>
+    /// A scenario stopped before the topology ran no steps at all, so these counts are not a tally
+    /// of anything — they are the scenario's own single outcome expressed in the shape the wire
+    /// contract's <c>counts</c> object has. Every stamp is Inconclusive today, which is why
+    /// this reproduces the previously-hardcoded <c>{ Inconclusive = 1 }</c> byte for byte on every
+    /// live path.
+    /// </remarks>
+    private static VerdictCounts CountsFor(Verdict verdict) => verdict switch
+    {
+        Verdict.Pass => new VerdictCounts { Pass = 1 },
+        Verdict.Fail => new VerdictCounts { Fail = 1 },
+        Verdict.EnvironmentError => new VerdictCounts { EnvError = 1 },
+        _ => new VerdictCounts { Inconclusive = 1 },
+    };
+
+    /// <summary>
+    /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
+    /// every compilation that carries no early verdict of its own, leaving the ones that do
+    /// untouched — the shared preamble both suite-level guards run before
+    /// <see cref="CompleteWithoutTopologyAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EXTRACTED RATHER THAN COPIED (MAJOR-1, fix round six). The protocol-conflict guard grew this
+    /// loop in fix round five; the base-directory-divergence guard forty lines above it still
+    /// returned a bare <see cref="SuiteResult"/> and had to grow the same one. Two copies of a
+    /// completion preamble is precisely how those two seams diverged in the first place, so there
+    /// is one.
+    /// </para>
+    /// <para>
+    /// A scenario that ALREADY carries an early verdict keeps it AND its own message: that message
+    /// is the more specific fact about that scenario (a schema error, a secret-reference error, a
+    /// preflight rejection), and the suite-level cause would say less about it. Every other
+    /// scenario is Inconclusive BECAUSE of the suite-level fact, so it is stamped as that
+    /// scenario's own cause rather than left null — a per-scenario record with no cause cannot
+    /// explain itself to anything rendered from it.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing renders it today</strong> (m4, gatekeeper + spec-compliance, fix round
+    /// seven — the paragraph above implied delivery). Measured: the stamped <c>EarlyMessage</c> has
+    /// exactly one consumer, <see cref="CompleteWithoutTopologyAsync"/>'s terminal-print suppression
+    /// check, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel —
+    /// JUnit, HTML or the event stream — carries a scenario-level message at all (see #372). The
+    /// stamp is therefore correct-by-construction rather than load-bearing: it puts the cause where
+    /// a renderer would read it once one exists, and costs nothing until then.
+    /// </para>
+    /// <para>
+    /// Stamping the cause is what makes it a duplicate on the TERMINAL, which the caller resolves
+    /// by handing the same text to <c>CompleteWithoutTopologyAsync</c>'s
+    /// <c>alreadyPrintedMessage</c>. The two halves belong together and are documented together
+    /// for that reason.
+    /// </para>
+    /// </remarks>
+    private static List<(
+        string ScenarioName,
+        ScenarioAst Ast,
+        PipelineResult? Pipeline,
+        Verdict? EarlyVerdict,
+        string? EarlyMessage,
+        string? ScenarioBaseDirectory)> StampInconclusiveWhereUnjudged(
+        IReadOnlyList<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)> compilations,
+        string cause)
+    {
+        var stamped = new List<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)>(compilations.Count);
+
+        foreach (var compilation in compilations)
+        {
+            stamped.Add(compilation.EarlyVerdict is not null
+                ? compilation
+                : (compilation.ScenarioName,
+                   compilation.Ast,
+                   compilation.Pipeline,
+                   Verdict.Inconclusive,
+                   cause,
+                   compilation.ScenarioBaseDirectory));
+        }
+
+        return stamped;
+    }
+
+    /// <summary>
+    /// Detects the divergences a shared <c>environment</c> block cannot rule out: declared security
+    /// paths that would resolve against DIFFERENT directories depending on which consumer resolves
+    /// them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Scenario against scenario.</strong> Scenarios in a suite must declare a
+    /// byte-identical <c>environment</c>, but they need not live in the same folder (#268), and
+    /// every <c>security</c> path is resolved relative to the scenario's own directory (REQ-003).
+    /// So one <c>caCert: ./certs/ca.pem</c> can name two files. The probe presents ONE of them, on
+    /// behalf of steps that would present the other; both fail closed, so nothing passes on the
+    /// wrong material, but the probe stops being evidence about those steps.
+    /// </para>
+    /// <para>
+    /// <strong>Scenario against seed root</strong> (m4, peer-review critic, fix round eight). The
+    /// CLIENT material — the probe's and the steps' <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c>
+    /// — resolves against <c>compilations[0].ScenarioBaseDirectory</c>, while REQ-016's SERVER
+    /// artefacts resolve against <c>SuiteTopology.StartAsync</c>'s own <c>seedBaseDirectory</c>.
+    /// Those are two parameters, and a divergent pair splits one suite's security material across
+    /// two roots — the client half trusting an anchor from one directory while the server half is
+    /// handed a keystore from another.
+    /// </para>
+    /// <para>
+    /// MEASURED before choosing between "pass one value to both" and "assert equality": the engine
+    /// has exactly ONE production caller of <c>RunSuiteAsync</c>, <c>RunCommand</c>, and it derives
+    /// <c>suiteBaseDirectory</c> as <c>scenarioBaseDirectories[0]</c> — literally the same string,
+    /// so the pair is equal by construction on every CLI path. Every test caller passes neither and
+    /// takes the null-to-null fallback. Collapsing the two parameters into one was therefore
+    /// rejected: it is unreachable on the only path that exists, and it would silently re-root a
+    /// library embedder's SEED, which is genuinely single-rooted by design and is not this
+    /// guard's business. Asserting instead refuses exactly the configuration whose security
+    /// material is ambiguous and touches nothing else.
+    /// </para>
+    /// <para>
+    /// Both arms are checked only when the suite declares security at all, so an ordinary
+    /// multi-directory suite is untouched.
+    /// </para>
+    /// <para>
+    /// <strong>Comparison is normalised</strong> (n1, peer-review critic, fix round eight). It used
+    /// to be a raw <see cref="StringComparison.Ordinal"/> compare of two strings that reach here
+    /// from different producers, so <c>D:\Suite</c> against <c>d:\suite\</c> — the same directory —
+    /// refused a correct suite. <see cref="NormaliseDirectoryForComparison"/> applies
+    /// <see cref="Path.GetFullPath(string)"/>, trims a trailing separator, and compares
+    /// case-insensitively on Windows, mirroring <c>RunCommand.PathsEqual</c> (which cannot be
+    /// shared: it lives in the CLI, which references this assembly and not the reverse). It differs
+    /// from that helper in one deliberate respect — an unnormalisable path is treated as DIVERGENT
+    /// rather than as "not comparable", because this guard's failure direction must be closed.
+    /// </para>
+    /// </remarks>
+    private static bool TryFindSecurityBaseDirectoryDivergence(
+        EnvironmentSpec? environment,
+        IReadOnlyList<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)> compilations,
+        string? seedBaseDirectory,
+        out string message)
+    {
+        message = string.Empty;
+
+        if (!EnvironmentSecurityValidator.DeclaresSecurity(environment) || compilations.Count == 0)
+        {
+            return false;
+        }
+
+        var first = compilations[0];
+
+        // ORDER IS DELIBERATE. The scenario-against-scenario arm runs FIRST because it is the
+        // author's cause — something about the suite's own layout, fixable by moving a file — while
+        // the seed-root arm below is an EMBEDDER's cause, fixable only in the calling host's code.
+        // A fixture can trip both at once (a suite with per-scenario directories and no
+        // seedBaseDirectory does), and the author-facing diagnostic is the more useful of the two.
+        if (compilations.Count >= 2)
+        {
+            foreach (var candidate in compilations)
+            {
+                if (DirectoriesEqual(candidate.ScenarioBaseDirectory, first.ScenarioBaseDirectory))
+                {
+                    continue;
+                }
+
+                message =
+                    $"RunSuiteAsync: this suite declares a 'security' block, but scenario "
+                    + $"'{candidate.ScenarioName}' resolves its declared security paths against a "
+                    + $"different directory than '{first.ScenarioName}' does. Every security path is "
+                    + "resolved relative to its own scenario's directory (REQ-003), so one declared "
+                    + "'caCert'/'clientCert'/'clientKey' would name two different files — and REQ-005's "
+                    + "probe can only present one of them, on behalf of steps that would present the "
+                    + "other. Put the scenarios of a secured suite in one directory.";
+                return true;
+            }
+        }
+
+        // The seed-root arm, checked for a single-scenario suite too — it is a property of the two
+        // PARAMETERS, not of how many scenarios there are.
+        if (!DirectoriesEqual(first.ScenarioBaseDirectory, seedBaseDirectory))
+        {
+            message =
+                "RunSuiteAsync: this suite declares a 'security' block, but the directory its "
+                + "scenarios resolve declared security paths against is not the directory the "
+                + "topology resolves 'security.serverArtifacts' against. The client material "
+                + "('caCert'/'clientCert'/'clientKey') would be read from one root and the server "
+                + "artefacts written from another, so one declared relative path would name two "
+                + "different files. Pass the same base directory as both 'seedBaseDirectory' and "
+                + "the scenarios' own base directory (the CLI does — it derives one from the other; "
+                + "a direct engine embedder must too).";
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether two base directories denote the same directory, for
+    /// <see cref="TryFindSecurityBaseDirectoryDivergence"/>. Two nulls are equal (both fall back to
+    /// the same root); one null is not.
+    /// </summary>
+    private static bool DirectoriesEqual(string? a, string? b)
+    {
+        if (a is null || b is null)
+        {
+            return a is null && b is null;
+        }
+
+        var left = NormaliseDirectoryForComparison(a);
+        var right = NormaliseDirectoryForComparison(b);
+
+        // Fail CLOSED: an unnormalisable path is not proven equal, so it is treated as divergent.
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            left,
+            right,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Resolves a directory to its full form with any trailing separator removed, or
+    /// <see langword="null"/> when <see cref="Path.GetFullPath(string)"/> itself rejects it.
+    /// </summary>
+    private static string? NormaliseDirectoryForComparison(string path)
+    {
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
         }
     }
 
@@ -1180,6 +2180,40 @@ public static class ScenarioRunner
         var diffLookup = BuildDiffLookup(registry);
         var runId = Guid.NewGuid().ToString("n");
         var buffer = new List<string>();
+
+        // ── REQ-005: the declared-versus-observed confirmations (watch parity) ─
+        // The same lines RunSuiteAsync prints once its topology is up, in the same position —
+        // ahead of the run — because the reason REQ-005 gives named LEVELS instead of a boolean is
+        // that an operator can tell a transport-only confirmation from an authenticated round trip.
+        // A path that confirms the level and then never renders it defeats that reason: measured
+        // before this, `--watch` showed a green run with no indication of which level was reached,
+        // on both the build arm and the reuse arm.
+        //
+        // Printed on EVERY re-run, not once per topology, because each re-run's output block is
+        // read on its own and a reader who cannot see the level cannot tell the two apart.
+        //
+        // n6 (peer review, fix round three): they are NOT re-measured per re-run, and they are
+        // printed BEFORE the run rather than after it, so describing them as "a property of the
+        // infrastructure this run just ran against" — as this comment previously did — over-claimed
+        // their freshness twice over. They are the build-time probe's output, replayed. The
+        // qualifying line below says so in the output itself rather than only here: a stale
+        // confirmation is only misleading if nothing tells the reader it is stale, and a watch
+        // session can hold one topology across many edits.
+        if (topology.SecurityConfirmations.Count > 0)
+        {
+            await output.WriteLineAsync(
+                    "security: confirmed once when this topology was built, and replayed here — "
+                    + "the endpoints are not re-probed per re-run. Save a change to the "
+                    + "'environment' block to rebuild the topology and re-confirm.")
+                .ConfigureAwait(false);
+
+            foreach (var confirmation in topology.SecurityConfirmations)
+            {
+                await output.WriteLineAsync(
+                        DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+        }
 
         // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────
         // ONLY on the reuse path, where the kept topology carries the previous re-run's writes.

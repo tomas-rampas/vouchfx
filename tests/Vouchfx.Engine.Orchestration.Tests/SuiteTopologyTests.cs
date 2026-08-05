@@ -207,4 +207,83 @@ public sealed class SuiteTopologyTests
             $"Bad-image test: OrchestrationException Kind={ex.Info.Kind}, " +
             $"ResourceName={ex.Info.ResourceName}, Detail={ex.Info.Detail} — PASS");
     }
+
+    // -----------------------------------------------------------------------
+    // The no-accessor guard (REQ-005) — NOT docker-gated: it fires at Step 0,
+    // before EnvironmentMapper.Map and long before DCP.
+    // -----------------------------------------------------------------------
+
+    private static EnvironmentSpec SecuredServiceEnvironment() =>
+        new(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["api"] = new ServiceSpec("acme/api:1", null, null, null, null)
+                {
+                    Security = new SecuritySpec("mtls", "8443", null, "./certs/c.pem", "./certs/k.pem", null),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+    /// <summary>
+    /// A suite that declares <c>security</c> must not start with the Null accessor silently
+    /// substituted for a real one: the probe would present nothing, and every <c>mtls</c> target
+    /// would fail closed blaming the author's certificates for the host's own omission.
+    /// </summary>
+    /// <remarks>
+    /// This is the structural guard for the defect <c>vouchfx watch</c> shipped with — an omitted
+    /// optional argument compiles, reads correctly, and no test of the CALLER could see it. Chosen
+    /// over making the parameter non-optional, which would force roughly sixty pre-existing call
+    /// sites (every store's Docker test in this assembly) to assert something their environment
+    /// already states: that they declare no security at all.
+    /// </remarks>
+    [Fact]
+    public async Task SuiteTopology_SecurityDeclaredButNoAccessorSupplied_FailsBeforeAnyContainerWork()
+    {
+        var ex = await Assert.ThrowsAsync<OrchestrationException>(
+            () => SuiteTopology.StartAsync(
+                environment: SecuredServiceEnvironment(),
+                appHostAssemblyName: AppHostAssemblyName));
+
+        Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
+        Assert.Contains("securityConfiguration", ex.Info.Detail, StringComparison.Ordinal);
+        Assert.Contains("defect in the calling host", ex.Info.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The guard's mirror: a suite declaring no <c>security</c> is untouched by it — which is what
+    /// keeps every pre-existing caller, and this file's own Docker tests, valid without change.
+    /// </summary>
+    /// <remarks>
+    /// Also non-Docker, by construction. The service's <c>env</c> names a dependency that does not
+    /// exist, which <c>EnvironmentMapper.Map</c> rejects EAGERLY as an <see cref="ArgumentException"/>
+    /// — Map is pure, and it runs before <c>HeadlessTopology.StartAsync</c> ever reaches DCP. So
+    /// reaching that exception is positive proof of two things at once: the guard did not fire, and
+    /// control got past Step 0 into real mapping.
+    /// </remarks>
+    [Fact]
+    public async Task SuiteTopology_NoSecurityDeclared_IsNotBlockedByTheAccessorGuard()
+    {
+        var unsecured = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["api"] = new ServiceSpec(
+                    "acme/api:1",
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, string>(StringComparer.Ordinal) { ["FOO"] = "${conn:typo}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => SuiteTopology.StartAsync(
+                environment: unsecured,
+                appHostAssemblyName: AppHostAssemblyName));
+    }
 }

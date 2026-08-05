@@ -458,8 +458,10 @@ public sealed class MqExpectKafkaProvider
         "    public static async System.Threading.Tasks.Task ExpectAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
-        "        string connKey,\n" +
+        "        string bootstrapKey,\n" +
+        "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
         "        string? payloadContainsTemplate,\n" +
@@ -476,7 +478,8 @@ public sealed class MqExpectKafkaProvider
         "        // consumer path runs, byte-identical to the committed slice.\n" +
         "        if (avro)\n" +
         "        {\n" +
-        "            await ExpectAvroAsync(vars, secrets, outcomeKey, connKey, topic,\n" +
+        "            await ExpectAvroAsync(vars, secrets, security, outcomeKey, bootstrapKey, targetName,\n" +
+        "                topic,\n" +
         "                expectKeyTemplate, payloadContainsTemplate, headerNames,\n" +
         "                headerValueTemplates, jsonPaths, jsonValueTemplates, avroRegistrySvcKey,\n" +
         "                ct, budgetGoverned)\n" +
@@ -484,17 +487,19 @@ public sealed class MqExpectKafkaProvider
         "            return;\n" +
         "        }\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
-        "        // Read the bootstrap-servers string staged by the orchestrator\n" +
-        "        // (VarKeys.Connection pattern).  A null or empty string means the\n" +
-        "        // dependency was not discovered → EnvironmentError (§12.1).\n" +
-        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        // Read the bootstrap-servers string staged by the orchestrator under the key\n" +
+        "        // this step's Emit chose at COMPILE time — VarKeys.Connection for a dependency\n" +
+        "        // target, VarKeys.Service for a service one (REQ-011), never guessed here and\n" +
+        "        // never resolved by trying one and falling back to the other.  A null or empty\n" +
+        "        // string means the target was not discovered → EnvironmentError (§12.1).\n" +
+        "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(bootstrap))\n" +
         "        {\n" +
         "            sw.Stop();\n" +
         "            vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "                Vouchfx.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + bootstrapKey + \"'\") + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
@@ -537,6 +542,13 @@ public sealed class MqExpectKafkaProvider
         "                EnableAutoCommit = false,\n" +
         "                EnablePartitionEof = true,\n" +
         "            };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the consumer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, string>(config).Build();\n" +
         "            consumer.Subscribe(topic);\n" +
         "            int scanned = 0;\n" +
@@ -748,8 +760,10 @@ public sealed class MqExpectKafkaProvider
         "    private static async System.Threading.Tasks.Task ExpectAvroAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
-        "        string connKey,\n" +
+        "        string bootstrapKey,\n" +
+        "        string targetName,\n" +
         "        string topic,\n" +
         "        string? expectKeyTemplate,\n" +
         "        string? payloadContainsTemplate,\n" +
@@ -765,14 +779,14 @@ public sealed class MqExpectKafkaProvider
         "        // the assembler's late supersession are the bound (#232).\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
-        "        var bootstrap = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
+        "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
         "        if (string.IsNullOrEmpty(bootstrap))\n" +
         "        {\n" +
         "            sw.Stop();\n" +
         "            vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "                Vouchfx.Engine.Abstractions.Verdict.EnvironmentError,\n" +
         "                sw.ElapsedMilliseconds,\n" +
-        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + connKey + \"'\") + \"}\");\n" +
+        "                \"{\\\"error\\\":\" + System.Text.Json.JsonSerializer.Serialize(\"kafka bootstrap not found for key '\" + bootstrapKey + \"'\") + \"}\");\n" +
         "            return;\n" +
         "        }\n" +
         "        // Schema-registry URL staged under svc::<sr>-sr; checked BEFORE any client build\n" +
@@ -820,6 +834,13 @@ public sealed class MqExpectKafkaProvider
         "                EnableAutoCommit = false,\n" +
         "                EnablePartitionEof = true,\n" +
         "            };\n" +
+        "            // REQ-015: set transport security for THIS step's target from the declared\n" +
+        "            // security block, before the consumer is built. Inside the guarded try,\n" +
+        "            // deliberately — a declared-but-unloadable path throws SecurityMaterialException,\n" +
+        "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
+        "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
+        "            // no security block leaves the config exactly as built above.\n" +
+        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueDeserializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncDeserializerExtensionMethods.AsSyncOverAsync(deserializer))\n" +
         "                .Build();\n" +
@@ -983,6 +1004,18 @@ public sealed class MqExpectKafkaProvider
         var safeId = CsxFragment.SanitiseId(ctx.StepId);
         var match = model.Match;
 
+        // REQ-011 + REQ-023 (amended): `target` may name a kafka DEPENDENCY, staged at
+        // conn::<name>, or a declared SERVICE — the customer-supplied broker shape — staged at
+        // svc::<name>. Which one is a compile-time fact, read from the same DeclaredServices map
+        // Validate reconciled the target against, so the emitted lookup is the key the engine
+        // actually stages. This provider does NOT transform the staged value afterwards: the
+        // engine stages a Kafka-addressed target as the bare bootstrap authority librdkafka
+        // expects, and a provider rewriting that value would mean the engine staged the wrong
+        // form (REQ-023's own rule).
+        var bootstrapKey = ctx.DeclaredServices.ContainsKey(model.Target)
+            ? VarKeys.Service(model.Target)
+            : VarKeys.Connection(model.Target);
+
         // Expand the header criteria into parallel name/value-template arrays.  Values
         // are emitted as RAW templates; the helper substitutes then secret-resolves each
         // at runtime, inside the guarded region.  No secret value is ever baked into the
@@ -1054,8 +1087,10 @@ public sealed class MqExpectKafkaProvider
                 await MqExpectKafka_Helpers.ExpectAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
-                    {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
+                    {{JsonSerializer.Serialize(bootstrapKey)}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{topicLiteral}},
                     {{keyTemplateLiteral}},
                     {{payloadContainsLiteral}},
@@ -1077,6 +1112,12 @@ public sealed class MqExpectKafkaProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+
+            // REQ-015. Spliced unconditionally, byte-identical to mq-publish.kafka's own splice —
+            // see that provider's note for why an Emit-time branch on "does this target declare
+            // security" is not available (ICompileContext carries no `environment` surface, and
+            // the v1 contract is additive-only). CsxAssembler dedupes the two to one copy.
+            KafkaSecurityHelper.Source,
         };
 
         return new CsxFragment(

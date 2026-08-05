@@ -150,7 +150,7 @@ public static class ConcurrentAlcChurnProbe
     /// discipline in <c>MemoryProbe.RunIsolatedNoInlineAsync</c>.
     /// </remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<(Verdict Verdict, List<string> Buffer)> ChurnOneAlcAsync(
+    private static async Task<ScenarioCoreResult> ChurnOneAlcAsync(
         System.Collections.Concurrent.ConcurrentBag<WeakReference> weakRefs,
         string scenarioName,
         CancellationToken ct)

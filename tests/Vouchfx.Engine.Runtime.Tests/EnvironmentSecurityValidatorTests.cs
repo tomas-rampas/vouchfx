@@ -428,6 +428,59 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Null(result);
     }
 
+    /// <summary>
+    /// A <c>serverArtifacts[].target</c> whose shape a POSIX container path cannot mean is rejected
+    /// at validation time — with the field named and REQ-018's preflight flag attached — rather
+    /// than surfacing at topology-build time as an opaque daemon failure.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately mirrors <c>ServerArtifactInjectionTests</c>'s theory over the same inputs: the
+    /// mapper repeats these rules, and the two stages reaching different answers about one declared
+    /// path is the exact failure this file's own remarks warn about.
+    /// </remarks>
+    [Theory]
+    [InlineData("/etc/kafka/../secrets/x.jks", "'.' or '..' segment")]
+    [InlineData("/etc/kafka/..", "'.' or '..' segment")]
+    [InlineData("/etc/kafka/./x.jks", "'.' or '..' segment")]
+    [InlineData(@"/etc/kafka\secrets\ks.jks", "contains a backslash")]
+    [InlineData("/etc//kafka/x.jks", "empty path segment")]
+    public void Validate_ServerArtifactTargetWithAnUnrepresentablePosixShape_IsRejected(
+        string target, string expected)
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", target),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+        var ast = BuildAst(dependencies: OneDependency("events-kafka", security));
+
+        var result = EnvironmentSecurityValidator.Validate(ast, _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains(expected, result!.Message, StringComparison.Ordinal);
+        Assert.Contains("serverArtifacts[0].target", result.Message, StringComparison.Ordinal);
+        Assert.True(result.IsSecurityPreflight);
+    }
+
+    /// <summary>
+    /// The mirror that keeps the rule above from over-reaching: a dot INSIDE a segment is an
+    /// ordinary file name, not a path segment.
+    /// </summary>
+    [Fact]
+    public void Validate_ServerArtifactTargetWithADotInsideAFileName_IsAccepted()
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "/etc/kafka/secrets/keystore..jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+        var ast = BuildAst(dependencies: OneDependency("events-kafka", security));
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(ast, _suiteDir));
+    }
+
     // ── 6. Services get the same treatment as dependencies ───────────────────
 
     [Fact]
@@ -809,5 +862,105 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         };
 
         Assert.Null(EnvironmentSecurityValidator.Validate(BuildAst(services: services), _suiteDir));
+    }
+
+    // ── serverArtifacts[].target shape (REQ-016, slice E) ────────────────────
+    //
+    // Checked HERE, not only in EnvironmentMapper, because of the EXIT CODE. A fault raised from
+    // the mapper surfaces as an ordinary environment-configuration error and exits 0 by default;
+    // reaching it at this stage attaches IsSecurityPreflight, which REQ-018 keys the unconditional
+    // non-zero exit on. It also tells an author at `vouchfx validate` time rather than after a
+    // topology build. The schema's own `^/` pattern covers only the first of the three rules.
+
+    /// <summary>
+    /// A target naming a DIRECTORY has no file name for the engine to create. The schema's
+    /// <c>^/</c> pattern accepts it, so this check is the only gate.
+    /// </summary>
+    [Fact]
+    public void Validate_ServerArtifactTargetNamingADirectory_FailsAsSecurityPreflight()
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "/etc/kafka/secrets/"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.True(result!.IsSecurityPreflight);
+        Assert.Contains("serverArtifacts[0].target", result.Message, StringComparison.Ordinal);
+        Assert.Contains("names a directory, not a file", result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Two artefacts claiming ONE in-container path are rejected rather than silently resolved by
+    /// declaration order — which one the broker's entrypoint ends up reading is not a decision
+    /// this engine makes quietly.
+    /// </summary>
+    [Fact]
+    public void Validate_TwoServerArtifactsWithTheSameTarget_FailsNamingTheSecondIndex()
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        WriteSuiteFile("certs/kafka.server.truststore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "/etc/kafka/secrets/store.jks"),
+            new("./certs/kafka.server.truststore.jks", "/etc/kafka/secrets/store.jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.True(result!.IsSecurityPreflight);
+        Assert.Contains("serverArtifacts[1].target", result.Message, StringComparison.Ordinal);
+        Assert.Contains("declared more than once", result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A relative target is rejected. Unreachable through the schema (whose <c>^/</c> pattern
+    /// catches it first) but reachable through direct engine embedding, which is the whole reason
+    /// this validator repeats the schema's rules rather than trusting them.
+    /// </summary>
+    [Fact]
+    public void Validate_ServerArtifactTargetNotAbsolute_FailsAsSecurityPreflight()
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "etc/kafka/secrets/store.jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.True(result!.IsSecurityPreflight);
+        Assert.Contains("must be an absolute path inside the container", result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The control: two artefacts with DISTINCT absolute file targets — the ordinary
+    /// keystore/truststore pair — pass cleanly.
+    /// </summary>
+    [Fact]
+    public void Validate_TwoServerArtifactsWithDistinctTargets_ReturnsNull()
+    {
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        WriteSuiteFile("certs/kafka.server.truststore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "/etc/kafka/secrets/keystore.jks"),
+            new("./certs/kafka.server.truststore.jks", "/etc/kafka/secrets/truststore.jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir));
     }
 }

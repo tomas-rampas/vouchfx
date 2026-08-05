@@ -47,6 +47,33 @@ public enum OrchestrationErrorKind
     /// of the more specific categories.
     /// </summary>
     Provision,
+
+    /// <summary>
+    /// A declared <c>security</c> block could not be confirmed against the running topology
+    /// (authenticated-infrastructure-mtls, REQ-005): the resolved endpoint refused the
+    /// connection, did not speak TLS, presented a certificate that does not chain to the declared
+    /// anchor, or refused the declared client certificate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Still an Environment error in the four-outcome taxonomy (§12.1) — the verdict is
+    /// unchanged, and nothing about how <see cref="Vouchfx.Engine.Abstractions.Verdict"/> values
+    /// map is altered by this member's existence. What it carries is the NARROW,
+    /// security-specific signal REQ-018 requires: this one cause of an Environment error exits
+    /// non-zero without <c>--fail-on-env-error</c>, because an unconfirmable security assertion
+    /// is not an infrastructure flake — it is an assertion the author explicitly wrote that the
+    /// engine could not satisfy, and treating it as opt-in would hand a team that forgot a flag a
+    /// green pipeline on a security suite that verified nothing.
+    /// </para>
+    /// <para>
+    /// Appended last so every pre-existing member keeps its ordinal value. The wire surface is
+    /// unaffected in shape: <c>EnvironmentErrorEvents.Create</c> serialises
+    /// <c>info.Kind.ToString()</c> into the event stream's <c>errorKind</c> STRING field, so a new
+    /// member adds a new value to an existing string field and changes no property name or CLR
+    /// type. Renderers tolerate unknown values by contract (§14).
+    /// </para>
+    /// </remarks>
+    SecurityConfirmation,
 }
 
 // ---------------------------------------------------------------------------

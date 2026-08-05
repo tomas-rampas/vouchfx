@@ -34,6 +34,7 @@ interface Vouchfx.Sdk.IBindingContext
 interface Vouchfx.Sdk.ICompileContext
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Captures { get }
   property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.CaptureExpr> CaptureExprs { get }
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get }
   property System.String StepId { get }
   property System.String SuiteDirectory { get }
   property System.String SuiteNamespace { get }
@@ -81,6 +82,9 @@ interface Vouchfx.Sdk.IStepValidator<TModel>
 record Vouchfx.Sdk.JsonSchemaFragment : System.IEquatable<Vouchfx.Sdk.JsonSchemaFragment>
   .ctor(System.String Json)
   property System.String Json { get; init }
+
+class Vouchfx.Sdk.KafkaSecurityHelper
+  field const System.String Source
 
 class Vouchfx.Sdk.ProjectContextDescriptions
   method static System.String DescribeDeclaredSurfaces(Vouchfx.Sdk.IProjectContext ctx)

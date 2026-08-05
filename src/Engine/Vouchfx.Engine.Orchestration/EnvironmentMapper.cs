@@ -575,15 +575,43 @@ public static class EnvironmentMapper
     /// The environment declaration from the parsed <c>.e2e.yaml</c> file.
     /// May be <see langword="null"/> (treated as an empty environment).
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The directory containing the suite's own <c>.e2e.yaml</c> file — the base every declared
+    /// <c>security.serverArtifacts[].source</c> resolves against (REQ-003/REQ-016). Defaults to
+    /// <see cref="Directory.GetCurrentDirectory"/>, mirroring
+    /// <see cref="SuiteTopology.StartAsync"/>'s own <c>seedBaseDirectory</c> default.
+    /// <para>
+    /// It MUST be the same base <c>EnvironmentSecurityValidator</c> checked containment against.
+    /// A path resolved against a DIFFERENT base is still contained within THAT base, so
+    /// containment cannot detect the divergence — the run would simply copy a file the suite
+    /// never named. Callers pass the first scenario's own directory, which is also the directory
+    /// the one shared topology's <c>environment</c> block came from.
+    /// </para>
+    /// </param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
+    /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>. REQ-023 (as
+    /// amended 2026-08-04) makes this the discriminator for the FORM a service's endpoint is
+    /// staged in: a target the Kafka families address is staged as the bare bootstrap authority
+    /// those clients expect, and every other service keeps its scheme-carrying URL. See
+    /// <c>StageServiceEndpoint</c> for why the form — not merely the confirmation level — has to
+    /// follow the protocol.
+    /// <see langword="null"/> means "no Kafka step targets anything here", which is correct for a
+    /// suite with no Kafka steps and for every caller that predates this parameter.
+    /// </param>
     /// <returns>
     /// A <see cref="MappedTopology"/> whose <see cref="MappedTopology.Configure"/> callback
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
     /// Thrown when a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, or when a dependency type is unrecognised.
+    /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
+    /// declared server artefact cannot be resolved (REQ-016).
     /// </exception>
-    public static MappedTopology Map(EnvironmentSpec? env)
+    public static MappedTopology Map(
+        EnvironmentSpec? env,
+        string? suiteDirectory = null,
+        IReadOnlySet<string>? kafkaSpeakingTargets = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -599,6 +627,11 @@ public static class EnvironmentMapper
                 HealthGateResourceNames: Array.Empty<string>(),
                 DependencyNames: Array.Empty<string>());
         }
+
+        // REQ-023 (amended): captured once here rather than read through the nullable parameter
+        // inside the resolver closure, so the staging rule is a plain set lookup at the one place
+        // it is applied.
+        var kafkaTargets = kafkaSpeakingTargets ?? EmptyProtocolTargets;
 
         // ----------------------------------------------------------------
         // Validate all service specs eagerly so Map() throws before any builder
@@ -1037,6 +1070,29 @@ public static class EnvironmentMapper
             healthGateNames.Add(name);
 
         // ----------------------------------------------------------------
+        // REQ-016: resolve every declared security.serverArtifacts entry to an absolute host
+        // path NOW — eagerly, before any builder mutation — so a blank/rooted/escaping/missing
+        // source, or a target that is not an absolute in-container file path, fails Map() with a
+        // located diagnostic. Deferring it into the Configure closure would place the throw after
+        // earlier resources had already been added, which is the discipline every other eager
+        // check in this method observes.
+        // ----------------------------------------------------------------
+        var resolvedSuiteDirectory = ResolveSuiteDirectory(suiteDirectory);
+        var serviceArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in services)
+        {
+            serviceArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "services", name, resolvedSuiteDirectory);
+        }
+
+        var dependencyArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in dependencies)
+        {
+            dependencyArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "dependencies", name, resolvedSuiteDirectory);
+        }
+
+        // ----------------------------------------------------------------
         // Configure callback: builds the resource graph.
         // ----------------------------------------------------------------
         Action<IDistributedApplicationBuilder> configure = builder =>
@@ -1050,6 +1106,11 @@ public static class EnvironmentMapper
                     builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
+
+                // REQ-016: the customer's broker image finds its keystore because the engine put
+                // it there. Applied to the RETAINED builder — the dependency's own resource, not
+                // a sidecar — since that is the container whose entrypoint reads the artefact.
+                ServerArtifactInjection.Apply(retained, dependencyArtifacts[name], "dependencies", name);
             }
 
             // SUT configuration surface: build the per-dependency container-native accessor
@@ -1167,6 +1228,12 @@ public static class EnvironmentMapper
 
                     ApplyEnv(name, containerBuilder, spec.Env, envAccessByDependency);
 
+                    // REQ-016: copy declared server artefacts into the system under test's own
+                    // container — the server certificate/key a TLS-terminating SUT presents, the
+                    // mirror of the client material REQ-024 gives the step.
+                    ServerArtifactInjection.Apply(
+                        containerBuilder, serviceArtifacts[name], "services", name);
+
                     // Stage the primary endpoint for svc::<name> resolution (ResolveServices /
                     // env: refs).
                     //
@@ -1219,7 +1286,7 @@ public static class EnvironmentMapper
                 var result = new Dictionary<string, object>(StringComparer.Ordinal);
 
                 foreach (var (name, endpointRef) in serviceEndpoints)
-                    result[name] = endpointRef.Url;
+                    result[name] = StageServiceEndpoint(name, endpointRef, kafkaTargets);
 
                 // §4 invariant: never use app.GetConnectionString(name) — it does not exist on
                 // DistributedApplication in Aspire 13.4.2 (spike S01-A-03 finding).
@@ -1253,6 +1320,94 @@ public static class EnvironmentMapper
             HealthGateResourceNames: healthGateNames,
             DependencyNames: dependencies.Keys.ToList());
     }
+
+    /// <summary>
+    /// The "no Kafka step targets anything" default for <see cref="Map"/>'s
+    /// <c>kafkaSpeakingTargets</c> parameter.
+    /// </summary>
+    private static readonly IReadOnlySet<string> EmptyProtocolTargets =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Renders one resolved service endpoint into the form its own consumer can use (REQ-023, as
+    /// amended 2026-08-04).
+    /// </summary>
+    /// <param name="name">The declared service name.</param>
+    /// <param name="endpoint">The retained endpoint reference, resolved after <c>StartAsync</c>.</param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The names the suite's own <c>mq-publish.kafka</c>/<c>mq-expect.kafka</c> steps address.
+    /// </param>
+    /// <returns>
+    /// A bare <c>host:port</c> bootstrap authority for a Kafka-addressed target; the endpoint's
+    /// own scheme-carrying URL for every other service — byte-identical to what this method
+    /// replaced, which was <c>endpoint.Url</c> unconditionally.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The requirement this implements changed, and the reason is worth keeping.</strong>
+    /// REQ-023 originally mandated an <c>https://</c> scheme unconditionally. A Kafka broker
+    /// authored as a SERVICE — the shape REQ-011 records the target deployment actually uses — was
+    /// therefore staged as <c>https://host:port</c>, a scheme meaningless to a Kafka client, which
+    /// then had to strip it back off. Forcing a scheme the consumer must undo is not a convenience:
+    /// it is a transformation the engine imposes and every provider must reverse identically or
+    /// diverge. The amended rule is the consumer's form, and a provider rewriting the staged value
+    /// is now the proof that the engine staged the wrong one.
+    /// </para>
+    /// <para>
+    /// <strong>Why the protocol source is the suite's own steps.</strong> It is the same inference
+    /// <see cref="SuiteProtocolTargets"/> already performs to choose REQ-005's confirmation level,
+    /// deliberately reused rather than re-derived, so the staging form and the confirmation level
+    /// cannot disagree about what a target speaks.
+    /// </para>
+    /// <para>
+    /// <strong>What is NOT changed, and why.</strong> The endpoint ANNOTATION is untouched — a
+    /// secured endpoint keeps the <c>https</c> URI scheme <c>WithHttpsEndpoint</c> gives it, and an
+    /// unsecured one keeps <c>tcp</c>/<c>http</c>. The endpoint's NAME
+    /// (<c>ServiceEndpointNaming.HttpsEndpointName</c>) is a REQ-023 constant surfaced through
+    /// <c>IProjectContext.DeclaredServices</c> and resolvable by a <c>healthCheck</c> selector, so
+    /// making either the name or the scheme depend on which steps a suite happens to contain would
+    /// buy nothing and make two author-visible surfaces protocol-dependent. Only the STAGED VALUE
+    /// — the thing a step actually consumes — follows the protocol.
+    /// </para>
+    /// <para>
+    /// MEASURED against the pinned Aspire 13.4.2 rather than assumed, twice.
+    /// <c>EndpointReference</c> exposes <c>Host</c>, <c>Port</c>, <c>Scheme</c> and <c>Url</c> as
+    /// separate members, so the authority is read directly and is not a string-surgery pass over
+    /// <c>Url</c> — nothing here parses a URL apart in order to put it back together. And
+    /// <c>Url</c> for a service declaring <c>ports: [9092]</c> renders <c>tcp://localhost:60081</c>
+    /// (measured live, against a running container): the pre-existing staged value for a non-HTTP
+    /// service carried a <c>tcp</c> scheme, not a bare authority, so a Kafka client could no more
+    /// consume it than it could consume the <c>https</c> one a secured service received.
+    /// </para>
+    /// <para>
+    /// <strong>Every consumer of the staged value, and what changes for each.</strong>
+    /// <c>svc::&lt;name&gt;</c> in <c>Vars</c> is read by the three HTTP-family providers (unchanged
+    /// — a target of theirs is never in this set) and, since REQ-011's fix, by the two Kafka
+    /// providers for a service target (which is what this exists for). The same string is also the
+    /// entry in <c>ScriptGlobalVariables.Services</c>, so a <c>script.csharp</c> step reading
+    /// <c>Services["broker"]</c> for a Kafka-addressed service now sees <c>host:port</c> where it
+    /// previously saw <c>tcp://host:port</c> — the same rule applied consistently, and the shape
+    /// such a script wanted anyway. Nothing else reads it: <c>${conn:…}</c> in an <c>env:</c> block
+    /// is resolved from the dependency builders directly and never from this map, and
+    /// <c>{placeholder}</c> substitution cannot address a prefixed key at all.
+    /// </para>
+    /// <para>
+    /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong> (m1,
+    /// peer-review critic, fix round eight), not by raw interpolation. That helper exists to
+    /// eliminate exactly the <c>$"{host}:{port}"</c> spelling that used to stand here, and this is
+    /// the one value in the assembly whose bracket-freeness is INFERRED — it comes from Aspire's
+    /// <c>EndpointReference.Host</c> — rather than proven by test, which is precisely the caller
+    /// <c>AuthorityText</c>'s own idempotency guard was written for. Byte-identical for every shape
+    /// reachable today (every host-published endpoint comes back as <c>localhost</c> or an IPv4
+    /// literal); it changes only what an IPv6 host would produce, and there it produces the
+    /// bracketed form a Kafka bootstrap actually parses instead of the ambiguous <c>::1:9093</c>.
+    /// </para>
+    /// </remarks>
+    private static string StageServiceEndpoint(
+        string name, EndpointReference endpoint, IReadOnlySet<string> kafkaSpeakingTargets) =>
+        kafkaSpeakingTargets.Contains(name)
+            ? AuthorityText.Format(endpoint.Host, endpoint.Port)
+            : endpoint.Url;
 
     // -----------------------------------------------------------------------
     // SUT configuration surface (`env:`) — validation and ReferenceExpression construction.
@@ -2231,6 +2386,44 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
+    /// Resolves <see cref="Map"/>'s <c>suiteDirectory</c> argument to an absolute path, defaulting
+    /// to the current directory (REQ-016).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cref names the method WITHOUT a parameter list on purpose. It carried one —
+    /// <c>Map(EnvironmentSpec?, string?)</c> — which stopped matching the moment
+    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it: this
+    /// project sets no <c>GenerateDocumentationFile</c>, so crefs here are never resolved and
+    /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
+    /// cannot rot the same way again.
+    /// </para>
+    /// A malformed value fails HERE, with a message naming it, rather than inside
+    /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
+    /// base directory itself, not in any one author-declared field, and the two deserve different
+    /// diagnostics. Mirrors <c>EnvironmentSecurityValidator.Validate</c>'s own guard around the
+    /// same call.
+    /// </remarks>
+    private static string ResolveSuiteDirectory(string? suiteDirectory)
+    {
+        var candidate = string.IsNullOrWhiteSpace(suiteDirectory)
+            ? Directory.GetCurrentDirectory()
+            : suiteDirectory;
+
+        try
+        {
+            return Path.GetFullPath(candidate);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ArgumentException(
+                $"suite directory '{candidate}' is not a valid path ({ex.Message}).",
+                nameof(suiteDirectory),
+                ex);
+        }
+    }
+
+    /// <summary>
     /// The B1 discriminator (fix round 2 — the tcp health check that could never fail):
     /// connects to <paramref name="host"/>:<paramref name="port"/> and, on a successful
     /// connect, performs a bounded, small-buffer read to distinguish a live backend from
@@ -2322,9 +2515,9 @@ public static class EnvironmentMapper
 
                 return bytesRead == 0
                     ? HealthCheckResult.Unhealthy(
-                        $"TCP connect to {host}:{port} succeeded, but the connection was closed " +
-                        "immediately (zero bytes read) — no backend is listening behind the " +
-                        "host-published proxy.")
+                        $"TCP connect to {AuthorityText.Format(host, port)} succeeded, but the " +
+                        "connection was closed immediately (zero bytes read) — no backend is " +
+                        "listening behind the host-published proxy.")
                     // >0 bytes: a server-speaks-first protocol greeted us unprompted.
                     : HealthCheckResult.Healthy();
             }
@@ -2345,7 +2538,14 @@ public static class EnvironmentMapper
             // re-throws only if the AMBIENT ct itself requested cancellation (the caller
             // genuinely cancelled the check), which HealthCheckService is expected to
             // observe rather than have swallowed into an Unhealthy result.
-            return HealthCheckResult.Unhealthy($"TCP probe of {host}:{port} failed: {ex.Message}");
+            // m3 (gatekeeper, fix round six): rendered through AuthorityText.Format, the same
+            // bracket rule SecuredEndpointProbe's observed-address messages use. `host` is
+            // bracket-free (it is the form TcpClient.ConnectAsync above needs), so a raw
+            // "{host}:{port}" renders an IPv6 literal as `::1:9093` — unparseable and ambiguous
+            // about where the address ends. Localhost/IPv4 today; the rule costs nothing and the
+            // branch should not close with a known-defective sibling of a defect it fixed.
+            return HealthCheckResult.Unhealthy(
+                $"TCP probe of {AuthorityText.Format(host, port)} failed: {ex.Message}");
         }
     }
 

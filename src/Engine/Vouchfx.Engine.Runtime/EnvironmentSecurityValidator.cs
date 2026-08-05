@@ -56,6 +56,20 @@ namespace Vouchfx.Engine.Runtime;
 internal static class EnvironmentSecurityValidator
 {
     /// <summary>
+    /// True when any declared service or dependency carries a <c>security</c> block.
+    /// </summary>
+    /// <param name="environment">The suite's environment declaration, or <see langword="null"/>.</param>
+    /// <remarks>
+    /// The cheap question "does this suite claim any security at all", asked by callers that must
+    /// apply a security-only rule without paying for the full validation walk. A one-line forward
+    /// to <see cref="SecuredTargets.Any"/> (m5, fix round three), which is the single spelling of
+    /// this walk — kept as a name rather than deleted so this class's own callers and tests keep
+    /// reading in this class's idiom.
+    /// </remarks>
+    internal static bool DeclaresSecurity(EnvironmentSpec? environment) =>
+        SecuredTargets.Any(environment);
+
+    /// <summary>
     /// Validates every declared <c>security</c> block's path-valued fields across
     /// <paramref name="ast"/>'s <c>environment.services</c> and
     /// <c>environment.dependencies</c>.
@@ -202,6 +216,7 @@ internal static class EnvironmentSecurityValidator
             return null;
         }
 
+        var claimedTargets = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < security.ServerArtifacts.Count; i++)
         {
             var fieldName = $"serverArtifacts[{i}].source";
@@ -211,9 +226,139 @@ internal static class EnvironmentSecurityValidator
             {
                 return artifactFailure;
             }
+
+            var targetFailure = ValidateArtifactTarget(
+                security.ServerArtifacts[i].Target, i, ownerKindPlural, ownerName, claimedTargets);
+            if (targetFailure is not null)
+            {
+                return targetFailure;
+            }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Validates one <c>serverArtifacts[].target</c>: an absolute in-container path naming a FILE,
+    /// declared at most once on this owner (REQ-016).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EnvironmentMapper</c> enforces the same three rules when it builds the copy, and keeps
+    /// doing so as a fail-closed backstop for direct engine embedding. The reason they are checked
+    /// HERE as well is the exit code, not the diagnostic: a fault raised from the mapper surfaces
+    /// as an ordinary <see cref="ArgumentException"/> environment-configuration error, which exits
+    /// 0 by default — while these are faults in a declared <c>security</c> block, which REQ-018
+    /// requires to exit non-zero with no flag. Reaching them at this stage is what attaches
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/> to them. It also means an author learns
+    /// at <c>vouchfx validate</c> time rather than after paying for a topology build.
+    /// </para>
+    /// <para>
+    /// Not fully covered by the schema, deliberately checked rather than assumed: the schema's
+    /// <c>^/</c> pattern rejects a relative target, but accepts <c>/etc/kafka/secrets/</c> — a
+    /// directory, with no file name for the engine to create — and says nothing about two artefacts
+    /// claiming one path.
+    /// </para>
+    /// </remarks>
+    private static ValidationFailure? ValidateArtifactTarget(
+        string? target, int index, string ownerKindPlural, string ownerName, HashSet<string> claimedTargets)
+    {
+        var fieldPath = $"environment.{ownerKindPlural}.{ownerName}.security.serverArtifacts[{index}].target";
+
+        if (string.IsNullOrWhiteSpace(target) || target[0] != '/')
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' must be an absolute path inside the container, beginning with '/'.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        // A container path is POSIX; split on '/' by hand rather than via Path.GetDirectoryName,
+        // which on Windows would reason about '\' and reach a different answer than the mapper.
+        if (target.LastIndexOf('/') == target.Length - 1)
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' names a directory, not a file. Give the full in-container "
+                + "path of the file to create, e.g. '/etc/kafka/secrets/kafka.keystore.jks'.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        // The shapes a POSIX container path cannot mean. Checked HERE as well as in the mapper's
+        // own ServerArtifactInjection.Plan, and for this stage's own reason: the author learns at
+        // `vouchfx validate` time, with the field named, instead of at topology-build time as an
+        // opaque daemon failure. No boundary is crossed either way — the destination is inside the
+        // author's own container — but measured, '/etc/kafka/..' produces a container file literally
+        // NAMED '..' and '/etc/kafka\secrets\ks.jks' one named 'kafka\secrets\ks.jks', and neither
+        // diagnoses itself. The two stages must agree, which is why both carry the same three rules.
+        if (target.Contains('\\', StringComparison.Ordinal))
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' contains a backslash. A container path is POSIX: separate "
+                + "its segments with '/', or the whole run of backslashes becomes part of one file "
+                + "NAME rather than a directory path.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        if (HasDotSegment(target))
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' contains a '.' or '..' segment. Give the already-resolved "
+                + "in-container path of the file to create, e.g. "
+                + "'/etc/kafka/secrets/kafka.keystore.jks' — this engine does not normalise a "
+                + "container path, so a '..' segment would be copied through as a literal file name.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        if (target.Contains("//", StringComparison.Ordinal))
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' contains an empty path segment ('//').")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        if (!claimedTargets.Add(target))
+        {
+            return new ValidationFailure(
+                $"{fieldPath}: '{target}' is declared more than once on '{ownerName}'. Two artefacts "
+                + "cannot land on one in-container path — which one wins is not something this engine "
+                + "will decide silently.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// True when any '/'-delimited segment of a container path is <c>.</c> or <c>..</c>.
+    /// </summary>
+    /// <remarks>
+    /// Per SEGMENT, never a plain substring test: <c>Contains("..")</c> would also reject the
+    /// perfectly ordinary <c>/etc/kafka/secrets/keystore..jks</c>. Mirrors
+    /// <c>ServerArtifactInjection.HasDotSegment</c> exactly — the two stages must reach the same
+    /// answer, and this rule is four lines, so a shared home would cost more than it saved.
+    /// </remarks>
+    private static bool HasDotSegment(string target)
+    {
+        foreach (var segment in target.Split('/'))
+        {
+            if (segment is "." or "..")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -335,6 +480,16 @@ internal static class EnvironmentSecurityValidator
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <strong>Slice E note.</strong> The rule itself now lives in
+    /// <see cref="SecurityArtifactPath.IsContainedWithin"/> (<c>Vouchfx.Engine.Authoring</c>) and
+    /// this member forwards to it. A third consumer arrived — <c>EnvironmentMapper</c> resolves
+    /// every <c>serverArtifacts[].source</c> for REQ-016 — and <c>Vouchfx.Engine.Orchestration</c>
+    /// cannot reference <c>Vouchfx.Engine.Runtime</c>, so the choice was a second copy of this
+    /// predicate or one shared home. This name is kept because
+    /// <c>SecurityConfigurationAccessor</c> and this validator's own tests both reach it, and
+    /// because the reasoning below is what a reader looking for the rule will search for.
+    /// </para>
+    /// <para>
     /// <see cref="StringComparison.Ordinal"/> comparison, deliberately — NOT
     /// <see cref="StringComparison.OrdinalIgnoreCase"/>. The prefix compared against here
     /// is always a byte-for-byte copy of <paramref name="resolvedSuiteDirectory"/> itself
@@ -368,17 +523,6 @@ internal static class EnvironmentSecurityValidator
     /// than whoever controls the suite directory.
     /// </para>
     /// </remarks>
-    internal static bool IsContainedWithin(string resolvedPath, string resolvedSuiteDirectory)
-    {
-        if (string.Equals(resolvedPath, resolvedSuiteDirectory, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var prefix = resolvedSuiteDirectory.EndsWith(Path.DirectorySeparatorChar)
-            ? resolvedSuiteDirectory
-            : resolvedSuiteDirectory + Path.DirectorySeparatorChar;
-
-        return resolvedPath.StartsWith(prefix, StringComparison.Ordinal);
-    }
+    internal static bool IsContainedWithin(string resolvedPath, string resolvedSuiteDirectory) =>
+        SecurityArtifactPath.IsContainedWithin(resolvedPath, resolvedSuiteDirectory);
 }
