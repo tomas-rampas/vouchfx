@@ -115,6 +115,37 @@ public sealed record ServiceSpec(
     public IReadOnlyList<int>? Ports { get; init; }
 
     /// <summary>
+    /// The host port each pinned container port publishes on (REQ-025), keyed by CONTAINER
+    /// port. <see langword="null"/> when no entry of <see cref="Ports"/> used the
+    /// <c>"&lt;host&gt;:&lt;container&gt;"</c> form, and never containing an entry for a port
+    /// declared as a bare integer — for which the orchestrator allocates a host port as before.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A companion map rather than a richer <see cref="Ports"/> element type</strong>,
+    /// and the reason is what reads <see cref="Ports"/>. Every consumer of that list wants the
+    /// CONTAINER port and nothing else: <c>ServiceEndpointNaming</c> derives endpoint names from
+    /// it (<c>tcp-9093</c>), <c>security.endpoint</c> resolves its selector against it (REQ-002),
+    /// and the health-check cross-reference and default probe read it. Widening the element type
+    /// would have made every one of those sites decide which half of a pair it meant, for a field
+    /// that is <see langword="null"/> in every suite written before this requirement. Keeping
+    /// <see cref="Ports"/> a list of container ports leaves all of them byte-for-byte unchanged
+    /// and confines the new fact to the two sites that consume it: the mapper, which publishes
+    /// the endpoints, and <c>SuiteTopology</c>'s pre-flight, which must refuse a pinned port this
+    /// machine cannot bind before any container starts.
+    /// </para>
+    /// <para>
+    /// Keyed by container port because that is the half the rest of the language already names —
+    /// an endpoint is <c>tcp-9093</c> whether or not its host side is pinned.
+    /// </para>
+    /// <para>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<int, int>? PinnedHostPorts { get; init; }
+
+    /// <summary>
     /// An author-declared health check for this service (services-generalisation spec,
     /// REQ-009), replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
     /// endpointName: "http")</c>) applied when this is <see langword="null"/> on an

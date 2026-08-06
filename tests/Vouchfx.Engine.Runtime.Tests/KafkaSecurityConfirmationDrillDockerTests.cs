@@ -151,8 +151,11 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <summary>The declared service name, and therefore the container-name prefix DCP allocates from.</summary>
     private const string BrokerName = "mtls-broker";
 
-    /// <summary>The suite's single step id, shared by the YAML and the CLI drills' output checks.</summary>
+    /// <summary>The suite's publish step id, shared by the YAML and the CLI drills' output checks.</summary>
     private const string StepId = "publish";
+
+    /// <summary>The consume step id, present only on REQ-025's produce-and-consume row.</summary>
+    private const string ConsumeStepId = "consume";
 
     /// <summary>The in-container path the fixture's conditional entrypoint checks for the keystore.</summary>
     private const string CheckedKeystorePath = "/etc/kafka/secrets/kafka.keystore.pem";
@@ -166,21 +169,52 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <summary>The prefix every row's suite directory shares, under the system temp directory.</summary>
     private const string SuiteDirectoryPrefix = "vouchfx-edge-drill-";
 
+    /// <summary>
+    /// Runs the stale-directory sweep EXACTLY ONCE for the whole class, however many rows execute.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A static initialiser, not the instance constructor, and the difference is not
+    /// stylistic.</strong> xUnit constructs a NEW INSTANCE OF THE TEST CLASS PER TEST METHOD —
+    /// measured, three methods yielding three constructor calls — so a sweep in the constructor
+    /// runs before every row and deletes every <c>vouchfx-edge-drill-*</c> directory each time,
+    /// including ones other rows own. A static field initialiser runs once, on first access,
+    /// before any row.
+    /// </para>
+    /// <para>
+    /// <strong>What was measured, and what was not.</strong> The per-method construction is
+    /// measured. The specific failure it was proposed to explain — a row losing its own
+    /// <c>client.pem</c> mid-run, surfacing as a probe abort at the client-identity-load arm — is
+    /// NOT explained by it: the same measurement shows construction is strictly SEQUENTIAL (the
+    /// next constructor ran 4ms after the previous method returned, never during it), and every row
+    /// here materialises its own directory inside its own method. So the mechanism is refuted as
+    /// stated, and the root cause of that intermittency is not established.
+    /// </para>
+    /// <para>
+    /// This change is made anyway, and honestly labelled: the sweep is the only code in this
+    /// repository that deletes these directories, an unexplained intermittent failure is exactly
+    /// the shape a cross-row filesystem interaction takes, and a fixture whose rows are coupled
+    /// through the filesystem is wrong on its own terms in a class destined for a proof pack.
+    /// Running it once removes the coupling by construction rather than by argument.
+    /// </para>
+    /// </remarks>
+    private static readonly bool s_swept = SweepStaleSuiteDirectoriesOnce();
+
     private readonly ITestOutputHelper _output;
 
     public KafkaSecurityConfirmationDrillDockerTests(ITestOutputHelper output)
     {
         _output = output;
-        SweepStaleSuiteDirectories();
+        _ = s_swept;
     }
 
     /// <summary>
-    /// Removes suite directories left by earlier runs, best-effort.
+    /// Removes suite directories left by earlier RUNS, best-effort, once per process.
     /// </summary>
     /// <remarks>
     /// These directories are deliberately not deleted at the end of a row (see
     /// <see cref="MaterialiseSuiteDirectory"/>), which means the private keys inside them outlive
-    /// the run that made them. Sweeping at class init bounds that to the interval between two
+    /// the run that made them. Sweeping once at class init bounds that to the interval between two
     /// runs instead of forever, without breaking the property the retention exists for — a CLI
     /// drill naming the suite after the test that built it, within the same run.
     /// <para>
@@ -201,7 +235,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// fail a drill, and each row recreates its own directory regardless.
     /// </para>
     /// </remarks>
-    private static void SweepStaleSuiteDirectories()
+    private static bool SweepStaleSuiteDirectoriesOnce()
     {
         try
         {
@@ -222,6 +256,9 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         {
             // The temp directory itself could not be enumerated.
         }
+
+        // The value is meaningless; the static field exists only to make this run exactly once.
+        return true;
     }
 
     private static readonly System.Reflection.Assembly[] s_providerAssemblies =
@@ -387,7 +424,12 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             "foreign-client-identity",
             securedEndpoint: "9093",
             keystoreTarget: CheckedKeystorePath,
-            afterMaterialise: TestCertificateAuthority.OverwriteWithForeignClientIdentity);
+            afterMaterialise: TestCertificateAuthority.OverwriteWithForeignClientIdentity,
+
+            // Gate on the SECURED port: this row's broker DOES serve 9093 (its keystore is at the
+            // checked path) and only the client identity is wrong, so the same early-gate race
+            // that flaked the positive control applies here.
+            healthCheckPort: 9093);
 
         Assert.Equal(Verdict.EnvironmentError, drill.Result.Verdict);
         Assert.True(drill.Result.SecurityConfirmationFailed);
@@ -466,6 +508,85 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     }
 
     /// <summary>
+    /// REQ-025's payoff: with the secured port's HOST side pinned and advertised, a Kafka producer
+    /// AND consumer complete over mutual TLS from the engine host.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the row every other Kafka row in this file could not be.</strong> Each of
+    /// them asserts that a step was REACHED and says plainly that its outcome is not asserted,
+    /// because it could not pass: the broker advertised <c>localhost:9093</c>, the engine host had
+    /// nothing there, and the client followed the advertisement into a dead end. Pinning the host
+    /// port is the one thing that changes, and the fixture is otherwise the positive control's.
+    /// </para>
+    /// <para>
+    /// So the assertion is on the VERDICT, not on execution — a Pass for both steps, from a
+    /// producer and a consumer that each negotiated mutual TLS, and the broker's own record naming
+    /// the client it authenticated.
+    /// </para>
+    /// <para>
+    /// The port is chosen at run time from a free-port probe rather than hard-coded: a hard-coded
+    /// number that some other process on a developer's machine happens to hold would fail this row
+    /// with EDGE-012's collision error, which is correct behaviour reported as a REQ-025 failure.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task PinnedAndAdvertisedHostPort_CompletesAProduceAndAConsumeOverMutualTls()
+    {
+        var pinned = ReserveAFreePort();
+        _output.WriteLine($"pinning and advertising host port {pinned} for the secured listener");
+
+        var drill = await RunDrillAsync(
+            "pinned-produce-consume",
+            securedEndpoint: "9093",
+            keystoreTarget: CheckedKeystorePath,
+            pinnedHostPort: pinned,
+            consumeStep: true,
+
+            // Gate on the SECURED port, not the plaintext one: this row's steps transact over
+            // 9093, and a gate on 9092 can clear before 9093 is behind its proxy.
+            healthCheckPort: 9093);
+
+        // The probe confirmed, as on every correctly-configured row.
+        Assert.False(
+            drill.Result.SecurityConfirmationFailed,
+            "the probe did not confirm; diagnostics: " + drill.Diagnostics);
+
+        // THE PAYOFF: both steps passed. Not "were reached" — passed.
+        Assert.Equal(Verdict.Pass, drill.Result.Verdict);
+        Assert.Equal(2, CountEvents(drill.Result.Buffer, EventTypes.StepCompleted));
+        Assert.DoesNotContain(
+            "\"verdict\":\"FAIL\"", string.Join("\n", drill.Result.Buffer), StringComparison.Ordinal);
+
+        // And the broker authenticated the declared identity by name for that traffic — the same
+        // evidence the transport rows use, now covering a run that actually moved a message.
+        AssertBrokerAuthenticated(
+            drill.Evidence, TestCertificateAuthority.ClientSubjectCommonName, expected: true);
+    }
+
+    /// <summary>
+    /// Finds a host port nothing is currently listening on, by binding port 0 and releasing it.
+    /// </summary>
+    /// <remarks>
+    /// Binds the ANY address, not loopback. The engine's own pinned-port pre-flight — which THIS
+    /// row runs, unlike its sibling in the orchestration tests — probes the any-address on every
+    /// platform, and the two are independent on Windows: a port free on <c>127.0.0.1</c> can be
+    /// held on <c>0.0.0.0</c>, so a loopback-derived port can be one the pre-flight then refuses.
+    /// That would surface as a collision failure inside the row that exists to prove pinning
+    /// WORKS. Measured across three full class runs (33 row-executions) without a recurrence, but
+    /// the sample bounds the risk rather than removing it, which is why the picker changed.
+    /// </remarks>
+    private static int ReserveAFreePort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    /// <summary>
     /// The positive control for BOTH edges: the same fixture with the endpoint naming the secured
     /// port AND the keystore landing at the checked path. The probe must confirm, and the run must
     /// reach its step.
@@ -481,7 +602,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     public async Task PositiveControl_SecuredEndpointAndKeystoreAtTheCheckedPath_ConfirmsAndReachesItsStep()
     {
         var drill = await RunDrillAsync(
-            "positive-control", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
+            "positive-control",
+            securedEndpoint: "9093",
+            keystoreTarget: CheckedKeystorePath,
+
+            // Gate on the SECURED port. This row's whole premise is that 9093 is serving, and a
+            // gate on 9092 clears before that is true — the measured cause of the intermittent
+            // "no backend is listening behind the host-published proxy" failures.
+            healthCheckPort: 9093);
 
         // ── The probe confirmed ───────────────────────────────────────────────────────────────
         Assert.False(
@@ -685,12 +813,17 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             output,
             StringComparison.Ordinal);
 
-        // The corroborating half, and it is WEAKER than it looks in two ways worth naming: on a
-        // host with no Docker at all both snapshots are empty and this compares nothing, and even
-        // with Docker it cannot see a topology that was built and torn down inside the call (see
-        // this test's own remarks). It is a cheap second opinion on the structural argument above,
-        // never the proof — what it does catch is a container LEFT BEHIND.
-        Assert.Equal(containersBefore, containersAfter);
+        // The corroborating half, and it is WEAKER than it looks in three ways worth naming: on a
+        // host with no Docker at all both snapshots are empty and this compares nothing; even with
+        // Docker it cannot see a topology built and torn down inside the call (see this test's own
+        // remarks); and it reads GLOBAL docker state, which this row does not own.
+        //
+        // So it asserts only that no broker container APPEARED — never that the two lists are
+        // equal. MEASURED: equality fails when a PREVIOUS row's teardown completes during this
+        // one, which removes a container between the two snapshots and is not this row's doing at
+        // all. A row that fails because a sibling finished tidying up is order-coupled by
+        // construction, and a subset check is the assertion that actually matches the claim.
+        AssertNoBrokerContainerAppeared(containersBefore, containersAfter);
     }
 
     /// <summary>
@@ -758,7 +891,28 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             StringComparison.Ordinal);
 
         var containersAfter = await ListBrokerContainersAsync(cts.Token);
-        Assert.Equal(containersBefore, containersAfter);
+        AssertNoBrokerContainerAppeared(containersBefore, containersAfter);
+    }
+
+    /// <summary>
+    /// Asserts no broker container APPEARED between two snapshots — deliberately a subset check
+    /// rather than equality.
+    /// </summary>
+    /// <remarks>
+    /// These rows read global docker state they do not own. A container VANISHING between the two
+    /// snapshots is a previous row's teardown completing, which says nothing about this row;
+    /// measured, that is exactly what failed an equality assertion here, repeatedly, in a class
+    /// run. Only an ARRIVAL is evidence about the row under test, so only an arrival fails.
+    /// </remarks>
+    private static void AssertNoBrokerContainerAppeared(
+        IReadOnlyList<string> before, IReadOnlyList<string> after)
+    {
+        var appeared = after.Except(before, StringComparer.Ordinal).ToArray();
+
+        Assert.True(
+            appeared.Length == 0,
+            "a broker container appeared during a row that must never start one: "
+            + string.Join(", ", appeared));
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -1279,9 +1433,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         string row,
         string securedEndpoint,
         string keystoreTarget,
-        Action<string>? afterMaterialise = null)
+        Action<string>? afterMaterialise = null,
+        int? pinnedHostPort = null,
+        bool consumeStep = false,
+        int healthCheckPort = 9092)
     {
-        var suiteDirectory = MaterialiseSuiteDirectory(row, securedEndpoint, keystoreTarget);
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            row, securedEndpoint, keystoreTarget, pinnedHostPort, consumeStep, healthCheckPort);
         afterMaterialise?.Invoke(suiteDirectory);
         _output.WriteLine($"row '{row}': suite directory {suiteDirectory}");
 
@@ -1351,7 +1509,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// intra-assembly test parallelism (see AssemblyInfo.cs), so two rows cannot race for one
     /// directory.
     /// </remarks>
-    private static string MaterialiseSuiteDirectory(string row, string securedEndpoint, string keystoreTarget)
+    private static string MaterialiseSuiteDirectory(
+        string row,
+        string securedEndpoint,
+        string keystoreTarget,
+        int? pinnedHostPort = null,
+        bool consumeStep = false,
+        int healthCheckPort = 9092)
     {
         var suiteDirectory = Path.Combine(Path.GetTempPath(), SuiteDirectoryPrefix + row);
         if (Directory.Exists(suiteDirectory))
@@ -1364,7 +1528,9 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // LF, not Environment.NewLine: this is a bash script read inside a Linux container, and a
         // CRLF `if [ -f … ]; then` is a syntax error the broker would report as nothing at all.
         File.WriteAllText(Path.Combine(suiteDirectory, "bash-config"), ConditionalEntrypoint);
-        File.WriteAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"), SuiteYaml(securedEndpoint, keystoreTarget));
+        File.WriteAllText(
+            Path.Combine(suiteDirectory, "drill.e2e.yaml"),
+            SuiteYaml(securedEndpoint, keystoreTarget, pinnedHostPort, consumeStep, healthCheckPort));
 
         return suiteDirectory;
     }
@@ -1386,7 +1552,12 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         + "if [ -f " + CheckedKeystorePath + " ]; then\n"
         + "  echo \"===> vouchfx fixture: keystore present, appending SSL configuration\"\n"
         + "  export KAFKA_LISTENERS=\"PLAINTEXT://0.0.0.0:9092,SECURE://0.0.0.0:9093,CONTROLLER://0.0.0.0:9094\"\n"
-        + "  export KAFKA_ADVERTISED_LISTENERS=\"PLAINTEXT://localhost:9092,SECURE://localhost:9093\"\n"
+        // The secured listener's ADVERTISED address is env-driven, defaulting to the container
+        // port. REQ-025's payoff row overrides it with the pinned HOST port, which is the whole
+        // point: a broker announces the address clients must use for the partition leader, and
+        // until a host port could be pinned there was no value it could announce that was true
+        // from outside the container. `${VAR:-default}` is safe under `set -o nounset`.
+        + "  export KAFKA_ADVERTISED_LISTENERS=\"PLAINTEXT://localhost:9092,SECURE://${VOUCHFX_SECURE_ADVERTISED:-localhost:9093}\"\n"
         + "  export KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=\"CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SECURE:SSL\"\n"
         + "  export KAFKA_SSL_KEYSTORE_TYPE=\"PEM\"\n"
         + "  export KAFKA_SSL_KEYSTORE_LOCATION=\"" + CheckedKeystorePath + "\"\n"
@@ -1419,7 +1590,35 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// container health check can present a client certificate.
     /// </para>
     /// </remarks>
-    private static string SuiteYaml(string securedEndpoint, string keystoreTarget) =>
+    /// <param name="pinnedHostPort">
+    /// REQ-025: when set, the secured container port is declared as
+    /// <c>"&lt;pinnedHostPort&gt;:9093"</c> and the broker is told to advertise that host port. When
+    /// null every row keeps the bare-integer form and the orchestrator-allocated host port every
+    /// other drill in this file uses.
+    /// </param>
+    /// <param name="consumeStep">
+    /// Appends an <c>mq-expect.kafka</c> step after the publish, so one run exercises a Kafka
+    /// producer AND a consumer over mutual TLS — the customer's own stated requirement, and the
+    /// pair REQ-025 exists to make reachable.
+    /// </param>
+    /// <param name="healthCheckPort">
+    /// Which container port the health gate probes, and it is PER-ROW rather than fixed at 9092
+    /// for a measured reason. A conformance run recorded 3 failures in 22 row-executions, every
+    /// one of them the orchestrator's "TCP connect … succeeded, but the connection was closed
+    /// immediately (zero bytes read) — no backend is listening behind the host-published proxy":
+    /// gating on 9092 while the probe targets 9093 lets the gate clear before the SECURED listener
+    /// is behind its proxy. Rows whose secured listener is meant to exist therefore gate on 9093 —
+    /// which is also the engine's own default for a security-declaring service, and needs no
+    /// client certificate to pass. The two rows whose premise is that NO secured listener exists
+    /// must keep 9092: gating on 9093 there would hold the topology unhealthy and the run would
+    /// never reach the probe those edges are about.
+    /// </param>
+    private static string SuiteYaml(
+        string securedEndpoint,
+        string keystoreTarget,
+        int? pinnedHostPort = null,
+        bool consumeStep = false,
+        int healthCheckPort = 9092) =>
         // Double-dollar raw string: a single '{'/'}' is a literal brace (this YAML carries a flow
         // mapping and a JSON payload) and '{{expr}}' is the interpolation hole — the same form
         // CsxFragment bodies use, and for the same reason. The single-dollar spelling inverts both
@@ -1431,8 +1630,8 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
           services:
             {{BrokerName}}:
               image: confluentinc/cp-kafka:7.6.1
-              ports: [9092, 9093]
-              healthCheck: { type: tcp, port: 9092 }
+              ports: [9092, {{(pinnedHostPort is { } pin ? $"\"{pin}:9093\"" : "9093")}}]
+              healthCheck: { type: tcp, port: {{healthCheckPort}} }
               security:
                 profile: mtls
                 endpoint: "{{securedEndpoint}}"
@@ -1478,6 +1677,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 # broker authenticated) and the exception cause on failure (which names WHY it
                 # refused).
                 KAFKA_LOG4J_LOGGERS: "org.apache.kafka.common.network.SslTransportLayer=DEBUG,org.apache.kafka.common.network.Selector=DEBUG"
+                {{AdvertisedOverride(pinnedHostPort)}}
         steps:
           - id: {{StepId}}
             type: mq-publish.kafka
@@ -1485,18 +1685,54 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             topic: orders
             payload: '{"id":"edge-drill"}'
 
-            # 5s, and it is mostly fixture cost rather than fixture meaning: on the two rows that
-            # reach this step it cannot pass anyway (see this file's header on advertised
-            # listeners). No assertion names the step's verdict — the only step evidence read
-            # anywhere is step-started, emitted before any budget can expire — but the CLI control
-            # asserts exit 0, and that DOES couple to the step's classification: a budget expiry
-            # resolves as Inconclusive, which exits 0 flaglessly, whereas a step that resolved as
-            # Fail would exit 1 and take that row red. So the value is free to move, and not free
-            # to move anywhere. Identical across every row, so it is never the variable under test.
-            # Lowered from 10s, at which the step was measured spending ~20s of wall clock; a
-            # smaller value is schema-legal and untried, so nothing here claims 5s is a floor.
-            timeout: 5s
-        """;
+            # The publish budget, and which rows DEPEND on it versus merely tolerate it:
+            #
+            #   • The pinned produce-and-consume row DEPENDS on it. It asserts Verdict.Pass, so
+            #     this step must complete a TLS handshake, fetch metadata, auto-create the topic
+            #     and be acknowledged inside the budget. It gets 30s for that reason — the 5s the
+            #     other rows use was inherited by it unexamined, and a budget chosen because a
+            #     step could not pass is the wrong budget for the one row that requires it to.
+            #   • The two abort rows never reach the step at all, so any value does.
+            #   • The remaining rows reach it and cannot pass (see this file's header on advertised
+            #     listeners). They tolerate the value — but not any value: the CLI control asserts
+            #     exit 0, and that couples to the step's CLASSIFICATION, since a budget expiry
+            #     resolves as Inconclusive (flaglessly exit 0) where a Fail would exit 1.
+            #
+            # Measured at 10s the unpinned step spent ~20s of wall clock; a value below 5s is
+            # schema-legal and untried, so nothing here claims 5s is a floor.
+            timeout: {{(consumeStep ? "30s" : "5s")}}
+        """
+        + (consumeStep ? ConsumeStepYaml : string.Empty);
+
+    /// <summary>
+    /// A YAML comment when nothing is pinned, and the env entry that overrides the broker's
+    /// advertised secured address when something is.
+    /// </summary>
+    /// <remarks>
+    /// A comment rather than an empty string because this sits mid-document on its own line: an
+    /// empty substitution would leave a blank line carrying the surrounding indentation, which is
+    /// legal YAML but reads as an accident.
+    /// </remarks>
+    private static string AdvertisedOverride(int? pinnedHostPort) =>
+        pinnedHostPort is { } port
+            ? $"VOUCHFX_SECURE_ADVERTISED: \"localhost:{port}\""
+            : "# no pinned host port: the entrypoint advertises the container port";
+
+    /// <summary>
+    /// The consumer half of REQ-025's produce-and-consume row, appended outside the raw string
+    /// literal because a raw string's closing delimiter must stand on its own line.
+    /// </summary>
+    private const string ConsumeStepYaml =
+        "\n"
+        + "  - id: " + ConsumeStepId + "\n"
+        + "    type: mq-expect.kafka\n"
+        + "    target: " + BrokerName + "\n"
+        + "    topic: orders\n"
+        + "    verifyMode: RETRY\n"
+        + "    timeout: 30s\n"
+        + "    match:\n"
+        + "      json:\n"
+        + "        \"$.id\": \"edge-drill\"\n";
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
     // Container evidence
@@ -1581,6 +1817,16 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         var recent = string.Empty;
         var filesystem = string.Empty;
 
+        // ACCUMULATED across every poll, not read off the final snapshot — and that distinction is
+        // a defect this fixture actually shipped. The authentication records are written EARLY (the
+        // probe runs immediately after the health gate), while the tail this watcher re-reads is a
+        // fixed 200 lines. On a short row that window still contains them at the end; on the
+        // produce-and-consume row it does not, because a consumer plus DEBUG-level transport
+        // logging pushes hundreds of lines out behind it. MEASURED: that row passed in isolation
+        // and failed inside the class, asserting the broker never authenticated a client it
+        // demonstrably had. A record seen once is kept.
+        var authenticationRecords = new SortedSet<string>(StringComparer.Ordinal);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             // --tail for the READINESS poll, and the full log only once ready. The readiness marker
@@ -1597,6 +1843,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 if (full.Length > 0)
                 {
                     log = full;
+                    CollectAuthenticationRecords(full, authenticationRecords);
                 }
             }
 
@@ -1625,10 +1872,12 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             // fetch found the container already removed. A 200-line tail costs little enough to
             // re-read every 200ms, which is the cadence that wins that race — and the full log is
             // fetched exactly once, for the start-up lines that never change.
-            recent = await DockerAsync($"logs --tail 200 {container}", cancellationToken)
-                .ConfigureAwait(false) is { Length: > 0 } refreshed
-                ? refreshed
-                : recent;
+            if (await DockerAsync($"logs --tail 200 {container}", cancellationToken)
+                    .ConfigureAwait(false) is { Length: > 0 } refreshed)
+            {
+                recent = refreshed;
+                CollectAuthenticationRecords(refreshed, authenticationRecords);
+            }
 
             try
             {
@@ -1651,6 +1900,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             if (final.Length > 0)
             {
                 recent = final;
+                CollectAuthenticationRecords(final, authenticationRecords);
             }
         }
 
@@ -1669,22 +1919,37 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // The broker's own authentication record. Every line it wrote about a TLS peer, kept
         // verbatim so a row can assert on the verdict the BROKER reached rather than only on the
         // one the engine reported.
-        var authentication = string.Join(
-            "\n",
-            (log + "\n" + recent)
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.Ordinal)
-                .Where(l =>
-                    l.Contains("Failed authentication", StringComparison.Ordinal)
-                    || l.Contains("Successfully authenticated", StringComparison.Ordinal)
-                    || l.Contains("peerPrincipal", StringComparison.Ordinal)
-                    || l.Contains("SSLHandshakeException", StringComparison.Ordinal)));
+        var authentication = string.Join("\n", authenticationRecords);
 
         return $"container: {container}\n"
             + $"listening ports: {string.Join(", ", bound)}\n"
             + $"entrypoint decision: {decisions}\n"
             + $"broker authentication records:\n{authentication}\n"
             + $"filesystem (declared target {keystoreTarget}):\n{filesystem}";
+    }
+
+    /// <summary>
+    /// Adds every line of <paramref name="text"/> that is the broker's own record of an
+    /// authentication outcome to <paramref name="into"/>, which de-duplicates them.
+    /// </summary>
+    /// <remarks>
+    /// The four markers are the two Selector verdicts (<c>Successfully authenticated</c> /
+    /// <c>Failed authentication</c>), the SslTransportLayer line naming the authenticated
+    /// <c>peerPrincipal</c>, and the <c>SSLHandshakeException</c> that names a refusal's cause.
+    /// </remarks>
+    private static void CollectAuthenticationRecords(string text, SortedSet<string> into)
+    {
+        foreach (var line in text.Split(
+                     '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.Contains("Failed authentication", StringComparison.Ordinal)
+                || line.Contains("Successfully authenticated", StringComparison.Ordinal)
+                || line.Contains("peerPrincipal", StringComparison.Ordinal)
+                || line.Contains("SSLHandshakeException", StringComparison.Ordinal))
+            {
+                into.Add(line);
+            }
+        }
     }
 
     /// <summary>

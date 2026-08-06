@@ -238,14 +238,19 @@
           "$ref": "#/$defs/security"
         },
         "ports": {
-          "description": "One or more TCP ports this service exposes, beyond (or instead of) the implicit default HTTP endpoint (services-generalisation spec, REQ-008) — for a system under test that does not speak HTTP at all, such as a customer-supplied Kafka broker. Each port is brought up via Aspire's generic TCP endpoint, never assumed to speak HTTP. Declaring 'ports' suppresses the implicit default HTTP endpoint that 'httpPort' alone would otherwise imply; declare 'httpPort' alongside 'ports' for a hybrid service that exposes both an HTTP endpoint and one or more raw TCP ports. Written as bare decimal integers only — unlike 'httpPort', this is a NEW field with no pre-existing engine behaviour to preserve, so it does not carry 'httpPort''s quoted-string/leading-zero-octal compatibility shape.",
+          "description": "One or more TCP ports this service exposes, beyond (or instead of) the implicit default HTTP endpoint (services-generalisation spec, REQ-008) — for a system under test that does not speak HTTP at all, such as a customer-supplied Kafka broker. Each port is brought up via Aspire's generic TCP endpoint rather than being assumed to speak HTTP — except the one a sibling 'security.endpoint' selects, which is declared with an 'https' scheme and replaces the plaintext endpoint that port would otherwise have carried. Declaring 'ports' suppresses the implicit default HTTP endpoint that 'httpPort' alone would otherwise imply; declare 'httpPort' alongside 'ports' for a hybrid service that exposes both an HTTP endpoint and one or more raw TCP ports. Each entry is either a bare decimal integer naming the CONTAINER port, whose host port the orchestrator then allocates, or a '<host>:<container>' string (docker-compose's ordering) pinning the host port too — which a service must use when its own configuration has to name the address clients will reach it on, as a broker's advertised listeners do. Every port is written as a plain decimal integer with no leading zero. In the pinned form the host half must be 1024..65535 (privileged and well-known ports are refused) and the container half 1..65535; those ranges are enforced when the document is parsed rather than by this schema, so an in-range-looking entry may still be rejected with a message naming the value.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
+          "$comment": "A SINGLE MERGED schema rather than a two-branch oneOf, matching this file's existing treatment of the identical integer-or-string case at 'httpPort' and at 'security.endpoint'. Measured: a oneOf yields TWO errors for one mistake, the second contradicting the first (['a:b'] tells the author their string should be an integer; [70000] tells them their integer should be a string), because JsonSchema.Net attaches no message to a failing oneOf node and the collector reports each branch's complaint. Merged, 'minimum'/'maximum' are no-ops against a string and 'pattern' is a no-op against a number (draft 2020-12), so the accepted set is identical and a mistake produces one located error. The pattern forbids a leading zero for the same reason 'security.endpoint' does: the schema bridge re-reads the document under YAML 1.1, where '0123' is octal 83 while the parser reads 123 — refusing the spelling makes that divergence unreachable. Range on the two halves of the pinned form is parser-owned; a regex expressing 1..65535 twice would be unreadable, so this pattern promises shape only and the description says so.",
           "items": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "string"
+            ],
             "minimum": 1,
-            "maximum": 65535
+            "maximum": 65535,
+            "pattern": "^[1-9][0-9]{0,4}(:[1-9][0-9]{0,4})?$"
           }
         },
         "healthCheck": {

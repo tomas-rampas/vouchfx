@@ -698,6 +698,25 @@ public static class EnvironmentMapper
                 }
             }
 
+            // REQ-025: an `httpPort` may not name a container port that `ports:` has PINNED.
+            // Both produce an endpoint declaration on that port, so the pin has two candidates
+            // and no rule distinguishes them: publishing both on one host port is impossible,
+            // and publishing one silently is the arbitrary choice this engine does not make.
+            // Refused eagerly, before any builder mutation, like every other cross-field check
+            // in this loop — and it narrows nothing that ever worked, because pinning is new.
+            if (spec.Image is not null
+                && spec.HttpPort is { } pinnedHttpPortCandidate
+                && spec.PinnedHostPorts is { } declaredPins
+                && declaredPins.TryGetValue(pinnedHttpPortCandidate, out var pinnedFor))
+            {
+                throw new ArgumentException(
+                    $"Service '{name}' declares 'httpPort: {pinnedHttpPortCandidate}' and also pins that " +
+                    $"same container port in 'ports' (to host port {pinnedFor}). One container " +
+                    "port cannot be declared twice. Remove the 'httpPort', or pin a different " +
+                    "container port.",
+                    nameof(env));
+            }
+
             // REQ-009: cross-referencing healthCheck.port against the service's OWN declared
             // ports/httpPort is this mapper's job, not the schema's (see HealthCheckSpec's own
             // remarks) — mirrors the ${conn:name} referencing an unknown dependency precedent.
@@ -1171,6 +1190,32 @@ public static class EnvironmentMapper
                     var endpointDeclarations = ServiceEndpointNaming.EndpointDeclarations(spec);
                     foreach (var endpoint in endpointDeclarations)
                     {
+                        // REQ-025: the host port this container port publishes on, when the author
+                        // pinned it, and null for every port declared as a bare integer — which
+                        // leaves the orchestrator allocating one exactly as before. Threaded into
+                        // all three overloads below rather than only the secured one, because the
+                        // requirement is about a service's ports and says nothing about schemes.
+                        //
+                        // GUARDED ON THE PORT HAVING COME FROM `ports:`, not on its VALUE alone.
+                        // EndpointDeclarations covers `httpPort` and the implicit HTTP endpoint as
+                        // well as `ports:` entries, so a lookup keyed on the port number alone
+                        // attaches a pin to an endpoint that never asked for one whenever the two
+                        // numbers coincide — an `httpPort: 9093` beside `ports: ["19093:9093"]`
+                        // would publish BOTH on host 19093. The remaining ambiguity, where those
+                        // two numbers are equal, is refused outright by the eager check in Map's
+                        // services loop, so reaching here means the association is unique.
+                        //
+                        // Passing null is what makes the default path byte-for-byte unchanged:
+                        // `port` is `int?` on every one of these overloads and null is its own
+                        // default, so an unpinned endpoint emits the identical call it always did.
+                        int? pinnedHostPort =
+                            spec.PinnedHostPorts is { } pins
+                            && spec.Ports is { } declaredPorts
+                            && declaredPorts.Contains(endpoint.Port)
+                            && pins.TryGetValue(endpoint.Port, out var host)
+                                ? host
+                                : null;
+
                         if (endpoint.IsSecured)
                         {
                             // REQ-023. WithHttpsEndpoint sets EndpointAnnotation.UriScheme to
@@ -1185,7 +1230,7 @@ public static class EnvironmentMapper
                             // with material its author supplied, which is exactly the model
                             // this feature assumes (the client-side trust material is REQ-024).
                             containerBuilder = containerBuilder.WithHttpsEndpoint(
-                                targetPort: endpoint.Port, name: endpoint.Name);
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
                         }
                         else if (string.Equals(
                                      endpoint.Name,
@@ -1193,12 +1238,12 @@ public static class EnvironmentMapper
                                      StringComparison.Ordinal))
                         {
                             containerBuilder = containerBuilder.WithHttpEndpoint(
-                                targetPort: endpoint.Port, name: endpoint.Name);
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
                         }
                         else
                         {
                             containerBuilder = containerBuilder.WithEndpoint(
-                                targetPort: endpoint.Port, name: endpoint.Name);
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
                         }
                     }
 

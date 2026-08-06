@@ -276,6 +276,113 @@ public sealed class EnvironmentMapperTests
 
         Assert.DoesNotContain(endpoints, e => e.Name == "http");
         Assert.DoesNotContain(endpoints, e => string.Equals(e.UriScheme, "http", StringComparison.Ordinal));
+
+        // REQ-025: a bare entry pins NOTHING, which is what leaves the orchestrator free to
+        // allocate. Asserted on the annotation rather than on a running container, because that is
+        // the only place the distinction is visible without Docker — and this test project's rows
+        // are the ones that gate a merge.
+        Assert.Null(tcpEndpoint.Port);
+    }
+
+    /// <summary>
+    /// REQ-025: a <c>"&lt;host&gt;:&lt;container&gt;"</c> entry sets the endpoint's HOST port,
+    /// leaving the container port as the target.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the requirement's core mechanism, and until this row existed nothing
+    /// asserted it in a lane that blocks a merge.</strong> Everything else exercising
+    /// <c>WithEndpoint(port:)</c> is docker-gated, and this repository's Docker/Aspire CI checks
+    /// are non-blocking — so a regression that dropped the host port entirely would have gone
+    /// green. Building the application model needs no Docker: only <c>StartAsync</c> does.
+    /// </para>
+    /// <para>
+    /// It is also the deterministic half of the live measurement. The docker row proves a client
+    /// reaches the pinned port; this proves the mapper asked for it, which is the part a refactor
+    /// can silently break.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Map_ServiceWithPinnedPort_SetsTheHostPortOnTheEndpointAnnotation()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["kafka-broker"] = new ServiceSpec(
+                    Image: "confluentinc/cp-kafka:7.6.1",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    PinnedHostPorts = new Dictionary<int, int> { [9093] = 19093 },
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
+        var endpoint = Assert.Single(resource.Annotations.OfType<EndpointAnnotation>());
+
+        // The endpoint is still NAMED for the container port — pinning changes where it is
+        // published, never what the rest of the language calls it.
+        Assert.Equal("tcp-9093", endpoint.Name);
+        Assert.Equal(9093, endpoint.TargetPort);
+        Assert.Equal(19093, endpoint.Port);
+    }
+
+    /// <summary>
+    /// REQ-025: a pin attaches only to the <c>ports:</c> entry that declared it, never to an
+    /// endpoint that merely shares its container port.
+    /// </summary>
+    /// <remarks>
+    /// The lookup was originally keyed on the port NUMBER across every endpoint declaration, which
+    /// covers <c>httpPort</c> and the implicit HTTP endpoint as well as <c>ports:</c> entries. This
+    /// pins a port that no <c>httpPort</c> names, and asserts the HTTP endpoint came away with no
+    /// host port of its own.
+    /// </remarks>
+    [Fact]
+    public void Map_PinnedPortBesideAnUnrelatedHttpPort_LeavesTheHttpEndpointUnpinned()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["hybrid"] = new ServiceSpec(
+                    Image: "example/hybrid:1",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null)
+                {
+                    Ports = new List<int> { 9093 },
+                    PinnedHostPorts = new Dictionary<int, int> { [9093] = 19093 },
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "hybrid");
+        var endpoints = resource.Annotations.OfType<EndpointAnnotation>().ToList();
+
+        var pinned = Assert.Single(endpoints, e => e.Name == "tcp-9093");
+        Assert.Equal(19093, pinned.Port);
+
+        var http = Assert.Single(endpoints, e => e.Name == "http");
+        Assert.Equal(8080, http.TargetPort);
+        Assert.Null(http.Port);
     }
 
     /// <summary>

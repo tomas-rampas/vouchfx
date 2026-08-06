@@ -206,7 +206,10 @@ public static class ServiceEndpointNaming
             // allOf clauses check `project`/`image` exclusivity, the ports-without-httpPort
             // health-check rule and the project-form restrictions, and none cross-checks
             // httpPort against ports items; `uniqueItems` rejects `[P, P]` but says nothing
-            // about httpPort), and `ports: [P, P]` via a hand-built EnvironmentSpec. Measured
+            // about httpPort), and `ports: [P, P]` via a hand-built EnvironmentSpec — or, since
+            // REQ-025, via the two FORMS naming one container port (`[P, "H:P"]`), which
+            // `uniqueItems` also cannot see because an integer never equals a string; the parser
+            // refuses both spellings, so the YAML route is closed there rather than here. Measured
             // before this fix, `ports:[8443] + httpPort:8443 + security.endpoint:8443` emitted
             // `https@8443 SECURED | http@8443 PLAINTEXT`: the mapper then made BOTH
             // WithHttpsEndpoint and WithHttpEndpoint calls on one port, the REQ-023

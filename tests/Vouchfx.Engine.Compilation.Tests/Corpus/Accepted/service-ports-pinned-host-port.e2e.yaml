@@ -1,0 +1,24 @@
+# REQ-025: a service's `ports` entry may pin the host port as "<host>:<container>", alongside the
+# bare container-port integer form, and both may appear in one list.
+#
+# This document exists because the golden pins the schema's TEXT, not its BEHAVIOUR: the type union
+# and pattern that admit the pinned form could be replaced by something that accepts a different
+# set entirely and the golden would simply be regenerated. The corpus is where "this shape is
+# accepted" is asserted.
+#
+# The single-integer string form ("8080") is here deliberately: the pattern's colon group is
+# optional so that a quoted integer — which the parser has always accepted — is not rejected by
+# the schema and then advised to write a pair, which was the exact mis-advice the merged-schema
+# change was made to remove.
+metadata:
+  name: pinned-host-port
+environment:
+  services:
+    broker:
+      image: confluentinc/cp-kafka:7.6.1
+      ports: [9092, "19093:9093", "8080"]
+      healthCheck: { type: tcp, port: 9092 }
+steps:
+  - id: noop
+    type: script.csharp
+    code: "return;"
