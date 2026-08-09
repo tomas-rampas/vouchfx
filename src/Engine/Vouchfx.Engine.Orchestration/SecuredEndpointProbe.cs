@@ -235,7 +235,8 @@ public sealed record SecurityConfirmation(
     /// </para>
     /// <para>
     /// The enum member is deliberately NOT renamed to suit that reading. Under <c>tls</c> the SERVER
-    /// is authenticated — its certificate chained to the declared <c>caCert</c> — so the name is
+    /// is authenticated — its certificate satisfied the declared <c>caCert</c>, or the platform's
+    /// own trust store where none is declared — so the name is
     /// accurate about the peer and merely silent about whose identity; adjacency supplies what it
     /// omits, and a rename would move a public API member to fix a rendering problem.
     /// </para>
