@@ -306,7 +306,9 @@ public sealed class MqPublishKafkaProviderTests
     /// Services-generalisation spec REQ-011: a <c>target</c> naming a declared
     /// <em>service</em> (a customer-supplied broker under <c>environment.services</c>,
     /// not the engine-provisioned <c>kafka</c> dependency type) is accepted —
-    /// name-membership only; protocol correctness is a later slice's concern.
+    /// name-membership only. Validate never inspects the service's protocol or ports;
+    /// the target's staged form is settled at Emit (svc::&lt;name&gt;, REQ-023) and its
+    /// protocol at run time.
     /// </summary>
     [Fact]
     public void Validate_TargetIsDeclaredService_IsValid()

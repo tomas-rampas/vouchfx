@@ -1,0 +1,232 @@
+# Security compatibility matrix
+
+**The question this page answers: for each technology vouchfx talks to, can a 1.0 suite reach a
+*secured* instance of it?**
+
+If your infrastructure is authenticated — a broker demanding mutual TLS, an API behind client
+certificates, a database that refuses plaintext — this is the page to read before you write your
+first suite. It is a reference table, not a tutorial. For the authoring syntax see
+[§3.2.6b of the DSL specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md); for
+where the boundary moves next see the [roadmap](roadmap.md).
+
+## The short answer
+
+- **Kafka** — reachable over TLS and mutual TLS, both as a `kafka` dependency and as an
+  `environment.services` entry standing in for a customer-supplied broker.
+- **The HTTP family** (`http.rest`, `http.soap`, `metrics-assert.prometheus`) — reachable over
+  HTTPS, presenting a client certificate, against any declared service.
+- **Everything else** — RabbitMQ, NATS, MongoDB, Redis, PostgreSQL, SQL Server, MySQL,
+  Elasticsearch, and the remaining families — **not** reachable over a secured connection in 1.0.
+
+## Read this first: vouchfx secures the *client*, never the server
+
+This is the single most likely surprise for a new enterprise adopter, so it is stated before the
+tables rather than after them.
+
+A `security:` block declares the **client-side** expectation for infrastructure whose server side is
+**already secured**. It does not cause vouchfx to secure anything. Where vouchfx starts the
+container itself — every managed dependency — it stages only the client half of the connection: the
+trust anchor, the client certificate and key, the transport protocol on the emitted client. It does
+not generate a server certificate, does not enable a listener's TLS, and does not reconfigure a
+stock image to demand an identity.
+
+So "vouchfx supports mutual-TLS Kafka" means this in practice:
+
+1. You supply your own broker image via `image:` (on the dependency) or an `environment.services`
+   entry, already configured to serve a secured listener.
+2. You supply its server-side material — keystore, truststore, certificate — through
+   `security.serverArtifacts`, which vouchfx streams into that container at topology-build time.
+3. vouchfx configures the *client*: the step's producer or consumer connects over TLS with the
+   certificate you declared.
+
+**You configure the server; vouchfx configures the client.** Declaring `security:` on a stock,
+engine-provisioned dependency does not secure it — it states an expectation the engine then confirms
+at run time, and fails the suite when the endpoint turns out not to speak TLS at all.
+
+One consequence worth knowing up front: a secured service's default health check becomes a TCP
+probe rather than an HTTP one, because a container health check cannot present a client certificate
+and an HTTPS probe against a mutual-TLS listener would hold a working topology unhealthy forever.
+Declare an explicit `healthCheck` against a separate unsecured port if you want a stronger probe.
+
+## How the division was derived
+
+The table below is derived from the code, not from intent. A target is reachable over a secured
+connection in 1.0 only where **all three** of the following hold together:
+
+1. the language schema accepts a `security:` block on that target — it is rejected outright on
+   every dependency kind except `kafka`;
+2. the engine's security-profile registry has a wiring registered for that target kind — the wired
+   set is exactly `{kafka dependency, any declared service}`, for both `tls` and `mtls`, checked at
+   validation time so a suite claiming anything else fails before a container starts; and
+3. the provider that resolves the step's `target` actually configures its emitted client from the
+   resolved security configuration — measured across all twenty-five Core providers, that is the
+   two Kafka providers and the three HTTP-family providers, and no others.
+
+Rule 3 is what makes the answer honest. Rules 1 and 2 alone would only tell you which suites
+*validate*; a suite can validate and still connect in plaintext if nothing on the provider side ever
+reads the declaration. Because both gates run at validation time, they decide only which suites are
+accepted at all — which is why widening them later is additive and safe, and why 1.0 deliberately
+rejects more than it might have.
+
+## Matrix by step family
+
+Every Core provider, and what it can reach.
+
+| Provider | Resolves `target` against | Secured connection in 1.0 | Notes |
+| --- | --- | --- | --- |
+| `http.rest` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
+| `http.soap` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
+| `metrics-assert.prometheus` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
+| `mq-publish.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Plain-payload and Avro paths alike |
+| `mq-expect.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Plain-payload and Avro paths alike |
+| `mq-publish.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-expect.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-publish.nats` | `nats` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-expect.nats` | `nats` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-publish.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-expect.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
+| `cache-assert.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-publish.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
+| `mq-expect.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
+| `db-assert.postgres` | `postgres` dependency | No | Deferred to 1.1 |
+| `db-assert.mysql` | `mysql` dependency | No | Deferred to 1.1 |
+| `db-assert.sqlserver` | `sqlserver` dependency | No | Deferred to 1.1 |
+| `db-assert.mongodb` | `mongodb` dependency | No | Server-side TLS deferred to 1.1; mutual TLS further out |
+| `db-assert.dynamodb` | `dynamodb` dependency | No | Reaches the engine-provisioned local double only |
+| `cache-assert.elasticsearch` | `elasticsearch` dependency | No | Out of scope — see below |
+| `storage-assert.s3` | `minio` dependency | No | Reaches the engine-provisioned MinIO only |
+| `mail-expect.smtp` | `mailpit` dependency | No | Deferred; not in 1.1's named set |
+| `webhook-listen.http` | — (engine-hosted listener) | No — plaintext inbound | See *Inbound listeners*, below |
+| `trace-expect.otlp` | — (engine-hosted receiver) | No — plaintext inbound | See *Inbound listeners*, below |
+| `script.csharp` | — (no infrastructure target) | Not applicable | Reconciles no target |
+
+## Matrix by dependency kind
+
+The `security:` block is accepted on exactly one of the thirteen dependency kinds. On the other
+twelve it is rejected outright — the *block*, not merely a particular profile value, and `tls` and
+`mtls` are refused identically.
+
+| `environment.dependencies` kind | Accepts `security:` | Status |
+| --- | --- | --- |
+| `kafka` | **Yes** | Delivered — TLS and mutual TLS |
+| `postgres` | No | Deferred to 1.1 |
+| `sqlserver` | No | Deferred to 1.1 |
+| `mysql` | No | Deferred to 1.1 |
+| `mongodb` | No | Deferred to 1.1 (server-side TLS) |
+| `redis` | No | Deferred to 1.1 (server-side TLS) |
+| `rabbitmq` | No | Deferred to 1.1 |
+| `nats` | No | Deferred to 1.1 |
+| `elasticsearch` | No | Out of scope |
+| `mailpit` | No | Not in 1.1's named set |
+| `azureservicebus` | No | Emulator only |
+| `dynamodb` | No | Local double only |
+| `minio` | No | Local double only |
+
+An `environment.services` entry accepts `security:` unconditionally — but only in its `image:` form.
+A `project:`-form service cannot be secured at all: its endpoints come from its own launch profile,
+so the engine has none of its own to give an `https` scheme, and the declaration is rejected at
+topology-build time.
+
+## What "not reachable" actually means for the twelve excluded kinds
+
+This distinction matters, because "the client library cannot do it" and "vouchfx does not wire it
+yet" are very different problems for an adopter to plan around. For these kinds it is the second.
+
+The .NET client libraries behind most of the excluded kinds carry TLS **through the connection
+string**: RabbitMQ flips on an `amqps://` scheme, NATS on `tls://`, Redis on `,ssl=true`, MongoDB
+on `tls=true`, and the relational clients on their own equivalent keywords. Enabling server-side
+TLS for those kinds is mechanically a scheme or keyword per kind, with no provider code change at
+all — which is exactly why it is a cheap 1.1 extension rather than a redesign.
+
+**What is missing is a channel for it in 1.0.** The connection string a provider consumes is built
+by the engine from the orchestrated resource; there is no DSL field through which an author supplies
+or amends one. The `variables` block cannot carry it either — names beginning with the engine's
+reserved `conn::` prefix are rejected by the schema, precisely so an author-supplied value cannot
+overwrite a staged connection string. So there is no supported way to hand vouchfx a
+TLS-enabled connection string for a dependency in 1.0.
+
+There is also **no substitute declaration** that buys transport security back. Re-declaring the
+technology under `environment.services` does not work: of the twenty-five Core providers, seventeen
+resolve `target` exclusively against declared dependencies and reject a target that is not a
+declared dependency of their own kind, and those seventeen cover all twelve excluded kinds. Moving
+the declaration trades a schema rejection for a step-validation rejection and still leaves you
+without a working suite. Only the three HTTP-family providers resolve `target` through declared
+services (and the two Kafka providers accept either), so the service form is a working path for an
+HTTP system under test and for a customer-supplied broker — and for nothing else.
+
+Kafka needed provider-side code where these kinds do not, for the same underlying reason: its client
+configuration derives no transport decision from the bootstrap string, so the decision has to be
+made in the emitted client configuration rather than carried in a URL.
+
+## The deferrals, stated plainly
+
+Rather than leaving blanks in the tables:
+
+- **Server-side TLS for RabbitMQ, NATS, MongoDB, Redis and the relational stores (PostgreSQL, SQL
+  Server, MySQL)** is **deferred to 1.1** by owner decision, taken on 3 August 2026. The design and
+  acceptance criteria are written and unchanged; only the release is deferred. Because both gates
+  that exclude these kinds run at validation time, widening is additive and breaks nothing that
+  validates today.
+- **Mutual TLS for MongoDB and Redis** goes further out than server-side TLS for them. Neither .NET
+  client accepts client certificates through a connection string — both are API-only — so the cheap
+  connection-string path that delivers server-side TLS does not reach client identity for these two.
+- **Secured Elasticsearch is out of scope**, not deferred. The engine provisions Elasticsearch with
+  its security subsystem disabled, and enabling it requires an initialisation/setup container that
+  this design does not add.
+- **`mailpit`, `azureservicebus`, `dynamodb` and `minio`** address engine-provisioned test doubles —
+  an SMTP capture server, the Service Bus emulator, DynamoDB Local, MinIO — reached at fixed,
+  engine-supplied local credentials. Pointing these providers at a real, secured, credentialed
+  service is not supported in 1.0 and is not part of 1.1's named set.
+- **Mutual TLS on the engine's own inbound listeners** is out of scope; see below.
+
+## Inbound listeners are plaintext
+
+Two providers do not connect *out* to infrastructure — the engine stands up an ephemeral listener
+and waits for the system under test to call *in*:
+
+- **`webhook-listen.http`** captures inbound webhook deliveries.
+- **`trace-expect.otlp`** receives OTLP trace exports.
+
+Both bind plaintext HTTP on an OS-assigned port. Your system under test must be able to reach the
+engine host over plain HTTP to deliver a callback or a span. A system under test that can only make
+mutually-authenticated outbound calls would need the listener to present a server certificate, which
+it does not do. Plan for this when the system under test is itself hardened: it is the one place in
+a secured topology where vouchfx is the server rather than the client.
+
+## What a green secured suite actually proves
+
+Before the first step runs, the engine connects to every declared secured endpoint with the same
+material a step will use, and reports one of two named confirmation levels. A declaration it cannot
+confirm fails the suite as an environment error with no gating flags set — the one deliberate
+exception to "only `Fail` breaks CI by default".
+
+- **`TransportConfirmed`** — the endpoint speaks TLS and, under `mtls`, the engine presented the
+  declared client certificate. It does **not** prove the peer *demanded* an identity: in TLS 1.3 a
+  server cannot reject a missing client certificate during the handshake, so a listener that merely
+  requests one is indistinguishable from an enforcing one at this level.
+- **`AuthenticatedRoundTrip`** — the engine completed an application-protocol round trip over the
+  secured connection, and under `mtls` additionally showed that a second connection presenting *no*
+  client certificate failed the same exchange. Both halves are needed for the claim "the peer
+  required an identity" to be true. Today this level is reached for Kafka-speaking targets.
+
+Neither level says anything about **authorisation** — whether the presented identity may publish to
+or consume from a given topic is the broker's own per-request decision, and surfaces as an ordinary
+step-level environment error.
+
+Where mutual TLS being *enforced* is itself the thing under test and the target is not one the
+engine can round-trip, assert it at the system under test — for example with a step that expects the
+rejection an unauthenticated caller should receive.
+
+## If your infrastructure is not on the delivered list
+
+Three honest options, in order of how often they apply:
+
+1. **Terminate TLS in front of the system under test, not in front of the store.** Most enterprise
+   requirements are about the API surface and the event bus, both of which 1.0 covers. A suite that
+   drives a secured REST API and a mutual-TLS Kafka broker, and then asserts against a plaintext
+   database *inside the private topology vouchfx created*, is a realistic and defensible shape — the
+   database is not exposed beyond the suite's own network.
+2. **Wait for 1.1** for the deferred kinds. The widening is additive; nothing you author today
+   breaks.
+3. **Raise it.** If a specific kind blocks an adoption, say so on the issue tracker — the ordering
+   within 1.1 is not fixed, and the deferred work is designed rather than merely intended.

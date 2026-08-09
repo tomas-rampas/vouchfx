@@ -118,7 +118,7 @@ public sealed class MqExpectKafkaProvider
           "required": ["target", "topic", "match"],
           "properties": {
             "target": {
-              "description": "Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
+              "description": "Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind — a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL §3.2.6b).",
               "type": "string",
               "minLength": 1
             },

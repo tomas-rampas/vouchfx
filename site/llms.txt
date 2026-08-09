@@ -13,6 +13,7 @@
 - [Recipes](https://vouchfx.io/recipes/): task-oriented, runnable patterns — SQL seeding, test doubles, secrets, capture/substitution, RETRY polling.
 - [Common patterns](https://vouchfx.io/common-patterns/): the structural shapes most `.e2e.yaml` files share.
 - [Troubleshooting](https://vouchfx.io/troubleshooting/): real failure modes and how to fix them.
+- [Security compatibility matrix](https://vouchfx.io/security-matrix/): which authenticated infrastructure a 1.0 suite can reach over TLS or mutual TLS, and which it cannot.
 
 ## Design docs
 

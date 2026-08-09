@@ -1460,14 +1460,34 @@ internal static class SchemaErrorCollector
                 // rejection), so the service form works solely for an HTTP system under test —
                 // never for the twelve kinds this branch fires on. (Kafka is the one kind
                 // that reaches a security block through BOTH surfaces, and it is already legal as
-                // a dependency, so this message never fires for it at all; its service-target path
-                // stages no connection string yet and fails closed at run time as an
-                // EnvironmentError, so it would not be a remedy to offer even if it did fire.)
+                // a dependency, so this message never fires for it at all. Its service-target path
+                // is a WORKING one, not a stub: REQ-023 has both Kafka providers accept a declared
+                // service and emit a lookup of the svc::<name> bootstrap authority the engine
+                // stages for it — MqPublishKafkaProvider.Emit and MqExpectKafkaProvider.Emit pick
+                // the svc:: key over conn:: from the same DeclaredServices map Validate reconciled
+                // against. That changes nothing here, but it changes the REASON: kafka needs no
+                // substitute declaration because this clause never refuses it, NOT because no
+                // working alternative exists for it.)
                 // The message therefore states the accepted surface and the release position, and
-                // offers no substitute declaration, because none exists. REQ-013 widens the set in
-                // 1.1 — said explicitly so an author reads a roadmap position, not a permanent
-                // refusal. This text is about to enter a frozen surface: verify any future edit
-                // against what a provider does at step-execution time, not what the schema accepts.
+                // offers no substitute declaration, because for the twelve kinds it fires on none
+                // exists. REQ-013 widens the set in 1.1 — said explicitly so an author reads a
+                // roadmap position, not a permanent refusal. This text is about to enter a frozen
+                // surface: verify any future edit against what a provider does at step-execution
+                // time, not what the schema accepts.
+                //
+                // That guard is not decorative, and it has already been proved by its own breach:
+                // the Kafka parenthetical above used to assert the opposite of what it now says —
+                // that the service-target path staged nothing and aborted at run time as an
+                // environment error. True when written, false from the moment REQ-023 landed the
+                // svc:: staging, and it survived anyway: here, in the frozen surface, and in the
+                // schema's mirrored $comment, through the very review round that shipped REQ-023.
+                // Nothing caught it, because every gate over this text proves only that the SCHEMA
+                // still composes byte-identically, and not one of them can tell whether a sentence
+                // about RUN-TIME behaviour is still true. The instruction was right and went
+                // unapplied. Applying it is the point: re-read this block against the providers,
+                // not against the goldens. (The retracted sentence is deliberately NOT quoted
+                // verbatim, here or in the schema — a grep for its distinctive phrasing has to stay
+                // a detector for the real thing, not a search that trips over its own obituary.)
                 if (propertyName == "security")
                 {
                     // NIT-1 + SEC-4 (peer review, fix round 3). Two bounds on this ONE branch,

@@ -103,7 +103,7 @@ public sealed class MqPublishKafkaProvider
           "required": ["target", "topic", "payload"],
           "properties": {
             "target": {
-              "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target validates but currently fails closed at run time as an environment error: provider-side connection staging for service targets arrives with a later slice.",
+              "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind — a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL §3.2.6b).",
               "type": "string",
               "minLength": 1
             },
@@ -269,9 +269,9 @@ public sealed class MqPublishKafkaProvider
         //     services-generalisation spec) a declared SERVICE — a customer-supplied broker
         //     under environment.services, since the customer's own mTLS broker runs its own
         //     entrypoint/config and is authored as a service, never the engine-provisioned
-        //     kafka dependency type. Acceptance is name-membership only for the service case;
-        //     protocol correctness is a later slice's concern (the probe fails closed at
-        //     runtime).
+        //     kafka dependency type. Acceptance is name-membership only for the service case:
+        //     Emit then reads the staged endpoint under the service key (see Emit's own
+        //     remarks), so a reconciled service target is connected to, not merely accepted.
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
             if (ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
