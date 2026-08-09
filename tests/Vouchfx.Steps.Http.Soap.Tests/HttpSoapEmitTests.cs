@@ -108,8 +108,9 @@ public sealed class HttpSoapEmitTests
 
     /// <summary>
     /// A <see cref="StubProjectContext"/> declaring service <c>"sut"</c> — <see cref="MakeModel"/>'s
-    /// default target (REQ-012: target reconciliation needs it declared as a service or
-    /// dependency to pass).
+    /// default target (REQ-012 as narrowed by M1: target reconciliation needs it declared under
+    /// <c>environment.services</c> to pass, and a target naming a declared dependency is
+    /// rejected outright — a dependency stages a connection string, not a service endpoint).
     /// </summary>
     private static readonly StubProjectContext s_sutDeclaredContext = new(
         new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)

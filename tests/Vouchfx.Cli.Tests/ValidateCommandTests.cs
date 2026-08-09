@@ -57,9 +57,12 @@ public sealed class ValidateCommandTests : IDisposable
         }
     }
 
-    // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012: http.rest's
-    // target must name a declared service or dependency) — this fixture predates that
-    // target-reconciliation check, when http.rest accepted any target string.
+    // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012 as narrowed by
+    // M1: http.rest's target must name an entry under environment.services, and a target
+    // naming a declared dependency is rejected at validation time — a dependency stages a
+    // connection string, not a service endpoint, so it could never have worked at run time)
+    // — this fixture predates that target-reconciliation check, when http.rest accepted any
+    // target string.
     private const string ValidScenario =
         "environment:\n" +
         "  services:\n" +

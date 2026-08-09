@@ -62,9 +62,10 @@ public sealed class MetricsAssertPrometheusProviderTests
 
     /// <summary>
     /// A <see cref="StubProjectContext"/> declaring service <c>"sut"</c> — the target every
-    /// Validate test in this file uses (REQ-012: target reconciliation needs it declared as
-    /// a service or dependency to pass; these tests are about metric/path/expect shape, not
-    /// target reconciliation).
+    /// Validate test in this file uses (REQ-012 as narrowed by M1: target reconciliation needs
+    /// it declared under <c>environment.services</c> to pass, and a target naming a declared
+    /// dependency is rejected outright — a dependency stages a connection string, not a service
+    /// endpoint; these tests are about metric/path/expect shape, not target reconciliation).
     /// </summary>
     private static readonly IProjectContext s_sutDeclaredContext = new StubProjectContext(
         services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)

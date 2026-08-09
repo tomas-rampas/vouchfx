@@ -36,9 +36,11 @@ public sealed class HttpRestExecutionTests
 
     /// <summary>
     /// A <see cref="StubProjectContext"/> declaring service <c>"svc"</c> — the target every
-    /// path-validation test in this file uses (REQ-012: target reconciliation needs it
-    /// declared as a service or dependency to pass; these tests are about path shape, not
-    /// target reconciliation, so declaring it here keeps that concern out of each test body).
+    /// path-validation test in this file uses (REQ-012 as narrowed by M1: target reconciliation
+    /// needs it declared under <c>environment.services</c> to pass, and a target naming a
+    /// declared dependency is rejected outright — a dependency stages a connection string, not
+    /// a service endpoint; these tests are about path shape, not target reconciliation, so
+    /// declaring it here keeps that concern out of each test body).
     /// </summary>
     private static readonly StubProjectContext s_svcDeclaredContext = new(
         new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
