@@ -226,9 +226,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// Note the reach this acquired when the absent-material rows landed: those two are NOT
     /// docker-gated, so an ordinary unit run — the one every contributor and every CI job makes —
     /// now writes private keys into the system temp directory where before only a docker-gated run
-    /// did. Judged acceptable on the two controls above (throwaway per-run material, 0600 where
-    /// the platform allows it, swept at the next class init), and recorded because it is a change
-    /// in blast radius rather than a change in kind.
+    /// did. It grew again with the authorisation drills: <c>WriteKafkaBrokerSuiteDirectory</c>
+    /// mints its second client identity UNCONDITIONALLY, so the same ordinary unit run now leaves
+    /// FOUR private keys per suite directory — authority, server, client, unauthorised client —
+    /// where the paragraph above was written for two. Judged acceptable on the same controls
+    /// (throwaway per-run material, 0600 where the platform allows it, swept at the next class
+    /// init), and both increments are recorded because each is a change in blast radius rather
+    /// than a change in kind.
     /// </para>
     /// <para>
     /// Every failure is swallowed: a directory another process still holds open is not a reason to

@@ -75,6 +75,38 @@ public static class TestCertificateAuthority
     /// <summary>Common name of the foreign client certificate.</summary>
     public const string ForeignClientSubjectCommonName = "vouchfx-test-foreign-client";
 
+    /// <summary>
+    /// Common name of a second client identity issued by the SAME authority as
+    /// <see cref="ClientSubjectCommonName"/> — one that authenticates perfectly and is simply not
+    /// granted anything by the broker's own authorisation rules.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from every other subject this class mints, for the operational reason recorded at
+    /// <see cref="ForeignCaSubjectCommonName"/>. The distinctness matters more here than usual:
+    /// this certificate's whole purpose is that it AUTHENTICATES IDENTICALLY to the authorised one
+    /// — same issuer, same chain, same result at the handshake — so the only thing separating the
+    /// two in a broker's logs and in an assertion is the common name. It is emphatically not
+    /// indistinguishable on the wire: the serial, the public key, the subject key identifier and
+    /// the DER length all differ, as they must for two certificates.
+    /// </remarks>
+    public const string UnauthorisedClientSubjectCommonName = "vouchfx-test-unauthorised";
+
+    /// <summary>File name of the unauthorised client's certificate PEM.</summary>
+    public const string UnauthorisedClientCertFileName = "unauthorised-client.pem";
+
+    /// <summary>File name of the unauthorised client's private-key PEM.</summary>
+    public const string UnauthorisedClientKeyFileName = "unauthorised-client-key.pem";
+
+    /// <summary>
+    /// File name of the server's certificate PEM, on its own — the form a TLS-terminating HTTP
+    /// server wants, as distinct from the key-plus-certificate single file Kafka's PEM key store
+    /// expects.
+    /// </summary>
+    public const string ServerCertFileName = "server.pem";
+
+    /// <summary>File name of the server's private-key PEM, on its own.</summary>
+    public const string ServerKeyFileName = "server-key.pem";
+
     private static readonly Oid s_serverAuth = new("1.3.6.1.5.5.7.3.1");
     private static readonly Oid s_clientAuth = new("1.3.6.1.5.5.7.3.2");
 
@@ -174,8 +206,14 @@ public static class TestCertificateAuthority
     /// <c>ssl.keystore.type=PEM</c> since 2.7, and <c>confluentinc/cp-kafka:7.6.1</c> ships Kafka
     /// 3.6, so the broker reads exactly the format .NET can write. A JKS would need
     /// <c>keytool</c> — a JDK on the test host, or a throwaway container per run — to produce
-    /// material this method emits in <strong>~200 ms</strong> (measured warm: 178–206 ms for the
-    /// three RSA-2048 key generations, issuance and PEM export) with no external tooling at all.
+    /// material this method emits in <strong>well under a second</strong> with no external tooling
+    /// at all. Measured on one host, Release, 10 samples after warm-up: <c>366 · 378 · 409 · 439 ·
+    /// 523 · 526 · 598 · 602 · 729 · 758 ms</c> for the FOUR RSA-2048 key generations (authority,
+    /// server, client, unauthorised client), issuance and PEM export. The spread is
+    /// two-fold — RSA key generation is a rejection-sampling search for primes, so its cost is
+    /// variable by construction — which is why the figure is quoted as a range and not a mean, and
+    /// why an earlier single-number claim of "~200 ms" was retracted rather than adjusted: it
+    /// predated the fourth key and no sample now falls inside the band it quoted.
     /// Nothing about the engine path under test changes: <c>ServerArtifactInjection</c> copies
     /// bytes through the container runtime's own API and never inspects them (EDGE-007 is why it
     /// sets <c>SourcePath</c> and never <c>Contents</c>), so a PEM store exercises the same copy a
@@ -211,6 +249,16 @@ public static class TestCertificateAuthority
         var server = IssueLeaf(ca, ServerSubjectCommonName, includeLocalhostSans: true, now);
         var client = IssueLeaf(ca, ClientSubjectCommonName, includeLocalhostSans: false, now);
 
+        // A SECOND client identity from the SAME authority. It is written unconditionally rather
+        // than on request because it costs one key generation and because the authorisation drills
+        // need the two identities to differ in exactly one way THE BROKER CAN ACT ON: the name it
+        // maps them to. (They differ in serial, key and every other per-certificate field, as any
+        // two certificates must; none of those reaches an authorisation decision.)
+        // Anything issued by a different CA, or with different extensions, would give a failing row
+        // a second candidate explanation.
+        var unauthorised = IssueLeaf(
+            ca, UnauthorisedClientSubjectCommonName, includeLocalhostSans: false, now);
+
         try
         {
             var caPem = ca.ExportCertificatePem() + "\n";
@@ -231,8 +279,31 @@ public static class TestCertificateAuthority
                 server.PrivateKeyPem + "\n" + server.Certificate.ExportCertificatePem() + "\n");
             RestrictToOwner(keystorePath);
 
+            // The SAME server leaf, split into the two separate files a TLS-terminating HTTP server
+            // wants. Two shapes of one identity rather than two identities, deliberately: a suite
+            // that secures both a broker and an HTTP API with one internal CA is the deployment's
+            // own shape, and issuing a second leaf here would invent a difference the fixture does
+            // not have.
+            File.WriteAllText(
+                Path.Combine(suiteDirectory, ServerCertFileName),
+                server.Certificate.ExportCertificatePem() + "\n");
+
+            var serverKeyPath = Path.Combine(suiteDirectory, ServerKeyFileName);
+            File.WriteAllText(serverKeyPath, server.PrivateKeyPem);
+            RestrictToOwner(serverKeyPath);
+
+            File.WriteAllText(
+                Path.Combine(suiteDirectory, UnauthorisedClientCertFileName),
+                unauthorised.Certificate.ExportCertificatePem() + "\n");
+
+            var unauthorisedKeyPath = Path.Combine(suiteDirectory, UnauthorisedClientKeyFileName);
+            File.WriteAllText(unauthorisedKeyPath, unauthorised.PrivateKeyPem);
+            RestrictToOwner(unauthorisedKeyPath);
+
             // The broker's trust store is the same anchor the suite declares as caCert, which is
-            // what makes ssl.client.auth=required accept the client certificate above.
+            // what makes ssl.client.auth=required accept BOTH client certificates above — the
+            // authorised one and the unauthorised one. That is the point: authentication cannot
+            // be what separates them.
             File.WriteAllText(Path.Combine(suiteDirectory, BrokerTruststoreFileName), caPem);
         }
         finally
@@ -241,7 +312,33 @@ public static class TestCertificateAuthority
             server.Loadable.Dispose();
             client.Certificate.Dispose();
             client.Loadable.Dispose();
+            unauthorised.Certificate.Dispose();
+            unauthorised.Loadable.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Points a suite directory's declared <c>clientCert</c>/<c>clientKey</c> at the SAME-AUTHORITY
+    /// identity the broker grants nothing to, leaving every other file untouched.
+    /// </summary>
+    /// <remarks>
+    /// The suite's YAML does not change: it still declares <c>client.pem</c> and
+    /// <c>client-key.pem</c>, and those files still hold a certificate the broker authenticates
+    /// without complaint. Only WHO it says you are changes — which is the single variable an
+    /// authorisation control is allowed to move.
+    /// </remarks>
+    public static void SwitchToUnauthorisedClientIdentity(string suiteDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(suiteDirectory);
+
+        File.Copy(
+            Path.Combine(suiteDirectory, UnauthorisedClientCertFileName),
+            Path.Combine(suiteDirectory, ClientCertFileName),
+            overwrite: true);
+
+        var keyPath = Path.Combine(suiteDirectory, ClientKeyFileName);
+        File.Copy(Path.Combine(suiteDirectory, UnauthorisedClientKeyFileName), keyPath, overwrite: true);
+        RestrictToOwner(keyPath);
     }
 
     /// <summary>
