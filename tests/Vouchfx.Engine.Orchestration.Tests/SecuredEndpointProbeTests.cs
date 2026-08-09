@@ -698,6 +698,15 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             Assert.Equal("kafka", confirmation.TargetKind);
             Assert.True(confirmation.ClientIdentityResolved);
             Assert.Contains("REFUSED the same request", confirmation.Detail, StringComparison.Ordinal);
+
+            // The STRONG level reaches the rendered line too — the other half of the pin that
+            // Confirm_RenderedLine_NamesDeclaredAndObserved places on the transport level. Between
+            // them the two live arms cover both levels through the probe itself, so a rendering
+            // that dropped the token could not survive on either path.
+            Assert.Contains(
+                "client identity resolved, level AuthenticatedRoundTrip —",
+                confirmation.ToString(),
+                StringComparison.Ordinal);
         }
         finally
         {
@@ -1115,12 +1124,102 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             // declaration — and never asserts presentation, which this side cannot observe.
             Assert.Contains("client identity none declared", line, StringComparison.Ordinal);
             Assert.DoesNotContain("presented", line, StringComparison.Ordinal);
+
+            // …AND THE LEVEL, through the real probe rather than through a hand-built record (peer
+            // review, slice F). Asserted as one contiguous fragment, not as two independent
+            // Contains, because the ADJACENCY is the contract: the level immediately after the
+            // client-identity clause is what stops a `tls` target's AuthenticatedRoundTrip reading
+            // as an authentication claim. See RenderedLine_NamesTheLevel_AndBothLevelsReadApart for
+            // the both-levels pin; this one proves the composed line a live confirmation produces.
+            Assert.Contains(
+                "client identity none declared, level TransportConfirmed —", line, StringComparison.Ordinal);
         }
         finally
         {
             listener.Stop();
             await serving;
         }
+    }
+
+    /// <summary>
+    /// <strong>The level is IN the rendered line, and the two levels render apart.</strong> The
+    /// regression pin for the peer-review finding that <c>SecurityConfirmation.ToString()</c>
+    /// rendered eight of its nine members and omitted the one REQ-005 introduced instead of a
+    /// boolean.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Built from the record directly rather than driven through a listener, deliberately: the
+    /// claim under test is about the RENDERING of every level the enum defines, and the probe can
+    /// only reach one level per arm. Driving it would test the arms again — which
+    /// <see cref="Confirm_RenderedLine_NamesDeclaredAndObserved"/> and
+    /// <see cref="Confirm_KafkaTargetRequiringAClientCertificate_ConfirmsAnAuthenticatedRoundTrip"/>
+    /// already do — and would still leave a newly-added level unrendered and unnoticed. Enumerating
+    /// <see cref="Enum.GetValues{TEnum}"/> is what makes that impossible: a third level cannot be
+    /// added without this test demanding it appear.
+    /// </para>
+    /// <para>
+    /// DISTINGUISHABILITY is asserted on two lines identical in every other member — same target,
+    /// same profile, same address, same client-identity state, same <c>Detail</c> — because that is
+    /// the exact condition the finding described. Two lines differing in their <c>Detail</c> prose
+    /// would "differ" while telling an operator nothing they could match on.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void RenderedLine_NamesTheLevel_AndBothLevelsReadApart()
+    {
+        var rendered = new Dictionary<SecurityConfirmationLevel, string>();
+
+        foreach (var level in Enum.GetValues<SecurityConfirmationLevel>())
+        {
+            var line = new SecurityConfirmation(
+                TargetName: "events",
+                TargetKind: "kafka",
+                DeclaredProfile: "mtls",
+                DeclaredEndpoint: "9093",
+                ObservedAddress: "localhost:9093",
+                ObservedProtocol: "Tls13",
+                ClientIdentityResolved: true,
+                Level: level,
+                Detail: "identical detail on both arms, so only the level can distinguish them.")
+                .ToString();
+
+            // The token itself…
+            Assert.Contains(level.ToString(), line, StringComparison.Ordinal);
+
+            // …in the ONE position the contract fixes: immediately after the client-identity
+            // clause and before the em dash that introduces Detail.
+            Assert.Contains(
+                $"client identity resolved, level {level} —", line, StringComparison.Ordinal);
+
+            rendered[level] = line;
+        }
+
+        // Both levels are covered, and neither borrowed the other's line.
+        Assert.Equal(2, rendered.Count);
+        Assert.Contains(SecurityConfirmationLevel.TransportConfirmed, (IDictionary<SecurityConfirmationLevel, string>)rendered);
+        Assert.Contains(SecurityConfirmationLevel.AuthenticatedRoundTrip, (IDictionary<SecurityConfirmationLevel, string>)rendered);
+        Assert.Equal(rendered.Count, rendered.Values.Distinct(StringComparer.Ordinal).Count());
+
+        // The anonymous-client rendering of the same pair, because the level's POSITION exists to
+        // disambiguate exactly this one: `tls` presents no identity and can still legitimately earn
+        // the strong level, and the two adjacent facts are what say so without over-claiming.
+        var noIdentity = new SecurityConfirmation(
+            TargetName: "events",
+            TargetKind: "kafka",
+            DeclaredProfile: "tls",
+            DeclaredEndpoint: "9093",
+            ObservedAddress: "localhost:9093",
+            ObservedProtocol: "Tls13",
+            ClientIdentityResolved: false,
+            Level: SecurityConfirmationLevel.AuthenticatedRoundTrip,
+            Detail: "the broker answered a Kafka ApiVersions request over this connection.")
+            .ToString();
+
+        Assert.Contains(
+            "client identity none declared, level AuthenticatedRoundTrip —",
+            noIdentity,
+            StringComparison.Ordinal);
     }
 
     // ── MAJOR-1 (fix round three): the differential's asymmetry stops at the connect ───────

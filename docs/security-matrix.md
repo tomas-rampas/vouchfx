@@ -48,6 +48,30 @@ probe rather than an HTTP one, because a container health check cannot present a
 and an HTTPS probe against a mutual-TLS listener would hold a working topology unhealthy forever.
 Declare an explicit `healthCheck` against a separate unsecured port if you want a stronger probe.
 
+### The client key must be an unencrypted PEM, inside the suite directory
+
+This is the limit most likely to bite an enterprise adopter first, because a corporate PKI hands out
+an encrypted key by default.
+
+`clientCert` and `clientKey` are read as a PEM certificate and its matching PEM private key. There is
+no field for a key passphrase anywhere in the `security:` block, so a key encrypted at rest cannot be
+used, and neither can a PKCS#12/PFX bundle carrying the certificate and key together. The Kafka
+providers hand the same two paths straight to their client library, also with no passphrase. Export
+the key as an unencrypted PEM — a `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block, never
+`ENCRYPTED PRIVATE KEY` — before you declare it.
+
+Both files must also sit inside the directory tree containing the `.e2e.yaml`. Every path in the
+block is written relative to that directory and must resolve inside it; an absolute path is rejected
+by name even when it points at the file you meant, so material kept in a shared machine-wide location
+has to be copied in beside the suite.
+
+`caCert` is the asymmetric case, and it invites the wrong generalisation: the trust anchor is loaded
+through a path constructor that auto-detects PEM and DER, so one field is format-tolerant and the
+other is not.
+
+A `clientKeyPassword` field could be added later without breaking any suite that validates today —
+this is a boundary of the current release, not a permanent design choice.
+
 ## How the division was derived
 
 The table below is derived from the code, not from intent. A target is reachable over a secured

@@ -650,6 +650,182 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
+    // ── The ENCRYPTED private key, which is what an enterprise PKI hands out by default ───────
+    //
+    // MEASURED on .NET 8.0.29 / Windows 10.0.26200 against X509Certificate2.CreateFromPemFile —
+    // the overload the accessor uses, and the only one available: CreateFromEncryptedPemFile
+    // appears nowhere in this tree, and KafkaSecurityHelper sets SslCertificateLocation /
+    // SslKeyLocation and never `ssl.key.password`.
+    //
+    //   key shape                                          result
+    //   ────────────────────────────────────────────────── ─────────────────────────────────────
+    //   unencrypted PKCS#8  (BEGIN PRIVATE KEY)            OK, HasPrivateKey=True
+    //   unencrypted PKCS#1  (BEGIN RSA PRIVATE KEY)        OK, HasPrivateKey=True
+    //   ENCRYPTED PKCS#8    (BEGIN ENCRYPTED PRIVATE KEY)  CryptographicException
+    //   openssl legacy enc  (Proc-Type: 4,ENCRYPTED)       CryptographicException
+    //   outright garbage                                   CryptographicException
+    //
+    // All three failures raise the SAME type with the SAME text — "The key contents do not contain
+    // a PEM, the content is malformed, or the key does not match the certificate." — so the
+    // exception carries no signal at all about encryption being the cause, and reporting it
+    // verbatim tells a bank's pilot their perfectly well-formed key is malformed. The FILE is where
+    // the distinction survives; these tests pin that the accessor reads it and says so.
+    //
+    // Each arm rewrites the bed's OWN client key rather than generating a new one, so encryption is
+    // the only variable: the same key, the same certificate, the same declaration.
+
+    /// <summary>
+    /// An ENCRYPTED PKCS#8 client key is reported AS ENCRYPTED — naming the field, the declared
+    /// path and what to do about it — rather than as a malformed one.
+    /// </summary>
+    [Fact]
+    public void For_EncryptedClientKey_NamesEncryptionAsTheCauseRatherThanMalformation()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        var keyPath = Path.Combine(bed.SuiteDirectory, TestCertificateAuthority.ClientKeyFileName);
+
+        // The SAME key the bed issued, re-exported under a password. Nothing else about the bed
+        // changes, so a failure here cannot be a malformed file wearing an encryption label.
+        using (var key = RSA.Create())
+        {
+            key.ImportFromPem(File.ReadAllText(keyPath));
+            File.WriteAllText(
+                keyPath,
+                key.ExportEncryptedPkcs8PrivateKeyPem(
+                    "pilot-passphrase".AsSpan(),
+                    new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 100_000)));
+        }
+
+        // The label is .NET's own, not this test's guess at one — asserted so a runtime that
+        // started writing a different label would fail HERE, where the classifier's premise lives,
+        // rather than silently downgrading the diagnostic in the field.
+        Assert.StartsWith(
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+            File.ReadAllText(keyPath),
+            StringComparison.Ordinal);
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWithSecuredService("payments", MtlsSecurity("8443")), bed.SuiteDirectory);
+        try
+        {
+            var certificates = accessor.For("payments")!.Certificates!;
+            var ex = Assert.Throws<SecurityMaterialException>(() => certificates.ClientCertificate);
+
+            // The FIELD at fault — the key, not the certificate beside it.
+            Assert.Contains(
+                "environment.services.payments.security.clientKey", ex.Message, StringComparison.Ordinal);
+
+            // The CAUSE, named…
+            Assert.Contains("ENCRYPTED private key", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("-----BEGIN ENCRYPTED PRIVATE KEY-----", ex.Message, StringComparison.Ordinal);
+
+            // …the LIMIT stated as a release position, and the way out given.
+            Assert.Contains("UNENCRYPTED PEM private key", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("openssl pkcs8 -topk8 -nocrypt", ex.Message, StringComparison.Ordinal);
+
+            // And NOT the platform's own text, which says "malformed" about a file that is not.
+            Assert.DoesNotContain("could not be loaded as a certificate", ex.Message, StringComparison.Ordinal);
+
+            // The declared-path disclosure rule holds here as everywhere in this class.
+            Assert.Contains(TestCertificateAuthority.ClientKeyFileName, ex.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(bed.SuiteDirectory, ex.Message, StringComparison.OrdinalIgnoreCase);
+
+            // The platform's fault is preserved as the inner exception, so nothing is lost —
+            // this is a rewording of the message, never a swallowing of the cause.
+            Assert.IsAssignableFrom<CryptographicException>(ex.InnerException);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The SECOND encrypted shape, which the PEM label alone does not identify: openssl's legacy
+    /// form keeps the ordinary <c>-----BEGIN RSA PRIVATE KEY-----</c> label and marks the
+    /// encryption with a <c>Proc-Type: 4,ENCRYPTED</c> header.
+    /// </summary>
+    /// <remarks>
+    /// Written by hand rather than by shelling out to openssl: the classifier under test reads the
+    /// FILE, so the file is the fixture, and a test that needed openssl on PATH would be skipped on
+    /// exactly the CI host this must not regress on. Measured, the real
+    /// <c>openssl rsa -aes256 -traditional</c> output on this host carries precisely these two
+    /// lines, and <c>CreateFromPemFile</c> rejects it with the same undifferentiated
+    /// <c>CryptographicException</c> as every other failure.
+    /// </remarks>
+    [Fact]
+    public void For_LegacyEncryptedClientKey_NamesTheProcTypeHeaderAsTheCause()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        var keyPath = Path.Combine(bed.SuiteDirectory, TestCertificateAuthority.ClientKeyFileName);
+
+        File.WriteAllText(
+            keyPath,
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            + "Proc-Type: 4,ENCRYPTED\n"
+            + "DEK-Info: AES-256-CBC,0123456789ABCDEF0123456789ABCDEF\n"
+            + "\n"
+            + Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)) + "\n"
+            + "-----END RSA PRIVATE KEY-----\n");
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWithSecuredService("payments", MtlsSecurity("8443")), bed.SuiteDirectory);
+        try
+        {
+            var certificates = accessor.For("payments")!.Certificates!;
+            var ex = Assert.Throws<SecurityMaterialException>(() => certificates.ClientCertificate);
+
+            Assert.Contains(
+                "environment.services.payments.security.clientKey", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("ENCRYPTED private key", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("Proc-Type: 4,ENCRYPTED", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("UNENCRYPTED PEM private key", ex.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(bed.SuiteDirectory, ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// <strong>The false-positive control.</strong> A key that is genuinely malformed — carrying
+    /// neither encryption marker — keeps the ORIGINAL generic message, so the new diagnostic cannot
+    /// tell an author their broken file is merely encrypted.
+    /// </summary>
+    /// <remarks>
+    /// This is the arm that makes the two above worth anything. All three shapes raise the same
+    /// <c>CryptographicException</c> with the same text (see this section's measured table), so a
+    /// classifier that answered "encrypted" too eagerly would pass both tests above and be wrong in
+    /// the field on the commonest fault of all: right filename, wrong bytes.
+    /// </remarks>
+    [Fact]
+    public void For_MalformedClientKey_KeepsTheGenericMessageAndClaimsNoEncryption()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        File.WriteAllText(
+            Path.Combine(bed.SuiteDirectory, TestCertificateAuthority.ClientKeyFileName), "not a pem");
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWithSecuredService("payments", MtlsSecurity("8443")), bed.SuiteDirectory);
+        try
+        {
+            var certificates = accessor.For("payments")!.Certificates!;
+            var ex = Assert.Throws<SecurityMaterialException>(() => certificates.ClientCertificate);
+
+            Assert.Contains(
+                "could not be loaded as a certificate and matching private key",
+                ex.Message,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("ENCRYPTED", ex.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(bed.SuiteDirectory, ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
     /// <summary>
     /// HALF a client pair fails closed rather than degrading to "present no identity".
     /// </summary>

@@ -213,10 +213,37 @@ public sealed record SecurityConfirmation(
     /// <summary>
     /// Renders this confirmation as one declared-versus-observed line for the run's own output.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The <see cref="Level"/> is rendered, and it was not until the peer review of slice
+    /// F.</strong> Eight of this record's nine members reached the line and the LEVEL — the one
+    /// member REQ-005 introduced instead of a boolean — did not, so a <c>TransportConfirmed</c> run
+    /// and an <c>AuthenticatedRoundTrip</c> one differed only in the trailing prose of
+    /// <see cref="Detail"/>. That is the indistinguishability named at
+    /// <c>ScenarioRunner.RunAsync</c>'s own confirmation loop, reached through a different door: an
+    /// operator wanting to gate CI on "every secured target reached the strong level" had only a
+    /// sentence to match on, and a sentence is not a contract.
+    /// </para>
+    /// <para>
+    /// <strong>Its POSITION is load-bearing, not cosmetic.</strong> The level sits immediately after
+    /// the client-identity clause because the two facts disambiguate each other. A
+    /// <c>profile: tls</c> target legitimately earns <c>AuthenticatedRoundTrip</c> — the round trip
+    /// confirms the transport and that the peer really speaks the protocol, and no client identity
+    /// was ever declared for it — which read alone would look like an authentication claim. Adjacent
+    /// it reads <c>client identity none declared, level AuthenticatedRoundTrip</c>, and the pair says
+    /// exactly what happened.
+    /// </para>
+    /// <para>
+    /// The enum member is deliberately NOT renamed to suit that reading. Under <c>tls</c> the SERVER
+    /// is authenticated — its certificate chained to the declared <c>caCert</c> — so the name is
+    /// accurate about the peer and merely silent about whose identity; adjacency supplies what it
+    /// omits, and a rename would move a public API member to fix a rendering problem.
+    /// </para>
+    /// </remarks>
     public override string ToString() =>
         $"security: {TargetKind} '{TargetName}' declared profile '{DeclaredProfile}' on endpoint "
         + $"'{DeclaredEndpoint}'; observed {ObservedProtocol} at {ObservedAddress}, client identity "
-        + $"{(ClientIdentityResolved ? "resolved" : "none declared")} — {Detail}";
+        + $"{(ClientIdentityResolved ? "resolved" : "none declared")}, level {Level} — {Detail}";
 }
 
 /// <summary>

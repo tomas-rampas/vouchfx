@@ -629,6 +629,57 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             }
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
+                // NAME THE CAUSE WHEN IT IS THE ONE AN ENTERPRISE PKI PRODUCES BY DEFAULT (peer
+                // review, slice F). CreateFromPemFile has no overload that takes a password —
+                // CreateFromEncryptedPemFile appears nowhere in this tree — and the Kafka helper
+                // sets SslCertificateLocation/SslKeyLocation and never `ssl.key.password`. So a
+                // bank handing its pilot an encrypted key hits this catch first, and MEASURED on
+                // .NET 8.0.29 / Windows 10.0.26200 the platform's own message carries no signal
+                // whatever about encryption being the reason:
+                //
+                //   key shape                                        CreateFromPemFile result
+                //   ──────────────────────────────────────────────── ──────────────────────────────
+                //   unencrypted PKCS#8  (BEGIN PRIVATE KEY)          OK, HasPrivateKey=True
+                //   unencrypted PKCS#1  (BEGIN RSA PRIVATE KEY)      OK, HasPrivateKey=True
+                //   ENCRYPTED PKCS#8    (BEGIN ENCRYPTED PRIVATE KEY)CryptographicException
+                //   openssl legacy enc  (Proc-Type: 4,ENCRYPTED)     CryptographicException
+                //   outright garbage    ("not a pem at all")         CryptographicException
+                //
+                // All three failures raise the IDENTICAL type and the IDENTICAL text — "The key
+                // contents do not contain a PEM, the content is malformed, or the key does not
+                // match the certificate." — so an encrypted key is reported to the author as a
+                // malformed one, and the platform message is not merely unhelpful but actively
+                // misleading. The FILE is the only place the distinction survives, which is why
+                // the classification below reads it rather than the exception.
+                //
+                // TWO markers, because measurement found two encrypted shapes and the brief for
+                // this fix named one. `-----BEGIN ENCRYPTED PRIVATE KEY-----` is what .NET's own
+                // RSA.ExportEncryptedPkcs8PrivateKeyPem writes and what `openssl pkcs8 -topk8`
+                // writes; `openssl rsa -aes256 -traditional` instead keeps the ordinary
+                // `-----BEGIN RSA PRIVATE KEY-----` label and marks the encryption with a
+                // `Proc-Type: 4,ENCRYPTED` header, so a label-only check would classify that file
+                // as garbage. Both were measured failing identically above, so covering both is a
+                // strict improvement with no new false positive: neither marker can appear in a
+                // file CreateFromPemFile would have loaded.
+                //
+                // IN THE CATCH, never before the load. This is a DIAGNOSTIC change and nothing
+                // more: every file that loads today still loads, on the same code path, with no
+                // extra I/O — the classification runs only once the load has already failed, and
+                // if it cannot read the file it falls back to the message below. It deliberately
+                // does NOT add a `clientKeyPassword` field; accepting encrypted keys is a scoping
+                // decision for a later release, not a fix for a bad message.
+                if (DescribeEncryptedPrivateKey(_clientKey.Resolved) is { } encryption)
+                {
+                    throw new SecurityMaterialException(
+                        $"{_fieldPathPrefix}.clientKey: '{_clientKey.Declared}' is an ENCRYPTED private " +
+                        $"key ({encryption}), which this release cannot load: vouchfx 1.0 requires an " +
+                        "UNENCRYPTED PEM private key, and there is no field for a key password. Decrypt " +
+                        "it first — 'openssl pkcs8 -topk8 -nocrypt -in <encrypted> -out <plain>' — and " +
+                        "point 'clientKey' at the result, keeping the plaintext key inside the suite " +
+                        "directory and out of version control.",
+                        ex);
+                }
+
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.clientCert/clientKey: '{_clientCert.Declared}' and " +
                     $"'{_clientKey.Declared}' could not be loaded as a certificate and matching private key " +
@@ -640,5 +691,95 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 pemPair?.Dispose();
             }
         }
+
+        /// <summary>
+        /// Classifies a private-key file that failed to load: returns a short phrase naming the
+        /// encryption marker found in it, or <see langword="null"/> when the file carries neither
+        /// marker (or cannot be read at all).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Reads a BOUNDED prefix — <see cref="EncryptionScanByteLimit"/> — rather than the whole
+        /// file. A 2048-bit encrypted PKCS#8 PEM measures about 1.7 KB and both markers sit in its
+        /// first two lines, so the cap is generous by more than thirty times against any realistic
+        /// key; and it caps what a mis-declared <c>clientKey</c> pointing at a multi-gigabyte file
+        /// can make the engine read while it is already on a failure path. A marker beyond the cap
+        /// simply yields the generic message, which is the behaviour without this method at all.
+        /// </para>
+        /// <para>
+        /// Every failure to read is swallowed for the same reason: this runs INSIDE a catch that is
+        /// already about to throw a well-formed diagnostic, and a second fault raised while
+        /// improving the first one's wording would replace a legible message with an illegible one.
+        /// </para>
+        /// </remarks>
+        private static string? DescribeEncryptedPrivateKey(string resolvedKeyPath)
+        {
+            string prefix;
+            try
+            {
+                var stream = new FileStream(
+                    resolvedKeyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                try
+                {
+                    var buffer = new byte[EncryptionScanByteLimit];
+                    var read = 0;
+                    int chunk;
+                    while (read < buffer.Length &&
+                           (chunk = stream.Read(buffer, read, buffer.Length - read)) > 0)
+                    {
+                        read += chunk;
+                    }
+
+                    // PEM is US-ASCII by definition (RFC 7468 §3), so a byte-wise decode cannot
+                    // corrupt either marker, and a truncated multi-byte sequence at the cap
+                    // boundary cannot throw the way a strict UTF-8 decode would.
+                    prefix = System.Text.Encoding.ASCII.GetString(buffer, 0, read);
+                }
+                finally
+                {
+                    stream.Dispose();
+                }
+            }
+            catch (Exception ex) when (ex is IOException
+                                           or UnauthorizedAccessException
+                                           or NotSupportedException
+                                           or ArgumentException)
+            {
+                return null;
+            }
+
+            if (prefix.Contains(EncryptedPkcs8Label, StringComparison.Ordinal))
+            {
+                return $"its PEM block is labelled '{EncryptedPkcs8Label}'";
+            }
+
+            if (prefix.Contains(LegacyEncryptedPemHeader, StringComparison.Ordinal))
+            {
+                return $"it carries the '{LegacyEncryptedPemHeader}' header";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The PEM label .NET's own <c>RSA.ExportEncryptedPkcs8PrivateKeyPem</c> and
+        /// <c>openssl pkcs8 -topk8</c> both write for a password-protected key — measured, on the
+        /// pinned runtime and on the openssl on this host.
+        /// </summary>
+        private const string EncryptedPkcs8Label = "-----BEGIN ENCRYPTED PRIVATE KEY-----";
+
+        /// <summary>
+        /// The header the legacy openssl form (<c>openssl rsa -aes256 -traditional</c>) writes
+        /// instead: the block keeps the ordinary <c>-----BEGIN RSA PRIVATE KEY-----</c> label, so
+        /// the label alone does not identify it — measured.
+        /// </summary>
+        private const string LegacyEncryptedPemHeader = "Proc-Type: 4,ENCRYPTED";
+
+        /// <summary>
+        /// How much of a failed key file is read when classifying it. See
+        /// <see cref="DescribeEncryptedPrivateKey"/>'s own remarks for why it is bounded and why
+        /// the bound is safe.
+        /// </summary>
+        private const int EncryptionScanByteLimit = 64 * 1024;
     }
 }

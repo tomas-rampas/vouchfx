@@ -218,9 +218,10 @@ public sealed class ThreeRequirementsSuiteDockerTests
             // Each pair is matched ON ONE LINE, which is the same discipline the REST-evidence assertion
             // below argues for, applied here where the report carries TWO confirmations. A confirmation
             // IS one line: `SecurityConfirmation.ToString()` renders name, declared profile, declared
-            // endpoint, observed protocol, observed address and Detail into a single string, and
-            // ScenarioRunner writes each one with a single WriteLineAsync (its `SecurityConfirmations`
-            // loop).
+            // endpoint, observed protocol, observed address, client-identity state, LEVEL and Detail
+            // into a single string, and ScenarioRunner writes each one with a single WriteLineAsync
+            // (its `SecurityConfirmations` loop). The level joined that list in slice F's peer-review
+            // fix and is now what each pair below is bound on — see the note at the assertions.
             //
             // The SANITISER on that write is NOT what keeps a confirmation on one line, and an earlier
             // version of this comment said it was. `DisplaySanitiser` deliberately PRESERVES `\n` — it
@@ -241,6 +242,14 @@ public sealed class ThreeRequirementsSuiteDockerTests
             var reportLines = diagnostics.ToString()
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+            //   THE LEVEL TOKEN IS NOW HALF OF EACH PAIR, and it is the half a customer can actually
+            //   gate on. Before slice F's peer-review fix the rendered line omitted the level entirely,
+            //   so the only thing distinguishing these two confirmations was the trailing Detail prose
+            //   — an operator wanting "every secured target reached the strong level" had a sentence to
+            //   grep and nothing else. Each assertion below binds the target name, the level token and
+            //   the Detail sentence on ONE line: the token says WHICH level, the sentence says which
+            //   branch produced it, and neither can carry the claim alone.
+            //
             //   the broker earns the application-layer level, and the half that cannot be faked is the
             //   REFUSAL of an anonymous second connection — that is what says the peer REQUIRES an
             //   identity rather than merely tolerating one.
@@ -248,6 +257,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
                 reportLines,
                 line =>
                     line.Contains($"service '{BrokerName}'", StringComparison.Ordinal)
+                    && line.Contains("level AuthenticatedRoundTrip", StringComparison.Ordinal)
                     && line.Contains(
                         "REFUSED the same request on a second connection presenting no client certificate",
                         StringComparison.Ordinal));
@@ -259,6 +269,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
                 reportLines,
                 line =>
                     line.Contains($"service '{ApiName}'", StringComparison.Ordinal)
+                    && line.Contains("level TransportConfirmed", StringComparison.Ordinal)
                     && line.Contains(
                         "the declared client certificate was configured on the handshake with no rejection raised",
                         StringComparison.Ordinal));

@@ -629,16 +629,24 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // a broker whose keystore landed correctly but whose KAFKA_SSL_CLIENT_AUTH was unset would
         // serve TLS, answer the round trip and refuse nothing, and this assertion would fail.
         //
-        // MATCHED ON THE SENTENCE, and not on SecurityConfirmationLevel.AuthenticatedRoundTrip,
-        // because the symbol is not reachable from here — measured, twice over. The enum is public,
-        // but nothing on this path exposes a value of it: ScenarioCoreResult carries a verdict, a
-        // buffer and the security flag and no confirmations at all, and SecurityConfirmation.
-        // ToString() — the only rendering that reaches this test — omits the Level entirely,
-        // printing the profile, endpoint, observed address, protocol, client-identity state and
-        // Detail. So the Detail sentence IS the signal available, and it is the specific one: this
-        // text is produced by exactly one branch, the mtls arm that ran the anonymous differential.
-        // Reaching the symbol would need the test to own the topology (SuiteTopology.
-        // SecurityConfirmations), which would mean not running the scenario this control is about.
+        // MATCHED ON THE LEVEL TOKEN *AND* ON THE SENTENCE, which is a change from the drill as
+        // first written and worth recording, because the reason it matched the sentence ALONE has
+        // been removed. That reason was: the enum value is not reachable from here (ScenarioCoreResult
+        // carries a verdict, a buffer and the security flag and no confirmations at all, and reaching
+        // SuiteTopology.SecurityConfirmations would mean the test owning the topology instead of
+        // running the scenario this control is about) AND SecurityConfirmation.ToString() omitted the
+        // Level entirely. The second half stopped being true in slice F's peer-review fix: the
+        // rendered line now carries `level AuthenticatedRoundTrip` immediately after the
+        // client-identity clause. The symbol is still unreachable; its NAME now is.
+        //
+        // Both are asserted, and they are not redundant. The token pins the LEVEL — the thing REQ-005
+        // introduced named levels to make matchable, and the thing a CI gate would key on. The
+        // sentence pins WHICH BRANCH produced it: only the mtls arm that actually ran the anonymous
+        // differential emits that text, so it is what separates "the strong level" from "the strong
+        // level for the right reason". A rewording of the Detail would leave the token standing, and
+        // a level dropped from the rendering would leave the sentence standing; this drill wants
+        // neither to pass alone.
+        Assert.Contains("level AuthenticatedRoundTrip", drill.Diagnostics, StringComparison.Ordinal);
         Assert.Contains(
             "REFUSED the same request on a second connection presenting no client certificate",
             drill.Diagnostics,
