@@ -221,7 +221,38 @@ public sealed class MetricsAssertPrometheusProvider
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(model.Target))
+        {
             errors.Add("metrics-assert.prometheus: 'target' must not be empty.");
+        }
+        else if (!ctx.DeclaredServices.ContainsKey(model.Target))
+        {
+            if (ctx.DeclaredDependencies.ContainsKey(model.Target))
+            {
+                // M1 fix (fix round 2) — mirrors HttpRestProvider.Validate's own identical
+                // fix and rationale: metrics-assert.prometheus resolves 'target' exclusively
+                // against declared services; a dependency target validated PASS before this
+                // fix and could never work at run time.
+                var services = ctx.DeclaredServices.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+                errors.Add(
+                    $"metrics-assert.prometheus: 'target' '{model.Target}' names a dependency " +
+                    "declared in environment.dependencies, which metrics-assert.prometheus " +
+                    "cannot reach — it resolves 'target' only against declared services. " +
+                    "Declared services: " + services + ".");
+            }
+            else
+            {
+                // REQ-012/EDGE-009 (services-generalisation spec): close the previously
+                // unvalidated-target hole — mirrors HttpRestProvider.Validate's own identical
+                // fix and rationale.
+                errors.Add(
+                    $"metrics-assert.prometheus: 'target' '{model.Target}' names neither a " +
+                    "declared service in environment.services nor a declared dependency in " +
+                    "environment.dependencies. " +
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(model.Path))
         {
@@ -346,9 +377,11 @@ public sealed class MetricsAssertPrometheusProvider
             public static async System.Threading.Tasks.Task ScrapeAsync(
                 System.Collections.Generic.IDictionary<string, object?> vars,
                 Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,
+                Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,
                 string outcomeKey,
                 string captureStatusKey,
                 string serviceKey,
+                string targetName,
                 string pathTemplate,
                 string metricTemplate,
                 string[] labelNames,
@@ -369,6 +402,12 @@ public sealed class MetricsAssertPrometheusProvider
                 var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
                 try
                 {
+                    // REQ-024: present the declared client certificate and trust the declared CA
+                    // for THIS step's target — same placement and same reasoning as
+                    // HttpRest_Helpers.ExecuteAsync (inside the guarded region so a malformed
+                    // artefact is a step-scoped EnvironmentError; before the first SendAsync so
+                    // the underlying handler is still mutable).
+                    Security_Helpers.ConfigureHandler(security, targetName, handler);
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
                     // enforcement mechanism; otherwise keep the 30s stall-window convention.
@@ -846,9 +885,11 @@ public sealed class MetricsAssertPrometheusProvider
                 await MetricsAssertPrometheus_Helpers.ScrapeAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{pathTemplateLiteral}},
                     {{metricTemplateLiteral}},
                     {{labelNamesLiteral}},
@@ -868,6 +909,7 @@ public sealed class MetricsAssertPrometheusProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+            SecurityHelper.Source,
         };
 
         return new CsxFragment(

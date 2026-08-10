@@ -16,6 +16,18 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Runtime</_Parameter1>
     </AssemblyAttribute>
+    <!-- authenticated-infrastructure-mtls, slice E (m3, peer-review fix round three): the drift
+         guard pinning SecuredEndpointProbe's profile vocabulary to the security-profile REGISTRY
+         needs to see internals of BOTH assemblies at once, and no test project could. The choice
+         was between granting Vouchfx.Engine.Compilation's internals to
+         Vouchfx.Engine.Orchestration.Tests — widening the deliberately narrow registry seam that
+         project's own csproj comment warns about — and granting THIS assembly's internals to
+         Vouchfx.Engine.Runtime.Tests, which already holds the registry grant. This is the second,
+         and the smaller widening: Orchestration's internals are already visible to
+         Vouchfx.Engine.Runtime, whose tests this is. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- Kestrel for the host-owned ephemeral webhook listener (S07-F-01a).

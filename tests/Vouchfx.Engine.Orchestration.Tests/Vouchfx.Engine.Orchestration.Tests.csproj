@@ -122,6 +122,12 @@
          used by TraceExpectOtlpDockerTests / HttpSoapDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.TraceExpect.Otlp\Vouchfx.Steps.TraceExpect.Otlp.csproj"
                       IsAspireProjectResource="false" />
+    <!-- REQ-005's probe tests need a real private CA, a server leaf with a private key, and a
+         client certificate/key pair on disk. Vouchfx.TestSupport already owns exactly that
+         (built for slice D's REQ-024 execution tests); referencing it here is what stops a
+         second, subtly-different certificate factory appearing in this assembly. -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj"
+                      IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Http.Soap\Vouchfx.Steps.Http.Soap.csproj"
                       IsAspireProjectResource="false" />
   </ItemGroup>

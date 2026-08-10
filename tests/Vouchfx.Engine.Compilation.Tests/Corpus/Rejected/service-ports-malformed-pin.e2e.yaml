@@ -1,0 +1,25 @@
+# expected-instance-location: /environment/services/broker/ports/0
+# expected-keyword: pattern
+#
+# REQ-025: a `ports` entry that is a string but not a well-formed port or "<host>:<container>"
+# pair is rejected by the schema, at the offending ITEM rather than at the array or the service.
+#
+# This document also pins the shape of the DIAGNOSIS, which is the reason the schema uses a single
+# merged type union rather than a two-branch oneOf. Measured against the pinned JsonSchema.Net: a
+# oneOf produces TWO errors for this one mistake, the second contradicting the first — the string
+# branch complains about the pattern while the integer branch complains that a string is not an
+# integer, and the author is told both that their value should match a pattern and that it should
+# have been a number. The merged form produces exactly one located error, keyed `pattern`, which
+# `expected-keyword` above asserts.
+metadata:
+  name: malformed-pin
+environment:
+  services:
+    broker:
+      image: confluentinc/cp-kafka:7.6.1
+      ports: ["a:b"]
+      healthCheck: { type: tcp, port: 9092 }
+steps:
+  - id: noop
+    type: script.csharp
+    code: "return;"

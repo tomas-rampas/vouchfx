@@ -33,6 +33,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring.Model;
 using YamlDotNet.RepresentationModel;
@@ -279,7 +281,7 @@ public static class EnvironmentMapper
 
                     if (KafkaWantsSchemaRegistry(spec.Extra))
                     {
-                        var srName = name + "-sr";
+                        var srName = KafkaSchemaRegistryServiceName(name);
                         var internalEndpoint = kafkaBuilder.Resource.InternalEndpoint;
                         var bootstrapServers = ReferenceExpression.Create(
                             $"PLAINTEXT://{internalEndpoint.Property(EndpointProperty.Host)}:{internalEndpoint.Property(EndpointProperty.Port)}");
@@ -312,7 +314,7 @@ public static class EnvironmentMapper
                 {
                     var gates = new List<string> { name };
                     if (KafkaWantsSchemaRegistry(spec.Extra))
-                        gates.Add(name + "-sr");
+                        gates.Add(KafkaSchemaRegistryServiceName(name));
                     return gates;
                 }),
 
@@ -344,7 +346,7 @@ public static class EnvironmentMapper
                     // provider via VarKeys.Connection(model.Target)).
                     serviceEndpoints[name] = containerBuilder.GetEndpoint("http");
                     // Stage SMTP URL as svc::<name>-smtp for docker tests and SUT config.
-                    serviceEndpoints[name + "-smtp"] = containerBuilder.GetEndpoint("smtp");
+                    serviceEndpoints[MailpitSmtpServiceName(name)] = containerBuilder.GetEndpoint("smtp");
 
                     var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
                     return (retained, retained);
@@ -573,15 +575,43 @@ public static class EnvironmentMapper
     /// The environment declaration from the parsed <c>.e2e.yaml</c> file.
     /// May be <see langword="null"/> (treated as an empty environment).
     /// </param>
+    /// <param name="suiteDirectory">
+    /// The directory containing the suite's own <c>.e2e.yaml</c> file — the base every declared
+    /// <c>security.serverArtifacts[].source</c> resolves against (REQ-003/REQ-016). Defaults to
+    /// <see cref="Directory.GetCurrentDirectory"/>, mirroring
+    /// <see cref="SuiteTopology.StartAsync"/>'s own <c>seedBaseDirectory</c> default.
+    /// <para>
+    /// It MUST be the same base <c>EnvironmentSecurityValidator</c> checked containment against.
+    /// A path resolved against a DIFFERENT base is still contained within THAT base, so
+    /// containment cannot detect the divergence — the run would simply copy a file the suite
+    /// never named. Callers pass the first scenario's own directory, which is also the directory
+    /// the one shared topology's <c>environment</c> block came from.
+    /// </para>
+    /// </param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
+    /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>. REQ-023 (as
+    /// amended 2026-08-04) makes this the discriminator for the FORM a service's endpoint is
+    /// staged in: a target the Kafka families address is staged as the bare bootstrap authority
+    /// those clients expect, and every other service keeps its scheme-carrying URL. See
+    /// <c>StageServiceEndpoint</c> for why the form — not merely the confirmation level — has to
+    /// follow the protocol.
+    /// <see langword="null"/> means "no Kafka step targets anything here", which is correct for a
+    /// suite with no Kafka steps and for every caller that predates this parameter.
+    /// </param>
     /// <returns>
     /// A <see cref="MappedTopology"/> whose <see cref="MappedTopology.Configure"/> callback
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
     /// Thrown when a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, or when a dependency type is unrecognised.
+    /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
+    /// declared server artefact cannot be resolved (REQ-016).
     /// </exception>
-    public static MappedTopology Map(EnvironmentSpec? env)
+    public static MappedTopology Map(
+        EnvironmentSpec? env,
+        string? suiteDirectory = null,
+        IReadOnlySet<string>? kafkaSpeakingTargets = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -597,6 +627,11 @@ public static class EnvironmentMapper
                 HealthGateResourceNames: Array.Empty<string>(),
                 DependencyNames: Array.Empty<string>());
         }
+
+        // REQ-023 (amended): captured once here rather than read through the nullable parameter
+        // inside the resolver closure, so the staging rule is a plain set lookup at the one place
+        // it is applied.
+        var kafkaTargets = kafkaSpeakingTargets ?? EmptyProtocolTargets;
 
         // ----------------------------------------------------------------
         // Validate all service specs eagerly so Map() throws before any builder
@@ -620,6 +655,199 @@ public static class EnvironmentMapper
                     $"Service '{name}' has neither 'image' nor 'project' set. " +
                     "Exactly one must be supplied.",
                     nameof(env));
+            }
+
+            // ── REQ-023: the secured endpoint ────────────────────────────────────────────
+            // Validated eagerly, before any builder mutation, for the same reason every other
+            // check in this loop is: an unresolvable selector must fail with a located,
+            // author-facing diagnostic naming what IS declared, never deep inside Aspire's own
+            // GetEndpoint or — far worse — silently, by leaving the service reachable over
+            // plaintext while its suite believes it is secured.
+            if (spec.Security is not null)
+            {
+                if (spec.Project is not null)
+                {
+                    // A project-form service's endpoints come from the project's own launch
+                    // profile, which this engine neither models nor names (see
+                    // ServiceEndpointNaming.DeclaredEndpointNames' own remarks — it returns an
+                    // EMPTY list for a project-form service), so there is no endpoint here for
+                    // REQ-023 to construct with an https scheme and no svc::<name> value is
+                    // staged for one at all. Failing loudly at topology-build time is the only
+                    // honest option: the alternative is a suite that validates, starts, and
+                    // then presents no client certificate to anything.
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'security' on a 'project'-form service, which this " +
+                        "release cannot secure: a project-form service's endpoints are discovered from " +
+                        "the project's own launch profile, so the engine has no endpoint to construct " +
+                        "with an 'https' scheme. Declare the system under test as an 'image'-form " +
+                        "service to use 'security'.",
+                        nameof(env));
+                }
+
+                if (ServiceEndpointNaming.ResolveSecuredPort(spec) is null)
+                {
+                    var declaredEndpoints = ServiceEndpointNaming.PlaintextEndpoints(spec);
+                    var described = declaredEndpoints.Count == 0
+                        ? "(none)"
+                        : string.Join(", ", declaredEndpoints.Select(e => $"{e.Name} (port {e.Port})"));
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'security.endpoint: {spec.Security.Endpoint}', which is " +
+                        "neither a port number (a bare decimal integer in 1..65535 with no leading zero) " +
+                        $"nor the name of an endpoint this service declares. Declared endpoints: {described}.",
+                        nameof(env));
+                }
+            }
+
+            // REQ-025: an `httpPort` may not name a container port that `ports:` has PINNED.
+            // Both produce an endpoint declaration on that port, so the pin has two candidates
+            // and no rule distinguishes them: publishing both on one host port is impossible,
+            // and publishing one silently is the arbitrary choice this engine does not make.
+            // Refused eagerly, before any builder mutation, like every other cross-field check
+            // in this loop — and it narrows nothing that ever worked, because pinning is new.
+            if (spec.Image is not null
+                && spec.HttpPort is { } pinnedHttpPortCandidate
+                && spec.PinnedHostPorts is { } declaredPins
+                && declaredPins.TryGetValue(pinnedHttpPortCandidate, out var pinnedFor))
+            {
+                throw new ArgumentException(
+                    $"Service '{name}' declares 'httpPort: {pinnedHttpPortCandidate}' and also pins that " +
+                    $"same container port in 'ports' (to host port {pinnedFor}). One container " +
+                    "port cannot be declared twice. Remove the 'httpPort', or pin a different " +
+                    "container port.",
+                    nameof(env));
+            }
+
+            // REQ-009: cross-referencing healthCheck.port against the service's OWN declared
+            // ports/httpPort is this mapper's job, not the schema's (see HealthCheckSpec's own
+            // remarks) — mirrors the ${conn:name} referencing an unknown dependency precedent.
+            // Validated eagerly, before any builder mutation, so a bad reference fails with a
+            // clear, located diagnostic instead of deep inside Aspire's own GetEndpoint.
+            //
+            // G-M2 (gatekeeper): gated on 'spec.Image is not null' — 'healthCheck'/'ports' are
+            // meaningless on a project-form service; the services loop below never reads
+            // either field once 'spec.Project is not null' (Aspire's own AddProject
+            // auto-discovers the project's launch-profile endpoints instead), so this
+            // cross-reference check must not run for one either. Without this guard, a
+            // project-form service that ALSO (uselessly) declared an inapplicable healthCheck
+            // could hit the ports-shaped diagnostics below with author-facing advice
+            // ("declare it under 'ports:'") that makes no sense for a service with no
+            // 'ports:'/'httpPort:' behaviour at all. $defs/service's own schema now rejects
+            // 'ports'/'healthCheck' on a project-form service outright (belt); this mapper-
+            // level skip is the brace — still correct for a direct EnvironmentSpec embedding
+            // that bypasses the schema (exactly the same belt-and-braces relationship every
+            // other eager check in this loop has with its own schema-level counterpart).
+            if (spec.Image is not null && spec.HealthCheck is { } healthCheck)
+            {
+                var isTcp = string.Equals(healthCheck.Type, "tcp", StringComparison.Ordinal);
+                var isHttp = string.Equals(healthCheck.Type, "http", StringComparison.Ordinal);
+
+                if (!isTcp && !isHttp)
+                {
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'healthCheck.type' = " +
+                        $"'{healthCheck.Type}', which is not recognised. Supported values: " +
+                        "tcp, http.",
+                        nameof(env));
+                }
+
+                if (isTcp)
+                {
+                    if (healthCheck.Port is not { } tcpPort)
+                    {
+                        throw new ArgumentException(
+                            $"Service '{name}' declares 'healthCheck: {{ type: tcp }}' with no " +
+                            "'port' field. A tcp health check must name the declared port to " +
+                            "probe.",
+                            nameof(env));
+                    }
+
+                    // m3 fix (fix round 3): for the HYBRID shape (ports + a sibling
+                    // httpPort), declaredPorts previously omitted httpPort entirely — so a
+                    // hybrid service could never tcp-probe its own httpPort: the port number
+                    // was never "among the service's declared ports" by this check's own
+                    // reckoning, even though it IS one of the service's declared ports (just
+                    // declared via the httpPort field rather than the ports list). The
+                    // resulting diagnostic then told the author to do the impossible —
+                    // "declare it under 'ports:'" — when they had already declared it, as
+                    // httpPort, and adding the SAME container port again under 'ports:' would
+                    // double-declare it under two different endpoint names. ApplyHealthCheck's
+                    // own endpoint-resolution fallback (below, in this same file) already
+                    // handles a tcpPort that is the service's httpPort rather than a 'ports:'
+                    // entry — resolving to the "http" endpoint — so admitting httpPort here is
+                    // the only change needed: the previously-dead branch becomes reachable and
+                    // already does the right thing.
+                    //
+                    // REQ-023: derived from ServiceEndpointNaming's own endpoint set rather
+                    // than re-deriving the ports/httpPort shape here, so a service's SECURED
+                    // port (which may be declared only by 'security.endpoint') is admitted
+                    // too. For a service with no 'security' block the set is identical, port
+                    // for port and in the same order, to the three-way expression this
+                    // replaced — the hybrid list, the ports-only list, and the
+                    // 'httpPort ?? 80' singleton.
+                    var declaredPorts = ServiceEndpointNaming.EndpointDeclarations(spec)
+                        .Select(e => e.Port)
+                        .ToList();
+
+                    if (!declaredPorts.Contains(tcpPort))
+                    {
+                        throw new ArgumentException(
+                            $"Service '{name}' declares 'healthCheck: {{ type: tcp, port: " +
+                            $"{tcpPort} }}', but {tcpPort} is not among the service's declared " +
+                            $"ports ({string.Join(", ", declaredPorts)}). Declare it under " +
+                            "'ports:' (or as 'httpPort' when the service has no 'ports:' at " +
+                            "all) first.",
+                            nameof(env));
+                    }
+                }
+                else if (spec.Ports is { Count: > 0 } && spec.HttpPort is null)
+                {
+                    // 'type: http' targets the service's "http" endpoint, which exists when
+                    // 'ports:' is absent (the implicit default) OR when 'httpPort' is
+                    // explicitly declared alongside 'ports:' (the opt-in hybrid shape) — never
+                    // when 'ports:' is declared with no sibling 'httpPort:' at all.
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'healthCheck: {{ type: http }}' but has no " +
+                        "HTTP endpoint — it declares 'ports:' with no sibling 'httpPort:'. Add " +
+                        "'httpPort:' to expose an HTTP endpoint for this health check to probe, " +
+                        "or declare a 'tcp' health check against one of the declared 'ports:' " +
+                        "instead.",
+                        nameof(env));
+                }
+                else if (!ServiceEndpointNaming.EndpointDeclarations(spec).Any(
+                             e => string.Equals(
+                                 e.Name, ServiceEndpointNaming.HttpEndpointName, StringComparison.Ordinal)))
+                {
+                    // REQ-023: this service has no "http" endpoint for the check to probe. TWO
+                    // distinct shapes reach here and the diagnostic must not assert the wrong
+                    // one (the message previously claimed the HTTP port "is also" the
+                    // security.endpoint, which is simply false for the second):
+                    //
+                    //   (a) the service declares an HTTP port that IS the secured port, so the
+                    //       "http" endpoint was replaced by the secured "https" one; or
+                    //   (b) the service declares `security` and no `httpPort`/`ports` at all,
+                    //       so the implicit plaintext HTTP endpoint is suppressed outright
+                    //       (PlaintextEndpoints' own REQ-023 rule) and there never was one.
+                    //
+                    // Either way an http health check against the mTLS listener could not pass:
+                    // a container health check cannot present a client certificate (measured on
+                    // the test bed — the listener answers 400 to an unauthenticated request),
+                    // which is exactly why REQ-005's engine-side probe exists separately from
+                    // health gating. The message names what the service actually declares
+                    // rather than assuming shape (a).
+                    var securedPort = ServiceEndpointNaming.ResolveSecuredPort(spec);
+                    var cause = spec.HttpPort is { } declaredHttpPort && declaredHttpPort == securedPort
+                        ? "its 'httpPort' is also its 'security.endpoint', so its only endpoint on that " +
+                          "port is the secured one"
+                        : "it declares 'security' with no separate 'httpPort', so it has no plaintext " +
+                          "HTTP endpoint at all";
+
+                    throw new ArgumentException(
+                        $"Service '{name}' declares 'healthCheck: {{ type: http }}' but {cause}. A health " +
+                        "check cannot present a client certificate; declare a 'tcp' health check against " +
+                        "the secured port, or expose a separate unsecured health port under 'ports:' (or " +
+                        "'httpPort:') and probe that.",
+                        nameof(env));
+                }
             }
         }
 
@@ -861,6 +1089,29 @@ public static class EnvironmentMapper
             healthGateNames.Add(name);
 
         // ----------------------------------------------------------------
+        // REQ-016: resolve every declared security.serverArtifacts entry to an absolute host
+        // path NOW — eagerly, before any builder mutation — so a blank/rooted/escaping/missing
+        // source, or a target that is not an absolute in-container file path, fails Map() with a
+        // located diagnostic. Deferring it into the Configure closure would place the throw after
+        // earlier resources had already been added, which is the discipline every other eager
+        // check in this method observes.
+        // ----------------------------------------------------------------
+        var resolvedSuiteDirectory = ResolveSuiteDirectory(suiteDirectory);
+        var serviceArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in services)
+        {
+            serviceArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "services", name, resolvedSuiteDirectory);
+        }
+
+        var dependencyArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
+        foreach (var (name, spec) in dependencies)
+        {
+            dependencyArtifacts[name] = ServerArtifactInjection.Plan(
+                spec.Security, "dependencies", name, resolvedSuiteDirectory);
+        }
+
+        // ----------------------------------------------------------------
         // Configure callback: builds the resource graph.
         // ----------------------------------------------------------------
         Action<IDistributedApplicationBuilder> configure = builder =>
@@ -874,6 +1125,11 @@ public static class EnvironmentMapper
                     builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
+
+                // REQ-016: the customer's broker image finds its keystore because the engine put
+                // it there. Applied to the RETAINED builder — the dependency's own resource, not
+                // a sidecar — since that is the container whose entrypoint reads the artefact.
+                ServerArtifactInjection.Apply(retained, dependencyArtifacts[name], "dependencies", name);
             }
 
             // SUT configuration surface: build the per-dependency container-native accessor
@@ -909,10 +1165,92 @@ public static class EnvironmentMapper
                 if (spec.Image is not null)
                 {
                     var fullImage = ResolveImage(spec.Image, imageRegistry);
-                    var port = spec.HttpPort ?? 80;
-                    var containerBuilder = builder.AddContainer(name, fullImage)
-                        .WithHttpEndpoint(targetPort: port, name: "http")
-                        .WithHttpHealthCheck(path: "/", endpointName: "http")
+
+                    // REQ-008: 'ports' declared at all switches this service from the
+                    // pre-existing HTTP-only-by-default shape to a generalised, non-HTTP-first
+                    // one — the implicit default HTTP endpoint is suppressed (never assumed
+                    // just because SOME container port exists) unless 'httpPort' is ALSO
+                    // explicitly declared alongside 'ports' (the opt-in hybrid shape).
+                    var hasExplicitPorts = spec.Ports is { Count: > 0 };
+
+                    var containerBuilder = builder.AddContainer(name, fullImage);
+
+                    // One endpoint set, computed by ServiceEndpointNaming, for BOTH the actual
+                    // Aspire declarations below and IProjectContext.DeclaredServices (which
+                    // projects the same computation's names) — the two cannot drift.
+                    //
+                    // For a service declaring no 'security' block this loop emits exactly the
+                    // calls the three-way branch it replaced emitted, in the same order:
+                    // WithEndpoint(tcp-<port>) per 'ports:' entry, then WithHttpEndpoint("http")
+                    // for 'httpPort' when declared, or the single implicit
+                    // WithHttpEndpoint("http") on 'httpPort ?? 80' when 'ports:' is absent.
+                    // Generic WithEndpoint (scheme omitted) leaves Aspire's own "tcp" default in
+                    // place (confirmed empirically against the pinned Aspire.Hosting 13.4.2
+                    // DLL), satisfying REQ-008 without this file setting a scheme itself.
+                    var endpointDeclarations = ServiceEndpointNaming.EndpointDeclarations(spec);
+                    foreach (var endpoint in endpointDeclarations)
+                    {
+                        // REQ-025: the host port this container port publishes on, when the author
+                        // pinned it, and null for every port declared as a bare integer — which
+                        // leaves the orchestrator allocating one exactly as before. Threaded into
+                        // all three overloads below rather than only the secured one, because the
+                        // requirement is about a service's ports and says nothing about schemes.
+                        //
+                        // GUARDED ON THE PORT HAVING COME FROM `ports:`, not on its VALUE alone.
+                        // EndpointDeclarations covers `httpPort` and the implicit HTTP endpoint as
+                        // well as `ports:` entries, so a lookup keyed on the port number alone
+                        // attaches a pin to an endpoint that never asked for one whenever the two
+                        // numbers coincide — an `httpPort: 9093` beside `ports: ["19093:9093"]`
+                        // would publish BOTH on host 19093. The remaining ambiguity, where those
+                        // two numbers are equal, is refused outright by the eager check in Map's
+                        // services loop, so reaching here means the association is unique.
+                        //
+                        // Passing null is what makes the default path byte-for-byte unchanged:
+                        // `port` is `int?` on every one of these overloads and null is its own
+                        // default, so an unpinned endpoint emits the identical call it always did.
+                        int? pinnedHostPort =
+                            spec.PinnedHostPorts is { } pins
+                            && spec.Ports is { } declaredPorts
+                            && declaredPorts.Contains(endpoint.Port)
+                            && pins.TryGetValue(endpoint.Port, out var host)
+                                ? host
+                                : null;
+
+                        if (endpoint.IsSecured)
+                        {
+                            // REQ-023. WithHttpsEndpoint sets EndpointAnnotation.UriScheme to
+                            // "https" unconditionally, which is what makes the staged
+                            // svc::<name> value begin "https://" and therefore what makes the
+                            // three HTTP-family providers issue a TLS request at all — they
+                            // derive their base URL solely from that string, so this fixes the
+                            // transport scheme for all three with no provider change.
+                            //
+                            // It declares endpoint METADATA only: it does not make the
+                            // container serve TLS. The system under test terminates TLS itself
+                            // with material its author supplied, which is exactly the model
+                            // this feature assumes (the client-side trust material is REQ-024).
+                            containerBuilder = containerBuilder.WithHttpsEndpoint(
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
+                        }
+                        else if (string.Equals(
+                                     endpoint.Name,
+                                     ServiceEndpointNaming.HttpEndpointName,
+                                     StringComparison.Ordinal))
+                        {
+                            containerBuilder = containerBuilder.WithHttpEndpoint(
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
+                        }
+                        else
+                        {
+                            containerBuilder = containerBuilder.WithEndpoint(
+                                targetPort: endpoint.Port, port: pinnedHostPort, name: endpoint.Name);
+                        }
+                    }
+
+                    containerBuilder = ApplyHealthCheck(
+                        builder, containerBuilder, name, spec, hasExplicitPorts, endpointDeclarations);
+
+                    containerBuilder = containerBuilder
                         // SUT configuration surface (point 2): a containerised SUT can reach a
                         // host-run resource (e.g. the webhook listener, which binds 0.0.0.0) via
                         // host.docker.internal on Docker Desktop already; '--add-host' makes the
@@ -933,9 +1271,42 @@ public static class EnvironmentMapper
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         containerBuilder = containerBuilder.WaitFor(depBuilder);
 
-                    ApplyEnv(containerBuilder, spec.Env, envAccessByDependency);
+                    ApplyEnv(name, containerBuilder, spec.Env, envAccessByDependency);
 
-                    serviceEndpoints[name] = containerBuilder.GetEndpoint("http");
+                    // REQ-016: copy declared server artefacts into the system under test's own
+                    // container — the server certificate/key a TLS-terminating SUT presents, the
+                    // mirror of the client material REQ-024 gives the step.
+                    ServerArtifactInjection.Apply(
+                        containerBuilder, serviceArtifacts[name], "services", name);
+
+                    // Stage the primary endpoint for svc::<name> resolution (ResolveServices /
+                    // env: refs).
+                    //
+                    // REQ-023: the SECURED endpoint wins outright when the service declares
+                    // one. This is the decision the requirement turns on, so it is recorded
+                    // here rather than inferred. `security.endpoint` is mandatory (REQ-002)
+                    // precisely because an implicit default could resolve to a plaintext
+                    // listener the infrastructure keeps open alongside the secured one — the
+                    // customer's own broker does exactly that. So when an author has named a
+                    // secured endpoint, every step targeting the service must reach THAT one:
+                    // staging a sibling plaintext 'httpPort' here instead would produce a suite
+                    // that passes every assertion having authenticated nothing (EDGE-004). A
+                    // service declaring both 'security' and a plain 'httpPort' therefore keeps
+                    // its plaintext endpoint declared (the SUT may genuinely serve one, and
+                    // it remains available to a health check), but it is not what svc::<name>
+                    // resolves to.
+                    //
+                    // With no 'security' block this is byte-for-byte today's rule: the "http"
+                    // endpoint when one exists, otherwise the FIRST declared TCP port, so a
+                    // purely non-HTTP service (REQ-008) still has a well-defined primary
+                    // endpoint.
+                    var securedEndpoint = endpointDeclarations.FirstOrDefault(e => e.IsSecured);
+                    var primaryEndpointName = securedEndpoint is not null
+                        ? securedEndpoint.Name
+                        : hasExplicitPorts && spec.HttpPort is null
+                            ? ServiceEndpointNaming.TcpEndpointName(spec.Ports![0])
+                            : ServiceEndpointNaming.HttpEndpointName;
+                    serviceEndpoints[name] = containerBuilder.GetEndpoint(primaryEndpointName);
                 }
                 else if (spec.Project is not null)
                 {
@@ -946,7 +1317,7 @@ public static class EnvironmentMapper
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         projectBuilder = projectBuilder.WaitFor(depBuilder);
 
-                    ApplyEnv(projectBuilder, spec.Env, envAccessByDependency);
+                    ApplyEnv(name, projectBuilder, spec.Env, envAccessByDependency);
                 }
             }
         };
@@ -960,7 +1331,7 @@ public static class EnvironmentMapper
                 var result = new Dictionary<string, object>(StringComparer.Ordinal);
 
                 foreach (var (name, endpointRef) in serviceEndpoints)
-                    result[name] = endpointRef.Url;
+                    result[name] = StageServiceEndpoint(name, endpointRef, kafkaTargets);
 
                 // §4 invariant: never use app.GetConnectionString(name) — it does not exist on
                 // DistributedApplication in Aspire 13.4.2 (spike S01-A-03 finding).
@@ -995,6 +1366,96 @@ public static class EnvironmentMapper
             DependencyNames: dependencies.Keys.ToList());
     }
 
+    /// <summary>
+    /// The "no Kafka step targets anything" default for <see cref="Map"/>'s
+    /// <c>kafkaSpeakingTargets</c> parameter.
+    /// </summary>
+    private static readonly IReadOnlySet<string> EmptyProtocolTargets =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Renders one resolved service endpoint into the form its own consumer can use (REQ-023, as
+    /// amended 2026-08-04).
+    /// </summary>
+    /// <param name="name">The declared service name.</param>
+    /// <param name="endpoint">The retained endpoint reference, resolved after <c>StartAsync</c>.</param>
+    /// <param name="kafkaSpeakingTargets">
+    /// The names the suite's own <c>mq-publish.kafka</c>/<c>mq-expect.kafka</c> steps address.
+    /// </param>
+    /// <returns>
+    /// A bare <c>host:port</c> bootstrap authority for a Kafka-addressed target; the endpoint's
+    /// own scheme-carrying URL for every other service — byte-identical to what this method
+    /// replaced, which was <c>endpoint.Url</c> unconditionally.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The requirement this implements changed, and the reason is worth keeping.</strong>
+    /// REQ-023 originally mandated an <c>https://</c> scheme unconditionally. A Kafka broker
+    /// authored as a SERVICE — the shape REQ-011 records the target deployment actually uses — was
+    /// therefore staged as <c>https://host:port</c>, a scheme meaningless to a Kafka client, which
+    /// then had to strip it back off. Forcing a scheme the consumer must undo is not a convenience:
+    /// it is a transformation the engine imposes and every provider must reverse identically or
+    /// diverge. The amended rule is the consumer's form, and a provider rewriting the staged value
+    /// is now the proof that the engine staged the wrong one.
+    /// </para>
+    /// <para>
+    /// <strong>Why the protocol source is the suite's own steps.</strong> It is the same inference
+    /// <see cref="SuiteProtocolTargets"/> already performs to choose REQ-005's confirmation level,
+    /// deliberately reused rather than re-derived, so the staging form and the confirmation level
+    /// cannot disagree about what a target speaks.
+    /// </para>
+    /// <para>
+    /// <strong>What is NOT changed, and why.</strong> The endpoint ANNOTATION is untouched — a
+    /// secured endpoint keeps the <c>https</c> URI scheme <c>WithHttpsEndpoint</c> gives it, and an
+    /// unsecured one keeps <c>tcp</c>/<c>http</c>. The endpoint's NAME
+    /// (<c>ServiceEndpointNaming.HttpsEndpointName</c>) is a REQ-023 constant surfaced through
+    /// <c>IProjectContext.DeclaredServices</c> and resolvable by a <c>healthCheck</c> selector, so
+    /// making either the name or the scheme depend on which steps a suite happens to contain would
+    /// buy nothing and make two author-visible surfaces protocol-dependent. Only the STAGED VALUE
+    /// — the thing a step actually consumes — follows the protocol.
+    /// </para>
+    /// <para>
+    /// MEASURED against the pinned Aspire 13.4.2 rather than assumed, twice.
+    /// <c>EndpointReference</c> exposes <c>Host</c>, <c>Port</c>, <c>Scheme</c> and <c>Url</c> as
+    /// separate members, so the authority is read directly and is not a string-surgery pass over
+    /// <c>Url</c> — nothing here parses a URL apart in order to put it back together. And
+    /// <c>Url</c> for a service declaring <c>ports: [9092]</c> renders <c>tcp://localhost:60081</c>
+    /// (measured live, against a running container): the pre-existing staged value for a non-HTTP
+    /// service carried a <c>tcp</c> scheme, not a bare authority, so a Kafka client could no more
+    /// consume it than it could consume the <c>https</c> one a secured service received.
+    /// </para>
+    /// <para>
+    /// <strong>Every consumer of the staged value, and what changes for each.</strong>
+    /// <c>svc::&lt;name&gt;</c> in <c>Vars</c> is read by the three HTTP-family providers (unchanged
+    /// — a target of theirs is never in this set) and, since REQ-011's fix, by the two Kafka
+    /// providers for a service target (which is what this exists for). The same string is also the
+    /// entry in <c>ScriptGlobalVariables.Services</c>, so a <c>script.csharp</c> step reading
+    /// <c>Services["broker"]</c> for a Kafka-addressed service now sees <c>host:port</c> where it
+    /// previously saw <c>tcp://host:port</c> — the same rule applied consistently, and the shape
+    /// such a script wanted anyway. Nothing else reads it: <c>${conn:…}</c> in an <c>env:</c> block
+    /// is resolved from the dependency builders directly and never from this map, and
+    /// <c>{placeholder}</c> substitution cannot address a prefixed key at all.
+    /// </para>
+    /// <para>
+    /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong> (m1,
+    /// peer-review critic, fix round eight), not by raw interpolation. That helper exists to
+    /// eliminate exactly the <c>$"{host}:{port}"</c> spelling that used to stand here, and this is
+    /// one of the values whose bracket-freeness is INFERRED rather than measured — it comes from
+    /// Aspire's <c>EndpointReference.Host</c> — which is precisely the kind of caller
+    /// <c>AuthorityText</c>'s own idempotency guard was written for. (No caller is proven
+    /// bracket-free, including the probe's own resolver; see <c>AuthorityText</c>'s remarks, which
+    /// this note previously contradicted by implying the others were.) Byte-identical for every shape
+    /// reachable today (every host-published endpoint comes back as <c>localhost</c> or an IPv4
+    /// literal); it changes only what an IPv6 host would produce, and there it produces the
+    /// bracketed form a Kafka bootstrap actually parses instead of the ambiguous <c>::1:9093</c>.
+    /// </para>
+    /// </remarks>
+    private static string StageServiceEndpoint(
+        string name, EndpointReference endpoint, IReadOnlySet<string> kafkaSpeakingTargets) =>
+        kafkaSpeakingTargets.Contains(name)
+            ? AuthorityText.Format(endpoint.Host, endpoint.Port)
+            : endpoint.Url;
+
     // -----------------------------------------------------------------------
     // SUT configuration surface (`env:`) — validation and ReferenceExpression construction.
     //
@@ -1019,6 +1480,41 @@ public static class EnvironmentMapper
     private static readonly Regex s_connRefPattern = new(
         @"\$\{conn:([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?\}",
         RegexOptions.Compiled);
+
+    /// <summary>
+    /// Matches a <c>${env:NAME}</c> reference (REQ-006) — a passthrough of the engine
+    /// process's own environment, resolved at topology-build time. Group 1 is the
+    /// environment-variable name. NAME follows the conventional POSIX shell identifier
+    /// shape (a letter or underscore, then letters/digits/underscores) — the shape both
+    /// the REQ-006 and EDGE-008 acceptance examples (<c>VOUCHFX_TEST_REGION</c>,
+    /// <c>VOUCHFX_UNSET_VAR_XYZ</c>) already use. Deliberately a SEPARATE pattern from
+    /// <see cref="s_connRefPattern"/> rather than one combined alternation: keeping the two
+    /// independent means every existing <c>${conn:...}</c> call site
+    /// (<see cref="CollectReferencedDependencyNames"/> in particular, which has no reason
+    /// to know about <c>${env:...}</c> at all) needs zero changes; only
+    /// <see cref="TokeniseEnvValue"/> interleaves matches from both patterns, and
+    /// <see cref="ValidateEnvValue"/> scans both independently.
+    /// </summary>
+    private static readonly Regex s_envRefPattern = new(
+        @"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Matches ONLY the <c>${env:</c> sigil itself (m5 fix, fix round 2) — case-INSENSITIVE,
+    /// unlike <see cref="s_envRefPattern"/> — used by <see cref="ValidateEnvValue"/> as a
+    /// PRESENCE check, mirroring the existing <c>${secret:...}</c> sigil-presence check
+    /// (<see cref="SecretReference.Sigil"/>'s own rationale): a malformed or wrong-case
+    /// attempt at an <c>env:</c> reference must be rejected too, not silently pass through
+    /// as opaque literal text. Case-insensitive specifically so a case-mistake on the
+    /// reserved word itself (<c>${ENV:GOOD}</c> for the case-sensitive-canonical
+    /// <c>${env:GOOD}</c>) is caught — every other malformed shape (<c>${env:}</c>,
+    /// <c>${env:2BAD}</c>, <c>${env: SPACED }</c>) already contains the exact-case sigil, so
+    /// case-insensitivity only widens what this check catches, never what
+    /// <see cref="s_envRefPattern"/> itself accepts as well-formed.
+    /// </summary>
+    private static readonly Regex s_envSigilPattern = new(
+        @"\$\{env:",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>The <c>${conn:name.part}</c> accessors supported by database-backed kinds.</summary>
     private static readonly string[] s_dbKindParts = { "host", "port", "username", "password", "database" };
@@ -1145,6 +1641,55 @@ public static class EnvironmentMapper
                     nameof(envValue));
             }
         }
+
+        // m5 fix (fix round 2): sigil-PRESENCE check, mirroring the ${secret:...} check
+        // above — env: previously used a well-formed-match-ONLY scan (below), which by
+        // construction never sees anything malformed, so '${env:}', '${env:2BAD}',
+        // '${ENV:GOOD}', and '${env: SPACED }' all validated PASS and reached the container
+        // as opaque literal text: a silent wrong value from a typo, against EDGE-008's
+        // stated purpose (surface the author's mistake, never guess). For every sigil-shaped
+        // occurrence (matched case-insensitively — see s_envSigilPattern's own remarks),
+        // confirm a WELL-FORMED s_envRefPattern match starts at that exact index; a mismatch
+        // means the sigil was found but the token was not well-formed at that position.
+        foreach (Match sigil in s_envSigilPattern.Matches(envValue))
+        {
+            var wellFormed = s_envRefPattern.Match(envValue, sigil.Index);
+            if (!wellFormed.Success || wellFormed.Index != sigil.Index)
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' contains a '${{env:...}}'-" +
+                    $"shaped token at position {sigil.Index} that is not well-formed. An " +
+                    "'env:' reference must exactly match '${env:NAME}' — a case-sensitive, " +
+                    "lower-case 'env:' sigil (never 'ENV:'/'Env:'), immediately followed by a " +
+                    "variable name starting with a letter or underscore (no spaces, no other " +
+                    "leading characters), and a closing '}' with nothing else inside.",
+                    nameof(envValue));
+            }
+        }
+
+        // REQ-006/EDGE-008: ${env:NAME} passthrough — resolved from the engine PROCESS's own
+        // environment at topology-build time (this eager pass, mirroring the ${conn:...} loop
+        // above). EDGE-008 is strict: an UNSET variable fails the suite here, naming the
+        // variable — never a silent empty-string substitution, which could turn a secured
+        // configuration value into an empty (and possibly insecure-by-default) one with no
+        // visible error. Environment.GetEnvironmentVariable returns null for an UNSET variable
+        // and "" for one explicitly set empty, which is exactly EDGE-008's unset-vs-empty
+        // distinction — an explicitly-empty value is a separate, author-visible choice the
+        // engine honours as-is, so only a null (never an empty string) throws below.
+        foreach (Match m in s_envRefPattern.Matches(envValue))
+        {
+            var varName = m.Groups[1].Value;
+
+            if (Environment.GetEnvironmentVariable(varName) is null)
+            {
+                throw new ArgumentException(
+                    $"Service '{serviceName}' env entry '{envKey}' references '{m.Value}', but the " +
+                    $"engine process has no environment variable named '{varName}' (EDGE-008). Set " +
+                    $"'{varName}' before running the suite, or set it to an explicit empty value if " +
+                    "that is genuinely what the service should receive.",
+                    nameof(envValue));
+            }
+        }
     }
 
     /// <summary>
@@ -1252,7 +1797,7 @@ public static class EnvironmentMapper
     {
         if (string.Equals(dependencyType, "mailpit", StringComparison.Ordinal))
         {
-            var smtp = serviceEndpoints[name + "-smtp"];
+            var smtp = serviceEndpoints[MailpitSmtpServiceName(name)];
             return new DependencyEnvAccess(
                 FullConnection: BuildHostPortExpression(smtp),
                 Host: smtp.Property(EndpointProperty.Host),
@@ -1419,29 +1964,76 @@ public static class EnvironmentMapper
         return builder.Build();
     }
 
-    /// <summary>A single literal-text or <c>${conn:...}</c>-reference span of an env value.</summary>
-    private readonly record struct EnvValueToken(bool IsReference, string Literal, string? DependencyName, string? Part);
+    /// <summary>The kind of span <see cref="EnvValueToken"/> represents.</summary>
+    private enum EnvValueTokenKind
+    {
+        /// <summary>Literal text, spliced verbatim (brace-escaped).</summary>
+        Literal,
+
+        /// <summary>A <c>${conn:name}</c> / <c>${conn:name.part}</c> dependency reference.</summary>
+        ConnRef,
+
+        /// <summary>A <c>${env:NAME}</c> process-environment reference (REQ-006).</summary>
+        EnvVar,
+    }
 
     /// <summary>
-    /// Splits an env value into literal-text and <c>${conn:name[.part]}</c>-reference tokens,
-    /// left to right.  Shared by <see cref="BuildEnvExpression"/> (validation already ran in
-    /// <see cref="ValidateEnvValue"/>, which uses the same <see cref="s_connRefPattern"/>).
+    /// A single literal-text, <c>${conn:...}</c>-reference, or <c>${env:...}</c>-reference
+    /// span of an env value. For <see cref="EnvValueTokenKind.ConnRef"/>, <c>Name</c> is the
+    /// dependency name and <c>Part</c> is the optional part accessor; for
+    /// <see cref="EnvValueTokenKind.EnvVar"/>, <c>Name</c> is the environment-variable name
+    /// and <c>Part</c> is unused (always <see langword="null"/>).
+    /// </summary>
+    private readonly record struct EnvValueToken(EnvValueTokenKind Kind, string Literal, string? Name, string? Part);
+
+    /// <summary>
+    /// Splits an env value into literal-text, <c>${conn:name[.part]}</c>-reference, and
+    /// <c>${env:NAME}</c>-reference tokens, left to right — the two reference patterns are
+    /// matched independently (see <see cref="s_envRefPattern"/>'s own remarks) and merged
+    /// here into one interleaved stream. Shared by <see cref="BuildEnvExpression"/>
+    /// (validation already ran in <see cref="ValidateEnvValue"/>, which scans the same two
+    /// patterns).
     /// </summary>
     private static IEnumerable<EnvValueToken> TokeniseEnvValue(string value)
     {
         var pos = 0;
-        foreach (Match m in s_connRefPattern.Matches(value))
+        while (pos < value.Length)
         {
-            if (m.Index > pos)
-                yield return new EnvValueToken(false, value[pos..m.Index], null, null);
+            var connMatch = s_connRefPattern.Match(value, pos);
+            var envMatch = s_envRefPattern.Match(value, pos);
 
-            yield return new EnvValueToken(
-                true, string.Empty, m.Groups[1].Value, m.Groups[2].Success ? m.Groups[2].Value : null);
-            pos = m.Index + m.Length;
+            // Pick whichever pattern matches EARLIER (leftmost-wins); a tie is unreachable
+            // in practice ('${conn:' and '${env:' cannot both start at the same index), but
+            // ties toward conn for a deterministic, arbitrary-but-stable choice.
+            Match next;
+            EnvValueTokenKind kind;
+            if (envMatch.Success && (!connMatch.Success || envMatch.Index < connMatch.Index))
+            {
+                next = envMatch;
+                kind = EnvValueTokenKind.EnvVar;
+            }
+            else if (connMatch.Success)
+            {
+                next = connMatch;
+                kind = EnvValueTokenKind.ConnRef;
+            }
+            else
+            {
+                yield return new EnvValueToken(EnvValueTokenKind.Literal, value[pos..], null, null);
+                yield break;
+            }
+
+            if (next.Index > pos)
+                yield return new EnvValueToken(EnvValueTokenKind.Literal, value[pos..next.Index], null, null);
+
+            yield return kind == EnvValueTokenKind.EnvVar
+                ? new EnvValueToken(EnvValueTokenKind.EnvVar, string.Empty, next.Groups[1].Value, null)
+                : new EnvValueToken(
+                    EnvValueTokenKind.ConnRef, string.Empty, next.Groups[1].Value,
+                    next.Groups[2].Success ? next.Groups[2].Value : null);
+
+            pos = next.Index + next.Length;
         }
-
-        if (pos < value.Length)
-            yield return new EnvValueToken(false, value[pos..], null, null);
     }
 
     /// <summary>
@@ -1491,33 +2083,80 @@ public static class EnvironmentMapper
     /// splicing literal spans and dependency parts (or the whole connection, for a bare
     /// <c>${conn:name}</c> reference) via <see cref="ReferenceExpressionBuilder"/>.
     /// </summary>
+    /// <param name="serviceName">
+    /// The owning service's own name, used ONLY to build a matching, fail-closed
+    /// <see cref="ArgumentException"/> message (G-M1) if <paramref name="envKey"/>'s value
+    /// somehow reaches this method referencing an unset <c>${env:NAME}</c> variable — see
+    /// the <c>EnvVar</c> case's own remarks below.
+    /// </param>
+    /// <param name="envKey">The service's own env-map key <paramref name="value"/> is bound to.</param>
+    /// <param name="value">The raw env value text to tokenise and splice.</param>
     private static ReferenceExpression BuildEnvExpression(
+        string serviceName,
+        string envKey,
         string value,
         IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
     {
         var builder = new ReferenceExpressionBuilder();
         foreach (var token in TokeniseEnvValue(value))
         {
-            if (!token.IsReference)
+            switch (token.Kind)
             {
-                if (token.Literal.Length > 0)
-                    builder.AppendLiteral(EscapeLiteralBraces(token.Literal));
-                continue;
-            }
+                case EnvValueTokenKind.Literal:
+                    if (token.Literal.Length > 0)
+                        builder.AppendLiteral(EscapeLiteralBraces(token.Literal));
+                    break;
 
-            var access = envAccessByDependency[token.DependencyName!];
-            var part = token.Part switch
-            {
-                null => (object)access.FullConnection,
-                "host" => access.Host!,
-                "port" => access.Port!,
-                "username" => access.Username!,
-                "password" => access.Password!,
-                "database" => access.Database!,
-                // Unreachable: ValidateEnvValue already rejected any other part name.
-                _ => throw new ArgumentException($"Unsupported env: part '{token.Part}'.", nameof(value)),
-            };
-            AppendPart(builder, part);
+                case EnvValueTokenKind.EnvVar:
+                    // REQ-006 / EDGE-008: re-read the CURRENT process environment here rather
+                    // than threading a value resolved during ValidateEnvValue's eager pass
+                    // through the token stream — mirrors this file's existing two-pass shape
+                    // (every env: value is independently re-scanned by BuildEnvExpression
+                    // after ValidateEnvValue already validated it). ValidateEnvValue has
+                    // already confirmed this variable is SET (non-null) before Configure (and
+                    // so this method) ever runs, in the real Map()→Configure() pipeline.
+                    //
+                    // G-M1 (gatekeeper): the throw below is FAIL-CLOSED, not a defensive
+                    // fallback — EDGE-008 is strict precisely because a silent empty-string
+                    // substitution could turn a secured configuration value into an empty
+                    // (and possibly insecure-by-default) one with no visible error (see
+                    // ValidateEnvValue's own identical reasoning). A prior revision spliced
+                    // '?? string.Empty' here on the reasoning that ValidateEnvValue's eager
+                    // pass already makes this unreachable in the live pipeline — true today,
+                    // but that made this branch FAIL OPEN for any caller that reaches
+                    // BuildEnvExpression without going through that eager pass first (a
+                    // direct unit test, or a future refactor that drops/reorders the eager
+                    // check), silently defeating the very guarantee EDGE-008 exists to give
+                    // authors. Throwing the SAME ArgumentException ValidateEnvValue itself
+                    // raises keeps this branch correct on its own terms, independent of
+                    // whatever ran before it.
+                    var envVarValue = Environment.GetEnvironmentVariable(token.Name!)
+                        ?? throw new ArgumentException(
+                            $"Service '{serviceName}' env entry '{envKey}' references " +
+                            $"'${{env:{token.Name}}}', but the engine process has no environment " +
+                            $"variable named '{token.Name}' (EDGE-008). Set '{token.Name}' before " +
+                            "running the suite, or set it to an explicit empty value if that is " +
+                            "genuinely what the service should receive.",
+                            nameof(value));
+                    builder.AppendLiteral(EscapeLiteralBraces(envVarValue));
+                    break;
+
+                case EnvValueTokenKind.ConnRef:
+                    var access = envAccessByDependency[token.Name!];
+                    var part = token.Part switch
+                    {
+                        null => (object)access.FullConnection,
+                        "host" => access.Host!,
+                        "port" => access.Port!,
+                        "username" => access.Username!,
+                        "password" => access.Password!,
+                        "database" => access.Database!,
+                        // Unreachable: ValidateEnvValue already rejected any other part name.
+                        _ => throw new ArgumentException($"Unsupported env: part '{token.Part}'.", nameof(value)),
+                    };
+                    AppendPart(builder, part);
+                    break;
+            }
         }
 
         return builder.Build();
@@ -1552,7 +2191,13 @@ public static class EnvironmentMapper
     /// (<see cref="ContainerResource"/>) and project-form (<c>ProjectResource</c>) services,
     /// both of which implement <see cref="IResourceWithEnvironment"/>.
     /// </summary>
+    /// <param name="serviceName">
+    /// The owning service's own name — threaded through to <see cref="BuildEnvExpression"/>
+    /// so a fail-closed <c>${env:NAME}</c> throw (G-M1) can name the same service/key
+    /// <see cref="ValidateEnvValue"/>'s own eager-pass throw would have named.
+    /// </param>
     private static void ApplyEnv<T>(
+        string serviceName,
         IResourceBuilder<T> builder,
         IReadOnlyDictionary<string, string>? env,
         IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
@@ -1563,8 +2208,394 @@ public static class EnvironmentMapper
 
         foreach (var (key, value) in env)
         {
-            var expression = BuildEnvExpression(value, envAccessByDependency);
+            var expression = BuildEnvExpression(serviceName, key, value, envAccessByDependency);
             builder.WithEnvironment(key, expression);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Authorable health checks (services-generalisation spec, REQ-009).
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Applies <paramref name="spec"/>'s <see cref="ServiceSpec.HealthCheck"/> (or, when
+    /// absent, the appropriate default) to <paramref name="containerBuilder"/>.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     No <c>healthCheck</c> declared, no explicit <c>ports</c> (the pre-existing
+    ///     HTTP-only-by-default shape) — preserves today's EXACT default byte-for-byte:
+    ///     <c>WithHttpHealthCheck(path: "/", endpointName: "http")</c> (existing
+    ///     <c>EnvironmentMapperTests</c> pin this).
+    ///   </description></item>
+    ///   <item><description>
+    ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> AND a sibling
+    ///     <c>httpPort</c> (the hybrid shape) — M4 fix (fix round 2): treat it as what it
+    ///     actually is, an image-form HTTP service, and apply the SAME default HTTP probe
+    ///     (<c>WithHttpHealthCheck(path: "/", endpointName: "http")</c>) rather than leaving
+    ///     it ungated. Before this fix a hybrid service with no explicit <c>healthCheck</c>
+    ///     fell into the "no implicit check" branch below purely because
+    ///     <c>hasExplicitPorts</c> is true — <c>docs/02</c> never actually promised that for
+    ///     the hybrid shape (it only documents the http-only and ports-only defaults), it was
+    ///     simply an oversight in the boolean split.
+    ///   </description></item>
+    ///   <item><description>
+    ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> and NO <c>httpPort</c>
+    ///     (ports-only) — M4 fix (fix round 2): default to a <c>tcp</c> probe on the FIRST
+    ///     declared port (<c>spec.Ports[0]</c>) via the SAME <see cref="ApplyTcpHealthCheck"/>
+    ///     helper the explicit <c>type: tcp</c> branch below uses. Before this fix the service
+    ///     was left with NO <see cref="HealthCheckAnnotation"/> at all, so per the pinned
+    ///     Aspire 13.4.2 XML docs for <c>WaitForResourceHealthyAsync</c>, a resource with no
+    ///     health-check annotation "will be considered healthy once it reaches a Running
+    ///     state" — combined with B1 (the tcp health check that could never fail), BOTH shapes
+    ///     available to a non-HTTP system under test were ungated. A protocol-agnostic tcp
+    ///     probe is strictly better than "Running" and costs nothing once B1's bounded
+    ///     zero-byte-read discriminator makes a bare tcp probe meaningful.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>type: http</c> — <c>WithHttpHealthCheck(path: healthCheck.Path ?? "/",
+    ///     endpointName: "http")</c>, the explicit spelling of the same default.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>type: tcp</c> — a raw TCP connect (plus B1's bounded zero-byte-read
+    ///     discriminator — see <see cref="ApplyTcpHealthCheck"/>) against the resolved
+    ///     endpoint, registered as a named async health check
+    ///     (<c>IServiceCollection.AddHealthChecks().AddAsyncCheck</c>) and attached via
+    ///     Aspire's generic <c>WithHealthCheck(key)</c>; issues NO HTTP request at all.
+    ///     <c>Map()</c>'s eager validation loop has already confirmed
+    ///     <see cref="HealthCheckSpec.Port"/> is set and matches a declared port/httpPort, so
+    ///     both are used unchecked here.
+    ///   </description></item>
+    /// </list>
+    /// </remarks>
+    private static IResourceBuilder<ContainerResource> ApplyHealthCheck(
+        IDistributedApplicationBuilder builder,
+        IResourceBuilder<ContainerResource> containerBuilder,
+        string serviceName,
+        ServiceSpec spec,
+        bool hasExplicitPorts,
+        IReadOnlyList<ServiceEndpointDeclaration> endpoints)
+    {
+        var healthCheck = spec.HealthCheck;
+        var securedEndpoint = endpoints.FirstOrDefault(e => e.IsSecured);
+
+        if (healthCheck is null && securedEndpoint is not null)
+        {
+            // REQ-023 default: a TCP probe on the secured endpoint, never an HTTP one.
+            //
+            // For a service whose ONLY endpoint is the secured one, this is a ceiling. A
+            // container health check cannot present a client certificate, so no generic
+            // health-gating mechanism can confirm a mutual-TLS listener is correctly
+            // configured — measured on the test bed, an unauthenticated request to an
+            // `ssl_verify_client on` listener completes the TLS handshake in full and is
+            // answered 400 at the HTTP layer, so an HTTP probe would hold the topology
+            // unhealthy forever for a service that is working perfectly. A TCP probe proves a
+            // listener accepted a connection and nothing more; confirming that the endpoint is
+            // actually SECURED is REQ-005's engine-side probe, which presents the declared
+            // client certificate and therefore cannot live in Aspire's health gating at all.
+            //
+            // For the one OTHER shape that reaches here — a secured service with a genuine
+            // sibling plaintext `httpPort` on a DIFFERENT port — it is a TRADE, not a ceiling:
+            // that plaintext endpoint is probeable, and an HTTP probe against it would be
+            // strictly more informative than a TCP connect. Defaulting to TCP anyway keeps ONE
+            // default for "a service that declares security" instead of a rule whose answer
+            // depends on a second field, and an author who wants the stronger probe declares
+            // `healthCheck: { type: http }` explicitly — which is accepted for exactly this
+            // shape, because the "http" endpoint still exists on its own port. Same escape for
+            // the ceiling case: an explicit healthCheck against a separate unsecured health
+            // port, the shape real mTLS services use.
+            return ApplyTcpHealthCheck(
+                builder, containerBuilder, serviceName, securedEndpoint.Port, securedEndpoint.Name);
+        }
+
+        if (healthCheck is null)
+        {
+            if (!hasExplicitPorts)
+            {
+                return containerBuilder.WithHttpHealthCheck(
+                    path: "/", endpointName: ServiceEndpointNaming.HttpEndpointName);
+            }
+
+            if (spec.HttpPort is not null)
+            {
+                // M4 fix: hybrid shape (ports + httpPort, no explicit healthCheck) — it IS an
+                // image-form HTTP service, so it gets the same default HTTP probe one.
+                return containerBuilder.WithHttpHealthCheck(
+                    path: "/", endpointName: ServiceEndpointNaming.HttpEndpointName);
+            }
+
+            // M4 fix: ports-only, no explicit healthCheck — default to a tcp probe on the
+            // first declared port rather than leaving the service ungated. This is
+            // STRICTLY BETTER than Aspire's own "healthy once Running" default (it proves a
+            // listener actually accepted a connection) but it is NOT a readiness guarantee:
+            // a tcp probe is deliberately protocol-agnostic and never inspects
+            // application-layer traffic, so it cannot detect a server whose listening
+            // socket opens before its own internal startup finishes (a routine pattern, not
+            // an edge case — e.g. a broker that starts accepting TCP connections a handful
+            // of milliseconds before it is ready to serve its protocol). A non-HTTP system
+            // under test with a slow post-listen startup may still need its first step
+            // written to tolerate a brief warm-up (verifyMode: RETRY) — see docs/02
+            // §3.2.6a's "What a tcp health check does not prove" note, which this default
+            // inherits verbatim.
+            var defaultPort = spec.Ports![0];
+            var defaultEndpointName = ServiceEndpointNaming.TcpEndpointName(defaultPort);
+            return ApplyTcpHealthCheck(builder, containerBuilder, serviceName, defaultPort, defaultEndpointName);
+        }
+
+        if (string.Equals(healthCheck.Type, "http", StringComparison.Ordinal))
+        {
+            var path = string.IsNullOrEmpty(healthCheck.Path) ? "/" : healthCheck.Path;
+            return containerBuilder.WithHttpHealthCheck(
+                path: path, endpointName: ServiceEndpointNaming.HttpEndpointName);
+        }
+
+        if (string.Equals(healthCheck.Type, "tcp", StringComparison.Ordinal))
+        {
+            // Map()'s eager validation loop guarantees Port is set and is one of this
+            // service's own declared ports/httpPort before Configure (and so this method)
+            // ever runs.
+            var tcpPort = healthCheck.Port!.Value;
+
+            // Resolve the SAME endpoint reference the port was registered under above, by
+            // looking the port up in the one endpoint set both this method and the
+            // declaration loop were handed: the dedicated tcp-<port> endpoint when the port
+            // came from 'ports', the "http" endpoint when it is the service's httpPort, or
+            // the secured "https" endpoint when it is the service's own security.endpoint
+            // (REQ-023 — a raw TCP connect does not care about the target endpoint's URI
+            // scheme, which is what makes probing the secured endpoint meaningful at all).
+            // Identical, port for port, to the ports-contains test this replaced for every
+            // service that declares no 'security' block.
+            var endpointName = endpoints.FirstOrDefault(e => e.Port == tcpPort)?.Name
+                ?? ServiceEndpointNaming.HttpEndpointName;
+
+            return ApplyTcpHealthCheck(builder, containerBuilder, serviceName, tcpPort, endpointName);
+        }
+
+        // Unreachable once the schema's closed 'type' enum (tcp/http) is in place; defensive
+        // fallback for a caller that bypasses schema validation (e.g. a hand-built ServiceSpec
+        // in a unit test) — mirrors this file's existing style (e.g.
+        // ResolveDependencyEnvAccess's own fallback throw).
+        throw new ArgumentException(
+            $"Service '{serviceName}' declares 'healthCheck.type' = '{healthCheck.Type}', which " +
+            "is not recognised. Supported values: tcp, http.",
+            nameof(spec));
+    }
+
+    /// <summary>
+    /// Registers a raw-TCP health check for <paramref name="tcpPort"/> against
+    /// <paramref name="containerBuilder"/>'s <paramref name="endpointName"/> endpoint, and
+    /// attaches it via Aspire's generic <c>WithHealthCheck(key)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>B1 fix (fix round 2 — the tcp health check that could never fail).</b> A bare
+    /// <c>ConnectAsync</c> success does NOT prove a backend is listening: the endpoint this
+    /// method probes is the HOST-PUBLISHED, DCP-PROXIED address, and DCP's proxy accepts the
+    /// TCP connection UNCONDITIONALLY — before it has even attempted to reach the real
+    /// backend — and only then tries the backend itself. Measured (peer review of this
+    /// branch's first commit, 4414931): a service with <c>ports: [9093]</c>,
+    /// <c>healthCheck: { type: tcp, port: 9093 }</c>, and NOTHING listening on 9093 was
+    /// declared "healthy" in ~18 seconds by the pre-fix connect-only check; the same dead port
+    /// under a <c>type: http</c> control correctly reported unhealthy, but only after
+    /// ~126 seconds.
+    /// <para>
+    /// This method's own job is the Aspire-specific wiring around the fix: resolve
+    /// <paramref name="endpointName"/>, report <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>
+    /// up front when the endpoint is not yet allocated (pre-<c>StartAsync</c> — an Aspire-only
+    /// concern a unit test against a real socket has no equivalent of), and register/attach the
+    /// named health check. The actual connect/read discriminator that decides Healthy/Unhealthy
+    /// is <see cref="ProbeAsync"/> — extracted into its own method (M4 fix, fix round 3) so it
+    /// has a unit test that runs with no Docker/DCP dependency; see its own remarks for the
+    /// branch-by-branch logic and what it proves.
+    /// </para>
+    /// </remarks>
+    private static IResourceBuilder<ContainerResource> ApplyTcpHealthCheck(
+        IDistributedApplicationBuilder builder,
+        IResourceBuilder<ContainerResource> containerBuilder,
+        string serviceName,
+        int tcpPort,
+        string endpointName)
+    {
+        var endpoint = containerBuilder.GetEndpoint(endpointName);
+
+        var healthCheckKey = $"{serviceName}-tcp-{tcpPort}-health";
+        builder.Services.AddHealthChecks().AddAsyncCheck(healthCheckKey, ct =>
+        {
+            if (!endpoint.IsAllocated)
+            {
+                return Task.FromResult(HealthCheckResult.Unhealthy("Endpoint not yet allocated."));
+            }
+
+            return ProbeAsync(endpoint.Host, endpoint.Port, ct);
+        });
+
+        return containerBuilder.WithHealthCheck(healthCheckKey);
+    }
+
+    /// <summary>
+    /// Resolves <see cref="Map"/>'s <c>suiteDirectory</c> argument to an absolute path, defaulting
+    /// to the current directory (REQ-016).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cref names the method WITHOUT a parameter list on purpose. It carried one —
+    /// <c>Map(EnvironmentSpec?, string?)</c> — which stopped matching the moment
+    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it: this
+    /// project sets no <c>GenerateDocumentationFile</c>, so crefs here are never resolved and
+    /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
+    /// cannot rot the same way again.
+    /// </para>
+    /// A malformed value fails HERE, with a message naming it, rather than inside
+    /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
+    /// base directory itself, not in any one author-declared field, and the two deserve different
+    /// diagnostics. Mirrors <c>EnvironmentSecurityValidator.Validate</c>'s own guard around the
+    /// same call.
+    /// </remarks>
+    private static string ResolveSuiteDirectory(string? suiteDirectory)
+    {
+        var candidate = string.IsNullOrWhiteSpace(suiteDirectory)
+            ? Directory.GetCurrentDirectory()
+            : suiteDirectory;
+
+        try
+        {
+            return Path.GetFullPath(candidate);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ArgumentException(
+                $"suite directory '{candidate}' is not a valid path ({ex.Message}).",
+                nameof(suiteDirectory),
+                ex);
+        }
+    }
+
+    /// <summary>
+    /// The B1 discriminator (fix round 2 — the tcp health check that could never fail):
+    /// connects to <paramref name="host"/>:<paramref name="port"/> and, on a successful
+    /// connect, performs a bounded, small-buffer read to distinguish a live backend from
+    /// whatever merely ACCEPTED the connection — in production, DCP's host-published TCP proxy,
+    /// which accepts unconditionally before it has even attempted to reach the real backend
+    /// (see <see cref="ApplyTcpHealthCheck"/>'s own remarks for the pre-fix false-positive this
+    /// closes and its measured evidence).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     Read returns <c>0</c> bytes — whatever accepted the connection closed the pipe
+    ///     immediately because the real backend refused/was unreachable →
+    ///     <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read times out (no bytes, connection stays open) — the overwhelming majority of
+    ///     TCP protocols do not speak first, so a live backend's connection is simply held
+    ///     open with nothing to read yet → <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Read returns <c>&gt;0</c> bytes immediately — a server-speaks-first protocol (e.g.
+    ///     SMTP, SSH) greeted us unprompted → definitely alive →
+    ///     <see cref="HealthCheckResult.Healthy"/>.
+    ///   </description></item>
+    /// </list>
+    /// Measured (fix round 2, on this exact tree): against RAW DOCKER-PUBLISHED PORTS, not
+    /// through a DCP-proxied endpoint, three trials in each direction, run independently by two
+    /// parties: <c>good=CONNECT_OK READ_TIMEOUT (alive-ish)</c>, <c>bad=CONNECT_OK
+    /// READ_BYTES=0</c> — exactly the discriminator this method implements. <b>Measured on
+    /// Docker Desktop for Windows only</b> — the Linux/DCP-on-Linux proxy-close-timing
+    /// behaviour is UNVERIFIED; the same "accept unconditionally, close on backend failure"
+    /// DCP proxy design is documented for both platforms, but this has not been re-confirmed
+    /// on Linux CI.
+    /// </para>
+    /// <para>
+    /// <b>What this proves, and what it does not.</b> A <see cref="HealthCheckResult.Healthy"/>
+    /// result confirms a listener accepted the connection and stayed open — it is
+    /// deliberately protocol-agnostic and never inspects application-layer traffic, so it
+    /// cannot detect a server whose listening socket opens before its own internal startup
+    /// finishes (a routine pattern for many servers, not an edge case). This is strictly
+    /// better than Aspire's own "healthy once Running" default for a resource with no
+    /// health-check annotation at all, but it is not a substitute for an application-level
+    /// readiness signal; see docs/02 §3.2.6a's "What a tcp health check does not prove" note.
+    /// </para>
+    /// <para>
+    /// <b>Side effect on the probed connection (n-1, fix round 3).</b> Every poll holds the
+    /// connection open for up to the 1-second read bound before this method (and the caller's
+    /// own disposal of the returned <c>TcpClient</c>) tears it down — and on a server-speaks-
+    /// first protocol, consumes exactly one byte of whatever the server sent (the read buffer
+    /// is a single byte) before disconnecting. A broker or service operator watching connection
+    /// logs will see a client connect, receive at most one byte, then disconnect, once per poll
+    /// interval — expected behaviour of this probe, not a malfunctioning client.
+    /// </para>
+    /// </remarks>
+    /// <param name="host">The host to connect to.</param>
+    /// <param name="port">The port to connect to.</param>
+    /// <param name="ct">
+    /// The ambient cancellation token honoured by the health-check infrastructure. Distinct
+    /// from this method's own internal connect (3s) and read (1s) timeouts — each a separately
+    /// linked <see cref="CancellationTokenSource"/> — so an ambient cancellation propagates to
+    /// the caller unchanged (per the verdict taxonomy, a genuinely cancelled check is the
+    /// caller's concern, never reported as this probe's own <see cref="HealthCheckResult.Unhealthy(string?, System.Exception?, System.Collections.Generic.IReadOnlyDictionary{string, object}?)"/>).
+    /// </param>
+    internal static async Task<HealthCheckResult> ProbeAsync(string host, int port, CancellationToken ct)
+    {
+        using var connectTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectTimeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+
+        using var tcpClient = new System.Net.Sockets.TcpClient();
+        try
+        {
+            await tcpClient.ConnectAsync(host, port, connectTimeoutCts.Token)
+                .ConfigureAwait(false);
+
+            // B1 fix: connect succeeded — this proves only that whatever accepted the
+            // connection did so, never that a real backend is listening behind it (see this
+            // method's own remarks). Discriminate with a bounded zero-byte-buffer read.
+            using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            readTimeoutCts.CancelAfter(TimeSpan.FromSeconds(1));
+
+            try
+            {
+                var stream = tcpClient.GetStream();
+                var buffer = new byte[1];
+                var bytesRead = await stream.ReadAsync(buffer, readTimeoutCts.Token)
+                    .ConfigureAwait(false);
+
+                return bytesRead == 0
+                    ? HealthCheckResult.Unhealthy(
+                        $"TCP connect to {AuthorityText.Format(host, port)} succeeded, but the " +
+                        "connection was closed immediately (zero bytes read) — no backend is " +
+                        "listening behind the host-published proxy.")
+                    // >0 bytes: a server-speaks-first protocol greeted us unprompted.
+                    : HealthCheckResult.Healthy();
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The read timed out waiting for data or EOF (readTimeoutCts fired, not the
+                // ambient ct): the connection was held open with nothing to read yet — the
+                // live-backend signature for the overwhelming majority of TCP protocols,
+                // which do not speak first.
+                return HealthCheckResult.Healthy();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Catches both a genuine connect failure (SocketException — refused,
+            // unreachable, …) and a post-connect read failure other than a timeout (e.g. a
+            // reset), plus the connect-stage LINKED timeout firing — the 'when' clause
+            // re-throws only if the AMBIENT ct itself requested cancellation (the caller
+            // genuinely cancelled the check), which HealthCheckService is expected to
+            // observe rather than have swallowed into an Unhealthy result.
+            // m3 (gatekeeper, fix round six): rendered through AuthorityText.Format, the same
+            // bracket rule SecuredEndpointProbe's observed-address messages use. `host` is
+            // bracket-free — that is what the caller above holds, NOT something the ConnectAsync
+            // above requires (that reason was asserted across this branch and is refuted: measured
+            // on net8.0, ConnectAsync accepts the bracketed literal and connects). It matters
+            // HERE because a raw "{host}:{port}" renders an IPv6 literal as `::1:9093` —
+            // unparseable and ambiguous about where the address ends. Localhost/IPv4 today; the
+            // rule costs nothing and the branch should not close with a known-defective sibling
+            // of a defect it fixed.
+            return HealthCheckResult.Unhealthy(
+                $"TCP probe of {AuthorityText.Format(host, port)} failed: {ex.Message}");
         }
     }
 
@@ -1596,6 +2627,57 @@ public static class EnvironmentMapper
         return node is YamlScalarNode { Value: { } value } &&
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
+
+    // -----------------------------------------------------------------------
+    // Dependency sidecar svc::-key naming (m1 fix, fix round 2).
+    // -----------------------------------------------------------------------
+    // A dependency's Build lambda ordinarily stages exactly one svc::<name>-shaped key
+    // per kind (or none, for the pure dependency-only kinds) — see the class remarks'
+    // "conn:: vs svc::" summary. TWO kinds are the exception: they stage an ADDITIONAL
+    // sidecar endpoint into svc::<name>-<suffix>, alongside their own conn::<name>. These
+    // two suffix-naming functions are the SINGLE source of truth for those extra names —
+    // both the Build lambdas below AND GetDependencyServiceSidecarNames (consulted by
+    // ProviderPipeline's host-resource-vs-declared-name collision guard) call them, so the
+    // two can never drift apart the way the guard's own stated justification once did
+    // (see that guard's remarks for the mailpit-smtp / kafka-sr false-negative it used to
+    // let through).
+
+    /// <summary>The svc::-staged key for a <c>mailpit</c> dependency's SMTP sidecar endpoint.</summary>
+    private static string MailpitSmtpServiceName(string dependencyName) => dependencyName + "-smtp";
+
+    /// <summary>
+    /// The svc::-staged key for a <c>kafka</c> dependency's optional schema-registry
+    /// sidecar endpoint (present only when <see cref="KafkaWantsSchemaRegistry"/> is true).
+    /// </summary>
+    private static string KafkaSchemaRegistryServiceName(string dependencyName) => dependencyName + "-sr";
+
+    /// <summary>
+    /// Returns the EXTRA <c>svc::&lt;name&gt;</c>-staged keys — beyond the dependency's own
+    /// bare name — that a dependency of <paramref name="spec"/>'s type stages during
+    /// <c>Configure</c>. Empty for every kind except <c>mailpit</c> (unconditionally, its
+    /// SMTP sidecar) and <c>kafka</c> (conditionally, when <c>schemaRegistry: true</c>).
+    /// </summary>
+    /// <remarks>
+    /// Purely declarative — reads only <paramref name="spec"/>, never invokes any dependency
+    /// registration's <c>Build</c> lambda — so it is safe to call at validation time, before
+    /// any <c>IDistributedApplicationBuilder</c> exists. <c>ProviderPipeline.
+    /// BuildProjectContext</c>'s host-resource-vs-declared-name collision guard (m1 fix, fix
+    /// round 2) calls this for every declared dependency so a host resource (e.g. a webhook
+    /// listener) cannot silently shadow one of these sidecar keys the way a listener named
+    /// <c>mail-smtp</c> alongside a <c>mailpit</c> dependency <c>mail</c>, or a listener named
+    /// <c>bus-sr</c> alongside a <c>kafka</c> dependency <c>bus</c> with
+    /// <c>schemaRegistry: true</c>, previously could — both used to validate PASS, and the
+    /// <c>-sr</c> key specifically is read at run time by both Kafka providers, so an Avro
+    /// publish would have sent schema-registry traffic to the engine's own listener instead.
+    /// </remarks>
+    public static IEnumerable<string> GetDependencyServiceSidecarNames(string name, DependencySpec spec) =>
+        spec.Type switch
+        {
+            "mailpit" => new[] { MailpitSmtpServiceName(name) },
+            "kafka" when KafkaWantsSchemaRegistry(spec.Extra) =>
+                new[] { KafkaSchemaRegistryServiceName(name) },
+            _ => Array.Empty<string>(),
+        };
 
     /// <summary>
     /// Parses the <c>extra.queues</c> sequence from an Azure Service Bus dependency's

@@ -35,6 +35,20 @@ public sealed class HttpRestExecutionTests
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// A <see cref="StubProjectContext"/> declaring service <c>"svc"</c> — the target every
+    /// path-validation test in this file uses (REQ-012 as narrowed by M1: target reconciliation
+    /// needs it declared under <c>environment.services</c> to pass, and a target naming a
+    /// declared dependency is rejected outright — a dependency stages a connection string, not
+    /// a service endpoint; these tests are about path shape, not target reconciliation, so
+    /// declaring it here keeps that concern out of each test body).
+    /// </summary>
+    private static readonly StubProjectContext s_svcDeclaredContext = new(
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
+        {
+            ["svc"] = new DeclaredServiceInfo(new List<string> { "http" }),
+        });
+
+    /// <summary>
     /// Minimal ICompileContext for the execution tests.
     /// </summary>
     private sealed class StubCompileContext : ICompileContext
@@ -475,7 +489,7 @@ public sealed class HttpRestExecutionTests
             Body: null,
             Expect: null);
 
-        var result = provider.Validate(model, new StubProjectContext());
+        var result = provider.Validate(model, s_svcDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
@@ -498,7 +512,7 @@ public sealed class HttpRestExecutionTests
             Body: null,
             Expect: null);
 
-        var result = provider.Validate(model, new StubProjectContext());
+        var result = provider.Validate(model, s_svcDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
@@ -521,7 +535,7 @@ public sealed class HttpRestExecutionTests
             Body: null,
             Expect: null);
 
-        var result = provider.Validate(model, new StubProjectContext());
+        var result = provider.Validate(model, s_svcDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
@@ -544,7 +558,7 @@ public sealed class HttpRestExecutionTests
             Body: null,
             Expect: null);
 
-        var result = provider.Validate(model, new StubProjectContext());
+        var result = provider.Validate(model, s_svcDeclaredContext);
 
         Assert.False(result.IsValid);
         Assert.NotEmpty(result.Errors);
@@ -566,7 +580,7 @@ public sealed class HttpRestExecutionTests
             Body: null,
             Expect: null);
 
-        var result = provider.Validate(model, new StubProjectContext());
+        var result = provider.Validate(model, s_svcDeclaredContext);
 
         Assert.True(result.IsValid,
             $"Expected valid path to be accepted; errors: {string.Join("; ", result.Errors)}");
@@ -594,12 +608,79 @@ public sealed class HttpRestExecutionTests
                 Body: null,
                 Expect: null);
 
-            var result = provider.Validate(model, new StubProjectContext());
+            var result = provider.Validate(model, s_svcDeclaredContext);
 
             Assert.True(result.IsValid,
                 $"Rooted path '{path}' must be accepted on all platforms; " +
                 $"errors: {string.Join("; ", result.Errors)}");
         }
+    }
+
+    // ── Target reconciliation (services-generalisation spec, REQ-012/EDGE-009) ──
+
+    /// <summary>
+    /// REQ-012/EDGE-009: a <c>target</c> naming neither a declared service nor a declared
+    /// dependency fails validation — at <c>vouchfx validate</c> time, never surfacing later
+    /// as a runtime "bootstrap not found" environment error. The message names the unknown
+    /// target and lists what IS declared.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesNeitherServiceNorDependency_IsInvalid_ListsDeclaredSurfaces()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "does-not-exist",
+            Method: "GET",
+            Path: "/api/v1/users",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, s_svcDeclaredContext);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("does-not-exist", StringComparison.Ordinal) &&
+            e.Contains("svc", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// DEPENDENCY (never a service) must be rejected too — http.rest resolves 'target'
+    /// exclusively against declared services (<c>VarKeys.Service</c>); a dependency stages
+    /// its connection into <c>conn::&lt;name&gt;</c> instead, which http.rest never reads.
+    /// Before this fix, the suite the reviewer probed — an http.rest step targeting a
+    /// declared 'postgres' dependency — validated PASS and then could never work at run
+    /// time. The message must name the dependency and list the services it CAN reach.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetNamesDeclaredDependency_IsInvalid_NamesDependencyAndListsServices()
+    {
+        var provider = new HttpRestProvider();
+        var ctx = new StubProjectContext(
+            services: new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
+            {
+                ["orders-api"] = new DeclaredServiceInfo(new List<string> { "http" }),
+            },
+            dependencies: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["orders-db"] = "postgres",
+            });
+        var model = new HttpRestModel(
+            Target: "orders-db",
+            Method: "GET",
+            Path: "/health",
+            Headers: null,
+            Body: null,
+            Expect: null);
+
+        var result = provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.Contains("orders-db", StringComparison.Ordinal) &&
+            e.Contains("dependency", StringComparison.OrdinalIgnoreCase) &&
+            e.Contains("orders-api", StringComparison.Ordinal));
     }
 
     // ── M1: Runtime same-authority — normal request still passes ──────────────
@@ -724,17 +805,31 @@ public sealed class HttpRestExecutionTests
     // ── Stub context for validate tests ───────────────────────────────────────
 
     /// <summary>
-    /// Minimal <see cref="IProjectContext"/> stub for validation tests.
-    /// Returns an empty <see cref="IProjectContext.DeclaredDependencies"/> map
-    /// (Sprint-4 addition to the interface).
+    /// Minimal <see cref="IProjectContext"/> stub for validation tests. Both maps default
+    /// empty; a test that needs its <c>target</c> to reconcile against a declared service
+    /// (REQ-012) passes <paramref name="services"/>, and a test proving M1's dependency-
+    /// target rejection (fix round 2) passes <paramref name="dependencies"/> — see
+    /// <see cref="StubProjectContext(IReadOnlyDictionary{string,IReadOnlyList{string}}?, IReadOnlyDictionary{string,string}?)"/>.
     /// </summary>
     private sealed class StubProjectContext : IProjectContext
     {
+        internal StubProjectContext(
+            IReadOnlyDictionary<string, DeclaredServiceInfo>? services = null,
+            IReadOnlyDictionary<string, string>? dependencies = null)
+        {
+            DeclaredServices = services
+                ?? new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
+            DeclaredDependencies = dependencies
+                ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
         /// <inheritdoc />
         public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
 
         /// <inheritdoc />
-        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
-            new Dictionary<string, string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
     }
 }

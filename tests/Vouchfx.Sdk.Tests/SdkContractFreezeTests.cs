@@ -56,6 +56,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Vouchfx.Sdk;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -150,6 +151,96 @@ public sealed class SdkContractFreezeTests
                 $"Frozen v1 core provider interface '{name}' is missing from Vouchfx.Sdk. "
                 + "The v1 contract is FROZEN — a core interface may never be renamed or removed.");
         }
+    }
+
+    /// <summary>
+    /// The DEFAULT-ness of a default-implemented interface member is part of the frozen contract,
+    /// and the byte-for-byte golden cannot see it. This is the missing half of that gate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What the golden misses, measured rather than argued.</strong>
+    /// <c>SdkPublicApiSignature.MemberLines</c> emits a property's type, name and accessor KINDS
+    /// (<c>get</c>/<c>set</c>/<c>init</c>) and never inspects <c>IsAbstract</c>. The committed
+    /// golden proves it: <c>ICompileContext.DeclaredServices</c> (which HAS a default
+    /// implementation) and <c>IProjectContext.DeclaredServices</c> (which does not) render as the
+    /// SAME byte sequence in <c>Golden/vouchfx-sdk-public-api.v1.txt</c> —
+    /// <c>property …&lt;System.String,Vouchfx.Sdk.DeclaredServiceInfo&gt; DeclaredServices
+    /// { get }</c>, once under each interface's own header. Deleting the
+    /// <c>=&gt; NoDeclaredServices</c> therefore leaves the golden byte-identical and this gate
+    /// silent — confirmed by doing exactly that and watching
+    /// <see cref="VouchfxSdkPublicApi_MatchesGolden_ByteForByte"/> pass unchanged.
+    /// </para>
+    /// <para>
+    /// <strong>Why that silence matters.</strong> <c>DeclaredServices</c> was added to a v1
+    /// interface at all ONLY because it carries a default: the default is what keeps every existing
+    /// implementor compiling — 82 type declarations implement <c>ICompileContext</c> in this
+    /// repository alone (measured), almost all of them test stand-ins, and every out-of-tree
+    /// provider is free to carry more — and it is therefore the entire basis on which the addition
+    /// is legal under the v1 freeze (see that member's own "Why a DEFAULT implementation" remarks).
+    /// Removing it turns an additive change into a source-breaking one for every consumer —
+    /// silently, since nothing else in this assembly's contract surface records that the member is
+    /// defaulted.
+    /// </para>
+    /// <para>
+    /// Asserted here rather than emitted into the signature on purpose: a change to
+    /// <c>SdkPublicApiSignature</c> would move BOTH goldens (this one and the
+    /// <c>Vouchfx.Sdk.Testing</c> one) and require the documented regen flags for a gate that adds
+    /// no contract information a reader of the golden was missing. A standalone assertion pins the
+    /// property and leaves the frozen artefacts untouched.
+    /// </para>
+    /// <para>
+    /// The census in the second half is the same guard pointed the other way: a NEW default
+    /// implementation added to a v1 interface is also a contract change the golden cannot see, and
+    /// it must be a deliberate, reviewed act rather than a silent one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DefaultImplementedInterfaceMembers_AreExactlyTheKnownSet()
+    {
+        // NonPublic and Static are in the census flags deliberately (m4 — gatekeeper m3 /
+        // security NIT-2, fix round five). The census once read Public | Instance | DeclaredOnly,
+        // which left the same blind spot this gate exists to close, one axis over: a
+        // `static virtual` / `static abstract` member, or a non-public default implementation,
+        // added to a v1 interface would escape BOTH the byte-for-byte golden (whose emitter takes
+        // public members only) and this census, and a non-abstract one of either kind is a default
+        // implementation by any other name. Widened and the expected set RE-DERIVED by measurement
+        // rather than predicted: the widening added no member, so the v1 surface carries no static
+        // or non-public interface member at all today — which is itself the fact worth pinning,
+        // since the first one added must now be a deliberate, reviewed act.
+        const BindingFlags flags =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+        var compileContextGetter = typeof(ICompileContext)
+            .GetProperty(nameof(ICompileContext.DeclaredServices), flags)?
+            .GetMethod;
+
+        Assert.NotNull(compileContextGetter);
+        Assert.False(
+            compileContextGetter!.IsAbstract,
+            "ICompileContext.DeclaredServices has lost its default implementation. That default is "
+            + "the only reason adding the member to a FROZEN v1 interface was legal: it keeps every "
+            + "existing implementor — 82 in-repo type declarations, almost all test stand-ins, plus "
+            + "every out-of-tree provider's own doubles — compiling and behaving exactly as before. "
+            + "Removing it is a "
+            + "source-breaking change to the v1 provider contract, and the byte-for-byte golden "
+            + "cannot see it (the signature emitter never inspects IsAbstract).");
+
+        // The census: which members of the frozen interfaces carry a default implementation at all.
+        var defaulted = typeof(IStepProvider).Assembly.GetTypes()
+            .Where(t => t.IsInterface && (t.IsPublic || t.IsNestedPublic))
+            .SelectMany(
+                t => t.GetMethods(flags),
+                (t, m) => (Type: t, Method: m))
+            .Where(x => !x.Method.IsAbstract)
+            .Select(x => $"{x.Type.FullName}.{x.Method.Name}")
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        string[] expected = { "Vouchfx.Sdk.ICompileContext.get_DeclaredServices" };
+
+        Assert.Equal(expected, defaulted);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

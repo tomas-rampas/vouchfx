@@ -92,7 +92,11 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
   taxonomy, the reports and the exit codes. **Only `Fail` breaks CI by default** — conflating an
-  environment error with a defect destroys trust in the tool.
+  environment error with a defect destroys trust in the tool. The one deliberate exception serves the
+  same argument rather than retracting it: a suite that declares a `security:` block the engine cannot
+  confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
+  infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
+  pipeline on a security suite that verified nothing.
 - **One event stream, many renderers.** A schema-versioned JSON Lines stream is the single substrate;
   the terminal, HTML, JUnit XML and `--events` outputs are all renderings of it, so they can never
   disagree. Each retry attempt is recorded individually, making a polling timeline renderable without
@@ -164,11 +168,15 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 | `0` | Pass — or EnvironmentError/Inconclusive when not opted in | – |
 | `1` | **Fail** — a genuine defect | **Always** |
 | `2` | UsageError — bad option, missing path | Always |
-| `3` | EnvironmentError | Only with `--fail-on-env-error` |
-| `4` | Inconclusive | Only with `--fail-on-inconclusive` |
+| `3` | EnvironmentError | Only with `--fail-on-env-error` — except an unconfirmable `security:` declaration |
+| `4` | Inconclusive | Only with `--fail-on-inconclusive` — except an unconfirmable `security:` declaration |
 | `5` | Gaps found | Only with `vouchfx plan --fail-on-gap` |
 
-One exception: a run in which *every* discovered scenario fails to parse exits 4 unconditionally.
+Two exceptions are unconditional. A run in which *every* discovered scenario fails to parse exits 4.
+And a suite declaring a `security:` block the engine cannot confirm exits non-zero with neither gating
+flag set — 3 when the pre-run confirmation probe fails, 4 when the declaration is rejected before any
+container starts. Every other environment error still exits 0 by default; see
+[CI integration](https://vouchfx.io/ci-integration/) for the full breakdown.
 
 Full CLI coverage — every flag, the report formats, graceful shutdown for programmatic hosts — is in
 [Getting Started](https://vouchfx.io/getting-started/).

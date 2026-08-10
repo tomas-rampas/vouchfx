@@ -60,9 +60,21 @@ public sealed class ScenarioValidatorTests
     [Fact]
     public void ValidateScenario_ValidHttpRestScenario_IsValidWithNoDiagnostics()
     {
+        // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012): this
+        // fixture predates REQ-012's target-reconciliation check, when http.rest accepted
+        // any target string. This test was never "the hole", though: it is a positive/
+        // happy-path test (asserts IsValid), so it only ever exercised REQ-012's ACCEPT
+        // branch; the REJECT branch (an undeclared target) is independently covered by
+        // HttpRestExecutionTests.Validate_TargetNamesNeitherServiceNorDependency_IsInvalid_ListsDeclaredSurfaces
+        // (a dedicated provider-level test with a stub IProjectContext that deliberately
+        // declares no services at all).
         const string yaml = """
             metadata:
               name: valid-scenario
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
             steps:
               - id: check-health
                 type: http.rest
@@ -214,7 +226,16 @@ public sealed class ScenarioValidatorTests
     [Fact]
     public void Validate_MixOfValidAndInvalidScenarios_AggregatesCorrectly()
     {
+        // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012) for the
+        // VALID document — see ValidateScenario_ValidHttpRestScenario_IsValidWithNoDiagnostics's
+        // own remark. The invalid document is unaffected: it fails at the schema stage
+        // (missing 'method') before target reconciliation is ever reached, so it is
+        // deliberately left with no environment block.
         const string validYaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
             steps:
               - id: ok
                 type: http.rest

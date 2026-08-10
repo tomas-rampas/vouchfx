@@ -28,6 +28,19 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   Elasticsearch dependencies are automatically reset (data cleared, structure preserved) after each scenario
   completes; broker and DynamoDB/MinIO dependencies are not reset; a failed reset surfaces as an environment
   error naming the dependency.
+- **Transport security for authenticated infrastructure** — a `security:` block declares TLS or mutual TLS
+  per target: on any `environment.services` entry, and on a `kafka` dependency. The HTTP family
+  (`http.rest`, `http.soap`, `metrics-assert.prometheus`) and the Kafka families (`mq-publish.kafka`,
+  `mq-expect.kafka`) take their client transport from that declaration, presenting the declared client
+  certificate under `profile: mtls` and pinning the peer to the declared `caCert`. Server-side keystore
+  and certificate files are declared as `serverArtifacts` and streamed into the target's own container
+  (never bind-mounted, so a remote daemon behaves like a local one). Before any step runs, a fail-closed
+  confirmation probe connects with the same material a step will and reports a named level —
+  `TransportConfirmed`, or `AuthenticatedRoundTrip` where the engine can complete a protocol round trip
+  and, under `mtls`, show that the peer *refused* an anonymous client. A declaration the engine cannot
+  confirm breaks CI with no gating flags set — the single deliberate exception to "only `Fail` breaks CI
+  by default". Which technologies this reaches, and which it does not, is set out per integration in the
+  [security compatibility matrix](security-matrix.md).
 - **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
   frozen byte-for-byte, each enforced by a golden-file CI gate. Evolution within v1.x is additive only.
 - **The Provider SDK** (`Vouchfx.Sdk`) with worked example providers, a conformance test harness, and the
@@ -112,6 +125,13 @@ within v1.x. Within that constraint, the near-term direction is:
   downloads the package, and places it in the providers directory, with a dependency-only *Vouched
   metapackage* installing the whole badge-holding set once Vouched providers exist. The frozen v1 SDK contract
   is what makes externally-built provider binaries loadable across the whole v1.x series.
+- **Transport security for the remaining dependency kinds** — 1.0 wires a client connection for exactly two
+  target kinds: any declared service, and a `kafka` dependency. On every other dependency kind a `security:`
+  block is rejected outright, and no profile or substitute declaration restores it. That narrowing is a
+  release position, not a permanent boundary — the schema and the CHANGELOG both name it as a **1.1**
+  capability, and widening it is additive, because both gates run at validation time and so decide only
+  which suites validate at all. The per-integration breakdown, including which deferrals are 1.1 and
+  which are out of scope, is the [security compatibility matrix](security-matrix.md).
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
 - **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked

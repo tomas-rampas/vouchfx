@@ -38,6 +38,9 @@ public sealed class TestCompileContext : ICompileContext
     private static readonly IReadOnlyDictionary<string, string> s_emptyStrings =
         new Dictionary<string, string>(StringComparer.Ordinal);
 
+    private static readonly IReadOnlyDictionary<string, DeclaredServiceInfo> s_emptyServices =
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
+
     /// <summary>
     /// Initialises a new <see cref="TestCompileContext"/> for the given step.
     /// </summary>
@@ -90,6 +93,18 @@ public sealed class TestCompileContext : ICompileContext
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// An <c>init</c> property rather than a fifth constructor parameter, deliberately: adding an
+    /// optional parameter to a PUBLISHED constructor is source-compatible but BINARY-breaking —
+    /// an assembly compiled against the four-parameter overload binds to a member that no longer
+    /// exists — and this harness ships as a NuGet package. An added property is additive in both
+    /// senses, and the golden diff shows one added line rather than a mutated signature.
+    /// Defaults to the empty map, which is the behaviour every existing harness call already had.
+    /// </remarks>
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; init; } =
+        s_emptyServices;
 
     /// <summary>
     /// Projects a format-aware capture map to the back-compatible expression-string

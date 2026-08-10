@@ -34,11 +34,18 @@ public interface IBindingContext { }
 /// <para>
 /// This context is <strong>engine-supplied and provider-consumed</strong>:
 /// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — only the
-/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
-/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
-/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
-/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
+/// interface. Adding a member is therefore non-breaking for providers — the ENGINE
+/// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
+/// this remark previously claimed the engine as "the single in-tree implementor",
+/// which the services-generalisation spec's own <see cref="DeclaredServices"/>
+/// addition below made visibly false — adding that member required updating ~22
+/// test-only stand-in implementations across this repository's own test suites,
+/// which also implement this interface in-tree, just never ship. The claim that
+/// matters for provider authors is unaffected either way: no PROVIDER implements
+/// this interface, so no provider needs to change when a member is added.) The
+/// <em>frozen v1 contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em>
+/// surface (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely
+/// via new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
 /// freezes at the M1.5 milestone (end of Phase 2).
 /// </para>
 /// <para>
@@ -65,6 +72,70 @@ public interface IProjectContext
     /// infrastructure (dependency reconciliation, §13).
     /// </remarks>
     IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <summary>
+    /// Gets the map of service names to their declared shape, as declared under
+    /// <c>environment.services</c> in the scenario file (services-generalisation spec,
+    /// REQ-010).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Keys are the logical service names (e.g. <c>"kafka-broker"</c>), mirroring
+    /// <see cref="DeclaredDependencies"/>'s own shape; each value's
+    /// <see cref="DeclaredServiceInfo.EndpointNames"/> carries the Aspire endpoint names
+    /// that service's declared shape produces (e.g. <c>["http"]</c> for the implicit
+    /// default HTTP endpoint, or <c>["tcp-9093"]</c> for a declared <c>ports: [9093]</c>
+    /// entry) — empty for a project-form service, whose endpoints Aspire auto-discovers
+    /// from the project's own launch profile rather than this engine modelling them. See
+    /// <see cref="DeclaredServiceInfo"/>'s own remarks for why the value is a record rather
+    /// than a bare endpoint-name list.
+    /// </para>
+    /// <para>
+    /// The map is NOT limited to <c>environment.services</c> entries, and a scenario that
+    /// omits that section entirely can still produce a non-empty map. It carries every name
+    /// the engine stages under a <c>svc::</c> key, from three sources:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///   <c>environment.services</c> entries, as above.
+    ///   </description></item>
+    ///   <item><description>
+    ///   Host resources contributed by a step's own
+    ///   <see cref="IHostResourceContributor{TModel}"/> — a <c>webhook-listen.http</c>
+    ///   listener or a <c>trace-expect.otlp</c> receiver, for example. These are declared BY
+    ///   a step rather than under <c>environment.services</c>, and a step may legitimately
+    ///   target one declared by a LATER step, which is why they are collected up front.
+    ///   </description></item>
+    ///   <item><description>
+    ///   Sidecar endpoints of managed dependencies, which the engine stages under a suffixed
+    ///   name rather than the dependency's own: a <c>kafka</c> dependency declaring
+    ///   <c>schemaRegistry: true</c> exposes its registry REST API at
+    ///   <c>&lt;name&gt;-sr</c>, and a <c>mailpit</c> dependency exposes SMTP at
+    ///   <c>&lt;name&gt;-smtp</c>. The dependency's own name stays in
+    ///   <see cref="DeclaredDependencies"/> and is staged under <c>conn::</c>, not here.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The practical consequence for a provider reconciling a <c>target</c>: membership of
+    /// this map means "the engine stages a <c>svc::</c> value under this name", not "the
+    /// author wrote this under <c>environment.services</c>". It says nothing about which
+    /// protocol that endpoint speaks.
+    /// </para>
+    /// <para>
+    /// Providers use this map the same way they use <see cref="DeclaredDependencies"/>: to
+    /// reconcile a step's <c>target</c> against declared infrastructure (dependency/service
+    /// reconciliation, §13) — e.g. <c>mq-publish.kafka</c> accepting a <c>target</c> naming
+    /// either a declared <c>kafka</c> dependency or a declared service exposing a
+    /// Kafka-compatible endpoint.
+    /// </para>
+    /// <para>
+    /// This is an ADDITIVE member on a provider-CONSUMED (never provider-implemented)
+    /// interface (see this interface's own remarks) — non-breaking for providers; only the
+    /// engine (and any test harness implementing this interface as a stand-in) must satisfy
+    /// it.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <summary>
     /// Gets the directory that relative file paths in step fields (e.g.
@@ -104,10 +175,59 @@ public interface IProjectContext
 /// named member on <see cref="IProjectContext"/> so a provider's <c>Emit</c>
 /// stage can resolve the same external file it validated at bind/validate
 /// time (e.g. <c>script.csharp</c>'s <c>file</c> field).
+/// authenticated-infrastructure-mtls addition: <see cref="DeclaredServices"/>,
+/// mirroring <see cref="IProjectContext.DeclaredServices"/> for the same reason —
+/// a provider whose <c>target</c> may name EITHER a dependency or a service must
+/// emit the corresponding <c>Vars</c> key, and which key that is can only be
+/// decided at compile time.
 /// </para>
 /// </remarks>
 public interface ICompileContext
 {
+    /// <summary>
+    /// The <see cref="DeclaredServices"/> default: the empty map, meaning "this context knows of
+    /// no declared services", which is what every pre-existing implementation was already saying
+    /// by not having the member at all.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, DeclaredServiceInfo> NoDeclaredServices =
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets the map of service names to their declared shape — the same map
+    /// <see cref="IProjectContext.DeclaredServices"/> exposes at validate time, exposed here
+    /// too because <c>Emit</c> runs in a separate stage and must reach the same fact.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// See <see cref="IProjectContext.DeclaredServices"/> for what the map contains (it is not
+    /// limited to <c>environment.services</c> entries: it carries every name the engine stages
+    /// under a <c>svc::</c> key). The engine's own context exposes the identical instance, so a
+    /// provider that reconciled a <c>target</c> against it in <c>Validate</c> reads the same
+    /// membership in <c>Emit</c>.
+    /// </para>
+    /// <para>
+    /// <strong>What it is for.</strong> A provider whose <c>target</c> may name either kind —
+    /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> accept a <c>kafka</c> dependency OR a
+    /// declared service (REQ-011) — must emit <c>VarKeys.Connection(target)</c> for the first
+    /// and <c>VarKeys.Service(target)</c> for the second. Emitting one key and hoping, or
+    /// emitting both and letting the helper try each in turn, is the "provider guessing" that
+    /// REQ-023 forbids; membership of this map is the answer, and it is known at compile time.
+    /// </para>
+    /// <para>
+    /// <strong>Why a DEFAULT implementation rather than a plain new member.</strong> This
+    /// interface's own remarks say adding a member is non-breaking because the engine is its
+    /// single in-tree implementor — which is true of PRODUCTION code and false of test doubles:
+    /// this repository alone carries some eighty <c>StubCompileContext</c> stand-ins, and every
+    /// provider outside it is free to carry more. A default returning the empty map keeps all of
+    /// them compiling and behaving EXACTLY as before (an unknown name is not a service, so a
+    /// provider emits the <c>conn::</c> key it emitted before this member existed), while the
+    /// engine's own context overrides it with the real map. Adding a member with a default is
+    /// additive in the strongest available sense; adding one without would have been a
+    /// source-breaking change dressed as an additive one.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices => NoDeclaredServices;
+
     /// <summary>
     /// Gets the identifier of the step currently being compiled.
     /// Providers must sanitise this value via <see cref="CsxFragment.SanitiseId"/>

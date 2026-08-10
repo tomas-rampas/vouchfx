@@ -79,7 +79,89 @@ public sealed record ServiceSpec(
     string? Project,
     string? ImagePullPolicy,
     int? HttpPort,
-    IReadOnlyDictionary<string, string>? Env);
+    IReadOnlyDictionary<string, string>? Env)
+{
+    /// <summary>
+    /// Optional transport security declaration (TLS/mTLS) for this service's endpoint
+    /// (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/> when
+    /// the service declares no <c>security:</c> block — today's unauthenticated-by-default
+    /// behaviour is unchanged.
+    /// </summary>
+    /// <remarks>
+    /// Declared as an init-only property rather than a positional record parameter,
+    /// mirroring <see cref="DependencySpec.Image"/>'s own remarks: this record lives in a
+    /// packable assembly, and inserting a new positional parameter would change the
+    /// primary constructor's parameter order/arity and the compiler-generated
+    /// <c>Deconstruct</c> — a binary-breaking change for any already-compiled caller. An
+    /// init-only property is purely additive.
+    /// </remarks>
+    public SecuritySpec? Security { get; init; }
+
+    /// <summary>
+    /// One or more TCP ports this service exposes, beyond (or instead of) the implicit
+    /// default HTTP endpoint (services-generalisation spec, REQ-008). <see langword="null"/>
+    /// when the service declares no <c>ports:</c> list — today's HTTP-only-by-default
+    /// behaviour (an implicit HTTP endpoint on <see cref="HttpPort"/>, or port 80) is
+    /// unchanged. When declared, the service is brought up via Aspire's generic TCP
+    /// endpoint for each port rather than an implicit <c>WithHttpEndpoint</c>, so a
+    /// non-HTTP system under test (e.g. a customer-supplied Kafka broker) can be targeted
+    /// at all; the implicit default HTTP endpoint is then suppressed unless
+    /// <see cref="HttpPort"/> is ALSO explicitly declared (a hybrid service exposing both).
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </remarks>
+    public IReadOnlyList<int>? Ports { get; init; }
+
+    /// <summary>
+    /// The host port each pinned container port publishes on (REQ-025), keyed by CONTAINER
+    /// port. <see langword="null"/> when no entry of <see cref="Ports"/> used the
+    /// <c>"&lt;host&gt;:&lt;container&gt;"</c> form, and never containing an entry for a port
+    /// declared as a bare integer — for which the orchestrator allocates a host port as before.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A companion map rather than a richer <see cref="Ports"/> element type</strong>,
+    /// and the reason is what reads <see cref="Ports"/>. Every consumer of that list wants the
+    /// CONTAINER port and nothing else: <c>ServiceEndpointNaming</c> derives endpoint names from
+    /// it (<c>tcp-9093</c>), <c>security.endpoint</c> resolves its selector against it (REQ-002),
+    /// and the health-check cross-reference and default probe read it. Widening the element type
+    /// would have made every one of those sites decide which half of a pair it meant, for a field
+    /// that is <see langword="null"/> in every suite written before this requirement. Keeping
+    /// <see cref="Ports"/> a list of container ports leaves all of them byte-for-byte unchanged
+    /// and confines the new fact to the two sites that consume it: the mapper, which publishes
+    /// the endpoints, and <c>SuiteTopology</c>'s pre-flight, which must refuse a pinned port this
+    /// machine cannot bind before any container starts.
+    /// </para>
+    /// <para>
+    /// Keyed by container port because that is the half the rest of the language already names —
+    /// an endpoint is <c>tcp-9093</c> whether or not its host side is pinned.
+    /// </para>
+    /// <para>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<int, int>? PinnedHostPorts { get; init; }
+
+    /// <summary>
+    /// An author-declared health check for this service (services-generalisation spec,
+    /// REQ-009), replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
+    /// endpointName: "http")</c>) applied when this is <see langword="null"/> on an
+    /// HTTP-shaped service (no <see cref="Ports"/> declared). A <see cref="Ports"/>-declared
+    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> does NOT go unchecked
+    /// (M4 fix, fix round 2 — this summary previously said it did, before that fix landed):
+    /// it defaults to a <c>tcp</c> probe against the first declared port, never an HTTP
+    /// request the service may not even be able to answer, but a real check rather than none
+    /// at all — see docs/02 §3.2.6a for what a <c>tcp</c> probe does and does not prove.
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </remarks>
+    public HealthCheckSpec? HealthCheck { get; init; }
+}
 
 /// <summary>
 /// Specification for a managed Aspire dependency (§3.2).
@@ -137,4 +219,18 @@ public sealed record DependencySpec(
     /// caller. An init-only property is purely additive.
     /// </remarks>
     public string? Image { get; init; }
+
+    /// <summary>
+    /// Optional transport security declaration (TLS/mTLS) for this dependency's
+    /// endpoint (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/>
+    /// when the dependency declares no <c>security:</c> block — today's
+    /// unauthenticated-by-default behaviour is unchanged. Kind-generic: every one of
+    /// the thirteen dependency kinds accepts this field, unlike <see cref="Extra"/>'s
+    /// per-kind-restricted siblings (<c>schemaRegistry</c>, <c>queues</c>, <c>topics</c>).
+    /// </summary>
+    /// <remarks>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Image"/> — see its own remarks.
+    /// </remarks>
+    public SecuritySpec? Security { get; init; }
 }

@@ -1,0 +1,19 @@
+# Surface coverage: environment.services.<name>.security with profile: mtls and every
+# optional field declared together (caCert + clientCert + clientKey) — the full shape
+# REQ-001 describes for a customer's own mTLS-secured broker declared as a service.
+metadata:
+  name: security-service-mtls-full
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      security:
+        profile: mtls
+        endpoint: 9093
+        caCert: ./certs/ca.pem
+        clientCert: ./certs/client.pem
+        clientKey: ./certs/client-key.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.services.security surface only."

@@ -94,14 +94,38 @@ internal static class WatchRunner
             buildTopologyAsync: async (compiled, ct) =>
             {
                 var ast = ((CompiledScenario)compiled).Ast;
-                var topology = await SuiteTopology.StartAsync(
-                    ast.Environment,
-                    appHostAssemblyName,
-                    startupTimeout: TimeSpan.FromSeconds(120),
-                    seedBaseDirectory: Path.GetDirectoryName(filePath),
-                    cancellationToken: ct).ConfigureAwait(false);
-                isolation = ScenarioRunner.BuildWatchIsolation(topology);
-                return topology;
+                var suiteDirectory = Path.GetDirectoryName(filePath);
+
+                // REQ-005/REQ-014: the SAME resolved client security configuration `vouchfx run`
+                // hands the probe. Omitted here until now, and the omission was invisible: an
+                // optional parameter left off compiles and reads correctly, while every secured
+                // suite became unrunnable under `--watch` — a `profile: tls` suite failing
+                // PartialChain and a `profile: mtls` suite reporting "no 'clientCert'/'clientKey'
+                // pair resolved" about files that exist and are valid. Fail-closed, but blaming the
+                // author for the host's defect. SuiteTopology.StartAsync now refuses to start a
+                // security-declaring suite with no accessor, so this cannot recur silently.
+                //
+                // Disposed in the finally below rather than by the topology: the accessor owns the
+                // X509Certificate2 instances it loads and the topology does not own its lifetime —
+                // matching ScenarioRunner exactly.
+                var probeSecurity = SecurityConfigurationAccessor.Build(ast, suiteDirectory);
+                try
+                {
+                    var topology = await SuiteTopology.StartAsync(
+                        ast.Environment,
+                        appHostAssemblyName,
+                        startupTimeout: TimeSpan.FromSeconds(120),
+                        seedBaseDirectory: suiteDirectory,
+                        securityConfiguration: probeSecurity,
+                        kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
+                        cancellationToken: ct).ConfigureAwait(false);
+                    isolation = ScenarioRunner.BuildWatchIsolation(topology);
+                    return topology;
+                }
+                finally
+                {
+                    (probeSecurity as IDisposable)?.Dispose();
+                }
             },
 
             // Run seam: run the latest-saved scenario against the kept topology.  `resetAndReseed`

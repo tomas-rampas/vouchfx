@@ -55,18 +55,26 @@ internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
     /// <param name="suiteDirectory">
     /// The base directory relative file-path fields are resolved against.
     /// </param>
+    /// <param name="declaredServices">
+    /// Map of service name to its declared shape (services-generalisation spec, REQ-010).
+    /// Defaults to an empty map (the pre-REQ-010 shape) when omitted, so this constructor's
+    /// pre-existing 2-argument call sites keep compiling unchanged.
+    /// </param>
     internal RunProjectContext(
         IReadOnlyDictionary<string, string> declaredDependencies,
-        string suiteDirectory)
+        string suiteDirectory,
+        IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>? declaredServices = null)
     {
         DeclaredDependencies = declaredDependencies;
         SuiteDirectory = suiteDirectory;
+        DeclaredServices = declaredServices
+            ?? new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(StringComparer.Ordinal);
     }
 
     /// <summary>
-    /// Creates a <see cref="RunProjectContext"/> with no declared dependencies,
-    /// used when the scenario file omits the <c>environment.dependencies</c>
-    /// section.
+    /// Creates a <see cref="RunProjectContext"/> with no declared dependencies or services,
+    /// used when the scenario file omits both the <c>environment.dependencies</c> and
+    /// <c>environment.services</c> sections.
     /// </summary>
     /// <param name="suiteDirectory">
     /// The base directory relative file-path fields are resolved against.
@@ -78,6 +86,9 @@ internal sealed class RunProjectContext : Vouchfx.Sdk.IProjectContext
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <inheritdoc />
     public string SuiteDirectory { get; }
@@ -120,6 +131,12 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
         new Dictionary<string, Vouchfx.Sdk.CaptureExpr>(StringComparer.Ordinal);
 
     /// <summary>
+    /// An empty declared-service map used as the default when a caller supplies none.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> s_emptyServices =
+        new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Initialises a new <see cref="RunCompileContext"/> with the given step
     /// identifier, suite namespace, capture map, and suite directory.
     /// </summary>
@@ -136,17 +153,26 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
     /// The step's <c>capture</c> map (varName → <see cref="Vouchfx.Sdk.CaptureExpr"/>).
     /// Pass <see langword="null"/> or omit to use an empty dictionary.
     /// </param>
+    /// <param name="declaredServices">
+    /// The suite's declared-service map — the SAME instance
+    /// <c>RunProjectContext.DeclaredServices</c> exposed to the step's own <c>Validate</c>, so
+    /// a provider that reconciled its <c>target</c> at validate time and one that picks the
+    /// <c>Vars</c> key for it at emit time read one map, never two derivations of it. Pass
+    /// <see langword="null"/> or omit for the empty map.
+    /// </param>
     public RunCompileContext(
         string stepId,
         string suiteNamespace,
         string suiteDirectory,
-        IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr>? captures = null)
+        IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr>? captures = null,
+        IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>? declaredServices = null)
     {
         StepId = stepId;
         SuiteNamespace = suiteNamespace;
         SuiteDirectory = suiteDirectory;
         CaptureExprs = captures ?? s_empty;
         Captures = ProjectExpressions(CaptureExprs);
+        DeclaredServices = declaredServices ?? s_emptyServices;
     }
 
     /// <inheritdoc />
@@ -163,6 +189,9 @@ internal sealed class RunCompileContext : Vouchfx.Sdk.ICompileContext
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, Vouchfx.Sdk.CaptureExpr> CaptureExprs { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, Vouchfx.Sdk.DeclaredServiceInfo> DeclaredServices { get; }
 
     /// <summary>
     /// Projects a format-aware capture map to the back-compatible expression-string

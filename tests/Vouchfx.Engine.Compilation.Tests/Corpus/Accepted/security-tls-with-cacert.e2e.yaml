@@ -1,0 +1,23 @@
+# Surface coverage: security.profile: tls WITH an explicit caCert declared — the
+# complementary shape to security-mtls-without-cacert.e2e.yaml (caCert is legal under
+# both profiles whether present or absent; only its presence differs between the two).
+#
+# Declared on a KAFKA dependency, not redis (M1, second peer-review round): a security
+# block is legal on a kafka dependency or any declared service, and on no other
+# dependency kind — this fixture pins the caCert-under-tls shape, so it uses a target
+# kind that shape is actually legal on. The rejection for every other kind is pinned by
+# Rejected/security-tls-non-kafka-dependency.e2e.yaml.
+metadata:
+  name: security-tls-with-cacert
+environment:
+  dependencies:
+    events:
+      type: kafka
+      security:
+        profile: tls
+        endpoint: 9093
+        caCert: ./certs/ca.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

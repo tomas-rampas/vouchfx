@@ -150,9 +150,11 @@ public sealed class HttpRestProvider
         "    public static async System.Threading.Tasks.Task ExecuteAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
         "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        Vouchfx.Engine.Abstractions.Security.ISecurityConfigurationAccessor security,\n" +
         "        string outcomeKey,\n" +
         "        string captureStatusKey,\n" +
         "        string serviceKey,\n" +
+        "        string targetName,\n" +
         "        string method,\n" +
         "        string pathTemplate,\n" +
         "        string? bodyTemplate,\n" +
@@ -175,6 +177,13 @@ public sealed class HttpRestProvider
         "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
+        "            // REQ-024: present the declared client certificate and trust the declared CA\n" +
+        "            // for THIS step's target. Inside the try, deliberately: a declared-but-\n" +
+        "            // malformed certificate throws SecurityMaterialException, which the general\n" +
+        "            // catch below maps to a step-scoped EnvironmentError (§12.1) rather than\n" +
+        "            // escaping the step. Before the first SendAsync, so the underlying handler is\n" +
+        "            // still mutable. A target with no security block leaves the handler untouched.\n" +
+        "            Security_Helpers.ConfigureHandler(security, targetName, handler);\n" +
         "            // Step-timeout convention (#232): a declared step budget governs this call —\n" +
         "            // lift the transport bound (infinite) and let the step token (ct) be the sole\n" +
         "            // enforcement mechanism; otherwise keep the M2 30s stall-window convention.\n" +
@@ -613,7 +622,43 @@ public sealed class HttpRestProvider
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(model.Target))
+        {
             errors.Add("http.rest: 'target' must not be empty.");
+        }
+        else if (!ctx.DeclaredServices.ContainsKey(model.Target))
+        {
+            if (ctx.DeclaredDependencies.ContainsKey(model.Target))
+            {
+                // M1 fix (fix round 2, narrows REQ-012's literal wording — see
+                // specs/authenticated-infrastructure-mtls.md's REQ-012 note): http.rest
+                // resolves 'target' EXCLUSIVELY against declared services
+                // (VarKeys.Service(model.Target), staged only for services — never
+                // conn::<target>, which a dependency stages into instead). Before this fix a
+                // target naming a declared dependency validated PASS and then could never
+                // work at run time: exactly the class of gap the split EDGE-009 exists to
+                // close, just on the dependency side instead of the "unknown name" side.
+                var services = ctx.DeclaredServices.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
+                errors.Add(
+                    $"http.rest: 'target' '{model.Target}' names a dependency declared in " +
+                    "environment.dependencies, which http.rest cannot reach — it resolves " +
+                    "'target' only against declared services. Declared services: " +
+                    services + ".");
+            }
+            else
+            {
+                // REQ-012/EDGE-009 (services-generalisation spec): close the previously
+                // unvalidated-target hole — http.rest accepted ANY target string, with no
+                // reconciliation against declared infrastructure at all, because IProjectContext
+                // had no DeclaredServices before REQ-010. Fires at validate time, not later as a
+                // runtime "bootstrap not found" EnvironmentError.
+                errors.Add(
+                    $"http.rest: 'target' '{model.Target}' names neither a declared service in " +
+                    "environment.services nor a declared dependency in environment.dependencies. " +
+                    ProjectContextDescriptions.DescribeDeclaredSurfaces(ctx));
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(model.Method))
             errors.Add("http.rest: 'method' must not be empty.");
@@ -802,9 +847,11 @@ public sealed class HttpRestProvider
                 await HttpRest_Helpers.ExecuteAsync(
                     Vars,
                     Secrets,
+                    Security,
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.CaptureStatus(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Service(model.Target))}},
+                    {{JsonSerializer.Serialize(model.Target)}},
                     {{JsonSerializer.Serialize(model.Method)}},
                     {{pathTemplateLiteral}},
                     {{bodyTemplateLiteral}},
@@ -826,6 +873,7 @@ public sealed class HttpRestProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
+            SecurityHelper.Source,
         };
 
         return new CsxFragment(

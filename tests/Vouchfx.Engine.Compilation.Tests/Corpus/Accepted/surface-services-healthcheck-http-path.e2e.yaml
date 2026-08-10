@@ -1,0 +1,16 @@
+# Surface coverage: environment.services.<name>.healthCheck with type: http and an explicit
+# path (services-generalisation spec, REQ-009) — the explicit spelling of the engine's own
+# pre-existing default behaviour (WithHttpHealthCheck), with a caller-chosen path.
+metadata:
+  name: surface-services-healthcheck-http-path
+environment:
+  services:
+    web:
+      image: traefik/whoami
+      healthCheck:
+        type: http
+        path: /healthz
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.services.healthCheck surface only."

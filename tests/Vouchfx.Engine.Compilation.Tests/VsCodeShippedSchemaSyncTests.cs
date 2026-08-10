@@ -13,7 +13,7 @@
 //     green squiggles for steps the engine will reject (or red squiggles for
 //     steps it accepts) — silently eroding trust in the extension.
 //   • This is the DLL-side counterpart of the extension's own packaging check:
-//     the engine recomposes the schema from the FULL thirteen-Core-provider registry
+//     the engine recomposes the schema from the FULL 25-Core-provider registry
 //     (exactly as SchemaFreezeTests does) and diffs it against the source-tree
 //     file the extension ships, catching drift the moment a provider's schema
 //     fragment changes without the shipped copy being regenerated.

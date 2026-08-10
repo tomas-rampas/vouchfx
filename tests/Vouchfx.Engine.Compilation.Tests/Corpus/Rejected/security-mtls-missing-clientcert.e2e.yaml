@@ -1,0 +1,24 @@
+# expected-instance-location: /environment/dependencies/orders-mq/security
+# expected-keyword: required
+#
+# REQ-001: 'clientCert' and 'clientKey' are required TOGETHER for profile 'mtls'. A
+# security block declaring 'clientKey' but omitting 'clientCert' is rejected here —
+# the mirror image of security-mtls-missing-clientkey.e2e.yaml. Uses 'type: kafka'
+# (not e.g. rabbitmq) deliberately (REQ-021): kafka is the only dependency kind wired
+# for 'mtls', so this fixture pins ONLY the clientCert/clientKey-required-together
+# rule, undisturbed by the separate per-kind profile narrowing a non-kafka kind would
+# also trip.
+metadata:
+  name: rejected-security-mtls-missing-clientcert
+environment:
+  dependencies:
+    orders-mq:
+      type: kafka
+      security:
+        profile: mtls
+        endpoint: 9093
+        clientKey: ./certs/client-key.pem
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

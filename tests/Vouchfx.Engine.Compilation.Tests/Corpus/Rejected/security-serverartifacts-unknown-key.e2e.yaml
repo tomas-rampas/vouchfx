@@ -1,0 +1,23 @@
+# expected-instance-location: /environment/dependencies/events-kafka/security/serverArtifacts/0/bogus
+# expected-keyword: additionalProperties
+#
+# $defs/securityServerArtifact carries 'additionalProperties: false' — exactly 'source'
+# and 'target' are recognised. An unrecognised key on a serverArtifacts item is
+# rejected here with a correctly-located error, mirroring topics-item-unknown-key.e2e.yaml.
+metadata:
+  name: rejected-security-serverartifacts-unknown-key
+environment:
+  dependencies:
+    events-kafka:
+      type: kafka
+      security:
+        profile: tls
+        endpoint: 9093
+        serverArtifacts:
+          - source: ./certs/kafka.server.keystore.jks
+            target: /etc/kafka/secrets/kafka.server.keystore.jks
+            bogus: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

@@ -1,0 +1,25 @@
+# expected-instance-location: /environment/dependencies/events-kafka/security/serverArtifacts/0
+# expected-keyword: required
+#
+# EDGE-007: Aspire's ContainerFile.Contents is text-only, so a binary keystore cannot be
+# declared inline — $defs/securityServerArtifact offers no 'contents' alternative, only
+# 'source' (a host file path) and 'target'. An item declaring 'contents' instead of
+# 'source' is rejected here for the missing required 'source' field (additionally
+# carries an 'additionalProperties' violation for the unrecognised 'contents' key, but
+# this fixture pins the missing-required-source failure specifically).
+metadata:
+  name: rejected-security-serverartifacts-contents-instead-of-source
+environment:
+  dependencies:
+    events-kafka:
+      type: kafka
+      security:
+        profile: tls
+        endpoint: 9093
+        serverArtifacts:
+          - contents: "not a real file, this must be rejected"
+            target: /etc/kafka/secrets/x.jks
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

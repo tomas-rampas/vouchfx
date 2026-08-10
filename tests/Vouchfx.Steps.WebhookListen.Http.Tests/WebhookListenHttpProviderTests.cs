@@ -35,6 +35,10 @@ file sealed class StubProjectContext : IProjectContext
     /// <inheritdoc />
     public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; } =
+        new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal);
 }
 
 /// <summary>

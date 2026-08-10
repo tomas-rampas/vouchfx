@@ -70,14 +70,21 @@ public sealed class SchemaRejectedCorpusTests
     /// files — a bare "at least one" would still pass if a glob/path
     /// regression silently dropped all but a single fixture, letting every
     /// OTHER <see cref="RejectedDocument_IsInvalidAtExpectedLocation"/> case
-    /// vanish instead of failing loudly. The floor is set comfortably below
-    /// the current committed count (25); safe to raise as fixtures are added
-    /// (feat/close-remaining-surfaces, Part D).
+    /// vanish instead of failing loudly. Raised from 15 to 40 (critic NIT-9):
+    /// the original floor was set when the committed count was 25 and never
+    /// tightened as fixtures accumulated, leaving it comfortable enough (15
+    /// against 44, pre-this-PR) to silently tolerate losing dozens of
+    /// fixtures to a regression. The committed count as of this PR is 45 (44
+    /// pre-existing, plus <c>security-serverartifacts-target-not-absolute.e2e.yaml</c>,
+    /// MINOR-4); 40 is sensibly below-but-near that — tight enough that
+    /// dropping several fixtures fails loudly, with enough headroom that
+    /// routine single-fixture additions/reorganisation do not require raising
+    /// it every time. Safe to raise again as fixtures accumulate further.
     /// </summary>
     [Fact]
     public void RejectedFiles_DiscoversAtLeastOneFile()
     {
-        const int minRejectedFiles = 15;
+        const int minRejectedFiles = 40;
 
         var count = RejectedFiles().Count();
 

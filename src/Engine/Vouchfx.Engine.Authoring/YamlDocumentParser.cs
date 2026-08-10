@@ -331,11 +331,300 @@ public static class YamlDocumentParser
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
             var env = ParseEnvMap(serviceMapping, keyScalar.Value);
+            var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
+            var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
+            var healthCheck = ParseHealthCheck(serviceMapping);
 
-            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env);
+            dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env)
+            {
+                Security = security,
+                Ports = ports,
+                PinnedHostPorts = pinnedHostPorts,
+                HealthCheck = healthCheck,
+            };
+        }
+
+        // REQ-025 / EDGE-012, ACROSS SERVICES. Two services pinning one host port is a fault in
+        // the DOCUMENT — it can never run, on any host, at any time — so it belongs here, where
+        // every service is in view at once, and not at topology-build time.
+        //
+        // MEASURED, and the measurement is why this moved: caught during the topology build it was
+        // classified an ENVIRONMENT error, so `vouchfx validate` reported PASS and a flagless
+        // `vouchfx run` exited 0 on a suite that cannot start. An authoring mistake was being
+        // reported as an infrastructure fault, which is the one direction the taxonomy must not
+        // bend. Caught here it is a parse error: `validate` exits 4 and so does `run` — measured
+        // against the same document, both before and after.
+        //
+        // The topology-build check remains as a backstop rather than as duplication: `ports:` is
+        // not the only way a spec acquires pins, since `ServiceSpec.PinnedHostPorts` is a public
+        // init-only property that a programmatic caller can populate without passing through this
+        // parser at all.
+        var pinnedBy = new Dictionary<int, (string Service, int ContainerPort)>();
+        foreach (var (serviceName, spec) in dict)
+        {
+            if (spec.PinnedHostPorts is not { Count: > 0 } pins)
+            {
+                continue;
+            }
+
+            foreach (var (containerPort, hostPort) in pins)
+            {
+                if (pinnedBy.TryGetValue(hostPort, out var owner))
+                {
+                    throw new YamlParseException(
+                        $"Host port {hostPort} is pinned by two services: '{owner.Service}' for "
+                        + $"container port {owner.ContainerPort}, and '{serviceName}' for container "
+                        + $"port {containerPort}. One host port publishes one container port — give "
+                        + "them different host ports.",
+                        servicesNode.Start.Line,
+                        servicesNode.Start.Column);
+                }
+
+                pinnedBy[hostPort] = (serviceName, containerPort);
+            }
         }
 
         return dict.Count > 0 ? dict : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Service ports / healthCheck parsers (services-generalisation, PR B) —
+    // REQ-008 / REQ-009. Deliberately lenient, like ParseSecurity: requiredness and
+    // per-type field shape are the JSON Schema layer's responsibility
+    // ($defs/serviceHealthCheck); cross-referencing healthCheck.port against the
+    // service's own declared ports/httpPort is EnvironmentMapper's job.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Parses a service's optional <c>ports:</c> sequence (REQ-008) into a list of TCP
+    /// port numbers. Each item is read as a bare integer scalar — unlike <c>httpPort</c>,
+    /// this is a NEW field with no pre-existing engine behaviour to preserve, so it does
+    /// not carry <c>httpPort</c>'s quoted-string/leading-zero-octal compatibility shape;
+    /// an author writes a plain decimal integer per item.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>ports</c> is present but is not a sequence, or when an item is not
+    /// an integer scalar — mirroring <see cref="ParseServerArtifacts"/>'s rigour for a
+    /// malformed list: silently dropping a malformed entry would leave a declared port
+    /// unexposed, surfacing later as a misattributed connection failure instead of an
+    /// authoring-time diagnostic.
+    /// </exception>
+    private static (List<int>? Ports, Dictionary<int, int>? Pinned) ParseServicePorts(
+        YamlMappingNode serviceMapping, string serviceName)
+    {
+        if (!TryGetNode(serviceMapping, "ports", out var portsNode))
+        {
+            return (null, null);
+        }
+
+        if (portsNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"Service '{serviceName}' 'ports' at line {portsNode.Start.Line} must be a sequence " +
+                $"of TCP port numbers (e.g. '[9093, 9094]'), but found {portsNode.NodeType}.",
+                portsNode.Start.Line,
+                portsNode.Start.Column);
+        }
+
+        var list = new List<int>(sequence.Children.Count);
+        var pinned = new Dictionary<int, int>();
+        var hostPorts = new Dictionary<int, int>();
+
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlScalarNode { Value: { } rawValue })
+            {
+                throw new YamlParseException(
+                    $"Service '{serviceName}' 'ports' item at line {item.Start.Line} must be a bare " +
+                    $"integer TCP port number or a '<host>:<container>' string, but found "
+                    + $"{item.NodeType}.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            int container;
+            var colon = rawValue.IndexOf(':', StringComparison.Ordinal);
+
+            if (colon < 0)
+            {
+                // The bare-integer form: container port declared, host port allocated by the
+                // orchestrator. It gets its OWN diagnostics rather than falling through to the
+                // pair branch — a value that is plainly a single number and merely out of range
+                // must not be told it should have been a pair.
+                container = ParsePortHalf(rawValue, rawValue, "port", serviceName, item);
+            }
+            else
+            {
+                // The mapping form, '<host>:<container>' — docker-compose's ordering, which is
+                // what the target deployment already writes.
+                //
+                // The one-colon guard is kept but is NOT what rejects '1:2:3' — measured, a
+                // last-colon split rejects it anyway, because a half containing a colon fails the
+                // digit test. It is kept because an input with two colons has no single reading
+                // this parser should pick, and saying so beats reinterpreting it.
+                if (rawValue.IndexOf(':', colon + 1) >= 0)
+                {
+                    throw Malformed(
+                        serviceName,
+                        item,
+                        rawValue,
+                        "it contains more than one ':'. The pinned form is exactly "
+                        + "'<host>:<container>', e.g. '19093:9093'.");
+                }
+
+                var host = ParsePortHalf(rawValue, rawValue[..colon], "host port", serviceName, item);
+                container = ParsePortHalf(
+                    rawValue, rawValue[(colon + 1)..], "container port", serviceName, item);
+
+                // Host ports below 1024 are refused outright. They are privileged on Linux (so a
+                // CI runner running as root would bind them where a developer's machine would
+                // not — a difference nobody wants to debug) and they are the well-known ports: a
+                // suite pinning 443 or 5432 squats a real service's port on every interface for
+                // the length of a run. The CONTAINER half is deliberately unconstrained — it
+                // lives in the container's own namespace, where 80 is its most ordinary value.
+                if (host < 1024)
+                {
+                    throw Malformed(
+                        serviceName,
+                        item,
+                        rawValue,
+                        $"its host port {host} is below 1024. Host ports 1..1023 are privileged "
+                        + "and well-known — pinning one squats a real service's port on this "
+                        + "machine for the whole run. Pin a host port in 1024..65535. (The "
+                        + "container port has no such limit.)");
+                }
+
+                if (!pinned.TryAdd(container, host))
+                {
+                    throw Malformed(
+                        serviceName,
+                        item,
+                        rawValue,
+                        $"container port {container} is already pinned to host port "
+                        + $"{pinned[container]}. One container port publishes on one host port.");
+                }
+
+                if (!hostPorts.TryAdd(host, container))
+                {
+                    throw Malformed(
+                        serviceName,
+                        item,
+                        rawValue,
+                        $"host port {host} is already pinned to container port {hostPorts[host]}. "
+                        + "One host port publishes one container port.");
+                }
+            }
+
+            // ACROSS BOTH FORMS. `ports: [9093, "19093:9093"]` declares one container port twice,
+            // and neither the schema's `uniqueItems` (which compares JSON values, and an integer
+            // is never equal to a string) nor a pinned-only duplicate check can see it. Left
+            // alone it produces two endpoint declarations with one name and the orchestrator
+            // refuses the topology with "an endpoint named 'tcp-9093' already exists" — an
+            // internal-sounding failure for a plain authoring mistake.
+            if (list.Contains(container))
+            {
+                throw Malformed(
+                    serviceName,
+                    item,
+                    rawValue,
+                    $"container port {container} is declared more than once in 'ports'. Declare it "
+                    + "once, in either the bare or the '<host>:<container>' form.");
+            }
+
+            list.Add(container);
+        }
+
+        return (
+            list.Count > 0 ? list : null,
+            pinned.Count > 0 ? pinned : null);
+    }
+
+    /// <summary>Builds the author-facing rejection for one malformed <c>ports:</c> entry.</summary>
+    private static YamlParseException Malformed(
+        string serviceName, YamlNode item, string rawValue, string because) =>
+        new($"Service '{serviceName}' 'ports' item '{rawValue}' at line {item.Start.Line} is "
+            + $"invalid: {because}",
+            item.Start.Line,
+            item.Start.Column);
+
+    /// <summary>
+    /// Parses one port value — a whole bare entry, or one half of a pinned pair — as a bare
+    /// decimal integer in 1..65535 with no leading zero.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Leading zeros are refused, and that is what stops one document meaning two
+    /// things.</strong> This value IS re-read as YAML — an earlier note here claimed otherwise and
+    /// was wrong: the schema bridge re-parses the document with a scalar resolver applying YAML
+    /// 1.1, under which <c>0123</c> is OCTAL. Measured: <c>ports: [0123]</c> was seen as <b>83</b>
+    /// by the schema and <b>123</b> by this parser, and <c>[00080]</c> threw inside the bridge.
+    /// Refusing the spelling makes that divergence unreachable rather than merely documented, and
+    /// it is already the published rule for the sibling <c>security.endpoint</c> ("decimal,
+    /// 1–65535, no leading zero").
+    /// </para>
+    /// <para>
+    /// <see cref="NumberStyles.None"/> refuses a leading sign, surrounding space and thousands
+    /// separators, so <c>-1</c>, <c>+80</c> and <c> 80</c> never reach the range test as something
+    /// that already parsed.
+    /// </para>
+    /// </remarks>
+    private static int ParsePortHalf(
+        string rawValue, string text, string role, string serviceName, YamlNode item)
+    {
+        if (text.Length == 0)
+        {
+            throw Malformed(serviceName, item, rawValue, $"its {role} is empty.");
+        }
+
+        if (text[0] == '0' && text.Length > 1)
+        {
+            throw Malformed(
+                serviceName,
+                item,
+                rawValue,
+                $"its {role} '{text}' has a leading zero. Write a plain decimal integer: a leading "
+                + "zero is read as octal by one of the two YAML passes this document makes and as "
+                + "decimal by the other, so the same text would name two different ports.");
+        }
+
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+        {
+            throw Malformed(
+                serviceName, item, rawValue, $"its {role} '{text}' is not a bare decimal integer.");
+        }
+
+        if (port is < 1 or > 65535)
+        {
+            throw Malformed(
+                serviceName, item, rawValue, $"its {role} {port} is outside the range 1..65535.");
+        }
+
+        return port;
+    }
+
+    /// <summary>
+    /// Parses a service's optional <c>healthCheck:</c> block (REQ-009) into a strongly-typed
+    /// <see cref="HealthCheckSpec"/>. Takes no owner-name parameter (unlike
+    /// <see cref="ParseSecurity"/>/<see cref="ParseServerArtifacts"/>): every field here is
+    /// read leniently with no throw path of its own, so there is no diagnostic message to
+    /// splice a service name into.
+    /// </summary>
+    private static HealthCheckSpec? ParseHealthCheck(YamlMappingNode serviceMapping)
+    {
+        if (!TryGetMapping(serviceMapping, "healthCheck", out var healthCheckNode))
+        {
+            return null;
+        }
+
+        var type = GetScalar(healthCheckNode, "type");
+        var path = GetScalar(healthCheckNode, "path");
+        var portRaw = GetScalar(healthCheckNode, "port");
+        int? port = portRaw is not null
+            && int.TryParse(portRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p)
+                ? p
+                : null;
+
+        return new HealthCheckSpec(type, path, port);
     }
 
     /// <summary>
@@ -447,16 +736,114 @@ public static class YamlDocumentParser
             // helper rather than changing GetScalar itself.
             var version = GetScalarOrPlainNull(depMapping, "version");
             var image = GetScalarOrPlainNull(depMapping, "image");
+            var security = ParseSecurity(depMapping, "Dependency", keyScalar.Value);
 
-            // Collect any extra fields (everything except 'type', 'version', and
-            // 'image') into a new mapping node so provider resource contributors
-            // can bind them.
-            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image");
+            // Collect any extra fields (everything except 'type', 'version', 'image',
+            // and 'security') into a new mapping node so provider resource
+            // contributors can bind them. 'security' is excluded here because it is
+            // now explicitly bound above, exactly like 'image'/'version'/'type'.
+            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security");
 
-            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image };
+            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image, Security = security };
         }
 
         return dict.Count > 0 ? dict : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Security block parser (authenticated-infrastructure-mtls, PR A) — shared by
+    // both ParseServiceMap and ParseDependencyMap (REQ-001 is kind-generic).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Parses a service's or dependency's optional <c>security:</c> block (REQ-001)
+    /// into a strongly-typed <see cref="SecuritySpec"/>.
+    /// </summary>
+    /// <param name="ownerMapping">The service's or dependency's own YAML mapping node.</param>
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — used only in diagnostic messages,
+    /// mirroring the capitalised label already used by e.g. <see cref="ParseEnvMap"/>'s
+    /// and <see cref="ParseDependencyMap"/>'s own throw messages.
+    /// </param>
+    /// <param name="ownerName">The service's or dependency's logical (map-key) name.</param>
+    /// <remarks>
+    /// Every field is read as its raw scalar text with NO requiredness enforced here —
+    /// <c>profile</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
+    /// mtls-requires-<c>clientCert</c>/<c>clientKey</c> rule, and the
+    /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule are the JSON Schema layer's
+    /// responsibility (<c>root-language-schema.json</c>'s <c>$defs/security</c>),
+    /// mirroring this parser's existing "deliberately lenient" design (see this file's
+    /// header remarks). <c>endpoint</c> is kept as raw scalar text rather than parsed to
+    /// <see cref="int"/>: unlike <c>httpPort</c>, which always means a port number,
+    /// <c>endpoint</c> may equally name a declared endpoint (a non-numeric string), so
+    /// pre-parsing it here would lose that second, equally valid shape.
+    /// </remarks>
+    private static SecuritySpec? ParseSecurity(YamlMappingNode ownerMapping, string ownerLabel, string ownerName)
+    {
+        if (!TryGetMapping(ownerMapping, "security", out var securityNode))
+        {
+            return null;
+        }
+
+        var profile = GetScalar(securityNode, "profile");
+        var endpoint = GetScalar(securityNode, "endpoint");
+        var caCert = GetScalar(securityNode, "caCert");
+        var clientCert = GetScalar(securityNode, "clientCert");
+        var clientKey = GetScalar(securityNode, "clientKey");
+        var serverArtifacts = ParseServerArtifacts(securityNode, ownerLabel, ownerName);
+
+        return new SecuritySpec(profile, endpoint, caCert, clientCert, clientKey, serverArtifacts);
+    }
+
+    /// <summary>
+    /// Parses a security block's optional <c>serverArtifacts:</c> sequence (REQ-016's
+    /// authoring surface) into a list of <see cref="SecurityServerArtifactSpec"/> pairs.
+    /// </summary>
+    /// <exception cref="YamlParseException">
+    /// Thrown when <c>serverArtifacts</c> is present but is not a sequence, or when any
+    /// item is not a mapping — mirroring <see cref="ParseSeedSqlSequence"/>'s rigour for a
+    /// malformed list: silently dropping a malformed entry would leave an artefact
+    /// unstaged, surfacing later as a misattributed EnvironmentError (§12.1) rather than
+    /// an authoring-time diagnostic.
+    /// </exception>
+    private static List<SecurityServerArtifactSpec>? ParseServerArtifacts(
+        YamlMappingNode securityNode,
+        string ownerLabel,
+        string ownerName)
+    {
+        if (!TryGetNode(securityNode, "serverArtifacts", out var artifactsNode))
+        {
+            return null;
+        }
+
+        if (artifactsNode is not YamlSequenceNode sequence)
+        {
+            throw new YamlParseException(
+                $"{ownerLabel} '{ownerName}' security 'serverArtifacts' at line {artifactsNode.Start.Line} " +
+                $"must be a sequence of {{ source, target }} mappings, but found {artifactsNode.NodeType}.",
+                artifactsNode.Start.Line,
+                artifactsNode.Start.Column);
+        }
+
+        var list = new List<SecurityServerArtifactSpec>(sequence.Children.Count);
+        foreach (var item in sequence.Children)
+        {
+            if (item is not YamlMappingNode itemMapping)
+            {
+                throw new YamlParseException(
+                    $"{ownerLabel} '{ownerName}' security 'serverArtifacts' item at line {item.Start.Line} " +
+                    "must be a mapping declaring 'source' and 'target' (e.g. '{ source: ./certs/x.jks, " +
+                    $"target: /etc/x.jks }}'), but found {item.NodeType}.",
+                    item.Start.Line,
+                    item.Start.Column);
+            }
+
+            var source = GetScalar(itemMapping, "source");
+            var target = GetScalar(itemMapping, "target");
+            list.Add(new SecurityServerArtifactSpec(source, target));
+        }
+
+        return list.Count > 0 ? list : null;
     }
 
     // -------------------------------------------------------------------------

@@ -159,6 +159,7 @@ nav:
       - Getting started (60-minute path): getting-started.md
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
+      - Security compatibility matrix: security-matrix.md
       - "Planner: coverage and gap analysis": planner.md
       - Troubleshooting: troubleshooting.md
       - CI integration reference: ci-integration.md

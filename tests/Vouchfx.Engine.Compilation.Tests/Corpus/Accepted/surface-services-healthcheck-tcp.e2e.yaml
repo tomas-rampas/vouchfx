@@ -1,0 +1,17 @@
+# Surface coverage: environment.services.<name>.healthCheck with type: tcp
+# (services-generalisation spec, REQ-009) — a raw TCP connect health check against a
+# declared port, issuing no HTTP request at all.
+metadata:
+  name: surface-services-healthcheck-tcp
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093]
+      healthCheck:
+        type: tcp
+        port: 9093
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises environment.services.healthCheck surface only."

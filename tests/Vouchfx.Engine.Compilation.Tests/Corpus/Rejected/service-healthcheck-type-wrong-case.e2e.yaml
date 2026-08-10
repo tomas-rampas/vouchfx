@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/services/kafka-broker/healthCheck/type
+# expected-keyword: enum
+#
+# services-generalisation spec REQ-009: 'healthCheck.type' is matched case-sensitively, like
+# every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode) — 'TCP' is
+# rejected; only the lower-case 'tcp'/'http' spellings validate.
+metadata:
+  name: rejected-service-healthcheck-type-wrong-case
+environment:
+  services:
+    kafka-broker:
+      image: myorg/kafka-broker:1.0
+      ports: [9093]
+      healthCheck:
+        type: TCP
+        port: 9093
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

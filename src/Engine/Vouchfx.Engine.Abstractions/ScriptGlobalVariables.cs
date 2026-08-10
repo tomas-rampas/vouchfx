@@ -3,6 +3,7 @@
 // Rule: no static members — the boundary must stay clean so the collectible AssemblyLoadContext
 // has nothing rooting the emitted assembly back into the Default context.
 using Vouchfx.Engine.Abstractions.Secrets;
+using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Abstractions.Traces;
 using Vouchfx.Engine.Abstractions.Webhooks;
 
@@ -122,9 +123,86 @@ public sealed class ScriptGlobalVariables
     public IStepEventSink? StepEvents { get; }
 
     /// <summary>
+    /// The execution-time per-target CLIENT SECURITY CONFIGURATION accessor
+    /// (authenticated-infrastructure-mtls, REQ-014).  An emitted step block resolves the
+    /// configuration declared for its own <c>target</c> through this member — certificate
+    /// paths for a client library that takes only paths, loaded certificate objects for one
+    /// that takes only objects — and configures its transport from it at step-execution time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is an <em>instance</em> property by design, exactly like <see cref="Secrets"/>,
+    /// <see cref="Webhooks"/> and <see cref="Traces"/>: the accessor and the certificate
+    /// objects it owns live in the <strong>Default</strong>
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (built and owned by the
+    /// runner), and the emitted script reaches them only by-reference through this member.
+    /// A static handle would root the collectible context back into the Default context and
+    /// defeat the memory model (§5).
+    /// </para>
+    /// <para>
+    /// The material this exposes is deliberately NOT reachable through <see cref="Vars"/>
+    /// under any prefix (REQ-014): <see cref="Vars"/> feeds the reported and §14 event
+    /// surface, and a certificate or key path written there would leak past the
+    /// <c>SecretString</c> redaction model.  Legacy constructors populate this with a
+    /// <see cref="NullSecurityConfigurationAccessor"/> whose every lookup returns
+    /// <see langword="null"/>, so a run declaring no <c>security</c> block pays nothing and
+    /// every existing call site keeps compiling unchanged.
+    /// </para>
+    /// </remarks>
+    public ISecurityConfigurationAccessor Security { get; }
+
+    /// <summary>
+    /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
+    /// webhook-capture accessor, OTLP trace-capture accessor, host-side step-event sink, and
+    /// per-target security-configuration accessor (the full host↔script boundary).
+    /// </summary>
+    /// <param name="vars">
+    /// Mutable state map; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="services">
+    /// Read-only typed-client surface; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="secrets">
+    /// The execution-time secret accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="webhooks">
+    /// The execution-time webhook-capture accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="traces">
+    /// The execution-time OTLP trace-capture accessor; must not be <see langword="null"/>.
+    /// </param>
+    /// <param name="stepEvents">
+    /// The host-side per-step live event sink, or <see langword="null"/> when no live
+    /// <c>--events-stream</c> conduit is configured for this run.
+    /// </param>
+    /// <param name="security">
+    /// The execution-time per-target security-configuration accessor; must not be
+    /// <see langword="null"/>.  Pass <see cref="NullSecurityConfigurationAccessor.Instance"/>
+    /// when the run declares no <c>security</c> block.
+    /// </param>
+    public ScriptGlobalVariables(
+        IDictionary<string, object?> vars,
+        IReadOnlyDictionary<string, object> services,
+        ISecretAccessor secrets,
+        IWebhookCaptureAccessor webhooks,
+        ITraceCaptureAccessor traces,
+        IStepEventSink? stepEvents,
+        ISecurityConfigurationAccessor security)
+    {
+        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
+        Traces = traces ?? throw new ArgumentNullException(nameof(traces));
+        StepEvents = stepEvents;
+        Security = security ?? throw new ArgumentNullException(nameof(security));
+    }
+
+    /// <summary>
     /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
     /// webhook-capture accessor, OTLP trace-capture accessor, and host-side step-event sink
-    /// (the full host↔script boundary, issue #262).
+    /// (the full host↔script boundary, issue #262), and no declared security configuration.
+    /// <see cref="Security"/> is a <see cref="NullSecurityConfigurationAccessor"/>.
     /// </summary>
     /// <param name="vars">
     /// Mutable state map; must not be <see langword="null"/>.
@@ -158,13 +236,8 @@ public sealed class ScriptGlobalVariables
         IWebhookCaptureAccessor webhooks,
         ITraceCaptureAccessor traces,
         IStepEventSink? stepEvents)
+        : this(vars, services, secrets, webhooks, traces, stepEvents, NullSecurityConfigurationAccessor.Instance)
     {
-        Vars = vars ?? throw new ArgumentNullException(nameof(vars));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
-        Secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
-        Webhooks = webhooks ?? throw new ArgumentNullException(nameof(webhooks));
-        Traces = traces ?? throw new ArgumentNullException(nameof(traces));
-        StepEvents = stepEvents;
     }
 
     /// <summary>
