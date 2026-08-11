@@ -28,6 +28,24 @@
 : "${VOUCHFX_SECURE_ADVERTISED:?must be set in the suite env: block to the pinned host address}"
 
 if [ -f /etc/kafka/secrets/kafka.keystore.pem ]; then
+  # THE LISTENER NAME `SECURE` IS LOAD-BEARING. DO NOT RENAME IT TO `SSL`.
+  #
+  # The Confluent image's own `configure` script greps KAFKA_ADVERTISED_LISTENERS for the
+  # literal string `SSL://`, and when it matches it insists on the JKS-shaped configuration
+  # this fixture deliberately does not use: KAFKA_SSL_KEYSTORE_FILENAME plus
+  # KAFKA_SSL_KEY_CREDENTIALS and KAFKA_SSL_KEYSTORE_CREDENTIALS — password files that a PEM
+  # store holding an unencrypted key has no equivalent of.
+  #
+  # Measured: rename SECURE to SSL, change nothing else, and the container exits 1 with
+  # `KAFKA_SSL_KEYSTORE_FILENAME is required.` before Kafka starts; through the engine that
+  # surfaces as a HEALTH GATE failure and exit 3. Neither diagnostic mentions the rename, so
+  # this is a bad one to discover by experiment. Any name that is not `SSL` works — the
+  # protocol is chosen by KAFKA_LISTENER_SECURITY_PROTOCOL_MAP below, not by the name.
+  #
+  # In fairness about provenance: `SECURE` was inherited from this repository's own mutual-TLS
+  # drill fixture, not chosen because someone knew about the grep. Peer review found the trap
+  # afterwards and measured it; the comment exists so the next reader gets it for free.
+  #
   # Three listeners, and note WHICH INTERFACE each binds to — the difference is a real
   # boundary, not bookkeeping.
   #

@@ -183,8 +183,14 @@ public sealed class ExamplesCompileTests
     // own. Two reasons, and the second is the one that earns the process start: a second
     // generator would be a second spelling of the file-name contract, free to drift from
     // the one the suite actually declares; and the script is a shipped artefact that
-    // otherwise has no non-docker gate at all, so running it here is what stops it rotting
-    // silently between full example runs.
+    // otherwise has no non-docker gate at all.
+    //
+    // WHICH SCRIPT THAT PROTECTS, PRECISELY: the POSIX one. Every job in this repository's
+    // CI runs on ubuntu-latest, so CI only ever executes the `.sh`. The `.ps1` is exercised
+    // only when someone runs this suite on a Windows machine — which is a real gate on a
+    // maintainer's workstation and no gate at all in CI. Do not read the paragraph above as
+    // claiming both scripts are covered; the pairing test below checks that the `.ps1`
+    // EXISTS, and nothing automated checks that it still WORKS.
     //
     // Once per script per test run, whichever example case reaches it first. The scripts
     // are idempotent, so the cost after the first run of a working checkout is one process
@@ -364,11 +370,26 @@ public sealed class ExamplesCompileTests
     /// An example's fixture scripts must come in pairs, and each must belong to an example.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="EnsureFixtureMaterial"/> catches a half-shipped pair only for an example
     /// it is given. This catches the other direction — a script whose example was renamed or
     /// removed — which nothing else would: the orphan simply stops being run, and the
     /// example that should have used it fails at the security preflight naming a missing
     /// certificate rather than a missing script.
+    /// </para>
+    /// <para>
+    /// <strong>It also pins the fixture convention to the FLAT examples directory, and that
+    /// is the more valuable half.</strong> Three mechanisms discover things under
+    /// <c>examples/</c> and they do not agree on depth: this class enumerates suites
+    /// RECURSIVELY, the examples workflow's roster is <c>find -maxdepth 1</c>, and its
+    /// fixture-script discovery is likewise flat. A <c>.setup.sh</c> beside one of the
+    /// subdirectory suites would therefore be run by this gate, never pairing-checked, and
+    /// never run by CI at all — a fixture that works on a developer's machine and silently
+    /// does not exist in the pipeline. Rather than widen CI (the subdirectory suites have
+    /// their own workflows, with their own prerequisites), the convention is declared flat
+    /// and enforced here: the scan below is RECURSIVE precisely so it can reject a script
+    /// that is not at the top level.
+    /// </para>
     /// </remarks>
     [Fact]
     public void FixtureScripts_ArePairedWithAnExample()
@@ -381,10 +402,24 @@ public sealed class ExamplesCompileTests
 
         var problems = new List<string>();
 
+        // Recursive BY DESIGN — see the remarks. A nested script is a finding, not a miss.
         foreach (var script in Directory
-            .GetFiles(directory, "*.setup.*", SearchOption.TopDirectoryOnly)
+            .GetFiles(directory, "*.setup.*", SearchOption.AllDirectories)
             .OrderBy(p => p, StringComparer.Ordinal))
         {
+            if (!string.Equals(
+                    Path.GetDirectoryName(script), directory, StringComparison.Ordinal))
+            {
+                problems.Add(
+                    $"'{Path.GetRelativePath(directory, script)}' is not directly under examples/. "
+                    + "Fixture scripts are only discovered for the FLAT examples/*.e2e.yaml suites "
+                    + "(.github/workflows/vouchfx-run-examples.yml uses 'find -maxdepth 1'), so a "
+                    + "nested one would run here and never in CI. Move the example and its script "
+                    + "to the top level, or give the subdirectory suite's own workflow the setup "
+                    + "step it needs.");
+                continue;
+            }
+
             var extension = Path.GetExtension(script);
             if (extension is not (".sh" or ".ps1"))
             {

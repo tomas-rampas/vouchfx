@@ -18,13 +18,19 @@ metadata:
         vouchfx run examples/security-mtls.e2e.yaml --fail-on-env-error --fail-on-inconclusive
 
     RUN IT WITH THOSE TWO FLAGS, and the reason is specific rather than general
-    hygiene. Only a Fail breaks CI by default; a RETRY assertion that never
-    matches is Inconclusive, which by default exits 0. Measured: with
-    verification switched off in the nginx configuration, the flagless command
-    still exits 0 while this suite's central assertion silently never matched.
-    For a suite whose whole subject is a security property, "did not manage to
-    prove it" must not read as success — so the flags are part of the command,
-    not an option.
+    hygiene. Only a Fail breaks CI by default. A RETRY assertion that never
+    matches is INCONCLUSIVE, and an unreachable or unhealthy container is an
+    ENVIRONMENT ERROR — neither of which is CI-breaking unless you ask for it.
+
+    Measured against this suite: break the Kafka leg alone, so the consumer's
+    match can never be satisfied, and the flagless command reports
+    `consume-order: INCONCLUSIVE` after its full 60-second budget and then
+    EXITS 0. Nothing about that run proved a security property, and CI would
+    have called it a pass. With the two flags the same run exits 4.
+
+    (The REST leg is covered differently — by the assertion at step 2, which is
+    a Fail and therefore gates CI on its own, flags or no flags. See that
+    step's note, which measures it.)
 
     The script is not a convenience. vouchfx resolves and existence-checks every
     path under a `security:` block BEFORE it starts a container, so nothing
@@ -41,6 +47,14 @@ metadata:
     directory, which is the wrong home for anything that matters. That
     constraint is a boundary of the current release, not a design position: see
     issue #384.
+
+    AND ADD YOUR OWN IGNORE RULE. You inherit this example's scripts, not this
+    repository's .gitignore. Whatever directory your suite generates key
+    material into needs an ignore rule in YOUR repository, added before the
+    first run rather than after — an unencrypted private key is not something to
+    notice in a code review. This repository ignores
+    `/examples/security-mtls/certs*/`; note the glob, which covers the staging
+    directory the scripts build into as well as the live one.
 
 # ── WHAT FAILURE LOOKS LIKE ──────────────────────────────────────────────────
 # This suite passes, so nothing below is produced by running it. It is here
@@ -87,11 +101,17 @@ environment:
       # only way in, and the `security` block below re-declares it as https.
       ports: [8443]
 
-      # A TCP probe, not an HTTP one, and not by accident: a container health
-      # check cannot present a client certificate, so an HTTP probe against a
-      # mutual-TLS listener would hold a perfectly healthy topology unhealthy
-      # forever. (The engine defaults a secured service to TCP for this reason;
-      # it is written out here because the reason is worth knowing.)
+      # A TCP probe. Worth understanding as a CONSEQUENCE rather than a choice:
+      # for a service that declares `ports` and no `httpPort`, the schema
+      # constrains healthCheck.type to `tcp` outright, so `type: http` here is
+      # rejected before anything starts. Declaring `ports` is the trigger — not
+      # declaring `security`.
+      #
+      # The rule exists for a reason that applies squarely to this service: a
+      # container health check cannot present a client certificate, so an HTTP
+      # probe against a mutual-TLS listener would hold a perfectly healthy
+      # topology unhealthy forever. Written out explicitly rather than left to
+      # the default, because the port it probes is worth stating.
       healthCheck: { type: tcp, port: 8443 }
 
       security:
@@ -174,9 +194,12 @@ environment:
       # machine. It affects the publish exactly as much as the consume.
       #
       # 39093 is arbitrary and simply has to be free. Change it if it collides.
-      # Only the secured port is published: 9092 stays inside the container,
-      # because publishing it would put an unauthenticated Kafka endpoint on
-      # every interface of the host for the length of the run.
+      #
+      # Only the secured port is published. The plaintext one is not merely
+      # unpublished — it is bound to loopback INSIDE the container (see
+      # broker-entrypoint.sh), because not publishing a port is not the same as
+      # making it unreachable: every other container in the topology network can
+      # still reach a 0.0.0.0-bound port directly, with no credentials.
       ports: ["39093:9093"]
       healthCheck: { type: tcp, port: 9093 }
 
@@ -357,13 +380,17 @@ steps:
 # certificate was REFUSED. That is the `AuthenticatedRoundTrip` level in the run
 # output, and neither half can be faked from the broker's side of the wire — the
 # refusal is the peer's own behaviour. It fails closed, too: measured, setting
-# `ssl.client.auth` to `none` aborts the run with exit 3 before a single step.
+# `KAFKA_SSL_CLIENT_AUTH` to `none` in broker-entrypoint.sh aborts the run with
+# exit 3 before a single step.
 #
 # THE API LEG IS THE SYSTEM UNDER TEST'S WORD ABOUT ITSELF. `TransportConfirmed`
-# — the level `orders-api` earns — says TLS was established and the declared
-# client certificate was offered. It does NOT say the server demanded one, and
-# it cannot: in TLS 1.3 a server cannot reject a missing client certificate
-# during the handshake, so from the client's side an enforcing listener and a
+# — the level `orders-api` earns — says, in the engine's own words, that TLS and
+# the server's trust chain are confirmed and that "the declared client
+# certificate was configured on the handshake with no rejection raised". Read the
+# last clause exactly: no rejection was raised, which is not the same as
+# acceptance. It does NOT say the server demanded a certificate, and it cannot:
+# in TLS 1.3 a server cannot reject a missing client certificate during the
+# handshake, so from the client's side an enforcing listener and a
 # merely-requesting one are indistinguishable.
 #
 # So the `verify=SUCCESS` this suite asserts is nginx REPORTING its own decision.

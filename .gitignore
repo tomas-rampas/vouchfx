@@ -106,7 +106,15 @@ appsettings.*.local.json
 ## Generated test certificates for examples/security-mtls.e2e.yaml
 ## (written by examples/security-mtls.setup.sh / .ps1). Throwaway material with
 ## UNENCRYPTED private keys — regenerated on demand, never committed.
-/examples/security-mtls/certs/
+##
+## The glob covers the STAGING directory (certs.new) as well as the live one, and
+## that is load-bearing rather than tidy: the scripts build into certs.new and swap,
+## so a run killed mid-generation leaves certs.new behind. Naming only certs/ left
+## that residue untracked-but-visible, one `git add -A` away from being committed —
+## on the branch whose subject is key hygiene. Reachable in CI, too: the examples
+## compile gate kills a timed-out setup script with SIGKILL, which no cleanup trap
+## survives.
+/examples/security-mtls/certs*/
 
 ## OS-generated files
 .DS_Store

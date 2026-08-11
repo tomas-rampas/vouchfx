@@ -26,8 +26,16 @@
     its own platform guarantees.  PowerShell 7 is built on .NET, so the
     certificate APIs below are already present on any Windows machine that can
     run this file — whereas openssl is not reliably installed there.  On Linux
-    and macOS the reverse holds, which is what the .sh sibling uses.  Both
-    scripts write exactly the same seven files.
+    and macOS the reverse holds, which is what the .sh sibling uses.
+
+    Both scripts write exactly the same seven files into the certificates
+    directory, with the same owner-only permissions on the three that contain a
+    private key, and neither writes anything else there.  One internal
+    difference, stated because it is a security property rather than a detail:
+    this script never puts the CA's own private key on disk at all — it lives in
+    an RSA object for the length of the run — while the .sh must hand openssl a
+    key file and therefore writes it to a temporary directory OUTSIDE the
+    repository.
 
 .PARAMETER Force
     Regenerate even when the existing material is still valid.
