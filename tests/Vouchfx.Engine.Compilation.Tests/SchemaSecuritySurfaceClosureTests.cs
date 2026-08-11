@@ -266,23 +266,24 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// Finding 1/2 above) — but <c>SuppressUnevaluatedPropertiesCascade</c>'s OWN scoping is
     /// deliberately confined to the step surface (<see cref="SchemaErrorCollector.TryGetStepScope"/>
     /// only ever recognises <c>/steps/&lt;N&gt;</c>), so the environment/security surface has NO
-    /// equivalent cascade protection today. Nothing currently NEEDS one — each of these three
+    /// equivalent cascade protection today. Nothing currently NEEDS one — each of these four
     /// independent single-field defects happens to produce exactly one error already — but
     /// nothing GUARDS that either, and a JsonSchema.Net upgrade changing same-object
     /// annotation-propagation behaviour (exactly the risk <c>NaiveFix_*</c> above pins for the
     /// sibling-keyword trap) could silently turn one genuine defect into a false "unknown
     /// property" pile-up alongside it, with no test here to notice. Pins single-error output,
-    /// through the real <see cref="DocumentValidator"/> front door, for the three shapes the
-    /// gatekeeper measured clean: a blank <c>caCert</c>, an out-of-range <c>endpoint</c>, and a
-    /// nested <c>serverArtifacts[0].target</c> pattern miss.
+    /// through the real <see cref="DocumentValidator"/> front door, for the four shapes
+    /// measured clean: a blank <c>caCert</c>, an out-of-range <c>endpoint</c>, a literal
+    /// <c>clientKeyPassword</c>, and a nested <c>serverArtifacts[0].target</c> pattern miss.
     /// </summary>
     /// <remarks>
-    /// The first two fixtures moved from a redis dependency to a kafka one in M1 (second
-    /// peer-review round): a 'security' block on any non-kafka dependency kind is now
+    /// The caCert and endpoint fixtures moved from a redis dependency to a kafka one in M1
+    /// (second peer-review round): a 'security' block on any non-kafka dependency kind is now
     /// rejected outright, which would make those documents single-error for a reason that has
     /// nothing to do with an annotation cascade — the guard would still be green while
     /// proving nothing. Kafka accepts the block, so the single error each fixture yields is
-    /// still the one direct-field defect it declares. The third fixture was already on kafka.
+    /// still the one direct-field defect it declares. The serverArtifacts fixture was already
+    /// on kafka, and the clientKeyPassword fixture was written on kafka for the same reason.
     /// The whole-block rejection's OWN single-error behaviour is pinned separately, by
     /// <c>EnvironmentSchemaTests.Dependency_Security_OnNonKafkaKind_YieldsExactlyOneError_WhateverIsInsideTheBlock</c>.
     /// </remarks>
@@ -315,6 +316,29 @@ public sealed class SchemaSecuritySurfaceClosureTests
               security:
                 profile: tls
                 endpoint: 70000
+        steps:
+          - id: noop
+            type: script.csharp
+            code: "// noop"
+        """)]
+    [InlineData(
+        // A literal (non-'${secret:}') clientKeyPassword fails
+        // $defs/security.properties.clientKeyPassword's own 'pattern' — the same shape as the
+        // blank-caCert case above, on the field this surface gained most recently. Present
+        // because that field is the newest addition to a $def with NO
+        // SuppressUnevaluatedPropertiesCascade protection, so it is exactly where a
+        // single-defect-to-error-pile-up regression would first show.
+        """
+        environment:
+          dependencies:
+            events:
+              type: kafka
+              security:
+                profile: mtls
+                endpoint: 9093
+                clientCert: certs/client.pem
+                clientKey: certs/client.key
+                clientKeyPassword: "hunter2"
         steps:
           - id: noop
             type: script.csharp
