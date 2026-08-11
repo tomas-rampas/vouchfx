@@ -103,6 +103,11 @@ appsettings.*.local.json
 ## Testcontainers / Docker scratch
 .testcontainers.properties
 
+## Generated test certificates for examples/security-mtls.e2e.yaml
+## (written by examples/security-mtls.setup.sh / .ps1). Throwaway material with
+## UNENCRYPTED private keys — regenerated on demand, never committed.
+/examples/security-mtls/certs/
+
 ## OS-generated files
 .DS_Store
 .DS_Store?
