@@ -56,9 +56,13 @@
 #   readable by the SUITE ITSELF via a `${env:NAME}` reference (REQ-006; docs/02
 #   §3.2.6) — the engine passes such secrets through verbatim, by design. Do not call
 #   this workflow from a secrets-bearing trigger context (one where GitHub injects real
-#   repository/organisation secrets) with a `scenario-path` an untrusted contributor can
-#   influence, e.g. a fork's contents merged via `pull_request_target` — that
-#   combination lets an attacker-authored suite exfiltrate the secret.
+#   repository/organisation secrets) with a `scenario-path` — OR a `setup-script` — an
+#   untrusted contributor can influence, e.g. a fork's contents merged via
+#   `pull_request_target`; that combination lets attacker-authored content exfiltrate the
+#   secret. `setup-script` is if anything the sharper of the two: it names a file this
+#   workflow executes as a shell script on the runner, before the suite, so it is arbitrary
+#   code rather than a document the engine interprets. Both inputs must name content from a
+#   ref you trust.
 #
 # ── Worked example (caller) ─────────────────────────────────────────────────────────
 #   jobs:
@@ -89,6 +93,22 @@ on:
         type: string
         required: false
         default: "."
+
+      setup-script:
+        description: >-
+          OPTIONAL path (relative to the caller's checked-out repository root) of a shell
+          script to run on THIS runner after checkout and before the suite, to produce
+          fixture files the suite declares but does not ship — most obviously the
+          certificates and key/trust stores a `security:` block names. Such material
+          cannot be produced from inside a suite: every path under a `security:` block is
+          resolved and existence-checked BEFORE the first container starts, so a
+          `script.csharp` step runs far too late. Left empty by default; when set, the
+          script must exist and must exit 0 or the job fails. It is invoked as
+          `bash <path>`, so it does not need its executable bit set — which a repository
+          developed on Windows often cannot carry.
+        type: string
+        required: false
+        default: ""
 
       vouchfx-repo:
         description: >-
@@ -230,6 +250,32 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
+
+      # 3b. OPTIONAL fixture preparation. Runs on THIS runner, against the consumer's own
+      #    checkout, before anything reads the suite. This is the only supported point at
+      #    which a suite's declared-but-generated files can be created: the engine resolves
+      #    and existence-checks every `security:` path before it starts a container, so no
+      #    step inside the suite is early enough, and a preceding JOB would not help either
+      #    — each job gets a fresh runner and a fresh checkout, so the material would have
+      #    to travel as an artefact, which for private keys is exactly where it should not
+      #    go. Skipped entirely when `setup-script` is empty.
+      #    SECURITY: the caller-supplied path is bound to an `env:` var and dereferenced as
+      #    "$SETUP_SCRIPT" rather than interpolated into the shell line via ${{ … }}, so a
+      #    value containing shell metacharacters cannot be executed — the same pattern the
+      #    pre-warm and run steps use.
+      - name: Prepare suite fixtures
+        if: inputs.setup-script != ''
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup-script }}
+        run: |
+          script="$GITHUB_WORKSPACE/$SETUP_SCRIPT"
+          if [ ! -f "$script" ]; then
+            echo "::error::setup-script '$SETUP_SCRIPT' was not found at '$script'." >&2
+            exit 1
+          fi
+          echo "::group::bash $SETUP_SCRIPT"
+          bash "$script"
+          echo "::endgroup::"
 
       # 4. Build vouchfx (Release) from source. Building the CLI project pulls in the six
       #    Core providers it references; the resulting `vouchfx` executable is the Aspire

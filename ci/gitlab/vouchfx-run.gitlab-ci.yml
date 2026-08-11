@@ -116,6 +116,14 @@
 #                                              ~20s per-resource cold-start watchdog. Each pull
 #                                              is best-effort and non-fatal. SUPPLY-CHAIN: pin
 #                                              each entry to an image DIGEST (name@sha256:...).
+#   VOUCHFX_SETUP_SCRIPT       (default "")     Optional path, relative to the project root, of a
+#                                              shell script run before the suite to produce
+#                                              fixture files the suite declares but does not ship
+#                                              — typically the certificates and key/trust stores a
+#                                              `security:` block names, which cannot be produced
+#                                              from inside a suite because every such path is
+#                                              existence-checked before the first container starts.
+#                                              A named-but-missing script fails the job.
 #
 # ── Telemetry (opt-in, off by default) — plain project CI variables, no template logic ──
 #   GitLab project/group CI variables are already environment variables inside the job,
@@ -165,6 +173,7 @@
     VOUCHFX_FAIL_ON_ENV_ERROR: "false"
     VOUCHFX_FAIL_ON_INCONCLUSIVE: "false"
     VOUCHFX_PREWARM_IMAGES: ""
+    VOUCHFX_SETUP_SCRIPT: ""
 
     # ── Docker-in-Docker wiring. The dind service listens on TCP with TLS on :2376; the
     #    build's Docker client + Testcontainers/Aspire/DCP reach it via DOCKER_HOST. ──────
@@ -236,6 +245,26 @@
       if ! ( cd "$VOUCHFX_SRC_DIR" && git checkout --quiet "$VOUCHFX_REF" ); then
         echo "ERROR: could not check out VOUCHFX_REF='$VOUCHFX_REF' — refusing to build an unintended ref." >&2
         exit 1
+      fi
+
+    # 3b. OPTIONAL fixture preparation, mirroring the GH template's `setup-script` input.
+    #    Runs in THIS job, against the consumer's own checkout, before anything reads the
+    #    suite. It is the only supported point at which a suite's declared-but-generated
+    #    files can be created: the engine resolves and existence-checks every `security:`
+    #    path before it starts a container, so no step inside the suite is early enough,
+    #    and an earlier job would have to ship the material as an artefact — which for
+    #    private keys is exactly where it should not go. Skipped when the variable is empty;
+    #    a named-but-missing script fails the job rather than being silently ignored.
+    #    Invoked as `bash <path>` so the script needs no executable bit.
+    - |
+      if [ -n "$VOUCHFX_SETUP_SCRIPT" ]; then
+        setup_script="$CI_PROJECT_DIR/$VOUCHFX_SETUP_SCRIPT"
+        if [ ! -f "$setup_script" ]; then
+          echo "ERROR: VOUCHFX_SETUP_SCRIPT '$VOUCHFX_SETUP_SCRIPT' was not found at '$setup_script'." >&2
+          exit 1
+        fi
+        echo "Preparing suite fixtures: bash $VOUCHFX_SETUP_SCRIPT"
+        bash "$setup_script"
       fi
 
     # 4. Build vouchfx (Release) from source. Building the CLI project pulls in the six Core

@@ -18,7 +18,17 @@
 # '*.e2e.yaml', flat files only), so adding a new example file automatically
 # adds its gate — no hand-maintained matrix to rot.
 # Each example runs on its own runner (no DCP contention) via the reusable
-# workflow, exercising the single-FILE discovery-root form 15× over.
+# workflow, exercising the single-FILE discovery-root form once per example.
+# (The counts that used to appear here and below were already stale by one
+# before this note replaced them; a roster this file discovers dynamically
+# should not carry a hand-maintained tally of its own size.)
+#
+# Fixture material: an example may ship `examples/<name>.setup.sh`, which the
+# discover job finds by convention and the run job passes to the reusable
+# workflow's `setup-script` input. That is the only point at which a suite's
+# declared-but-generated files (certificates, key stores) can be created — the
+# engine existence-checks every `security:` path before the first container
+# starts. See examples/security-mtls.e2e.yaml.
 #
 # Strict gating is deliberate here, unlike the taxonomy's permissive CI default:
 # these suites are self-contained by construction, so an Environment error or
@@ -64,6 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       examples: ${{ steps.list.outputs.examples }}
+      setups: ${{ steps.list.outputs.setups }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,11 +93,32 @@ jobs:
           echo "Discovered roster: $examples"
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
 
+          # A SECOND, equally dynamic list: the examples that ship a fixture script.
+          #
+          # Some suites declare files a fresh checkout does not contain, because nothing
+          # inside a suite can create them in time — every `security:` path is resolved
+          # and existence-checked before the first container starts. Those examples ship
+          # `examples/<name>.setup.sh` beside the suite, and the run job below passes it
+          # to the reusable workflow's `setup-script` input.
+          #
+          # Discovered by CONVENTION rather than listed by name, for the same reason the
+          # roster above is: a hand-maintained exception here would rot the first time
+          # someone added or renamed an example. Adding `<name>.setup.sh` is the whole of
+          # what a new example needs to do to get its fixtures generated.
+          # (tests/Vouchfx.Engine.Runtime.Tests/ExamplesCompileTests.cs honours the same
+          # convention, so the non-docker compile gate prepares the same material.)
+          setups=$(find examples -maxdepth 1 -name '*.setup.sh' -printf '%f\n' \
+            | sed 's/\.setup\.sh$//' \
+            | sort \
+            | jq --raw-input --slurp --compact-output 'split("\n") | map(select(length > 0))')
+          echo "Examples with a fixture script: $setups"
+          echo "setups=$setups" >> "$GITHUB_OUTPUT"
+
   run-example:
     name: Example ${{ matrix.example }}
     needs: discover
     strategy:
-      # One broken example must not mask the verdicts of the other fourteen.
+      # One broken example must not mask the verdicts of all the others.
       fail-fast: false
       matrix:
         example: ${{ fromJson(needs.discover.outputs.examples) }}
@@ -95,6 +127,13 @@ jobs:
       # The single-file root form — also a rolling regression gate for
       # `vouchfx run <file>.e2e.yaml` across every provider family.
       scenario-path: examples/${{ matrix.example }}.e2e.yaml
+      # Generate this example's fixture material on the SAME runner, before the
+      # suite is read — see the discover job's note on the convention, and
+      # vouchfx-run.yml's own note on why no earlier job could do it instead.
+      # Empty for every example that ships no script, which is most of them.
+      setup-script: >-
+        ${{ contains(fromJson(needs.discover.outputs.setups), matrix.example)
+            && format('examples/{0}.setup.sh', matrix.example) || '' }}
       # Strict: a self-contained example that env-errors or times out has
       # regressed (see the header note on why the permissive default is wrong here).
       fail-on-env-error: true

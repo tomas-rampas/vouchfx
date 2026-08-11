@@ -1,0 +1,411 @@
+metadata:
+  name: security-mtls-example
+  description: >
+    Mutual TLS, end to end, against one topology: a REST call that presents a
+    client certificate to a TLS-terminating API, and a Kafka publish/consume
+    pair over a mutually-authenticated broker. Both services chain to one
+    private certificate authority, which is the shape an internal PKI actually
+    takes.
+
+    RUN THE SETUP SCRIPT FIRST. This suite declares certificates that do not
+    exist in a fresh checkout:
+
+        bash examples/security-mtls.setup.sh          (Linux, macOS, CI)
+        pwsh -File examples/security-mtls.setup.ps1   (Windows)
+
+    then:
+
+        vouchfx run examples/security-mtls.e2e.yaml --fail-on-env-error --fail-on-inconclusive
+
+    RUN IT WITH THOSE TWO FLAGS, and the reason is specific rather than general
+    hygiene. Only a Fail breaks CI by default. A RETRY assertion that never
+    matches is INCONCLUSIVE, and an unreachable or unhealthy container is an
+    ENVIRONMENT ERROR — neither of which is CI-breaking unless you ask for it.
+
+    Measured against this suite: break the Kafka leg alone, so the consumer's
+    match can never be satisfied, and the flagless command reports
+    `consume-order: INCONCLUSIVE` after its full 60-second budget and then
+    EXITS 0. Nothing about that run proved a security property, and CI would
+    have called it a pass. With the two flags the same run exits 4.
+
+    (The REST leg is covered differently — by the assertion at step 2, which is
+    a Fail and therefore gates CI on its own, flags or no flags. See that
+    step's note, which measures it.)
+
+    The script is not a convenience. vouchfx resolves and existence-checks every
+    path under a `security:` block BEFORE it starts a container, so nothing
+    inside the suite — not even a script.csharp step — can create this material
+    in time. A real adopter is in the same position: certificates come from the
+    PKI before the suite runs. See docs/security-matrix.md for what a green
+    secured run does and does not prove.
+
+    WHAT THE CERTIFICATES MUST NOT BE. Everything under security-mtls/certs/ is
+    generated, git-ignored and thrown away. Do not put a production identity
+    there. If you adapt this example to your own infrastructure, have your PKI
+    issue the suite a DEDICATED, SHORT-LIVED, NON-PRODUCTION certificate scoped
+    to what the test needs — the key has to sit unencrypted inside the suite
+    directory, which is the wrong home for anything that matters. That
+    constraint is a boundary of the current release, not a design position: see
+    issue #384.
+
+    AND ADD YOUR OWN IGNORE RULE. You inherit this example's scripts, not this
+    repository's .gitignore. Whatever directory your suite generates key
+    material into needs an ignore rule in YOUR repository, added before the
+    first run rather than after — an unencrypted private key is not something to
+    notice in a code review. This repository ignores
+    `/examples/security-mtls/certs*/`; note the glob, which covers the staging
+    directory the scripts build into as well as the live one.
+
+# ── WHAT FAILURE LOOKS LIKE ──────────────────────────────────────────────────
+# This suite passes, so nothing below is produced by running it. It is here
+# because a green run is only evidence if you know what a non-green one looks
+# like — a reader who sees only the happy path has learned the syntax, not that
+# the engine checks anything. Both diagnostics were measured against
+# vouchfx 1.0.0-rc.4, and both are abridged.
+#
+# Declare `tls` (or `mtls`) on an endpoint that turns out to be plaintext, and
+# the pre-step probe refuses the topology — exit 3, with NO gating flag set. An
+# unconfirmable security assertion is one of the two deliberate exceptions to
+# "only a Fail breaks CI by default" (docs/ci-integration.md lists both):
+#
+#   RunSuiteAsync: topology failed to start - Orchestration SecurityConfirmation
+#   on resource 'api': 'api' declared profile 'tls' on endpoint '80', but the TLS
+#   handshake against localhost:19663 failed: Cannot determine the frame size or
+#   a corrupted frame was received.. The endpoint may not be running TLS at all
+#   (a plaintext listener alongside the secured one is the usual cause), or its
+#   certificate may not satisfy the declared trust anchor.
+#
+# Put a `security:` block on a dependency kind that has no wiring — `postgres`,
+# say — and it is rejected before any container starts at all, exit 4:
+#
+#   (line 8) [properties] Dependency 'store' (type 'postgres') declares
+#   'security', but no security profile is wired for dependency kind 'postgres'
+#   in this release — only a 'kafka' dependency, or a declared service, can carry
+#   a 'security' block today.
+#
+# The full exit-code table is in docs/ci-integration.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment:
+  services:
+    # ── The secured REST API ────────────────────────────────────────────────
+    # An `image:`-form service standing in for a system under test that
+    # terminates TLS and demands a client certificate. It has to be `image:`:
+    # a `project:`-form service cannot be secured, because its endpoints come
+    # from its own launch profile and the engine has none of its own to give an
+    # `https` scheme.
+    orders-api:
+      image: nginx:alpine
+
+      # Declaring `ports` suppresses the implicit HTTP endpoint. 8443 is the
+      # only way in, and the `security` block below re-declares it as https.
+      ports: [8443]
+
+      # A TCP probe. Worth understanding as a CONSEQUENCE rather than a choice:
+      # for a service that declares `ports` and no `httpPort`, the schema
+      # constrains healthCheck.type to `tcp` outright, so `type: http` here is
+      # rejected before anything starts. Declaring `ports` is the trigger — not
+      # declaring `security`.
+      #
+      # The rule exists for a reason that applies squarely to this service: a
+      # container health check cannot present a client certificate, so an HTTP
+      # probe against a mutual-TLS listener would hold a perfectly healthy
+      # topology unhealthy forever. Written out explicitly rather than left to
+      # the default, because the port it probes is worth stating.
+      healthCheck: { type: tcp, port: 8443 }
+
+      security:
+        # `mtls` — present a client certificate and require the peer's own to
+        # validate. `tls` would authenticate the server only.
+        profile: mtls
+
+        # WHICH declared port carries the secured listener. The engine gives
+        # this one an `https` scheme and probes it before any step runs.
+        endpoint: "8443"
+
+        # THE TRUST ANCHOR. Declared because the API's certificate is issued by
+        # a private authority that no machine trust store knows about — which is
+        # the normal enterprise case. Without it the handshake would be
+        # validated against the platform's public roots and fail. One authority
+        # signs both services here, so both name the same file: that is what an
+        # internal PKI looks like, and it is why `caCert` is a per-target field
+        # rather than a global one — a suite spanning two organisations would
+        # declare two different anchors.
+        caCert: ./security-mtls/certs/ca.pem
+
+        # THE IDENTITY THIS SUITE PRESENTS, as a separate certificate/key PAIR.
+        # Two fields rather than one bundle because the engine reads a PEM
+        # certificate and a matching UNENCRYPTED PEM private key; there is no
+        # field for a PKCS#12 bundle and none for a key passphrase.
+        #
+        # A corporate PKI hands out an encrypted key, and the answer is NOT to
+        # decrypt that one. Two properties are being asked of this file at once —
+        # unencrypted, and inside the suite directory — and together they make it
+        # unsuitable for any identity you would mind losing: it sits in a working
+        # tree, it gets copied by whatever copies the tree, and only a .gitignore
+        # stands between it and a commit. Have the PKI issue the suite its own
+        # short-lived, non-production certificate, scoped to what the test needs,
+        # and treat it as disposable. See issue #384 — the passphrase gap is a
+        # boundary of this release, not a design position.
+        clientCert: ./security-mtls/certs/client.pem
+        clientKey: ./security-mtls/certs/client-key.pem
+
+        # WHAT serverArtifacts IS DOING: copying host files into the container
+        # at topology-build time, before it starts.
+        #
+        # This is the half of mutual TLS vouchfx does NOT do for you. The engine
+        # configures the CLIENT — the trust anchor and the identity above. The
+        # SERVER has to already be secured, and `serverArtifacts` is the channel
+        # for the material that secures it: nginx's own certificate and key, the
+        # anchor it validates callers against, and the configuration that turns
+        # verification on. Delete this block and the suite still validates and
+        # still starts a container — it just fails at the probe, because nothing
+        # on port 8443 speaks TLS.
+        serverArtifacts:
+          - source: ./security-mtls/nginx-mtls.conf
+            target: /etc/nginx/conf.d/default.conf
+          - source: ./security-mtls/certs/server.pem
+            target: /etc/nginx/certs/server.pem
+          - source: ./security-mtls/certs/server-key.pem
+            target: /etc/nginx/certs/server-key.pem
+          - source: ./security-mtls/certs/ca.pem
+            target: /etc/nginx/certs/ca.pem
+
+    # ── The secured Kafka broker ────────────────────────────────────────────
+    # Declared as a SERVICE rather than as a `kafka` dependency, because this
+    # stands in for a broker the customer already runs and has already secured.
+    # (A `kafka` dependency also accepts `security:` — it is the one dependency
+    # kind that does — but the engine would then be starting a stock image that
+    # serves no secured listener.)
+    orders-broker:
+      image: confluentinc/cp-kafka:7.6.1
+
+      # THE HOST PORT IS PINNED, and this is the one line most likely to be
+      # copied out and quietly dropped.
+      #
+      # A Kafka client does not keep talking to the address it dialled. It asks
+      # for metadata and is redirected to whatever the broker ADVERTISES as the
+      # partition leader — so the broker has to name an address that is true on
+      # the client's side of the connection. With an orchestrator-allocated host
+      # port the broker cannot know that address at the time it needs to
+      # advertise it, and every step reaches the broker, gets redirected, and
+      # then fails to connect. Pinning the host port is what lets
+      # `VOUCHFX_SECURE_ADVERTISED` below name a port that exists on this
+      # machine. It affects the publish exactly as much as the consume.
+      #
+      # 39093 is arbitrary and simply has to be free. Change it if it collides.
+      #
+      # Only the secured port is published. The plaintext one is not merely
+      # unpublished — it is bound to loopback INSIDE the container (see
+      # broker-entrypoint.sh), because not publishing a port is not the same as
+      # making it unreachable: every other container in the topology network can
+      # still reach a 0.0.0.0-bound port directly, with no credentials.
+      ports: ["39093:9093"]
+      healthCheck: { type: tcp, port: 9093 }
+
+      security:
+        profile: mtls
+        endpoint: "9093"
+
+        # The same three client-side files as the API above — one authority,
+        # one identity, two secured targets.
+        caCert: ./security-mtls/certs/ca.pem
+        clientCert: ./security-mtls/certs/client.pem
+        clientKey: ./security-mtls/certs/client-key.pem
+
+        serverArtifacts:
+          # Sourced by the Confluent image before it renders broker properties;
+          # see the file for why the secured listener is made conditional there
+          # rather than declared in `env:` below.
+          - source: ./security-mtls/broker-entrypoint.sh
+            target: /etc/confluent/docker/bash-config
+          # The broker's key store is ONE PEM file (private key, then
+          # certificate) and its trust store is the anchor. Kafka has read PEM
+          # stores since 2.7, which is what keeps the setup script free of a JDK.
+          - source: ./security-mtls/certs/kafka.keystore.pem
+            target: /etc/kafka/secrets/kafka.keystore.pem
+          - source: ./security-mtls/certs/kafka.truststore.pem
+            target: /etc/kafka/secrets/kafka.truststore.pem
+
+      env:
+        # Ordinary single-node KRaft configuration, plus the BASELINE listeners: the
+        # internal ones this broker needs whether or not it is secured. The SECURE
+        # listener is not here — broker-entrypoint.sh adds it, and rewrites this
+        # KAFKA_LISTENERS value, only once it can see the key store has actually
+        # arrived. So this block is what the broker falls back to if delivery failed:
+        # a broker with no secured listener at all, which fails the suite loudly at the
+        # handshake instead of coming up quietly half-secured.
+        #
+        # Both baseline listeners bind LOOPBACK, not 0.0.0.0 — see the entrypoint's own
+        # note for the measured reason (a 0.0.0.0-bound plaintext listener is reachable
+        # by every other container on the topology network, credentials not required).
+        KAFKA_NODE_ID: "1"
+        KAFKA_PROCESS_ROLES: "broker,controller"
+        KAFKA_LISTENERS: "PLAINTEXT://127.0.0.1:9092,CONTROLLER://127.0.0.1:9094"
+        KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+        KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+        KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9094"
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+        KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+        KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+        KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+        CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+        # The address the broker advertises for its secured listener — the
+        # pinned host port from `ports:` above, spelled as the client sees it.
+        VOUCHFX_SECURE_ADVERTISED: "localhost:39093"
+
+steps:
+  # ── 1. A REST call presenting a client certificate ────────────────────────
+  - id: call-api
+    type: http.rest
+    description: >
+      Calls the API over HTTPS, presenting the declared client certificate. The
+      response is nginx's own account of the handshake — which identity it saw
+      and whether it verified. Capturing those two fields, rather than only
+      asserting a 200, is what makes this step evidence: a server with
+      verification switched off also answers 200.
+    target: orders-api
+    method: GET
+    path: /orders
+    expect: { status: 200 }
+    capture:
+      clientDn: "$.clientDn"
+      verify: "$.verify"
+    timeout: 30s
+
+  # ── 2. Assert the API's verdict IMMEDIATELY ───────────────────────────────
+  # This step exists to make a broken API leg fail HERE, as a Fail, naming the
+  # right thing — and it earns its place by what happens without it.
+  #
+  # The captured values are also pinned by the consumer's `match` at the end.
+  # But that assertion is a RETRY, and a RETRY that never matches is
+  # INCONCLUSIVE, not Fail — which is not CI-breaking by default. Measured, with
+  # verification switched off in the nginx configuration and no strict flags:
+  #
+  #   without this step   exit 0, and the only complaint is against
+  #                       `consume-order` — a Kafka step, when the fault is in
+  #                       the HTTP service two steps earlier
+  #   with this step      exit 1, verdict Fail, reported at 0 ms against a step
+  #                       whose name and message say exactly what broke
+  #
+  # What does NOT change is the wall clock: the run still executes the remaining
+  # steps and still spends the consumer's full 60-second budget, because
+  # `continueOnFailure` abort semantics are parsed but not yet enforced by the
+  # engine. So this step buys the right verdict, the right exit code and the
+  # right attribution — not a faster failure. Worth being exact about, since the
+  # obvious assumption is that a Fail stops the scenario.
+  #
+  # It is a script.csharp step because `http.rest`'s `expect` block accepts a
+  # status code and nothing else — there is no body assertion to use instead. A
+  # throwing script is a Fail, which is the throw-to-assert idiom this
+  # repository already uses (see examples/reference/reference.e2e.yaml).
+  - id: assert-client-authenticated
+    type: script.csharp
+    description: >
+      Fails the run unless nginx reported that it verified the client
+      certificate this suite presented, and that the identity it saw was the one
+      declared. Read the note at the end of this file first: this is the SERVER
+      reporting its own decision, which is a weaker kind of evidence than the
+      engine's own confirmation of the broker.
+    verifyMode: IMMEDIATE
+    timeout: 15s
+    code: |
+      var verify = (string)Vars["verify"];
+      var clientDn = (string)Vars["clientDn"];
+
+      if (verify != "SUCCESS")
+      {
+        throw new System.Exception(
+          "The API did not verify this suite's client certificate: it reported "
+          + "ssl_client_verify='" + verify + "', expected 'SUCCESS'. Either the API is no "
+          + "longer requiring a client certificate (check ssl_verify_client in "
+          + "examples/security-mtls/nginx-mtls.conf) or the certificate presented does not "
+          + "chain to the CA the API trusts.");
+      }
+
+      if (clientDn != "CN=vouchfx-example-client")
+      {
+        throw new System.Exception(
+          "The API authenticated a DIFFERENT identity than the one declared: it saw '"
+          + clientDn + "', expected 'CN=vouchfx-example-client'. The certificates under "
+          + "examples/security-mtls/certs/ are probably stale — regenerate them.");
+      }
+
+  # ── 3. Publish over mutual TLS ────────────────────────────────────────────
+  - id: publish-order
+    type: mq-publish.kafka
+    description: >
+      Publishes to the secured listener. The captured evidence from step 1 is
+      carried in the payload so the consumer below can assert on it — which is
+      what ties the two halves of this example into one transaction instead of
+      two unrelated demonstrations.
+    target: orders-broker
+    topic: orders
+    payload: '{"orderId":"ord-001","clientDn":"{clientDn}","verify":"{verify}"}'
+    timeout: 30s
+
+  # ── 4. Consume over mutual TLS ────────────────────────────────────────────
+  - id: consume-order
+    type: mq-expect.kafka
+    description: >
+      Reads the message back over the same mutually-authenticated connection.
+      verifyMode RETRY polls with engine-owned backoff until the message arrives
+      or the timeout expires — never write a sleep.
+
+      The match reaches back to step 1: the values it pins were produced by
+      nginx, not by this suite, so reaching them here means the REST leg
+      authenticated and the Kafka leg carried the result.
+    target: orders-broker
+    topic: orders
+    verifyMode: RETRY
+    timeout: 60s
+    match:
+      json:
+        "$.orderId": "ord-001"
+        "$.clientDn": "CN=vouchfx-example-client"
+        "$.verify": "SUCCESS"
+
+# ── THE TWO LEGS DO NOT CARRY THE SAME GRADE OF EVIDENCE ─────────────────────
+# The most useful paragraph in this file if you are building a proof of your own,
+# and the easiest thing to get wrong: a green run above does NOT mean the same
+# thing about the broker and about the API.
+#
+# THE BROKER LEG IS MEASURED BY THE ENGINE, INDEPENDENTLY OF THE BROKER'S
+# COOPERATION. Before any step ran, vouchfx completed a Kafka round trip over the
+# secured connection AND showed that a second connection presenting no client
+# certificate was REFUSED. That is the `AuthenticatedRoundTrip` level in the run
+# output, and neither half can be faked from the broker's side of the wire — the
+# refusal is the peer's own behaviour. It fails closed, too: measured, setting
+# `KAFKA_SSL_CLIENT_AUTH` to `none` in broker-entrypoint.sh aborts the run with
+# exit 3 before a single step.
+#
+# THE API LEG IS THE SYSTEM UNDER TEST'S WORD ABOUT ITSELF. `TransportConfirmed`
+# — the level `orders-api` earns — says, in the engine's own words, that TLS and
+# the server's trust chain are confirmed and that "the declared client
+# certificate was configured on the handshake with no rejection raised". Read the
+# last clause exactly: no rejection was raised, which is not the same as
+# acceptance. It does NOT say the server demanded a certificate, and it cannot:
+# in TLS 1.3 a server cannot reject a missing client certificate during the
+# handshake, so from the client's side an enforcing listener and a
+# merely-requesting one are indistinguishable.
+#
+# So the `verify=SUCCESS` this suite asserts is nginx REPORTING its own decision.
+# Measured, to be exact about the gap: an nginx configured with
+# `ssl_verify_client off`, no `ssl_client_certificate` at all, and the expected
+# JSON hardcoded into its `return` produces a PASS and exit 0 with both strict
+# flags set. The assertion is trustworthy here only because the configuration
+# that produces it ships in this repository, beside the suite, and you can read it.
+#
+# THE LESSON FOR YOUR OWN SUITE: an application-layer assertion about
+# authentication is exactly as trustworthy as the thing making it. When the
+# service is code you deploy rather than a fixture you wrote, treat its own
+# claim as corroboration and get the load-bearing proof from somewhere the
+# service does not control — the engine's confirmation level, the peer's logs,
+# or a negative control that must fail. This example does not ship the negative
+# controls; they live in the engine's own drill suite, because an example that
+# fails is one CI rejects.
+# ─────────────────────────────────────────────────────────────────────────────
