@@ -275,7 +275,12 @@ public sealed class ExamplesCompileTests
     /// stalled script would otherwise stall the blocking build job indefinitely.
     /// </para>
     /// </remarks>
-    private static async Task<string?> RunSetupScriptAsync(string script)
+    /// <param name="timeout">
+    /// Overrides <see cref="s_setupScriptTimeout"/>. Exists so the timeout BRANCH is
+    /// testable in a second rather than in two minutes — the production callers pass
+    /// nothing.
+    /// </param>
+    private static async Task<string?> RunSetupScriptAsync(string script, TimeSpan? timeout = null)
     {
         var interpreter = OperatingSystem.IsWindows() ? "pwsh" : "bash";
         var startInfo = new ProcessStartInfo(interpreter);
@@ -309,10 +314,11 @@ public sealed class ExamplesCompileTests
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            using var timeout = new CancellationTokenSource(s_setupScriptTimeout);
+            var budget = timeout ?? s_setupScriptTimeout;
+            using var deadline = new CancellationTokenSource(budget);
             try
             {
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -320,16 +326,20 @@ public sealed class ExamplesCompileTests
 
                 // Whatever the pipes yielded before the kill, on a short budget of its own:
                 // the point is to report, not to wait a second time on a process already
-                // declared stuck.
+                // declared stuck. This call cannot throw — see its remarks; that is what
+                // keeps the sentence below the thing the caller actually receives.
                 var partial = await DrainOrGiveUpAsync(stdoutTask, stderrTask).ConfigureAwait(false);
                 return $"The example fixture script '{script}' did not finish within "
-                    + $"{s_setupScriptTimeout.TotalSeconds:F0}s and was killed. This is a TIMEOUT, "
+                    + $"{budget.TotalSeconds:F0}s and was killed. This is a TIMEOUT, "
                     + $"not a failure to generate — the fixture material may be absent or "
                     + $"half-written.{partial}";
             }
 
-            var stdout = await stdoutTask.ConfigureAwait(false);
-            var stderr = await stderrTask.ConfigureAwait(false);
+            // Never a bare `await` on a read: a faulted pipe would otherwise escape this
+            // method as an opaque IO error rather than as a diagnostic naming the script.
+            // These SAY SO when a read fails rather than returning silence — see the helper.
+            var stdout = await ReadTextOrExplainAsync(stdoutTask, "stdout").ConfigureAwait(false);
+            var stderr = await ReadTextOrExplainAsync(stderrTask, "stderr").ConfigureAwait(false);
 
             return process.ExitCode == 0
                 ? null
@@ -337,16 +347,115 @@ public sealed class ExamplesCompileTests
         }
     }
 
-    /// <summary>Whatever the two pipes produce within a short grace, or nothing.</summary>
-    private static async Task<string> DrainOrGiveUpAsync(Task<string> stdout, Task<string> stderr)
-    {
-        var both = Task.WhenAll(stdout, stderr);
-        var finished = await Task.WhenAny(both, Task.Delay(TimeSpan.FromSeconds(5)))
-            .ConfigureAwait(false);
+    /// <summary>How long the timeout path waits for whatever the pipes already hold.</summary>
+    private static readonly TimeSpan s_drainGrace = TimeSpan.FromSeconds(5);
 
-        return ReferenceEquals(finished, both)
-            ? $"\n{await stdout.ConfigureAwait(false)}\n{await stderr.ConfigureAwait(false)}"
-            : string.Empty;
+    /// <summary>Whatever the two pipes produce within a short grace, or nothing.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>No path out of this method throws, and that is the contract rather than a
+    /// nicety.</strong> It is called from the timeout branch, whose whole job is to turn a
+    /// wedged script into the legible sentence "this timed out". An exception escaping here
+    /// would propagate past that sentence and out of the caller, so a hung script would
+    /// surface as an opaque IO error — the exact outcome the timeout branch exists to
+    /// prevent. Its summary promises "or nothing"; a fault is a case of nothing.
+    /// </para>
+    /// <para>
+    /// The previous version did throw. It awaited <c>Task.WhenAny(both, delay)</c> and
+    /// treated "the winner is <c>both</c>" as "the reads succeeded" — but
+    /// <see cref="Task.WhenAny(Task[])"/> completes when a task finishes in ANY state,
+    /// faulted included, so a faulted read made the reference comparison TRUE and the
+    /// following <c>await</c> rethrew. Measured directly: with one read faulted,
+    /// <c>ReferenceEquals(winner, both)</c> is <see langword="true"/> and
+    /// <c>both.Status</c> is <c>Faulted</c>.
+    /// </para>
+    /// <para>
+    /// The fix is structural rather than a <c>catch</c>: nothing here ever awaits a task
+    /// that might be faulted. <see cref="Task.WhenAny(Task[])"/> is used precisely BECAUSE
+    /// it never surfaces its arguments' exceptions, and each read's text is then taken by
+    /// inspecting its status. That is stronger than catching a measured exception type, and
+    /// it avoids having to enumerate the types a broken pipe can produce — which measurement
+    /// says is not a list anyone should trust: killing the child, and even disposing the
+    /// <see cref="Process"/> with reads outstanding, both leave the reads
+    /// <c>RanToCompletion</c> holding partial output on this platform, so the natural fault
+    /// is rare enough that a hand-written catch list would be guesswork.
+    /// </para>
+    /// </remarks>
+    private static async Task<string> DrainOrGiveUpAsync(
+        Task<string> stdout, Task<string> stderr, TimeSpan? grace = null)
+    {
+        // A read still running when the grace expires could fault afterwards, with nobody
+        // left to look at it. Observed here so it can never escalate.
+        ObserveIfItEverFaults(stdout);
+        ObserveIfItEverFaults(stderr);
+
+        var both = Task.WhenAll(stdout, stderr);
+        ObserveIfItEverFaults(both);
+
+        // Never adopts a fault from either argument — see the remarks.
+        await Task.WhenAny(both, Task.Delay(grace ?? s_drainGrace)).ConfigureAwait(false);
+
+        var outText = TextOfCompleted(stdout);
+        var errText = TextOfCompleted(stderr);
+
+        return outText.Length == 0 && errText.Length == 0
+            ? string.Empty
+            : $"\n{outText}\n{errText}";
+    }
+
+    /// <summary>
+    /// The text of a read that SUCCEEDED, or the empty string for one that faulted, was
+    /// cancelled, or has not finished. Never awaits, so it cannot throw.
+    /// </summary>
+    private static string TextOfCompleted(Task<string> read) =>
+        read.Status == TaskStatus.RanToCompletion ? read.Result : string.Empty;
+
+    /// <summary>Marks a task's eventual exception observed, whenever it arrives.</summary>
+    private static void ObserveIfItEverFaults(Task task) =>
+        _ = task.ContinueWith(
+            static faulted => _ = faulted.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    /// <summary>
+    /// Awaits one pipe read and yields its text, or — if the read did not succeed — a short
+    /// bracketed note SAYING SO. Never rethrows.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The success path needs never-throwing for the same reason the timeout path does: a
+    /// plain <c>await</c> on a faulted read would escape this class's "return a diagnostic,
+    /// never throw" contract and reach the test as an opaque IO error instead of a message
+    /// naming the script. Unlike <see cref="TextOfCompleted"/> this WAITS, because on the
+    /// success path a pipe may still hold buffered output after the process has exited.
+    /// </para>
+    /// <para>
+    /// <strong>But it must not go quiet, and that is why this is not simply
+    /// <see cref="TextOfCompleted"/> with a wait in front.</strong> Substituting the empty
+    /// string for a failed read is right on the TIMEOUT path — that method's contract is
+    /// "whatever the pipes produced, or nothing", and the timeout sentence carries the
+    /// diagnosis on its own. On the SUCCESS path the same substitution would be a new way to
+    /// lose information: a script that exited non-zero would be reported as
+    /// <c>exited 7</c> followed by two blank lines, and the reader would conclude the script
+    /// printed nothing, when in truth its output was never read. An empty stream and an
+    /// unreadable one are different facts and are now spelled differently.
+    /// </para>
+    /// </remarks>
+    private static async Task<string> ReadTextOrExplainAsync(Task<string> read, string streamName)
+    {
+        ObserveIfItEverFaults(read);
+        await Task.WhenAny(read).ConfigureAwait(false);
+
+        if (read.Status == TaskStatus.RanToCompletion)
+        {
+            return read.Result;
+        }
+
+        // GetBaseException: the platform wraps a pipe failure a layer or two deep, and the
+        // outer text is usually "One or more errors occurred".
+        var reason = read.Exception?.GetBaseException().Message ?? read.Status.ToString();
+        return $"<{streamName} could not be read: {reason}>";
     }
 
     private static void KillQuietly(Process process)
@@ -363,6 +472,131 @@ public sealed class ExamplesCompileTests
                                        or NotSupportedException)
         {
             // Exited between the check and the kill, or the platform refused it.
+        }
+    }
+
+    // ── The failure paths of the setup-script runner ───────────────────────────────────
+    //
+    // These are kept permanently, and the reason is the record rather than a preference:
+    // this helper has needed two correctness fixes and BOTH were in its failure handling —
+    // first a deadlock from draining the pipes sequentially, then a rethrow from treating
+    // Task.WhenAny's "completed" as "succeeded". The happy path has never been wrong. Tests
+    // that only exercise a working script would have caught neither.
+    //
+    // They are also cheap: no containers, no repository files, and the one that starts a
+    // process bounds it to a couple of seconds.
+
+    /// <summary>
+    /// A faulted pipe read must not escape the drain helper — it is the timeout path's
+    /// last step, and an exception there replaces the timeout diagnostic with an opaque one.
+    /// </summary>
+    [Fact]
+    public async Task DrainOrGiveUp_WhenOnePipeReadFaults_ReturnsWhatSurvivedInsteadOfThrowing()
+    {
+        var faulted = new TaskCompletionSource<string>();
+        faulted.SetException(new IOException("the pipe broke when the process was killed"));
+
+        var text = await DrainOrGiveUpAsync(
+            faulted.Task, Task.FromResult("output written before the kill"), TimeSpan.FromSeconds(2));
+
+        Assert.Contains("output written before the kill", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("the pipe broke", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>Both reads faulted is the "or nothing" case, not the throwing case.</summary>
+    [Fact]
+    public async Task DrainOrGiveUp_WhenBothPipeReadsFault_ReturnsEmpty()
+    {
+        var first = new TaskCompletionSource<string>();
+        first.SetException(new IOException("stdout broke"));
+        var second = new TaskCompletionSource<string>();
+        second.SetException(new ObjectDisposedException("stderr"));
+
+        var text = await DrainOrGiveUpAsync(first.Task, second.Task, TimeSpan.FromSeconds(2));
+
+        Assert.Equal(string.Empty, text);
+    }
+
+    /// <summary>Reads that never finish are abandoned at the grace, not waited on forever.</summary>
+    [Fact]
+    public async Task DrainOrGiveUp_WhenReadsNeverComplete_GivesUpAtTheGrace()
+    {
+        var neverFinishes = new TaskCompletionSource<string>();
+        var alsoNever = new TaskCompletionSource<string>();
+
+        var text = await DrainOrGiveUpAsync(
+            neverFinishes.Task, alsoNever.Task, TimeSpan.FromMilliseconds(200));
+
+        Assert.Equal(string.Empty, text);
+    }
+
+    /// <summary>
+    /// On the SUCCESS path an unreadable stream must be reported as unreadable, not as an
+    /// empty one — the two are different facts and silence would lose a diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of the drain tests above, and deliberately the opposite assertion:
+    /// never-throwing is required on both paths, but only the timeout path may go quiet.
+    /// </remarks>
+    [Fact]
+    public async Task ReadTextOrExplain_WhenTheReadFails_SaysSoRatherThanReturningEmpty()
+    {
+        var faulted = new TaskCompletionSource<string>();
+        faulted.SetException(new IOException("the pipe closed early"));
+
+        var text = await ReadTextOrExplainAsync(faulted.Task, "stdout");
+
+        Assert.NotEqual(string.Empty, text);
+        Assert.Contains("stdout could not be read", text, StringComparison.Ordinal);
+        Assert.Contains("the pipe closed early", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A read that succeeds is passed through verbatim, brackets and all absent.</summary>
+    [Fact]
+    public async Task ReadTextOrExplain_WhenTheReadSucceeds_ReturnsTheTextUnchanged()
+    {
+        var text = await ReadTextOrExplainAsync(Task.FromResult("the script said this"), "stdout");
+
+        Assert.Equal("the script said this", text);
+    }
+
+    /// <summary>
+    /// A script that hangs is reported AS A TIMEOUT — never as a pass, and never as some
+    /// other error. The whole point of the bounded wait.
+    /// </summary>
+    [Fact]
+    public async Task RunSetupScript_WhenTheScriptHangs_ReportsATimeoutRatherThanAPass()
+    {
+        // Written outside the repository: this is a probe, not a fixture, and the pairing
+        // test above would rightly object to a stray *.setup.* file under examples/.
+        var directory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-setup-timeout-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            var script = Path.Combine(
+                directory, OperatingSystem.IsWindows() ? "hang.setup.ps1" : "hang.setup.sh");
+            File.WriteAllText(
+                script, OperatingSystem.IsWindows() ? "Start-Sleep -Seconds 120\n" : "sleep 120\n");
+
+            var failure = await RunSetupScriptAsync(script, TimeSpan.FromSeconds(2));
+
+            Assert.NotNull(failure);
+            Assert.Contains("did not finish within", failure, StringComparison.Ordinal);
+            Assert.Contains("TIMEOUT", failure, StringComparison.Ordinal);
+            Assert.Contains("not a failure to generate", failure, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
         }
     }
 
