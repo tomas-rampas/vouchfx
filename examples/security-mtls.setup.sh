@@ -28,9 +28,16 @@
 #  reader install something, the pair produces byte-compatible output from
 #  whichever tool is already there.  Both write exactly the same seven files into
 #  the certificates directory, with the same permissions, and neither writes
-#  anything else there — this script keeps the CA's own key and the CSRs in a
-#  temporary directory outside the repository; the .ps1 never puts the CA key on
-#  disk at all.
+#  anything else there.  This script keeps the CA's own key and the CSRs in a
+#  temporary directory OUTSIDE the repository and deletes it on exit; the .ps1
+#  never puts the CA key on disk at all.
+#
+#  Those are two separate promises and only one of them is absolute.  Location is
+#  unconditional.  Deletion is an EXIT trap, so it covers every ending the shell
+#  gets to observe — measured: normal exit, `set -e` error, SIGTERM and SIGINT all
+#  leave nothing behind — but a SIGKILL bypasses every trap there is, and leaves
+#  the temporary directory holding the CA key.  Being out of the tree is what
+#  bounds that case: it cannot be committed, only reaped by the host.
 #
 #  PREREQUISITE: openssl on PATH.  Present by default on essentially every Linux
 #  and macOS install and on every GitHub-hosted runner; if it is missing this
@@ -213,9 +220,10 @@ cp "${work}/ca.pem" "${work}/kafka.truststore.pem"
 
 # ── 5. Publish ───────────────────────────────────────────────────────────────
 # Private keys are narrowed BEFORE the swap, so they are never briefly readable at the
-# live path. There is nothing else to clean up here: the CA key, the CSRs and the serial
-# file were all written to $secrets_work, outside the tree, so the staging directory
-# holds exactly the seven published files and nothing more.
+# live path. Nothing is deleted by hand here: the CA key, the CSRs and the serial file all
+# live in $secrets_work, and the EXIT trap armed above removes it on success, on a `set -e`
+# error, and on SIGTERM/SIGINT alike (all measured; SIGKILL is the one exception, and no
+# trap survives that).
 chmod 600 \
   "${work}/client-key.pem" \
   "${work}/server-key.pem" \
@@ -223,7 +231,20 @@ chmod 600 \
 
 rm -rf -- "$certs_dir"
 mv -- "$work" "$certs_dir"
-trap - EXIT
+
+# NO `trap - EXIT` HERE, and the omission is the point rather than an oversight.
+#
+# There was one, from when the trap's only target was $work: after the `mv` that path no
+# longer exists, so disarming was a harmless belt-and-braces guard against some future
+# edit deleting the freshly published directory. It stopped being harmless the moment
+# $secrets_work joined the same trap — the trap became the ONLY thing that removes the CA's
+# private key, and disarming it on the success path meant the normal, everyday run was the
+# one that leaked. Measured before the fix: one `--force` run left a /tmp/tmp.* directory
+# holding ca-key.pem, for a signing key both fixture services trust.
+#
+# Leaving the trap armed is safe, and that was measured too rather than assumed: $work has
+# been renamed away, `rm -rf` over a path that no longer exists returns 0, the published
+# directory is untouched, and the script still exits 0 under `set -euo pipefail`.
 
 cat <<EOF
 security-mtls: wrote ${#OUTPUTS[@]} files to ${certs_dir}

@@ -39,8 +39,14 @@ if [ -f /etc/kafka/secrets/kafka.keystore.pem ]; then
   # Measured: rename SECURE to SSL, change nothing else, and the container exits 1 with
   # `KAFKA_SSL_KEYSTORE_FILENAME is required.` before Kafka starts; through the engine that
   # surfaces as a HEALTH GATE failure and exit 3. Neither diagnostic mentions the rename, so
-  # this is a bad one to discover by experiment. Any name that is not `SSL` works — the
-  # protocol is chosen by KAFKA_LISTENER_SECURITY_PROTOCOL_MAP below, not by the name.
+  # this is a bad one to discover by experiment.
+  #
+  # Any name that does NOT END IN `SSL` works — the protocol is chosen by
+  # KAFKA_LISTENER_SECURITY_PROTOCOL_MAP below, not by the name. "Does not end in" rather
+  # than "is not": the image's test is a SUBSTRING match on the rendered advertised
+  # listeners (`configure` line 87: `$KAFKA_ADVERTISED_LISTENERS == *"SSL://"*`), so the
+  # plausible-looking `MTLS_SSL`, `TLS_SSL` and `SASL_SSL` all render as `…SSL://` and trip
+  # exactly the same branch.
   #
   # In fairness about provenance: `SECURE` was inherited from this repository's own mutual-TLS
   # drill fixture, not chosen because someone knew about the grep. Peer review found the trap

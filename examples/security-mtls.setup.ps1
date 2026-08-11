@@ -34,8 +34,11 @@
     difference, stated because it is a security property rather than a detail:
     this script never puts the CA's own private key on disk at all — it lives in
     an RSA object for the length of the run — while the .sh must hand openssl a
-    key file and therefore writes it to a temporary directory OUTSIDE the
-    repository.
+    key file and therefore writes it to a temporary directory outside the
+    repository, which its EXIT trap then deletes on every ending a shell can
+    observe (a SIGKILL being the one exception). Being outside the tree and being
+    short-lived are two separate promises; the .sh needs both, and this script
+    needs neither because the key never reaches a filesystem.
 
 .PARAMETER Force
     Regenerate even when the existing material is still valid.
