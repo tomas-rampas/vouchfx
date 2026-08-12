@@ -770,7 +770,9 @@ public static class YamlDocumentParser
     /// Every field is read as its raw scalar text with NO requiredness enforced here —
     /// <c>profile</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
     /// mtls-requires-<c>clientCert</c>/<c>clientKey</c> rule, and the
-    /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule are the JSON Schema layer's
+    /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule, and the rule that
+    /// <c>clientKeyPassword</c> is a single whole <c>${secret:}</c> reference rather than a
+    /// literal (client-key-password spec, REQ-001), are the JSON Schema layer's
     /// responsibility (<c>root-language-schema.json</c>'s <c>$defs/security</c>),
     /// mirroring this parser's existing "deliberately lenient" design (see this file's
     /// header remarks). <c>endpoint</c> is kept as raw scalar text rather than parsed to
@@ -790,9 +792,13 @@ public static class YamlDocumentParser
         var caCert = GetScalar(securityNode, "caCert");
         var clientCert = GetScalar(securityNode, "clientCert");
         var clientKey = GetScalar(securityNode, "clientKey");
+        var clientKeyPassword = GetScalar(securityNode, "clientKeyPassword");
         var serverArtifacts = ParseServerArtifacts(securityNode, ownerLabel, ownerName);
 
-        return new SecuritySpec(profile, endpoint, caCert, clientCert, clientKey, serverArtifacts);
+        return new SecuritySpec(profile, endpoint, caCert, clientCert, clientKey, serverArtifacts)
+        {
+            ClientKeyPassword = clientKeyPassword,
+        };
     }
 
     /// <summary>

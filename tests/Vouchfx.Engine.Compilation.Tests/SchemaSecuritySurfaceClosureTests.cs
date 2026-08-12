@@ -21,8 +21,8 @@
 //
 // And one thing it records rather than proves (m4, second peer-review round): the seam stops
 // AT THE SCHEMA. Finding 1 shows a composed profile fragment's own field validating; nothing
-// downstream can then read it, because YamlDocumentParser.ParseSecurity binds six fixed keys
-// into SecuritySpec, which carries no Extra bucket (DependencySpec does). Until that additive
+// downstream can then read it, because YamlDocumentParser.ParseSecurity binds a fixed set of
+// keys into SecuritySpec, which carries no Extra bucket (DependencySpec does). Until that additive
 // fix lands, REQ-020 buys authoring-time extensibility only — see
 // SecuritySpec_HasNoExtraBucket_SoAComposedProfileFieldIsDroppedAfterValidation at the foot of
 // this file, which fails the day the bucket appears.
@@ -378,7 +378,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// <summary>
     /// m4 (peer review, fix round 2): REQ-020's composed-profile-fragment seam is proven at the
     /// SCHEMA layer by Finding 1 above — and the NEXT layer silently drops the data.
-    /// <c>YamlDocumentParser.ParseSecurity</c> reads six fixed keys and binds them into
+    /// <c>YamlDocumentParser.ParseSecurity</c> reads a fixed set of keys and binds them into
     /// <see cref="SecuritySpec"/>, which — unlike its sibling
     /// <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec"/> — has no <c>Extra</c> bucket.
     /// So a composed profile fragment's own field validates and is then discarded before any
@@ -423,7 +423,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
             "the schema, so update this test, SchemaSecuritySurfaceClosureTests' own header, and " +
             "the CHANGELOG entry that records the limit.");
 
-        // The six keys ParseSecurity reads, pinned so a SEVENTH fixed key added without an
+        // The fixed keys ParseSecurity reads, pinned so a further fixed key added without an
         // Extra bucket still leaves this note accurate about the shape it describes.
         var declared = typeof(SecuritySpec)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -435,9 +435,84 @@ public sealed class SchemaSecuritySurfaceClosureTests
         Assert.Equal(s_securitySpecMembers, declared);
     }
 
-    /// <summary>The six keys <c>YamlDocumentParser.ParseSecurity</c> binds, ordinally sorted.</summary>
+    // ── The accept-and-drop hole, closed mechanically ─────────────────────────────────
+
+    /// <summary>
+    /// Every property <c>$defs/security</c> declares must have a matching
+    /// <see cref="SecuritySpec"/> member, so a field the SCHEMA accepts cannot be silently
+    /// DROPPED by the model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured, not hypothetical. Between the commit that let the schema accept
+    /// <c>clientKeyPassword</c> and the one that made <c>SecuritySpec</c> bind it, this
+    /// repository was in an ACCEPT-AND-DROP state — the document validated and the value was
+    /// discarded before any consumer could read it — and no test was red. The sibling assertion
+    /// above is one-sided by design: it pins <see cref="SecuritySpec"/>'s members against a
+    /// hand-maintained array, which notices a member VANISHING but nothing about a schema
+    /// property that never gained one. This test ties the two surfaces together and derives the
+    /// expected set from the composed schema at run time, so the hole cannot reopen for the next
+    /// security field the schema learns.
+    /// </para>
+    /// <para>
+    /// The camelCase-to-PascalCase mapping is applied MECHANICALLY, with no exclusion list:
+    /// every key <c>$defs/security</c> declares today maps by upper-casing its first character
+    /// (<c>serverArtifacts</c> to <see cref="SecuritySpec.ServerArtifacts"/> included, whose
+    /// member happens to be a list of a different record — the mapping is over NAMES, never
+    /// types). An exclusion list would recreate exactly the hand-maintained hazard this test
+    /// exists to remove, so a key that stops mapping cleanly must be reconciled rather than
+    /// exempted.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EverySecuritySchemaProperty_HasAMatchingSecuritySpecMember()
+    {
+        var registry = MinimalRegistry();
+        var composedJson = SchemaComposer.ComposeSchemaJson(registry);
+        var rootObj = JsonNode.Parse(composedJson)!.AsObject();
+
+        var schemaProperties = rootObj["$defs"]!["security"]!.AsObject()["properties"]!.AsObject()
+            .Select(property => property.Key)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
+
+        // Non-vacuity: were the walk above ever to resolve to an empty or wrong node, a clean
+        // sweep over ZERO keys would be indistinguishable from a genuine pass.
+        Assert.NotEmpty(schemaProperties);
+        Assert.Contains("clientKeyPassword", schemaProperties);
+
+        var members = typeof(SecuritySpec)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var dropped = schemaProperties
+            .Where(key => !members.Contains(ToPascalCase(key)))
+            .ToArray();
+
+        Assert.True(
+            dropped.Length == 0,
+            "$defs/security declares " + string.Join(", ", dropped) + ", for which SecuritySpec " +
+            "has no matching member. A document declaring such a field VALIDATES and the value " +
+            "is then DROPPED before any consumer can read it — the accept-and-drop state this " +
+            "repository was already in once, between the schema accepting 'clientKeyPassword' " +
+            "and the model binding it, with nothing red to say so. Add the member as an " +
+            "INIT-ONLY property (never a positional parameter — see SecuritySpec's own remarks " +
+            "on binary compatibility) and bind it in YamlDocumentParser.ParseSecurity.");
+
+        static string ToPascalCase(string camelCase) =>
+            char.ToUpperInvariant(camelCase[0]) + camelCase[1..];
+    }
+
+    /// <summary>
+    /// The fixed set of keys <c>YamlDocumentParser.ParseSecurity</c> binds, ordinally sorted.
+    /// <c>ClientKeyPassword</c> joined that set on 2026-08-11 (client-key-password spec,
+    /// REQ-003) as an INIT-ONLY property — one more FIXED key, deliberately not an
+    /// <c>Extra</c> bucket, so the closure this class documents is unchanged in kind.
+    /// </summary>
     private static readonly string[] s_securitySpecMembers =
     {
-        "CaCert", "ClientCert", "ClientKey", "Endpoint", "Profile", "ServerArtifacts",
+        "CaCert", "ClientCert", "ClientKey", "ClientKeyPassword", "Endpoint", "Profile",
+        "ServerArtifacts",
     };
 }

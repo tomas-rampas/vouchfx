@@ -83,7 +83,46 @@ public sealed record SecuritySpec(
     string? CaCert,
     string? ClientCert,
     string? ClientKey,
-    IReadOnlyList<SecurityServerArtifactSpec>? ServerArtifacts);
+    IReadOnlyList<SecurityServerArtifactSpec>? ServerArtifacts)
+{
+    /// <summary>
+    /// The passphrase for an encrypted <see cref="ClientKey"/>, as DECLARED TEXT: a
+    /// <c>${secret:&lt;source&gt;/&lt;path&gt;}</c> reference, retained verbatim and
+    /// UNRESOLVED at this layer (client-key-password spec, REQ-003).
+    /// <see langword="null"/> when the author declares no <c>clientKeyPassword</c> — the
+    /// ordinary case, an unencrypted key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference is never resolved here, and on any schema-validated path this record
+    /// holds only a REFERENCE, never a passphrase value: that the text is a single whole
+    /// <c>${secret:}</c> reference and never a literal is enforced by the JSON Schema layer's
+    /// own <c>pattern</c> (<c>root-language-schema.json</c>'s <c>$defs/security</c>), like
+    /// every sibling field's shape. A direct engine embedder that bypasses the schema CAN bind
+    /// a literal here — this parser enforces no shape, by design, and
+    /// <c>SecuritySpecBindingTests.Parse_ClientKeyPasswordLiteral_IsStillBound_ParserStaysLenient</c>
+    /// pins exactly that — so no consumer may assume the text is non-secret. §17 requires
+    /// resolution at step-execution time, at first use of the certificate material, so that no
+    /// secret value is ever baked into the compiled script's IL and the reproducibility
+    /// envelope hashes the reference rather than the value.
+    /// </para>
+    /// <para>
+    /// This record's compiler-generated <c>ToString()</c> prints this property, so never
+    /// interpolate a <see cref="SecuritySpec"/> whole into a diagnostic, event or report —
+    /// name the field you need. Deliberately NOT closed by a hand-written
+    /// <c>PrintMembers</c> override: an explicit override must enumerate all seven members, so
+    /// a future eighth field would be silently dropped from <c>ToString()</c> — a worse drift
+    /// trap than the hazard it closes.
+    /// </para>
+    /// <para>
+    /// Declared as an init-only property rather than a positional record parameter, per
+    /// this record's own binary-compatibility rule in the remarks above: an init-only
+    /// property is purely additive, whereas a seventh positional parameter would change
+    /// the primary constructor's arity and the compiler-generated <c>Deconstruct</c>.
+    /// </para>
+    /// </remarks>
+    public string? ClientKeyPassword { get; init; }
+}
 
 /// <summary>
 /// A single <c>{ source, target }</c> pair declared under a <see cref="SecuritySpec.ServerArtifacts"/>
