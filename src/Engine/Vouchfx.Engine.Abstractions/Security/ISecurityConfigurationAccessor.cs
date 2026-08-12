@@ -28,6 +28,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
+using Vouchfx.Engine.Abstractions.Secrets;
 
 namespace Vouchfx.Engine.Abstractions.Security;
 
@@ -177,6 +178,52 @@ public interface ISecurityCertificateMaterial
     /// the certificate, or a declared path resolves outside the suite directory (REQ-003).
     /// </exception>
     X509Certificate2? ClientCertificate { get; }
+
+    /// <summary>
+    /// The resolved passphrase for an encrypted client private key, or
+    /// <see langword="null"/> when the target declares no <c>clientKeyPassword</c> — the
+    /// ordinary case, an unencrypted key (client-key-password spec, REQ-004).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <see cref="SecretString"/> rather than a <see cref="string"/> BECAUSE THE TYPE IS THE
+    /// REDACTION CONTROL (§17): its <c>ToString()</c> returns
+    /// <see cref="SecretString.RedactedMarker"/>, it is deliberately not
+    /// <see cref="System.IFormattable"/>, its JSON converter writes the marker rather than the
+    /// value, and it exposes no public length. A plain <c>string?</c> on an interface an
+    /// emitted CSX block names by type would put a plaintext passphrase one interpolation away
+    /// from the §14 event stream. A consumer that genuinely needs the characters — librdkafka
+    /// takes a passphrase only as text — calls <see cref="SecretString.Reveal"/> explicitly,
+    /// and that call is the deliberate, greppable audit point.
+    /// </para>
+    /// <para>
+    /// <strong>The obligation that comes with that call</strong>, which the generic
+    /// <see cref="SecretString.Reveal"/> documentation cannot state because it does not know
+    /// where its value came from: the value MUST have been resolved through
+    /// <see cref="ISecretAccessor.Resolve"/>, whose <see cref="SecretAccessor.ResolvedSecrets"/>
+    /// ledger is what the runner's diagnostic and observation scrubbers read; a passphrase
+    /// resolved by calling a resolver directly is invisible to them. Feed the revealed string
+    /// straight into its sink — never into a local that outlives the call, a <c>Vars</c> key, or
+    /// any diagnostic string.
+    /// </para>
+    /// <para>
+    /// The <see cref="SecretString"/> TYPE is what makes that ledger membership structural
+    /// rather than merely documented, and it is the stronger of the two arguments for the type:
+    /// <see cref="SecretString"/>'s constructor is <see langword="internal"/>
+    /// (<c>SecretString.cs</c>), with <c>InternalsVisibleTo</c> granted only to
+    /// <c>Vouchfx.Engine.Abstractions.Tests</c>, so <c>Vouchfx.Engine.Runtime</c> CANNOT mint
+    /// one — the load path can only obtain a <see cref="SecretString"/> from a resolver, which
+    /// is exactly what puts the value in the scrub ledger. With a plain <c>string?</c> here that
+    /// guarantee would have been one careless line from being lost.
+    /// </para>
+    /// <para>
+    /// DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
+    /// engine-supplied interface others implement: every existing implementor — the production
+    /// material and the test doubles — keeps compiling untouched, and the default's own
+    /// <see langword="null"/> means "no passphrase declared", never "not yet loaded".
+    /// </para>
+    /// </remarks>
+    SecretString? ClientKeyPassword => null;
 
     /// <summary>
     /// Decides whether a remote (server) certificate is trusted under THIS target's declared
