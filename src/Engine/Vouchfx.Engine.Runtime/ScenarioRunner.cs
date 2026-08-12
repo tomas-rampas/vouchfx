@@ -334,6 +334,20 @@ public static class ScenarioRunner
             new VaultSecretResolver(new EnvironmentConfiguredVaultKvClient()),
         };
 
+    /// <summary>
+    /// Builds a disposable <see cref="SecretAccessorScope"/> over
+    /// <see cref="BuildSecretResolvers"/> — the accessor a caller resolves through, plus ownership
+    /// of the resolvers' disposal (§17, client-key-password REQ-009).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private because the <c>--watch</c> run path
+    /// (<c>Vouchfx.Cli.Watch.WatchRunner</c>) builds its own topology, and therefore its own
+    /// probe-time <c>SecurityConfigurationAccessor</c>, outside this class. Routing it through the
+    /// SAME factory is what keeps the set of resolvable secret sources identical on both paths —
+    /// the property <see cref="s_knownSecretSources"/> already relies on for the validation pass.
+    /// </remarks>
+    internal static SecretAccessorScope CreateSecretAccessorScope() => new(BuildSecretResolvers());
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -642,10 +656,38 @@ public static class ScenarioRunner
         // seedBaseDirectory is this path's only base directory — RunScenarioOwningTopologyAsync
         // already hands the same value to ProviderPipeline.Compile above, so the probe resolves
         // each declared path to exactly the file EnvironmentSecurityValidator checked.
-        var probeSecurity = SecurityConfigurationAccessor.Build(ast, seedBaseDirectory);
+        //
+        // The probe's own secret scope (REQ-009): a declared `clientKeyPassword` resolves LAZILY,
+        // inside the certificate load, which on this path happens inside StartAsync AFTER the
+        // health gate — so §17's resolve-at-execution-time rule holds unchanged and no earlier
+        // resolution pass is introduced.
+        //
+        // OPEN QUESTION, owned by REQ-010 and deliberately not answered here: this scope is
+        // constructed BEFORE the per-scenario SecretAccessor built in
+        // RunScenarioAgainstTopologyAsync, so the two hold DIFFERENT ResolvedSecrets ledgers, and a
+        // passphrase resolved for the probe is invisible to the step path's scrubbers. Closing it
+        // means either sharing one scope across both paths or registering into one ledger; both are
+        // changes to where this scope is constructed, not to what it is.
+        //
+        // THE SCOPE IS BUILT OUTSIDE THE `try` AND THE ACCESSOR INSIDE IT, and the split is
+        // deliberate. `Build` can throw (Path.GetFullPath on a malformed declared path), and
+        // constructed before the `try` its failure skipped the `finally` below — leaking this
+        // scope's resolvers, the Vault one's HttpClient included. The scope's own construction
+        // allocates two objects and touches nothing, so a failure there leaves nothing to
+        // dispose. This is the rule the per-scenario site already states in full at its own
+        // construction (see "Constructed INSIDE the try, not before it").
+        //
+        // `using var` is NOT the alternative: it would hold the resolvers for the whole method
+        // rather than releasing them once the topology is up, which the `finally` below
+        // deliberately does.
+        var probeSecrets = CreateSecretAccessorScope();
+        ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
         SuiteTopology suite;
         try
         {
+            probeSecurity = SecurityConfigurationAccessor.Build(
+                ast, seedBaseDirectory, probeSecrets.Accessor);
+
             suite = await SuiteTopology.StartAsync(
                 doc.Environment,
                 appHostAssemblyName,
@@ -745,6 +787,10 @@ public static class ScenarioRunner
             // as the topology is up, instead of holding it for the whole run alongside the
             // separate per-scenario accessor built below.
             (probeSecurity as IDisposable)?.Dispose();
+
+            // The scope outlives nothing beyond that accessor — the passphrase, if any, is already
+            // inside the loaded certificate — so its resolvers are released here too.
+            probeSecrets.Dispose();
         }
 
         await using (suite.ConfigureAwait(false))
@@ -1257,12 +1303,24 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
         }
 
-        var probeSecurity = SecurityConfigurationAccessor.Build(
-            scenarios[0], compilations.Count > 0 ? compilations[0].ScenarioBaseDirectory : seedBaseDirectory);
+        // The probe's own secret scope, and the same REQ-010 open question the single-scenario path
+        // records verbatim: built before any per-scenario SecretAccessor exists, so its
+        // ResolvedSecrets ledger is not the one the step-path scrubbers read.
+        //
+        // The scope outside the `try`, the accessor inside it, for the reason given in full at the
+        // single-scenario site above: a throwing `Build` must not skip the `finally` that disposes
+        // these resolvers.
+        var probeSecrets = CreateSecretAccessorScope();
+        ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
 
         SuiteTopology suite;
         try
         {
+            probeSecurity = SecurityConfigurationAccessor.Build(
+                scenarios[0],
+                compilations.Count > 0 ? compilations[0].ScenarioBaseDirectory : seedBaseDirectory,
+                probeSecrets.Accessor);
+
             suite = await SuiteTopology.StartAsync(
                 scenarios[0].Environment,
                 appHostAssemblyName,
@@ -1339,6 +1397,7 @@ public static class ScenarioRunner
             // including the two catches that return above. Each scenario builds its own accessor
             // for its own steps inside RunScenarioAgainstTopologyAsync.
             (probeSecurity as IDisposable)?.Dispose();
+            probeSecrets.Dispose();
         }
 
         await using (suite.ConfigureAwait(false))
@@ -2699,12 +2758,11 @@ public static class ScenarioRunner
         // compile time, so no secret value is ever baked into the emitted IL.
         //
         // Some resolvers own disposable state (the Vault resolver's client owns an
-        // HttpClient).  Retain the array so the finally below disposes any IDisposable
-        // resolver at scenario end — no HttpClient leaks across the per-scenario
-        // boundary, and no static handle holds the connection open.
-        var secretResolvers = BuildSecretResolvers();
-        var secretCatalog = new SecretSourceCatalog(secretResolvers);
-        var secretAccessor = new SecretAccessor(secretCatalog);
+        // HttpClient).  The scope owns them, and the finally below disposes it at scenario
+        // end — no HttpClient leaks across the per-scenario boundary, and no static handle
+        // holds the connection open.
+        var secretScope = CreateSecretAccessorScope();
+        var secretAccessor = secretScope.Accessor;
 
         // ── Per-target client security configuration (REQ-014) ────────────────
         // Built here, in the Default ALC, from this scenario's OWN declared `security`
@@ -2743,8 +2801,13 @@ public static class ScenarioRunner
         ISecurityConfigurationAccessor securityAccessor = NullSecurityConfigurationAccessor.Instance;
         try
         {
+            // The scenario's OWN accessor is handed the scenario's OWN secret accessor (REQ-009):
+            // on this path the two are one, so a `clientKeyPassword` resolved for a step is
+            // recorded in exactly the ResolvedSecrets ledger the runner's diagnostic and
+            // observation scrubbers read. The probe path's separate scope is the divergence
+            // REQ-010 owns; see the note at its construction site.
             securityAccessor = SecurityConfigurationAccessor.Build(
-                ast, scriptBaseDirectory ?? seedBaseDirectory);
+                ast, scriptBaseDirectory ?? seedBaseDirectory, secretAccessor);
 
             // Built once, up front (moved ahead of its former use inside the step loop below)
             // because the live sink needs it at construction time, issue #262: the map of
@@ -2989,11 +3052,11 @@ public static class ScenarioRunner
         }
         finally
         {
-            // Dispose any resolver that owns disposable state (the Vault resolver's
+            // Disposes any resolver that owns disposable state (the Vault resolver's
             // client owns an HttpClient).  Runs on EVERY exit path — normal completion,
             // the EnvironmentError/Inconclusive early returns above, and any unexpected
             // throw — so no HttpClient leaks across the per-scenario boundary (§5).
-            DisposeSecretResolvers(secretResolvers);
+            secretScope.Dispose();
 
             // Same contract for the security accessor's loaded certificates (REQ-014): each
             // X509Certificate2 wraps an OS key handle, and on Windows a PKCS#12 re-import
@@ -3001,23 +3064,6 @@ public static class ScenarioRunner
             // (no `security` block declared, the common path) is not IDisposable, so this
             // costs an unsecured run one type test.
             (securityAccessor as IDisposable)?.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Disposes any <see cref="IDisposable"/> resolvers in <paramref name="resolvers"/>
-    /// (e.g. the Vault resolver's client owns an
-    /// <see cref="System.Net.Http.HttpClient"/>).  Stateless resolvers (such as the
-    /// <c>env</c> resolver) are skipped.  Never throws into the verdict path.
-    /// </summary>
-    private static void DisposeSecretResolvers(IReadOnlyList<ISecretResolver> resolvers)
-    {
-        foreach (var resolver in resolvers)
-        {
-            if (resolver is IDisposable disposable)
-            {
-                disposable.Dispose();
-            }
         }
     }
 

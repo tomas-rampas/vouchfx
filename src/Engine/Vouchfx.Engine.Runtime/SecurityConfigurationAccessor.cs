@@ -32,9 +32,12 @@
 // on a target no step in this scenario touches, and reading a private key has a real cost;
 // cached because the SAME instance must be handed to every step that resolves the target —
 // see ISecurityCertificateMaterial's own remarks on borrowing.
+using System.Globalization;
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -73,6 +76,23 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
     /// <see langword="null"/> falls back to the current directory, mirroring
     /// <c>ProviderPipeline.Compile</c>'s own default.
     /// </param>
+    /// <param name="secrets">
+    /// The run's secret accessor, used ONLY to resolve a declared <c>clientKeyPassword</c>
+    /// reference — lazily, at first use of the certificate material, never here
+    /// (client-key-password spec, REQ-009; §17). <see langword="null"/> is legal and keeps
+    /// today's behaviour for every suite that declares no passphrase; a suite that DOES declare
+    /// one then fails closed at load time rather than loading the key as though it were
+    /// unencrypted (H2).
+    /// <para>
+    /// Deliberately a REQUIRED parameter with no default, however uninteresting a
+    /// <see langword="null"/> argument is at most call sites. This branch already paid for the
+    /// opposite choice once: <c>SuiteTopology.StartAsync</c>'s optional
+    /// <c>securityConfiguration</c> was silently omitted by <c>WatchRunner</c>, which compiled
+    /// and read correctly while making every secured suite unrunnable under <c>--watch</c> (see
+    /// that call site's own remarks). A required parameter forces each caller to state which
+    /// accessor this material resolves through.
+    /// </para>
+    /// </param>
     /// <returns>
     /// A disposable accessor, or <see cref="NullSecurityConfigurationAccessor.Instance"/> when
     /// the scenario declares no <c>security</c> block at all — the common path, which then
@@ -85,7 +105,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
     /// own construction sequence — which sits outside the <c>finally</c> that disposes the
     /// scenario's secret resolvers.
     /// </remarks>
-    internal static ISecurityConfigurationAccessor Build(ScenarioAst ast, string? suiteDirectory)
+    internal static ISecurityConfigurationAccessor Build(
+        ScenarioAst ast, string? suiteDirectory, ISecretAccessor? secrets)
     {
         var services = ast.Environment?.Services;
         var dependencies = ast.Environment?.Dependencies;
@@ -100,7 +121,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             {
                 if (spec.Security is { } security)
                 {
-                    byTarget[name] = Project(name, "services", security, resolvedSuiteDirectory);
+                    byTarget[name] = Project(name, "services", security, resolvedSuiteDirectory, secrets);
                 }
             }
         }
@@ -137,7 +158,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     continue;
                 }
 
-                byTarget[name] = Project(name, "dependencies", security, resolvedSuiteDirectory);
+                byTarget[name] = Project(name, "dependencies", security, resolvedSuiteDirectory, secrets);
             }
         }
 
@@ -182,7 +203,11 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
     }
 
     private static SecurityConfiguration Project(
-        string targetName, string ownerKindPlural, SecuritySpec security, string resolvedSuiteDirectory)
+        string targetName,
+        string ownerKindPlural,
+        SecuritySpec security,
+        string resolvedSuiteDirectory,
+        ISecretAccessor? secrets)
     {
         var fieldPathPrefix = $"environment.{ownerKindPlural}.{targetName}.security";
 
@@ -193,10 +218,30 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         // No path-valued certificate field declared at all → no certificate VIEW, rather than
         // an empty one. REQ-001/REQ-024: an absent caCert is a normal configuration in which
         // the platform's own trust store applies, and the engine must synthesise nothing.
+        //
+        // `clientKeyPassword` DOES participate, and the earlier reading of this condition — that
+        // it need not, because "materialising a view whose every path is null would answer it with
+        // silence just the same" — stopped being true the moment ResolveClientKeyPassword grew
+        // EDGE-004's missing-`clientKey` refusal. The view is no longer silent about that shape:
+        // reading its passphrase raises the refusal by name, and reading its certificate forces the
+        // same resolver rather than returning the "present nothing" null H2 forbids. Excluding the
+        // field here would therefore leave EXACTLY ONE of EDGE-004's three shapes — a passphrase
+        // with no path-valued field at all — dropped before any guard can see it, which is the
+        // deferral-to-an-unwritten-guard this comment used to contain. All three are reachable only
+        // by direct engine embedding (the schema's `mtls` branch requires the `clientCert`/
+        // `clientKey` pair and its `tls` branch forbids the passphrase outright); no YAML-authored
+        // suite changes shape because of this clause.
         var certificates = ca is null && clientCert is null && clientKey is null
+                && security.ClientKeyPassword is null
             ? null
             : new SecurityCertificateMaterial(
-                fieldPathPrefix, resolvedSuiteDirectory, ca, clientCert, clientKey);
+                fieldPathPrefix,
+                resolvedSuiteDirectory,
+                ca,
+                clientCert,
+                clientKey,
+                security.ClientKeyPassword,
+                secrets);
 
         return new SecurityConfiguration(security.Profile ?? string.Empty, certificates);
     }
@@ -256,21 +301,48 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         private readonly DeclaredPath? _ca;
         private readonly DeclaredPath? _clientCert;
         private readonly DeclaredPath? _clientKey;
+
+        /// <summary>
+        /// The <c>clientKeyPassword</c> exactly as DECLARED — a <c>${secret:source/path}</c>
+        /// reference on any schema-validated path — or <see langword="null"/> when the author
+        /// declared none. Never a passphrase value.
+        /// </summary>
+        /// <remarks>
+        /// <strong>HAZARD H1 — this field, and never the resolved
+        /// <see cref="ClientKeyPassword"/> member, is what "did the author declare a passphrase?"
+        /// must be asked of.</strong> <see langword="null"/> on the interface member is
+        /// OVERLOADED: it means both "no passphrase was declared" and "this implementor inherits
+        /// <see cref="ISecurityCertificateMaterial.ClientKeyPassword"/>'s default and knows
+        /// nothing about passphrases at all". Keyed off the member, a plumbing omission — a new
+        /// material type that forgets the override, a <c>Build(…)</c> call handed no accessor —
+        /// becomes indistinguishable from an author who declared nothing, and the REQ-006
+        /// contradiction guard silently no-ops on exactly the case it exists to catch. Nothing in
+        /// the type system enforces this; see <see cref="ResolveClientKeyPassword"/>'s own note at
+        /// the guard.
+        /// </remarks>
+        private readonly string? _declaredClientKeyPassword;
+
+        private readonly ISecretAccessor? _secrets;
         private readonly Lazy<X509Certificate2?> _caCertificate;
         private readonly Lazy<X509Certificate2?> _clientCertificate;
+        private readonly Lazy<SecretString?> _clientKeyPassword;
 
         internal SecurityCertificateMaterial(
             string fieldPathPrefix,
             string resolvedSuiteDirectory,
             DeclaredPath? ca,
             DeclaredPath? clientCert,
-            DeclaredPath? clientKey)
+            DeclaredPath? clientKey,
+            string? declaredClientKeyPassword,
+            ISecretAccessor? secrets)
         {
             _fieldPathPrefix = fieldPathPrefix;
             _resolvedSuiteDirectory = resolvedSuiteDirectory;
             _ca = ca;
             _clientCert = clientCert;
             _clientKey = clientKey;
+            _declaredClientKeyPassword = declaredClientKeyPassword;
+            _secrets = secrets;
 
             // ExecutionAndPublication: one load per target however many steps resolve it
             // concurrently under `--parallel`, and the SAME instance to all of them.
@@ -289,6 +361,14 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             _caCertificate = new Lazy<X509Certificate2?>(LoadCa, LazyThreadSafetyMode.ExecutionAndPublication);
             _clientCertificate = new Lazy<X509Certificate2?>(
                 LoadClient, LazyThreadSafetyMode.ExecutionAndPublication);
+
+            // The passphrase resolves on FIRST USE of the material and never at Build time
+            // (REQ-009, §17): construction of this object must not touch the secret subsystem, or
+            // a suite would resolve a secret for a target no step ever reaches, and — worse — do
+            // it before the topology the value may live in has started. Same caching rationale as
+            // the two loaders above, including the deliberate caching of a failure.
+            _clientKeyPassword = new Lazy<SecretString?>(
+                ResolveClientKeyPassword, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
         // The PATH view is guarded by the same containment backstop as the object view below,
@@ -307,6 +387,18 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         public X509Certificate2? CaCertificate => _caCertificate.Value;
 
         public X509Certificate2? ClientCertificate => _clientCertificate.Value;
+
+        /// <inheritdoc />
+        /// <remarks>
+        /// Resolved through the run's <see cref="ISecretAccessor"/> on FIRST READ — of this member
+        /// or of <see cref="ClientCertificate"/>, whichever a consumer touches first — and cached
+        /// for the scenario. Reading it is what performs the resolution, so it can throw
+        /// (<see cref="SecurityMaterialException"/>) exactly like the two certificate views, and it
+        /// raises REQ-006's contradiction refusal for a passphrase declared against a key that is
+        /// not encrypted — deliberately, so that a consumer reading only the passphrase and the
+        /// paths (librdkafka) is governed by the same guard as one reading the certificate.
+        /// </remarks>
+        public SecretString? ClientKeyPassword => _clientKeyPassword.Value;
 
         public bool TrustsRemoteCertificate(
             X509Certificate2? remoteCertificate, X509Chain? platformBuiltChain, SslPolicyErrors sslPolicyErrors)
@@ -561,6 +653,19 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             if (_clientCert is null && _clientKey is null)
             {
                 // No client identity declared at all — the `tls` profile. Absent, not missing.
+                //
+                // EDGE-004 shape (b)/(c) — a passphrase declared beside a bare `caCert`, or beside
+                // nothing at all — is NOT that, and must not be answered with the null this line
+                // returns: `ClientCertificate == null` is this engine's wire signal for "present no
+                // client identity" (H2), so returning it here would let an incoherent declaration
+                // resolve to silence on the certificate path while only the passphrase path refused
+                // it. Forcing the resolver routes both shapes through the missing-`clientKey`
+                // refusal, which is unconditional for them and so does not return.
+                if (_declaredClientKeyPassword is not null)
+                {
+                    _ = _clientKeyPassword.Value;
+                }
+
                 return null;
             }
 
@@ -585,13 +690,76 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             EnsureContained(_clientCert, "clientCert");
             EnsureContained(_clientKey, "clientKey");
 
+            // Resolves the reference on first use of this material and caches it (REQ-009), and
+            // raises REQ-006's contradiction refusal for a passphrase declared against a key that
+            // is not encrypted — see ResolveClientKeyPassword, which owns both.
+            var passphrase = _clientKeyPassword.Value;
+
             X509Certificate2? pemPair = null;
             try
             {
-                pemPair = X509Certificate2.CreateFromPemFile(_clientCert.Resolved, _clientKey.Resolved);
+                // Reveal() at the sink and nowhere else (§17): the revealed string is handed
+                // straight to the platform loader as its ReadOnlySpan<char> argument and never
+                // bound to a local, a Vars key or a diagnostic.
+                //
+                // MEASURED against the pinned net8.0 ref pack, because the two overloads do NOT
+                // take their arguments in the same order and the mistake compiles:
+                //   CreateFromPemFile(string certPemFilePath, string? keyPemFilePath = null)
+                //   CreateFromEncryptedPemFile(string certPemFilePath, ReadOnlySpan<char> password,
+                //                              string? keyPemFilePath = null)
+                // — the password sits BETWEEN the two paths.
+                if (passphrase is null)
+                {
+                    pemPair = X509Certificate2.CreateFromPemFile(_clientCert.Resolved, _clientKey.Resolved);
+                }
+                else
+                {
+                    // SCOPED TO THE DECRYPTING LOAD, AND ONLY TO IT. The wrong-passphrase message
+                    // below is an ATTRIBUTION, so what it is allowed to see decides whether it is
+                    // true: raised from the method-wide catch it also fired for an unreadable
+                    // `clientCert` and for a failure of the PKCS#12 re-import two statements later,
+                    // and told the author "the likeliest cause is that the passphrase is wrong"
+                    // about faults the passphrase had no part in.
+                    //
+                    // CryptographicException ONLY, and that is the narrowing rather than a
+                    // side-effect of it. A wrong passphrase — and an encryption form .NET's PEM
+                    // reader will not read — fails as a CryptographicException; a file that cannot
+                    // be opened fails as an IOException or an UnauthorizedAccessException, which
+                    // this filter lets through to the generic message that does not blame anything.
+                    try
+                    {
+                        pemPair = X509Certificate2.CreateFromEncryptedPemFile(
+                            _clientCert.Resolved, passphrase.Reveal(), _clientKey.Resolved);
+                    }
+                    catch (CryptographicException ex)
+                    {
+                        // HAZARD H3 — WHAT THIS MESSAGE MAY CONTAIN IS CONSTRAINED AT THIS THROW
+                        // SITE, not downstream. SecuredEndpointProbe folds a
+                        // SecurityMaterialException's Message into its probe-failure text, which
+                        // becomes a §14 environment-error event, so by the time this string leaves
+                        // the method it is already bound for the stream and for every renderer. It
+                        // therefore quotes NEITHER the passphrase value NOR its length — no
+                        // Reveal(), no Length, and not the platform's own text either — and every
+                        // piece of untrusted text it does quote (the reference, and the declared
+                        // `clientKey` path, which is an unconstrained schema string carrying the
+                        // same C0/ANSI/newline hazard) goes through QuoteUntrusted rather than
+                        // being concatenated raw.
+                        throw new SecurityMaterialException(
+                            $"{_fieldPathPrefix}.clientKey: {QuoteUntrusted(_clientKey.Declared)} could "
+                            + "not be loaded with the passphrase 'clientKeyPassword' resolved from "
+                            + $"{QuoteUntrusted(_declaredClientKeyPassword!)}. The likeliest cause is "
+                            + "that the passphrase is wrong; the other is an encryption form this "
+                            + $"runtime cannot read, since only the '{EncryptedPkcs8Label}' (PKCS#8) "
+                            + "form is supported — convert an openssl legacy key marked "
+                            + $"'{LegacyEncryptedPemHeader}' with 'openssl pkcs8 -topk8'. The "
+                            + "passphrase itself is never reported.",
+                            ex);
+                    }
+                }
 
-                // The PKCS#12 round trip is NOT ceremony. MEASURED on this repo's Windows host
-                // against the mutual-TLS test bed: a certificate produced directly by
+                // The PKCS#12 round trip is NOT ceremony, and it applies UNCHANGED to BOTH branches
+                // above. MEASURED on this repo's Windows host against the mutual-TLS test bed: a
+                // certificate produced directly by
                 // CreateFromPemFile reports HasPrivateKey=true and then FAILS the TLS client
                 // authentication handshake with AuthenticationException, because its key is an
                 // EPHEMERAL key SChannel cannot use for client auth; the identical certificate
@@ -619,7 +787,10 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     // certificate, and the GC never reclaims it (measured: unchanged after a
                     // forced collection). EphemeralKeySet would close that, and is exactly the
                     // defect this round trip exists to work around — so the abandonment window
-                    // is accepted, not traded for a certificate that cannot authenticate.
+                    // is accepted, not traded for a certificate that cannot authenticate. An
+                    // encrypted-key load has no reason to be exempt from any of this: skipping the
+                    // round trip on that branch would ship a path that authenticates on Linux and
+                    // fails on Windows.
                     return new X509Certificate2(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
                 }
                 finally
@@ -630,10 +801,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
                 // NAME THE CAUSE WHEN IT IS THE ONE AN ENTERPRISE PKI PRODUCES BY DEFAULT (peer
-                // review, slice F). CreateFromPemFile has no overload that takes a password —
-                // CreateFromEncryptedPemFile appears nowhere in this tree — and the Kafka helper
-                // sets SslCertificateLocation/SslKeyLocation and never `ssl.key.password`. So a
-                // bank handing its pilot an encrypted key hits this catch first, and MEASURED on
+                // review, slice F). A bank handing its pilot an encrypted key and declaring NO
+                // `clientKeyPassword` hits this catch first, and MEASURED on
                 // .NET 8.0.29 / Windows 10.0.26200 the platform's own message carries no signal
                 // whatever about encryption being the reason:
                 //
@@ -662,21 +831,45 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // strict improvement with no new false positive: neither marker can appear in a
                 // file CreateFromPemFile would have loaded.
                 //
-                // IN THE CATCH, never before the load. This is a DIAGNOSTIC change and nothing
-                // more: every file that loads today still loads, on the same code path, with no
-                // extra I/O — the classification runs only once the load has already failed, and
-                // if it cannot read the file it falls back to the message below. It deliberately
-                // does NOT add a `clientKeyPassword` field; accepting encrypted keys is a scoping
-                // decision for a later release, not a fix for a bad message.
-                if (DescribeEncryptedPrivateKey(_clientKey.Resolved) is { } encryption)
+                // IN THE CATCH, never before the load — on THIS path. The classification runs only
+                // once the load has already failed, so every file that loads without a declared
+                // passphrase still loads, on the same code path, with no extra I/O; if it cannot
+                // read the file it falls back to the generic message below.
+                //
+                // That "no extra I/O" claim is now TRUE OF THE NO-PASSPHRASE PATH ONLY, and saying
+                // otherwise would be the over-claim this file exists to avoid. A declared
+                // passphrase reads the key file twice on a successful load: once eagerly in
+                // ResolveClientKeyPassword, to raise REQ-006's contradiction refusal for a key that
+                // is not encrypted, and once in the platform loader. That is the price of siting
+                // REQ-006's guard on the MATERIAL rather than on the certificate load — librdkafka
+                // never touches ClientCertificate, so a guard in the load would be absent from it —
+                // and it is paid only by suites that declare a passphrase, against a file this
+                // method already reads in full.
+                //
+                // GUARDED ON NO PASSPHRASE BEING DECLARED, and the guard is load-bearing. This
+                // message's whole content is "the key is encrypted and you declared no
+                // passphrase" — which, for an author who DID declare one, is false in its second
+                // half and useless in its first: REQ-006's guard has already confirmed the key is
+                // encrypted, and the decrypting load owns its own failure in its own catch above.
+                // Reaching here with a passphrase declared therefore means the fault is in reading
+                // the certificate file or in the PKCS#12 round trip, and the generic message below
+                // — which attributes nothing — is the honest one for it.
+                if (_declaredClientKeyPassword is null
+                    && DescribeEncryptedPrivateKey(_clientKey.Resolved, out _) is { } encryption)
                 {
                     throw new SecurityMaterialException(
-                        $"{_fieldPathPrefix}.clientKey: '{_clientKey.Declared}' is an ENCRYPTED private " +
-                        $"key ({encryption}), which this release cannot load: vouchfx 1.0 requires an " +
-                        "UNENCRYPTED PEM private key, and there is no field for a key password. Decrypt " +
-                        "it first — 'openssl pkcs8 -topk8 -nocrypt -in <encrypted> -out <plain>' — and " +
-                        "point 'clientKey' at the result, keeping the plaintext key inside the suite " +
-                        "directory and out of version control.",
+                        $"{_fieldPathPrefix}.clientKey: '{_clientKey.Declared}' is an ENCRYPTED private "
+                        + $"key ({encryption}) and no 'clientKeyPassword' is declared for it. Declare the "
+                        + "passphrase beside 'clientKey' as a secret reference — "
+                        + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved at "
+                        + "step-execution time and never written to a report, an event or the compiled "
+                        + "script; a literal passphrase is refused. Only the "
+                        + $"'{EncryptedPkcs8Label}' (PKCS#8) form can be opened that way, so a key "
+                        + $"marked '{LegacyEncryptedPemHeader}' must first be converted with "
+                        + "'openssl pkcs8 -topk8'. Failing that, decrypt the key outright — "
+                        + "'openssl pkcs8 -topk8 -nocrypt -in <encrypted> -out <plain>' — and point "
+                        + "'clientKey' at the result, keeping the plaintext key inside the suite "
+                        + "directory and out of version control.",
                         ex);
                 }
 
@@ -693,10 +886,448 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         }
 
         /// <summary>
-        /// Classifies a private-key file that failed to load: returns a short phrase naming the
-        /// encryption marker found in it, or <see langword="null"/> when the file carries neither
-        /// marker (or cannot be read at all).
+        /// Resolves the declared <c>clientKeyPassword</c> reference through the run's secret
+        /// accessor, or returns <see langword="null"/> when the author declared none.
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <strong>HAZARD H2 — every failure here THROWS, and none returns
+        /// <see langword="null"/>.</strong> <c>ClientCertificate == null</c> is this engine's wire
+        /// signal for "profile: tls, present no client identity", so a passphrase path that yielded
+        /// null instead of throwing would reproduce, exactly, the bypass this file already records
+        /// for a half-declared pair (see <see cref="LoadClient"/>): measured against a listener
+        /// that requests but does not enforce a client certificate, a declared <c>mtls</c> identity
+        /// degraded to "present nothing" and the suite PASSED while presenting no identity. That
+        /// rule binds all three failures below alike — a null accessor, an unresolvable reference,
+        /// and a reference resolving to an empty string.
+        /// </para>
+        /// <para>
+        /// <strong>HAZARD H3</strong> applies to every message raised here for the reason stated at
+        /// <see cref="LoadClient"/>'s catch: these strings reach the §14 event stream through
+        /// <c>SecuredEndpointProbe</c>, so none quotes a value or a length, and every piece of
+        /// untrusted text each one quotes goes through <see cref="QuoteUntrusted"/> rather than
+        /// being concatenated raw.
+        /// </para>
+        /// <para>
+        /// <strong>THE GUARD ORDER BELOW IS LOAD-BEARING, not incidental, and each step is placed
+        /// against a stated property rather than by convenience.</strong>
+        /// </para>
+        /// <list type="number">
+        /// <item><description>
+        /// <em>Nothing declared</em> — the overwhelmingly common path, answered before anything is
+        /// examined at all.
+        /// </description></item>
+        /// <item><description>
+        /// <em>Not a whole secret reference</em> — FIRST of the refusals, because it is the only one
+        /// whose subject may be a SECRET. Every guard after it may quote the declared text; this one
+        /// may not, and none of them could be made safe individually while a literal could still
+        /// reach them. It is also the cheapest — one regex over one string, no I/O and no accessor —
+        /// so placing it first costs nothing to place it correctly.
+        /// </description></item>
+        /// <item><description>
+        /// <em>No <c>clientKey</c> to decrypt</em> (EDGE-004) — before the file read, because there
+        /// is no file to read; a passphrase for a target with no key is incoherent whatever the
+        /// filesystem says.
+        /// </description></item>
+        /// <item><description>
+        /// <em>Key unreadable</em>, then <em>key not encrypted</em> (REQ-006) — one read of the key
+        /// file, two distinct verdicts. Unreadable is checked first because the classifier cannot
+        /// tell the two apart on its own and the wrong order reports a missing or ACL-denied file as
+        /// a passphrase-against-plaintext contradiction.
+        /// </description></item>
+        /// <item><description>
+        /// <em>No accessor</em>, then <em>resolution</em>, then <em>empty value</em> — last, so a
+        /// target refused for any contradiction above never resolves its secret at all.
+        /// </description></item>
+        /// </list>
+        /// </remarks>
+        private SecretString? ResolveClientKeyPassword()
+        {
+            // ── 1. Nothing declared ───────────────────────────────────────────────────────────
+            //
+            // Keyed off the DECLARED TEXT (H1) — this is the one authority on whether the author
+            // asked for a passphrase at all.
+            if (_declaredClientKeyPassword is null)
+            {
+                return null;
+            }
+
+            // ── 2. The declared value must be a single WHOLE secret reference ─────────────────
+            //
+            // AND THE VALUE IS NOT REPORTED, which is the entire point of this guard rather than a
+            // stylistic preference. `SecuritySpec.ClientKeyPassword`'s own remarks record that a
+            // direct engine embedder bypassing the schema CAN bind a literal here, so no consumer
+            // may assume the text is non-secret — and this class is a consumer. Without this guard
+            // a literal reaches SecretAccessor.Resolve, which raises
+            // "the secret reference '<literal>' is malformed…" (ISecretAccessor.cs), and the catch
+            // below quotes that message beside the declared text — the passphrase, twice, into a
+            // §14 environment-error event, the JSON stream, the HTML report and the terminal.
+            //
+            // NO LATER SCRUB CAN REACH IT. ResolvedSecrets.Record runs only after a SUCCESSFUL
+            // resolve (ISecretAccessor.cs), and this diagnostic fires INSTEAD of one, so REQ-010's
+            // ledger is empty at the moment the value would be emitted. Redaction on this path is
+            // achievable only by not emitting the value in the first place.
+            //
+            // Placed BEFORE every other refusal for the same reason: each of them quotes the
+            // declared text through QuoteUntrusted, which ESCAPES but does not WITHHOLD. Passing
+            // here is what earns them that right — after this line the text is a well-formed
+            // reference, and a reference is a pointer, never a secret (§17).
+            //
+            // SecretReference.TryParse is the whole-token grammar the schema's `pattern` is the
+            // anchored spelling of (REQ-001), so this refuses exactly what `vouchfx validate`
+            // refuses, in one spelling rather than two.
+            if (!SecretReference.TryParse(_declaredClientKeyPassword, out _))
+            {
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: the declared value is not a single, whole "
+                    + "secret reference. IT IS DELIBERATELY NOT REPORTED HERE, because a value in "
+                    + "this position may be the passphrase itself. Declare a reference of the form "
+                    + "'${secret:<source>/<path>}' and nothing else — for example "
+                    + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved at "
+                    + "step-execution time and never written to a report, an event or the compiled "
+                    + "script. A literal passphrase is refused by design (§17), as is a reference "
+                    + "with any text around it.");
+            }
+
+            // ── 3. EDGE-004: a passphrase with no `clientKey` to decrypt ──────────────────────
+            //
+            // Reachable only by direct engine embedding — the schema's `mtls` branch requires the
+            // `clientCert`/`clientKey` pair and its `tls` branch forbids this field outright — which
+            // is precisely the argument for the guard rather than against it, and the same one the
+            // half-a-pair refusal in LoadClient rests on: the only thing between an author and a
+            // control that is not running must not be a layer the runtime never consults.
+            //
+            // Three shapes reach here, and only one of them was refused before this guard existed,
+            // by accident: a passphrase beside `clientCert` alone (the certificate load's half-a-pair
+            // check catches the CERTIFICATE fault, and is absent from a passphrase-only consumer such
+            // as librdkafka); a passphrase beside `caCert` alone; and a passphrase beside nothing at
+            // all. All three are now one refusal, sited where every consumer meets it.
+            if (_clientKey is null)
+            {
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}: 'clientKeyPassword' is declared without a matching "
+                    + "'clientKey'. A key passphrase decrypts a private key, and this target "
+                    + "declares none, so the passphrase can only be a control that is not running: "
+                    + "declare 'clientKey' (with its 'clientCert') for the encrypted key the "
+                    + "passphrase belongs to, or remove 'clientKeyPassword'.");
+            }
+
+            // ── 4. The key file: readable, then encrypted (REQ-006) ───────────────────────────
+            //
+            // Containment is re-checked FIRST, because this reads the file and no read of a declared
+            // path may precede that check.
+            //
+            // HAZARD H1, and it is not enforceable by the type system, so it is stated here at the
+            // site it governs: the declared-passphrase condition at the top of this method asks
+            // _declaredClientKeyPassword — the DECLARED TEXT from SecuritySpec at the authoring layer
+            // — and must NEVER ask the resolved ClientKeyPassword member. `null` on that member is
+            // OVERLOADED (see the field's own remarks): it means both "the author declared nothing"
+            // AND "this implementor inherits the interface default", so keyed off the member, a
+            // plumbing omission — a material type that forgets the override, a Build(…) call handed
+            // no accessor — would make this guard silently no-op on precisely the case it exists to
+            // catch.
+            //
+            // Silently loading the key unencrypted instead would let a suite pass while the
+            // passphrase it declares does nothing at all, which is how a key rotated back to
+            // plaintext goes unnoticed.
+            //
+            // IT LIVES HERE, in the resolver, rather than in LoadClient, so that it is a property of
+            // the MATERIAL rather than of one code path. LoadClient is not the only consumer of a
+            // passphrase — librdkafka reads the paths and the passphrase and never touches
+            // ClientCertificate at all — and a guard that only the certificate load ran would be
+            // absent from exactly the consumer that never loads a certificate.
+            //
+            // TWO VERDICTS OFF ONE READ, and separating them is a correctness fix rather than a
+            // nicety. DescribeEncryptedPrivateKey answers `null` both for a file carrying no
+            // encryption marker and for a file it could not read at all; that conflation is harmless
+            // at its other call site, which is already inside a catch about to throw a well-formed
+            // diagnostic, and terminal here, where the return value IS the diagnostic. A missing,
+            // locked or ACL-denied key would otherwise be reported to a passphrase-only consumer as
+            // "'client-key.pem' is NOT an encrypted private key" — an accusation about the author's
+            // configuration for a fault in the filesystem, with no later load attempt to correct the
+            // story.
+            EnsureContained(_clientKey, "clientKey");
+
+            var encryption = DescribeEncryptedPrivateKey(_clientKey.Resolved, out var readable);
+
+            if (!readable)
+            {
+                // The platform's own message is deliberately NOT quoted: it carries the RESOLVED
+                // absolute path, which this file's header forbids any diagnostic from naming (a
+                // provider's general catch writes it into Vars and thence to the §14 stream, where
+                // no scrubber can redact a host path).
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: a key passphrase is declared, but "
+                    + $"{QuoteUntrusted(_clientKey.Declared)} could not be READ, so whether it is an "
+                    + "encrypted private key cannot be determined. Refused rather than guessed: "
+                    + "reporting an unreadable key as an unencrypted one would blame the declaration "
+                    + "for a filesystem fault. Check that the file exists inside the suite directory "
+                    + "and is readable by this process.");
+            }
+
+            if (encryption is null)
+            {
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: a key passphrase is declared, but "
+                    + $"{QuoteUntrusted(_clientKey.Declared)} is NOT an encrypted private key — it "
+                    + $"carries neither the '{EncryptedPkcs8Label}' label nor a "
+                    + $"'{LegacyEncryptedPemHeader}' header. A passphrase that decrypts nothing "
+                    + "is a control that is not running: remove 'clientKeyPassword', or point "
+                    + "'clientKey' at the encrypted key it belongs to.");
+            }
+
+            // ── 5. Resolution ─────────────────────────────────────────────────────────────────
+            //
+            // Ordered AFTER every guard above deliberately: a target refused for any contradiction
+            // never resolves its secret at all.
+            if (_secrets is null)
+            {
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: "
+                    + $"{QuoteUntrusted(_declaredClientKeyPassword)} is declared, but this run has "
+                    + "no secret accessor to resolve it through, so the passphrase cannot be obtained. "
+                    + "Refused rather than attempting the key unencrypted: a client identity that "
+                    + "silently fails to load presents nothing, which a listener that requests but "
+                    + "does not enforce a client certificate accepts.");
+            }
+
+            SecretString resolved;
+            try
+            {
+                resolved = _secrets.Resolve(_declaredClientKeyPassword);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException
+                                           and not SecurityMaterialException)
+            {
+                // Wrapped rather than allowed to propagate, deliberately: SecuredEndpointProbe
+                // catches SecurityMaterialException ONLY (SecuredEndpointProbe.cs), so an escaping
+                // exception would leave the probe's client-identity load by a path that has no
+                // environment-error classification of its own — and that path is MEASURED in this
+                // repository (SecuredEndpointProbe's own remarks): a stack trace instead of a
+                // verdict, with no report artefacts and a non-taxonomy exit code.
+                //
+                // ANY exception, not only SecretResolutionException, because `_secrets` is the
+                // INTERFACE: an ObjectDisposedException from a Vault client, anything
+                // HttpVaultKvClient does not wrap, and every third-party ISecretAccessor an embedder
+                // supplies all arrive here, and none of them is any better classified than the one
+                // shape this catch used to name.
+                //
+                // TWO EXCLUSIONS, both for the same reason — they are already correctly classified.
+                // OperationCanceledException is the run being cancelled and must reach the
+                // cancellation plumbing as itself; SecurityMaterialException is this engine's own
+                // verdict-bearing type, and re-wrapping one would bury a good diagnostic inside a
+                // vaguer one.
+                //
+                // The subsystem's own message is preserved as the inner exception and quoted
+                // through QuoteUntrusted — it is untrusted text from an arbitrary implementor, and
+                // it is prose rather than a token, so it is given the wider cap.
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: "
+                    + $"{QuoteUntrusted(_declaredClientKeyPassword)} could not be resolved "
+                    + $"({QuoteUntrusted(ex.Message, limit: ResolverMessageQuoteLimit)}).",
+                    ex);
+            }
+
+            if (resolved.Reveal().Length == 0)
+            {
+                // An exported-but-empty environment variable is the ordinary way to reach this.
+                // Attempting the load with it would surface the platform's undifferentiated
+                // CryptographicException, which this file measures to be identical for an encrypted
+                // key, a malformed key and outright garbage.
+                throw new SecurityMaterialException(
+                    $"{_fieldPathPrefix}.clientKeyPassword: "
+                    + $"{QuoteUntrusted(_declaredClientKeyPassword)} resolved to an EMPTY value, "
+                    + "which cannot decrypt a private key. Set the referenced secret, or remove "
+                    + "'clientKeyPassword' and point 'clientKey' at an unencrypted key.");
+            }
+
+            return resolved;
+        }
+
+        /// <summary>
+        /// Renders untrusted text — a declared secret reference, or a message built from one — safe
+        /// to splice into a diagnostic that reaches a terminal, a CI log and the §14 event stream.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Named for what it does rather than for its first caller. It renders ARBITRARY untrusted
+        /// text — a declared secret reference, a declared path, an exception message raised by a
+        /// third-party resolver — and the previous name (<c>DescribeReference</c>) described only
+        /// one of those and read as though the rest were outside its remit.
+        /// </para>
+        /// <para>
+        /// Two properties, both required by HAZARD H3. First, the escaping is TOTAL: nothing that
+        /// can forge a line of output, silently reorder one, or break a downstream renderer
+        /// survives it — see the four numbered arms of the escaping loop, each pinned by its own
+        /// test. Second, the result is CAPPED at <paramref name="limit"/>, because a reference's
+        /// path class admits arbitrary length and a diagnostic is not a place to reproduce a
+        /// megabyte of it.
+        /// </para>
+        /// <para>
+        /// <strong>It ESCAPES; it does not WITHHOLD.</strong> Whatever it is handed is rendered,
+        /// safely and legibly. Deciding that a piece of text must not be reported AT ALL — because
+        /// it may be a secret rather than a pointer to one — is a caller's judgement, made before
+        /// the call; see <see cref="ResolveClientKeyPassword"/>'s second guard, which exists
+        /// precisely because handing a possible passphrase to this method would reproduce it
+        /// faithfully.
+        /// </para>
+        /// <para>
+        /// The output is quoted here rather than at each call site, so a reference can never be
+        /// spliced in unquoted by an author who forgot the quotes.
+        /// </para>
+        /// </remarks>
+        /// <param name="text">The untrusted text to render.</param>
+        /// <param name="limit">
+        /// How many characters of <paramref name="text"/> survive. The default,
+        /// <see cref="ReferenceQuoteLimit"/>, suits a reference; a nested subsystem message, which
+        /// is prose rather than a token, is given <see cref="ResolverMessageQuoteLimit"/>.
+        /// </param>
+        private static string QuoteUntrusted(string text, int limit = ReferenceQuoteLimit)
+        {
+            // Every control character named here is written as a C# escape, never as a raw literal
+            // byte typed into this source file — the same rule DisplaySanitiser's own tests state.
+            const char space = '\u0020';
+            const char delete = '\u007f';
+            const char c1First = '\u0080';
+            const char c1Last = '\u009f';
+            const char quote = '\'';
+
+            var truncated = text.Length > limit;
+
+            // NEVER CUT A SURROGATE PAIR IN HALF. `limit` counts UTF-16 code units, and a high
+            // surrogate (U+D800–U+DBFF) sits ABOVE the C1 range escaped below, so a lone one
+            // would pass through raw into this message — which HAZARD H3 records as reaching the
+            // §14 event stream and the JUnit XML renderer, where a lone surrogate throws
+            // InvalidOperationException at GetString (see the renderer's own XML-safety
+            // handling). Backing off one unit is the whole fix: the low surrogate that would
+            // have completed the pair is being dropped anyway, so nothing legible is lost.
+            //
+            // This back-off covers ONLY the lone surrogate truncation CREATES. One already present
+            // in the INPUT is a different case with the same consequence, and arm 3 of the loop
+            // below is what covers that.
+            var kept = limit;
+            if (truncated && kept > 0 && char.IsHighSurrogate(text[kept - 1]))
+            {
+                kept--;
+            }
+
+            var span = truncated ? text.AsSpan(0, kept) : text.AsSpan();
+
+            var builder = new StringBuilder(span.Length + 8);
+            builder.Append(quote);
+
+            // AN INDEXED LOOP, not `foreach`, because arm 3 must look AHEAD one unit to tell a
+            // legitimate surrogate pair from a lone half.
+            for (var index = 0; index < span.Length; index++)
+            {
+                var character = span[index];
+
+                // ARM 1 — THE DELIMITER ITSELF. This method supplies the surrounding quotes, so an
+                // apostrophe inside the text closes them early and renders ONE quoted token as two
+                // apparently separate ones. A reader then cannot tell where the untrusted text
+                // ended and the engine's own prose resumed, which is the confusion every other arm
+                // here exists to prevent — reached with a printable character rather than a
+                // control one.
+                if (character == quote)
+                {
+                    AppendEscape(builder, character);
+                    continue;
+                }
+
+                // ARM 2 — C0, DELETE and C1. Including tab, carriage return and newline, which
+                // DisplaySanitiser deliberately preserves and which are exactly what would let a
+                // crafted reference forge a line of engine output.
+                if (character < space || character == delete || (character >= c1First && character <= c1Last))
+                {
+                    AppendEscape(builder, character);
+                    continue;
+                }
+
+                // ARM 3 — SURROGATES ALREADY IN THE INPUT. A well-formed pair passes through whole
+                // (an astral character is ordinary text and there is nothing to hide in it); an
+                // unpaired half, in EITHER direction, is escaped. A lone surrogate sits above the
+                // C1 range, so no earlier arm sees it; it cannot be encoded as UTF-8, and it throws
+                // InvalidOperationException at GetString in the JUnit XML renderer — a diagnostic
+                // that destroys the report carrying it.
+                if (char.IsHighSurrogate(character))
+                {
+                    if (index + 1 < span.Length && char.IsLowSurrogate(span[index + 1]))
+                    {
+                        builder.Append(character).Append(span[index + 1]);
+                        index++;
+                        continue;
+                    }
+
+                    AppendEscape(builder, character);
+                    continue;
+                }
+
+                if (char.IsLowSurrogate(character))
+                {
+                    AppendEscape(builder, character);
+                    continue;
+                }
+
+                // ARM 4 — THE NON-C0 LINE BREAKS AND THE INVISIBLE FORMAT CONTROLS, which sit far
+                // above the C1 range and so survive every arm above.
+                //
+                // U+2028 LINE SEPARATOR is the measured one, and it is YAML-REACHABLE: the schema
+                // pattern's path class is `[^}]+`, which admits it. It is a LINE BREAK in HTML —
+                // where #371 records HtmlRenderer.HtmlEscape passing control characters straight
+                // through — so a reference carrying it forges an apparent line of engine output in
+                // the report, which is arm 2's hazard reached by a character arm 2 cannot see.
+                // U+2029 is its paragraph-separating sibling.
+                //
+                // The bidi and format controls (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F)
+                // reorder the text a reader SEES without changing the text a machine reads, so a
+                // reference can be made to display as something other than what was declared.
+                //
+                // Stated as CATEGORIES rather than as a list of code points, deliberately: a
+                // hand-written enumeration freezes what its author happened to know, and
+                // CharUnicodeInfo already carries the answer. Cf, Zl and Zp are exactly the
+                // invisible-or-breaking categories not already covered above.
+                switch (CharUnicodeInfo.GetUnicodeCategory(character))
+                {
+                    case UnicodeCategory.Format:
+                    case UnicodeCategory.LineSeparator:
+                    case UnicodeCategory.ParagraphSeparator:
+                        AppendEscape(builder, character);
+                        break;
+                    default:
+                        builder.Append(character);
+                        break;
+                }
+            }
+
+            if (truncated)
+            {
+                builder.Append("...");
+            }
+
+            return builder.Append(quote).ToString();
+        }
+
+        /// <summary>
+        /// Appends one <c>\uXXXX</c> escape for <paramref name="character"/> — the single spelling
+        /// every arm of <see cref="QuoteUntrusted"/>'s loop uses, so no arm can render its own
+        /// escape differently from the rest.
+        /// </summary>
+        private static void AppendEscape(StringBuilder builder, char character) =>
+            builder.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
+
+        /// <summary>
+        /// Classifies a private-key file: returns a short phrase naming the encryption marker found
+        /// in it, or <see langword="null"/> when the file carries neither marker — with
+        /// <paramref name="readable"/> telling the two REASONS for that <see langword="null"/>
+        /// apart.
+        /// </summary>
+        /// <param name="resolvedKeyPath">The absolute path of the declared key file.</param>
+        /// <param name="readable">
+        /// <see langword="true"/> when the file was opened and its prefix decoded — so a
+        /// <see langword="null"/> return means "no marker found"; <see langword="false"/> when it
+        /// could not be read at all, so a <see langword="null"/> return means nothing about
+        /// encryption either way.
+        /// </param>
         /// <remarks>
         /// <para>
         /// Reads a BOUNDED prefix — <see cref="EncryptionScanByteLimit"/> — rather than the whole
@@ -707,13 +1338,30 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         /// simply yields the generic message, which is the behaviour without this method at all.
         /// </para>
         /// <para>
-        /// Every failure to read is swallowed for the same reason: this runs INSIDE a catch that is
-        /// already about to throw a well-formed diagnostic, and a second fault raised while
-        /// improving the first one's wording would replace a legible message with an illegible one.
+        /// <strong>WHAT EACH OF THE TWO CALLERS GETS, because they want different things and the
+        /// single-return shape this method used to have served only one of them.</strong> Read
+        /// failures are still SWALLOWED rather than thrown — both callers are on a path that must
+        /// end in one legible diagnostic, and a second fault raised while classifying would replace
+        /// it with an illegible one — but they are now REPORTED, through
+        /// <paramref name="readable"/>.
+        /// </para>
+        /// <para>
+        /// <see cref="LoadClient"/>'s catch calls this to IMPROVE a diagnostic it is already about
+        /// to throw. It passes <c>out _</c> and is right to: a read failure there simply leaves the
+        /// generic message in place, which is the behaviour without this method at all.
+        /// </para>
+        /// <para>
+        /// <see cref="ResolveClientKeyPassword"/> calls it to DECIDE, outside any catch, and there
+        /// the return value IS the diagnostic. Conflating the two nulls for that caller reported a
+        /// missing, locked or ACL-denied key file as "… is NOT an encrypted private key" — an
+        /// accusation about the author's declaration for a fault in the filesystem, and terminal
+        /// for a passphrase-only consumer, which has no later load attempt to correct the story.
+        /// It therefore checks <paramref name="readable"/> first and raises its own message.
         /// </para>
         /// </remarks>
-        private static string? DescribeEncryptedPrivateKey(string resolvedKeyPath)
+        private static string? DescribeEncryptedPrivateKey(string resolvedKeyPath, out bool readable)
         {
+            readable = false;
             string prefix;
             try
             {
@@ -748,6 +1396,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 return null;
             }
 
+            readable = true;
+
             if (prefix.Contains(EncryptedPkcs8Label, StringComparison.Ordinal))
             {
                 return $"its PEM block is labelled '{EncryptedPkcs8Label}'";
@@ -781,5 +1431,26 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         /// the bound is safe.
         /// </summary>
         private const int EncryptionScanByteLimit = 64 * 1024;
+
+        /// <summary>
+        /// How many characters of a quoted secret REFERENCE survive
+        /// <see cref="QuoteUntrusted"/>'s cap. A reference is a token, and enough of one to
+        /// recognise is the whole reason to quote it at all.
+        /// </summary>
+        private const int ReferenceQuoteLimit = 120;
+
+        /// <summary>
+        /// How many characters of a quoted RESOLVER MESSAGE survive
+        /// <see cref="QuoteUntrusted"/>'s cap — wider than
+        /// <see cref="ReferenceQuoteLimit"/> because a nested subsystem message is prose rather
+        /// than a token, and truncating it at a token's length would cut it mid-sentence.
+        /// </summary>
+        /// <remarks>
+        /// Named rather than written at its one call site so that both caps are pinnable by test.
+        /// The default was; this one was not, which left the wider of the two — the one applied to
+        /// text from an arbitrary third-party <c>ISecretAccessor</c> — as the only unpinned
+        /// bound on this class's output.
+        /// </remarks>
+        private const int ResolverMessageQuoteLimit = 512;
     }
 }

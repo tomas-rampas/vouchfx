@@ -179,6 +179,61 @@ public static class TestCertificateAuthority
     }
 
     /// <summary>
+    /// Re-exports the client key already written into <paramref name="suiteDirectory"/> as an
+    /// ENCRYPTED PKCS#8 PEM under <paramref name="passphrase"/>, in place, so that encryption is
+    /// the only thing that changed about the bed.
+    /// </summary>
+    /// <param name="suiteDirectory">
+    /// A directory already populated by <see cref="CreateSuiteDirectory"/> (or
+    /// <see cref="WriteKafkaBrokerSuiteDirectory"/>), containing <see cref="ClientKeyFileName"/>.
+    /// </param>
+    /// <param name="passphrase">The passphrase the re-exported key is encrypted under.</param>
+    /// <remarks>
+    /// <para>
+    /// Lives HERE, beside the fixture that writes the key, rather than in either test class that
+    /// wants it. It existed twice — once taking a <see cref="TestCertificateBed"/> and once taking
+    /// a directory path, with byte-identical bodies — which is a seam rather than a design: the
+    /// two arms of the same requirement were written in different classes, and the copy that
+    /// changes first is the one whose divergence nobody notices. One spelling, in the shared home
+    /// both classes already reference.
+    /// </para>
+    /// <para>
+    /// The parameters mirror <see cref="WriteKafkaBrokerSuiteDirectory"/>'s rather than
+    /// <see cref="CreateSuiteDirectory"/>'s: a directory, because that is what BOTH callers can
+    /// supply (a bed exposes its directory; a directory cannot produce a bed).
+    /// </para>
+    /// <para>
+    /// AES-256-CBC with SHA-256 and 100,000 iterations — a shape .NET's own PEM reader opens, so
+    /// the fixture exercises the engine's load path rather than a limitation of the encoding.
+    /// </para>
+    /// </remarks>
+    public static void EncryptClientKeyInPlace(string suiteDirectory, string passphrase)
+    {
+        var keyPath = Path.Combine(suiteDirectory, ClientKeyFileName);
+
+        using var key = RSA.Create();
+        key.ImportFromPem(File.ReadAllText(keyPath));
+        File.WriteAllText(
+            keyPath,
+            key.ExportEncryptedPkcs8PrivateKeyPem(
+                passphrase.AsSpan(),
+                new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 100_000)));
+    }
+
+    /// <summary>
+    /// A per-test environment-variable name for a client-key passphrase.
+    /// </summary>
+    /// <remarks>
+    /// Environment variables are process-global and xUnit runs test classes in parallel, so a
+    /// shared name lets one arm read another's value — or, worse, read a value another arm has
+    /// just cleared, which fails intermittently rather than outright. Hoisted for the same reason
+    /// as <see cref="EncryptClientKeyInPlace"/>: it was named in one test class and inlined in
+    /// another, so only one of the two stated why it was unique.
+    /// </remarks>
+    public static string UniqueClientKeyPassphraseVariableName() =>
+        "VOUCHFX_TEST_CKP_" + Guid.NewGuid().ToString("N");
+
+    /// <summary>
     /// Writes into <paramref name="suiteDirectory"/> (created if absent) everything a mutual-TLS
     /// Kafka broker fixture needs on BOTH sides of the connection: the client material a suite
     /// declares under <c>security:</c> (<see cref="CaFileName"/>, <see cref="ClientCertFileName"/>,

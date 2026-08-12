@@ -13,10 +13,12 @@
 using System.Reflection;
 using Vouchfx.Cli.Watch;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Engine.Runtime;
+using Vouchfx.Engine.Runtime.Secrets;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Cli;
@@ -108,9 +110,29 @@ internal static class WatchRunner
                 // Disposed in the finally below rather than by the topology: the accessor owns the
                 // X509Certificate2 instances it loads and the topology does not own its lifetime —
                 // matching ScenarioRunner exactly.
-                var probeSecurity = SecurityConfigurationAccessor.Build(ast, suiteDirectory);
+                //
+                // The secret scope (client-key-password REQ-009) comes from ScenarioRunner's own
+                // factory rather than a second spelling here, so `--watch` resolves
+                // `clientKeyPassword` against exactly the sources `vouchfx run` does. Resolution
+                // stays lazy: it happens inside the certificate load, which StartAsync reaches only
+                // after the health gate.
+                //
+                // THE SCOPE OUTSIDE THE `try`, THE ACCESSOR INSIDE IT. `Build` can throw
+                // (Path.GetFullPath on a malformed declared path), and constructed before the
+                // `try` its failure skipped the `finally` below, leaking this scope's resolvers
+                // and the Vault one's HttpClient. That matters more here than at either
+                // `ScenarioRunner` site: THIS seam re-runs on every file save, so a suite whose
+                // `Build` fails repeatedly leaks once per save for as long as `--watch` is left
+                // running. The scope's own construction allocates two objects and touches
+                // nothing, so a failure there leaves nothing to dispose.
+                var probeSecrets = ScenarioRunner.CreateSecretAccessorScope();
+                ISecurityConfigurationAccessor probeSecurity =
+                    NullSecurityConfigurationAccessor.Instance;
                 try
                 {
+                    probeSecurity = SecurityConfigurationAccessor.Build(
+                        ast, suiteDirectory, probeSecrets.Accessor);
+
                     var topology = await SuiteTopology.StartAsync(
                         ast.Environment,
                         appHostAssemblyName,
@@ -125,6 +147,7 @@ internal static class WatchRunner
                 finally
                 {
                     (probeSecurity as IDisposable)?.Dispose();
+                    probeSecrets.Dispose();
                 }
             },
 
