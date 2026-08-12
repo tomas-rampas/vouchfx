@@ -740,8 +740,17 @@ internal static class SchemaErrorCollector
     /// container's (<c>securityExtra</c> beside a forbidden <c>security</c>) is NOT inside it and
     /// must survive. <see cref="IsForbiddenPropertyShape"/> is re-used verbatim as the predicate, so this
     /// pass recognises exactly the shapes <see cref="FormatForbiddenPropertyError"/> renders and
-    /// nothing else — a scalar-valued forbidden property (<c>clientCert</c>, <c>path</c>) has no
-    /// children and no same-location siblings to subsume, and is a no-op.
+    /// nothing else. A scalar-valued forbidden property has no CHILDREN to subsume — but it is no
+    /// longer true, as this paragraph claimed until 2026-08-12, that it has no same-location
+    /// siblings either, nor therefore that it is a no-op. <c>clientKeyPassword</c> is the first
+    /// forbidden-under-<c>tls</c> scalar that also carries a <c>pattern</c>: MEASURED against the
+    /// composed schema, <c>profile: tls</c> with a literal <c>clientKeyPassword: "hunter2"</c>
+    /// makes the evaluator report TWO errors at the identical pointer — the <c>pattern</c> miss
+    /// and this rule's own boolean-<c>false</c> rejection — and the same-location clause below is
+    /// what reduces them to the ONE an author must act on (delete the field; what its value would
+    /// have had to look like is moot). Pinned by
+    /// <c>SchemaSecuritySurfaceClosureTests.SingleEnvironmentSecurityDefect_YieldsExactlyOneError</c>,
+    /// which carries that document as a case.
     /// </para>
     /// <para>
     /// SAME-LOCATION errors are subsumed too, not only strictly-nested ones, because

@@ -69,8 +69,12 @@ public sealed class SecretReferencePatternParityTests
     /// The eight cases REQ-001 names by hand are all present (a valid <c>env</c>
     /// reference; a <c>vault</c> reference with a multi-segment path; a dotted source; a
     /// source containing <c>/</c>; a path containing <c>{</c>; a reference with
-    /// surrounding literal text; a bare literal; the empty string), plus five further
+    /// surrounding literal text; a bare literal; the empty string), plus seven further
     /// boundary shapes that cost nothing to carry and close the obvious gaps around them.
+    /// Fifteen entries in total, counted off the list below on 2026-08-12 — an earlier
+    /// revision of this sentence said "five further" against six, which is the fourth
+    /// comment-versus-code count mismatch found in this series; recount rather than
+    /// increment when adding one.
     /// </remarks>
     public static TheoryData<string, string> Corpus() => new()
     {
@@ -152,6 +156,16 @@ public sealed class SecretReferencePatternParityTests
             "single trailing '\\n', while TryParse's whole-token rule (Index == 0 && Length == " +
             "token.Length) does not — so a bare '$' anchor ACCEPTS this here and the engine " +
             "then REFUSES it. Guards the closing anchor against exactly that divergence."
+        },
+        {
+            "\n" + "${secret:env/CLIENT_KEY_PASS}",
+            "A reference preceded by a newline — the START anchor's counterpart to the " +
+            "trailing-newline case above (critic NIT-7). No live divergence exists today: " +
+            "'^' is not multiline by default in .NET or in ECMA-262, so both layers refuse " +
+            "this. It is carried so the start anchor is pinned by BEHAVIOUR as well as by the " +
+            "structural check's StartsWith('^') spelling — asserting the end anchor by " +
+            "spelling is exactly what let the '$' divergence through, and a spelling that " +
+            "happens to be right today is not evidence."
         },
     };
 
@@ -264,7 +278,7 @@ public sealed class SecretReferencePatternParityTests
             $"rather than as a spelling. Got pattern: '{schemaPattern}'.");
 
         var parserClasses = CharacterClasses(parserPattern);
-        var schemaClasses = CharacterClasses(WithoutLookarounds(schemaPattern));
+        var schemaClasses = CharacterClasses(WithoutTrailingLookaround(schemaPattern));
 
         Assert.True(
             parserClasses.SequenceEqual(schemaClasses, StringComparer.Ordinal),
@@ -382,20 +396,55 @@ public sealed class SecretReferencePatternParityTests
             .ToList();
 
     /// <summary>
-    /// Removes zero-width lookaround groups — <c>(?=…)</c>, <c>(?!…)</c>, <c>(?&lt;=…)</c>,
-    /// <c>(?&lt;!…)</c> — from <paramref name="pattern"/>, so that
+    /// Removes the schema pattern's single TRAILING lookaround — its end anchor — so that
     /// <see cref="CharacterClasses(string)"/> sees only the classes that decide which
-    /// characters a MATCHED value may contain.
+    /// characters a MATCHED value may contain, and asserts that a trailing lookaround is
+    /// the only one there is.
     /// </summary>
     /// <remarks>
-    /// A lookaround consumes nothing, so a character class inside one is anchoring
-    /// machinery rather than grammar. Concretely: the schema's end anchor is
-    /// <c>(?![\s\S])</c> — "no character of any kind follows" — whose <c>[\s\S]</c> would
-    /// otherwise be compared against a parser class that has no counterpart to it, and the
-    /// class-for-class assertion would fail for a pattern that is in fact correct. Handles
-    /// the non-nested case only, which is all any anchor of this shape needs; a nested
-    /// lookaround would leave a residue and fail loudly rather than pass silently.
+    /// <para>
+    /// The end anchor is <c>(?![\s\S])</c> — "no character of any kind follows" — whose
+    /// <c>[\s\S]</c> has no counterpart in the parser's grammar, so the class-for-class
+    /// assertion would fail for a pattern that is in fact correct unless that class is
+    /// excluded from the comparison.
+    /// </para>
+    /// <para>
+    /// It excludes exactly that one, and not "every lookaround" (critic NIT-7). An earlier
+    /// revision stripped all of them on the premise that a lookaround consumes nothing and is
+    /// therefore anchoring machinery rather than grammar. That is true of <c>(?![\s\S])</c>
+    /// and is NOT a general property: a lookaround can carry a semantic constraint — a
+    /// forbidden substring, a required prefix — which decides what values are legal while
+    /// consuming nothing, and a blanket strip would make such a constraint invisible to the
+    /// class-for-class check, the one assertion here that is meant to catch a divergence no
+    /// corpus entry happens to probe. So this asserts the pattern carries exactly ONE
+    /// lookaround and that it is TRAILING, then removes only it: any other lookaround fails
+    /// loudly and is read by a human, which is the correct outcome for a construct nothing
+    /// here knows how to interpret. Non-nested by construction, as any anchor of this shape is.
+    /// </para>
     /// </remarks>
-    private static string WithoutLookarounds(string pattern) =>
-        Regex.Replace(pattern, @"\(\?<?[=!](?:\\.|[^()\\])*\)", string.Empty);
+    private static string WithoutTrailingLookaround(string pattern)
+    {
+        var lookarounds = Regex.Matches(pattern, @"\(\?<?[=!](?:\\.|[^()\\])*\)");
+
+        Assert.True(
+            lookarounds.Count == 1,
+            $"Expected the '{PatternLocation}' pattern to carry exactly ONE lookaround — its " +
+            $"end anchor — but found {lookarounds.Count} in '{pattern}'. This helper removes " +
+            "the end anchor so the character-class comparison is not confused by the " +
+            "anchor's own '[\\s\\S]'; it deliberately does NOT remove lookarounds in general, " +
+            "because a lookaround can carry a semantic constraint that DOES decide which " +
+            "values are legal. Decide what the additional one means and handle it " +
+            "explicitly — never widen this strip to hide it.");
+
+        var anchor = lookarounds[0];
+
+        Assert.True(
+            anchor.Index + anchor.Length == pattern.Length,
+            $"Expected the '{PatternLocation}' pattern's single lookaround to be TRAILING (an " +
+            $"end anchor), but it ends at index {anchor.Index + anchor.Length} of a pattern " +
+            $"{pattern.Length} characters long: '{pattern}'. A lookaround anywhere else is not " +
+            "an anchor and must not be silently removed from the character-class comparison.");
+
+        return pattern[..anchor.Index];
+    }
 }

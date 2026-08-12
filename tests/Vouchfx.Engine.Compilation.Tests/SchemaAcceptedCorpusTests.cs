@@ -138,15 +138,28 @@ public sealed class SchemaAcceptedCorpusTests
     /// downstream <c>[Theory]</c> case would then just vanish instead of
     /// failing loudly, mirroring
     /// <c>ExamplesCompileTests.ExampleFiles_DiscoversAtLeastOneFile</c>'s own
-    /// concern, but for a PARTIAL loss rather than a total one). The floor is
-    /// set comfortably below the current committed count — safe to raise as
-    /// fixtures are added, a drop below it is worth investigating
-    /// (feat/close-remaining-surfaces, Part D).
+    /// concern, but for a PARTIAL loss rather than a total one).
     /// </summary>
+    /// <remarks>
+    /// Raised from 15 to 34 (critic NIT-8, 2026-08-12). 15 was set when the
+    /// corpus was young and never tightened as fixtures accumulated: the
+    /// committed count is <b>36</b> — counted directly off the tree on
+    /// 2026-08-12 (every <c>*.e2e.yaml</c> under <c>Corpus/Accepted</c>,
+    /// recursively, the same enumeration <see cref="AcceptedFiles"/> itself
+    /// performs), not carried forward from the previous revision of this
+    /// comment — so the old floor would have tolerated losing twenty-one
+    /// fixtures in silence, which is the whole failure this gate exists to
+    /// prevent. Its sibling <c>SchemaRejectedCorpusTests</c> was retightened
+    /// the same way (40 to 55 against a counted 57) and this one was left
+    /// behind. 34 is sensibly below-but-near the true count: tight enough that
+    /// dropping several fixtures fails loudly, with enough headroom that
+    /// routine reorganisation does not require raising it every time. Safe to
+    /// raise as fixtures accumulate; recount rather than increment when doing so.
+    /// </remarks>
     [Fact]
     public void AcceptedFiles_DiscoversAtLeastOneFile()
     {
-        const int minAcceptedFiles = 15;
+        const int minAcceptedFiles = 34;
 
         var acceptedCount = AcceptedFiles().Count();
 

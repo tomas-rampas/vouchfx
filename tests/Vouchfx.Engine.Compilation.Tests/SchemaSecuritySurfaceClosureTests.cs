@@ -32,6 +32,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Json.Schema;
+using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
@@ -272,9 +273,11 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// annotation-propagation behaviour (exactly the risk <c>NaiveFix_*</c> above pins for the
     /// sibling-keyword trap) could silently turn one genuine defect into a false "unknown
     /// property" pile-up alongside it, with no test here to notice. Pins single-error output,
-    /// through the real <see cref="DocumentValidator"/> front door, for the four shapes
+    /// through the real <see cref="DocumentValidator"/> front door, for the five shapes
     /// measured clean: a blank <c>caCert</c>, an out-of-range <c>endpoint</c>, a literal
-    /// <c>clientKeyPassword</c>, and a nested <c>serverArtifacts[0].target</c> pattern miss.
+    /// <c>clientKeyPassword</c> under <c>mtls</c>, the same literal under <c>tls</c> (where the
+    /// field is forbidden outright, so TWO keywords fail at one location), and a nested
+    /// <c>serverArtifacts[0].target</c> pattern miss.
     /// </summary>
     /// <remarks>
     /// The caCert and endpoint fixtures moved from a redis dependency to a kafka one in M1
@@ -283,7 +286,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// nothing to do with an annotation cascade — the guard would still be green while
     /// proving nothing. Kafka accepts the block, so the single error each fixture yields is
     /// still the one direct-field defect it declares. The serverArtifacts fixture was already
-    /// on kafka, and the clientKeyPassword fixture was written on kafka for the same reason.
+    /// on kafka, and both clientKeyPassword fixtures were written on kafka for the same reason.
     /// The whole-block rejection's OWN single-error behaviour is pinned separately, by
     /// <c>EnvironmentSchemaTests.Dependency_Security_OnNonKafkaKind_YieldsExactlyOneError_WhateverIsInsideTheBlock</c>.
     /// </remarks>
@@ -338,6 +341,30 @@ public sealed class SchemaSecuritySurfaceClosureTests
                 endpoint: 9093
                 clientCert: certs/client.pem
                 clientKey: certs/client.key
+                clientKeyPassword: "hunter2"
+        steps:
+          - id: noop
+            type: script.csharp
+            code: "// noop"
+        """)]
+    [InlineData(
+        // The SAME literal, under 'profile: tls', where 'clientKeyPassword' is forbidden
+        // outright by this $def's own allOf. Unlike every other case in this theory, TWO
+        // keywords fail at ONE location here: the boolean 'false' subschema ([properties])
+        // and the field's own 'pattern' — 'clientKeyPassword' is the first forbidden-under-tls
+        // scalar that also carries a pattern, so it is the first field for which
+        // SchemaErrorCollector's same-location subsumption rule has anything to subsume on a
+        // SCALAR (SuppressErrorsInsideForbiddenContainer's own remarks used to call that shape
+        // a no-op, and this case is why they no longer do). The author's one action is to
+        // delete the field, so one error is the correct output — measured here, never inferred.
+        """
+        environment:
+          dependencies:
+            events:
+              type: kafka
+              security:
+                profile: tls
+                endpoint: 9093
                 clientKeyPassword: "hunter2"
         steps:
           - id: noop
@@ -502,6 +529,120 @@ public sealed class SchemaSecuritySurfaceClosureTests
 
         static string ToPascalCase(string camelCase) =>
             char.ToUpperInvariant(camelCase[0]) + camelCase[1..];
+    }
+
+    /// <summary>
+    /// The layer BELOW the one above: every property <c>$defs/security</c> declares must be
+    /// READ by <c>YamlDocumentParser.ParseSecurity</c>, not merely have a
+    /// <see cref="SecuritySpec"/> member to be read into. A document declaring the whole
+    /// surface is parsed, and no member of the resulting <see cref="SecuritySpec"/> may be
+    /// <see langword="null"/> afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EverySecuritySchemaProperty_HasAMatchingSecuritySpecMember</c> closes schema →
+    /// model. It cannot close model → parser: a member can exist while <c>ParseSecurity</c>
+    /// never reads its key, and the result is the SAME accept-and-drop outcome one layer down
+    /// — the document validates, the member stays <see langword="null"/>, and nothing is red.
+    /// Only a round trip through the real parser can see that, so this test performs one.
+    /// </para>
+    /// <para>
+    /// The completeness of the fixture is DERIVED from the schema rather than asserted by
+    /// hand: every key <c>$defs/security</c> declares must appear as a declared key in the
+    /// document below, so a schema property added without a fixture line fails here before it
+    /// can reach the null check. The fixture itself is hand-written because each key needs a
+    /// type-appropriate value (a port, a path, a whole <c>${secret:}</c> reference, a nested
+    /// artefact list), which no mechanical generator produces — and it is first put through
+    /// the real <see cref="DocumentValidator"/>, so an illegal fixture fails as an illegal
+    /// fixture rather than silently proving nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EverySecuritySchemaProperty_IsReadBackByTheParser_NoMemberIsLeftNull()
+    {
+        // Every $defs/security key, with a type-appropriate value. 'profile: mtls' because it
+        // is the only profile under which the whole surface is legal at once (the 'tls' branch
+        // forbids clientCert/clientKey/clientKeyPassword), and a kafka dependency because that
+        // is the only dependency kind accepting a security block at all.
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: mtls
+                    endpoint: 9093
+                    caCert: ./certs/ca.pem
+                    clientCert: ./certs/client.pem
+                    clientKey: ./certs/client-key.enc.pem
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
+                    serverArtifacts:
+                      - source: ./certs/broker.jks
+                        target: /etc/kafka/secrets/broker.jks
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// noop"
+            """;
+
+        var registry = MinimalRegistry();
+
+        // Non-vacuity, first: a fixture the schema rejects would prove nothing about what the
+        // parser reads back from a LEGAL document.
+        var validation = DocumentValidator.Validate(yaml, registry);
+        Assert.True(
+            validation.IsValid,
+            "The whole-surface fixture below must itself be a valid document. Errors: " +
+            string.Join("; ", validation.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}")));
+
+        var composedJson = SchemaComposer.ComposeSchemaJson(registry);
+        var schemaProperties = JsonNode.Parse(composedJson)!.AsObject()["$defs"]!["security"]!
+            .AsObject()["properties"]!.AsObject()
+            .Select(property => property.Key)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.NotEmpty(schemaProperties);
+
+        // Derivation, not a hand-written list: the fixture must DECLARE every schema key.
+        // Matched on a line's own leading token so 'clientKey' is not satisfied by the
+        // 'clientKeyPassword' line that merely starts with the same characters.
+        var declaredKeys = yaml
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Select(line => line.StartsWith("- ", StringComparison.Ordinal) ? line[2..] : line)
+            .Select(line => line.IndexOf(':', StringComparison.Ordinal) is var colon && colon > 0
+                ? line[..colon]
+                : string.Empty)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var undeclared = schemaProperties.Where(key => !declaredKeys.Contains(key)).ToArray();
+        Assert.True(
+            undeclared.Length == 0,
+            "$defs/security declares " + string.Join(", ", undeclared) + ", which the " +
+            "whole-surface fixture in this test does not. Add the key (with a type-appropriate " +
+            "value) — otherwise this test cannot tell whether ParseSecurity reads it.");
+
+        var document = YamlDocumentParser.Parse(yaml);
+        var security = document.Environment?.Dependencies?["events"].Security;
+
+        Assert.NotNull(security);
+
+        var unread = typeof(SecuritySpec)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Where(property => property.GetValue(security) is null)
+            .Select(property => property.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            unread.Length == 0,
+            "SecuritySpec." + string.Join(", SecuritySpec.", unread) + " is null after parsing " +
+            "a document that DECLARES every $defs/security property. The member exists and the " +
+            "schema accepts the field, but YamlDocumentParser.ParseSecurity never reads its key " +
+            "— the accept-and-drop hole one layer below the schema/model check above. Bind the " +
+            "key in ParseSecurity.");
     }
 
     /// <summary>

@@ -207,14 +207,20 @@ public interface ISecurityCertificateMaterial
     /// any diagnostic string.
     /// </para>
     /// <para>
-    /// The <see cref="SecretString"/> TYPE is what makes that ledger membership structural
-    /// rather than merely documented, and it is the stronger of the two arguments for the type:
-    /// <see cref="SecretString"/>'s constructor is <see langword="internal"/>
-    /// (<c>SecretString.cs</c>), with <c>InternalsVisibleTo</c> granted only to
-    /// <c>Vouchfx.Engine.Abstractions.Tests</c>, so <c>Vouchfx.Engine.Runtime</c> CANNOT mint
-    /// one — the load path can only obtain a <see cref="SecretString"/> from a resolver, which
-    /// is exactly what puts the value in the scrub ledger. With a plain <c>string?</c> here that
-    /// guarantee would have been one careless line from being lost.
+    /// <strong>What the type does NOT give is ledger membership</strong>, and an earlier draft
+    /// of these remarks claimed otherwise. <see cref="SecretString"/>'s constructor is
+    /// <see langword="internal"/> (<c>SecretString.cs</c>), with <c>InternalsVisibleTo</c>
+    /// granted only to <c>Vouchfx.Engine.Abstractions.Tests</c>, so the load path cannot MINT a
+    /// <see cref="SecretString"/>: it must obtain one from a resolver. That is a strictly
+    /// narrower guarantee than "the value is in the scrub ledger", because a resolver called
+    /// DIRECTLY registers nothing — <c>EnvironmentSecretResolver</c> is a public sealed class
+    /// whose public <c>Resolve</c> ends by constructing a <see cref="SecretString"/>
+    /// (<c>Secrets/ISecretResolver.cs</c>), <c>VaultSecretResolver</c> has the same shape, and
+    /// <c>ScenarioRunner.BuildSecretResolvers</c> already constructs both inside
+    /// <c>Vouchfx.Engine.Runtime</c>. Only <see cref="ISecretAccessor.Resolve"/> records into
+    /// <see cref="SecretAccessor.ResolvedSecrets"/> (<c>Secrets/ISecretAccessor.cs</c>). The
+    /// obligation stated above is therefore a DISCIPLINE that NO type enforces — not this one,
+    /// and not any other in the engine. It holds only for as long as callers keep it.
     /// </para>
     /// <para>
     /// DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
