@@ -267,8 +267,9 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// Finding 1/2 above) — but <c>SuppressUnevaluatedPropertiesCascade</c>'s OWN scoping is
     /// deliberately confined to the step surface (<see cref="SchemaErrorCollector.TryGetStepScope"/>
     /// only ever recognises <c>/steps/&lt;N&gt;</c>), so the environment/security surface has NO
-    /// equivalent cascade protection today. Nothing currently NEEDS one — each of these four
-    /// independent single-field defects happens to produce exactly one error already — but
+    /// equivalent cascade protection today. Nothing currently NEEDS one — each of these five
+    /// single-field shapes yields exactly one author-facing error already: four because only one
+    /// keyword fails, the fifth because the same-location clause subsumes the second — but
     /// nothing GUARDS that either, and a JsonSchema.Net upgrade changing same-object
     /// annotation-propagation behaviour (exactly the risk <c>NaiveFix_*</c> above pins for the
     /// sibling-keyword trap) could silently turn one genuine defect into a false "unknown
@@ -351,12 +352,15 @@ public sealed class SchemaSecuritySurfaceClosureTests
         // The SAME literal, under 'profile: tls', where 'clientKeyPassword' is forbidden
         // outright by this $def's own allOf. Unlike every other case in this theory, TWO
         // keywords fail at ONE location here: the boolean 'false' subschema ([properties])
-        // and the field's own 'pattern' — 'clientKeyPassword' is the first forbidden-under-tls
-        // scalar that also carries a pattern, so it is the first field for which
-        // SchemaErrorCollector's same-location subsumption rule has anything to subsume on a
-        // SCALAR (SuppressErrorsInsideForbiddenContainer's own remarks used to call that shape
-        // a no-op, and this case is why they no longer do). The author's one action is to
-        // delete the field, so one error is the correct output — measured here, never inferred.
+        // and the field's own 'pattern'. That two-into-one shape is NOT new to this field —
+        // measured against the composed schema, 'profile: tls' with 'clientCert: ""'
+        // (minLength) or with 'clientCert: 123' (type) produces the identical two errors at one
+        // pointer, collected to one, and has done since the tls branch existed. What IS new is
+        // narrower: 'clientKeyPassword' is the first forbidden-under-tls scalar carrying a
+        // 'pattern' (clientCert and clientKey carry only minLength and type), and the first for
+        // which this corpus exercises the shape at all — the clientCert fixtures elsewhere
+        // declare a valid path, which passes minLength. The author's one action is to delete
+        // the field, so one error is the correct output — measured here, never inferred.
         """
         environment:
           dependencies:
@@ -556,6 +560,14 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// the real <see cref="DocumentValidator"/>, so an illegal fixture fails as an illegal
     /// fixture rather than silently proving nothing.
     /// </para>
+    /// <para>
+    /// STRUCTURAL ASSUMPTION, recorded because nothing enforces it: a SINGLE fixture requires
+    /// every <c>$defs/security</c> property to be legal SIMULTANEOUSLY, which holds only because
+    /// <c>mtls</c> admits the whole surface today. If a future field is legal only under one
+    /// profile — a <c>tls</c>-only field, say — no one document can declare them all, and this
+    /// test must then be split into per-profile fixtures, each parsed and swept as below, with
+    /// the UNION of their declared keys asserted against the schema's property list.
+    /// </para>
     /// </remarks>
     [Fact]
     public void EverySecuritySchemaProperty_IsReadBackByTheParser_NoMemberIsLeftNull()
@@ -605,10 +617,28 @@ public sealed class SchemaSecuritySurfaceClosureTests
         Assert.NotEmpty(schemaProperties);
 
         // Derivation, not a hand-written list: the fixture must DECLARE every schema key.
-        // Matched on a line's own leading token so 'clientKey' is not satisfied by the
-        // 'clientKeyPassword' line that merely starts with the same characters.
-        var declaredKeys = yaml
-            .Split('\n')
+        // Scoped to the 'security:' BLOCK (its own line excluded, everything indented under it
+        // included) rather than to the whole document (NIT-E, peer review): a future
+        // $defs/security property whose name is already used elsewhere in this fixture — 'type',
+        // declared on the dependency two lines above, is the live example — would otherwise be
+        // counted as declared by that unrelated line. The null sweep below would still redden,
+        // but its message accuses ParseSecurity of not reading a key when the real fault is a
+        // fixture missing a line. Matched on a line's own leading token so 'clientKey' is not
+        // satisfied by the 'clientKeyPassword' line that merely starts with the same characters.
+        var lines = yaml.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        var securityLineIndex = Array.FindIndex(lines, line => line.TrimStart() == "security:");
+        Assert.True(
+            securityLineIndex >= 0,
+            "The whole-surface fixture in this test must declare a 'security:' block — the key " +
+            "sweep below is scoped to it, and finding none would sweep nothing.");
+
+        var securityIndent = lines[securityLineIndex].Length -
+                             lines[securityLineIndex].TrimStart().Length;
+
+        var declaredKeys = lines
+            .Skip(securityLineIndex + 1)
+            .TakeWhile(line => line.Trim().Length == 0 ||
+                               line.Length - line.TrimStart().Length > securityIndent)
             .Select(line => line.Trim())
             .Select(line => line.StartsWith("- ", StringComparison.Ordinal) ? line[2..] : line)
             .Select(line => line.IndexOf(':', StringComparison.Ordinal) is var colon && colon > 0

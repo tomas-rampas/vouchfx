@@ -740,17 +740,26 @@ internal static class SchemaErrorCollector
     /// container's (<c>securityExtra</c> beside a forbidden <c>security</c>) is NOT inside it and
     /// must survive. <see cref="IsForbiddenPropertyShape"/> is re-used verbatim as the predicate, so this
     /// pass recognises exactly the shapes <see cref="FormatForbiddenPropertyError"/> renders and
-    /// nothing else. A scalar-valued forbidden property has no CHILDREN to subsume — but it is no
-    /// longer true, as this paragraph claimed until 2026-08-12, that it has no same-location
-    /// siblings either, nor therefore that it is a no-op. <c>clientKeyPassword</c> is the first
-    /// forbidden-under-<c>tls</c> scalar that also carries a <c>pattern</c>: MEASURED against the
-    /// composed schema, <c>profile: tls</c> with a literal <c>clientKeyPassword: "hunter2"</c>
-    /// makes the evaluator report TWO errors at the identical pointer — the <c>pattern</c> miss
-    /// and this rule's own boolean-<c>false</c> rejection — and the same-location clause below is
-    /// what reduces them to the ONE an author must act on (delete the field; what its value would
-    /// have had to look like is moot). Pinned by
+    /// nothing else. A scalar-valued forbidden property has no CHILDREN to subsume, but it does
+    /// have same-location SIBLINGS: any keyword of the property's OWN base schema that the value
+    /// also fails reports at the identical pointer as this rule's boolean-<c>false</c> rejection,
+    /// so this pass is not a no-op on a scalar. An earlier version of this paragraph called that
+    /// shape a no-op, which was wrong outright rather than merely out of date — it has been
+    /// reachable for as long as the <c>tls</c> branch has forbidden a scalar with any base-schema
+    /// constraint. MEASURED against the composed schema, each of these documents makes the
+    /// evaluator report TWO errors at one pointer, which the same-location clause below reduces to
+    /// the ONE an author must act on (delete the field; what its value would have had to look like
+    /// is moot): <c>profile: tls</c> with <c>clientCert: ""</c> (<c>minLength</c> +
+    /// boolean-<c>false</c>), with <c>clientCert: 123</c> (<c>type</c> + boolean-<c>false</c>), and
+    /// with a literal <c>clientKeyPassword: "hunter2"</c> (<c>pattern</c> + boolean-<c>false</c>).
+    /// What <c>clientKeyPassword</c> is genuinely first at is narrower: it is the first
+    /// forbidden-under-<c>tls</c> scalar carrying a <c>pattern</c> (measured against the composed
+    /// schema, <c>clientCert</c> and <c>clientKey</c> carry <c>minLength</c> and <c>type</c> only),
+    /// and the first for which the test corpus exercises the shape at all — the <c>clientCert</c>
+    /// fixtures elsewhere declare a valid path, which passes <c>minLength</c> and leaves the
+    /// boolean-<c>false</c> rejection alone at the pointer. Pinned by
     /// <c>SchemaSecuritySurfaceClosureTests.SingleEnvironmentSecurityDefect_YieldsExactlyOneError</c>,
-    /// which carries that document as a case.
+    /// which carries the <c>clientKeyPassword</c> document as a case.
     /// </para>
     /// <para>
     /// SAME-LOCATION errors are subsumed too, not only strictly-nested ones, because

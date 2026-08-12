@@ -107,11 +107,16 @@ public interface ISecurityConfiguration
 /// implementation of this interface is constructed.
 /// </para>
 /// <para>
-/// <strong>Containment is re-checked on BOTH views, on every read.</strong> All five members
-/// below that surface declared material — the three paths and the two certificate
-/// objects — throw <see cref="SecurityMaterialException"/> for a declared path that resolves
-/// outside the suite directory, so the guarantee does not depend on which view a consumer
-/// happens to want. That matters because the two views have disjoint consumers: librdkafka
+/// <strong>Containment is re-checked on BOTH views, on every read.</strong> Every PATH-VALUED
+/// member below — the paths themselves, and the certificate objects derived from them — throws
+/// <see cref="SecurityMaterialException"/> for a declared path that resolves outside the suite
+/// directory, so the guarantee does not depend on which view a consumer happens to want. Stated
+/// as a property of the member rather than as a count of members, so that a member added later
+/// cannot silently falsify it: one surfacing no path at all — <see cref="ClientKeyPassword"/>, a
+/// passphrase — is outside this rule rather than an exception to it.
+/// </para>
+/// <para>
+/// The two views matter because they have disjoint consumers: librdkafka
 /// reads only the paths and never the objects. It is DEFENCE IN DEPTH, not the primary
 /// control — <c>EnvironmentSecurityValidator</c> has already rejected an escaping path on
 /// every production route, before any container starts — and it is measured NOT to catch a
