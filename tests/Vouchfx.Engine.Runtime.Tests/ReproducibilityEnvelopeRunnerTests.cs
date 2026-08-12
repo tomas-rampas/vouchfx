@@ -359,4 +359,125 @@ public sealed class ReproducibilityEnvelopeRunnerTests
             Environment.SetEnvironmentVariable(envName, null);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // 5. client-key-password REQ-010 criterion 3 — environment-level security.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// REQ-010 criterion 3. A suite declaring <c>environment.…security.clientKeyPassword</c>
+    /// must produce an envelope carrying that REFERENCE's hash and not its value.
+    /// <para>
+    /// This was NOT possible before T5: the envelope's scan iterated <c>ast.Steps</c> only, so
+    /// a reference declared in the <c>environment</c> block was invisible to it — a secret the
+    /// run genuinely depends on, silently missing from the reproducibility receipt. The scan
+    /// now also walks <c>SecuredTargets.Enumerate</c>, the one canonical walk of declared
+    /// <c>security</c> blocks.
+    /// </para>
+    /// <para>
+    /// The env var is set to a known value throughout, and the assertion that the value is
+    /// absent is therefore meaningful: §17's headline guarantee is that the envelope never
+    /// invokes a resolver, so there is no mechanism by which the value could appear.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Envelope_ContainsTheClientKeyPasswordReferenceHash_NotItsValue()
+    {
+        var envName = "VOUCHFX_REPRO_CKP_" + Guid.NewGuid().ToString("N");
+        var rawToken = $"${{secret:env/{envName}}}";
+
+        Environment.SetEnvironmentVariable(envName, SecretValue);
+        try
+        {
+            // No step carries a secret reference: the ONLY one in the document is the
+            // environment-level passphrase, so a green result cannot come from the step scan.
+            var yaml =
+                $$"""
+                environment:
+                  services:
+                    api:
+                      image: traefik/whoami
+                      security:
+                        profile: mtls
+                        endpoint: 8443
+                        caCert: certs/ca.pem
+                        clientCert: certs/client.pem
+                        clientKey: certs/client.key
+                        clientKeyPassword: "${secret:env/{{envName}}}"
+                steps:
+                  - id: call
+                    type: http.rest
+                    target: api
+                    method: GET
+                    path: /api
+                    expect:
+                      status: 200
+                """;
+
+            var ast = BuildAst(yaml);
+
+            // Guard the fixture itself: if the authoring layer stopped binding the field, the
+            // envelope assertions below would pass vacuously against an absent declaration.
+            Assert.Equal(rawToken, ast.Environment!.Services!["api"].Security!.ClientKeyPassword);
+
+            var line = EmitEnvelopeLine(ast, seedBaseDirectory: null);
+            var evt = EventStreamJson.FromLine<ReproducibilityEnvelopeEvent>(line);
+
+            var digest = Assert.Single(evt.SecretReferences);
+            Assert.Equal("env", digest.Source);
+            Assert.Equal(Sha256Hex(rawToken), digest.ReferenceHash);
+            Assert.Contains(Sha256Hex(rawToken), line, StringComparison.Ordinal);
+            Assert.DoesNotContain(SecretValue, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    /// <summary>
+    /// The path-valued security fields — <c>caCert</c>, <c>clientCert</c>, <c>clientKey</c> and
+    /// <c>serverArtifacts[].source</c> — are deliberately NOT scanned, and the omission is a
+    /// rule rather than an oversight: REQ-011 REFUSES a <c>${secret:}</c> in any of them, so a
+    /// reference found there names a value the engine is about to reject, and enveloping it
+    /// would record a dependency for a run that never happens.
+    /// <para>
+    /// Asserted rather than merely commented, because a later reader "fixing the gap" by
+    /// scanning every security field would silently invert this decision.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Envelope_DoesNotScanThePathValuedSecurityFields()
+    {
+        var envName = "VOUCHFX_REPRO_CKP_PATHS_" + Guid.NewGuid().ToString("N");
+
+        // A `${secret:}` in a PATH field — the shape REQ-011 refuses. Whatever the validator
+        // does with it, the envelope must not hash it.
+        var yaml =
+            $$"""
+            environment:
+              services:
+                api:
+                  image: traefik/whoami
+                  security:
+                    profile: mtls
+                    endpoint: 8443
+                    caCert: "${secret:env/{{envName}}}"
+                    clientCert: "${secret:env/{{envName}}}"
+                    clientKey: "${secret:env/{{envName}}}"
+            steps:
+              - id: call
+                type: http.rest
+                target: api
+                method: GET
+                path: /api
+                expect:
+                  status: 200
+            """;
+
+        var envelope = ScenarioRunner.BuildReproducibilityEnvelope(
+            BuildAst(yaml), seedBaseDirectory: null);
+
+        Assert.Empty(envelope.SecretReferences);
+    }
 }

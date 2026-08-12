@@ -54,32 +54,92 @@ public sealed class SecretAccessor : ISecretAccessor
     private readonly ISecretSourceCatalog _catalog;
 
     /// <summary>
-    /// The per-scenario, Default-ALC record of every value this accessor has revealed
-    /// (§17, S11-B-01).  Populated on each successful <see cref="Resolve"/> and consumed by
-    /// the runner as a DEFENCE-IN-DEPTH scrub net for free-form provider observation text
-    /// before it enters the event stream.  Type-based <see cref="SecretString"/> redaction
-    /// remains the primary mechanism; this is a backstop for the one surface the engine
-    /// cannot type-check (a provider-built observation / exception message).
+    /// The Default-ALC record of every value this accessor has revealed (§17, S11-B-01).
+    /// Populated on each successful <see cref="Resolve"/> and consumed by the runner as a
+    /// DEFENCE-IN-DEPTH scrub net for free-form provider observation text before it enters the
+    /// event stream.  Type-based <see cref="SecretString"/> redaction remains the primary
+    /// mechanism; this is a backstop for the one surface the engine cannot type-check (a
+    /// provider-built observation / exception message).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Lives on the accessor (Default ALC), which the runner holds: recording from inside
     /// the collectible script's <c>accessor.Resolve(...)</c> call runs this Default-ALC
     /// method body and adds a plain <see cref="string"/> to a Default-ALC set — no static,
     /// no handle bridging the boundary, so nothing roots the collectible
     /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (§5).
+    /// </para>
+    /// <para>
+    /// <strong>The ledger's lifetime is the CALLER's choice, not this type's</strong>
+    /// (client-key-password REQ-010).  Built through <see cref="SecretAccessor(ISecretSourceCatalog)"/>
+    /// it is private to this accessor, which is the per-scenario shape the scrub net was
+    /// introduced with.  Built through
+    /// <see cref="SecretAccessor(ISecretSourceCatalog, ResolvedSecretLedger)"/> the caller
+    /// supplies one it also hands to other accessors, so a value resolved through any of them
+    /// is scrubbable from text emitted on any other's path.  The engine uses the second shape
+    /// to give the topology probe and the per-scenario steps ONE ledger for a whole run, because
+    /// those two have genuinely different lifetimes (one probe scope, N scenario scopes) and no
+    /// single accessor can span both.
+    /// </para>
+    /// <para>
+    /// <strong>KNOWN CONSEQUENCE — this property is a CONFIRMATION ORACLE for author script
+    /// code, and run-scoping widens it.</strong>  <c>SecretAccessor</c> is public in a package
+    /// that is in the emitted CSX script's reference closure, so a <c>script.csharp</c> body can
+    /// write <c>((SecretAccessor)Vars.Secrets).ResolvedSecrets.Scrub(candidate)</c> and learn
+    /// from whether the result changed whether <c>candidate</c> is a resolved secret value;
+    /// <see cref="ResolvedSecretLedger.Count"/> likewise reveals how many distinct values a run
+    /// has revealed.  It is CONFIRM-ONLY, not extraction: <see cref="ResolvedSecretLedger.Scrub"/>
+    /// replaces exact occurrences and never returns a recorded value, so an attacker must already
+    /// hold the candidate.  The oracle itself predates the shared ledger, but was previously
+    /// scenario-local; sharing one ledger across a run makes it answer for values resolved in
+    /// OTHER scenarios and — on the shared-topology suite path — for the topology probe's
+    /// <c>clientKeyPassword</c>, which no step resolves and the script has no other route to.
+    /// The accessibility is deliberately left unchanged here: this type ships in a released
+    /// package, so narrowing it is a breaking change needing its own decision.
+    /// </para>
     /// </remarks>
-    public ResolvedSecretLedger ResolvedSecrets { get; } = new();
+    public ResolvedSecretLedger ResolvedSecrets { get; }
 
     /// <summary>
-    /// Initialises a new accessor over <paramref name="catalog"/>.
+    /// Initialises a new accessor over <paramref name="catalog"/>, with a fresh
+    /// <see cref="ResolvedSecrets"/> ledger private to this accessor.
     /// </summary>
     /// <param name="catalog">The run's source catalog; must not be <see langword="null"/>.</param>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="catalog"/> is <see langword="null"/>.
     /// </exception>
     public SecretAccessor(ISecretSourceCatalog catalog)
+        : this(catalog, new ResolvedSecretLedger())
+    {
+    }
+
+    /// <summary>
+    /// Initialises a new accessor over <paramref name="catalog"/> that records every value it
+    /// reveals into <paramref name="ledger"/> — a ledger the caller may share with other
+    /// accessors so one scrub net covers them all (client-key-password REQ-010).
+    /// </summary>
+    /// <param name="catalog">The run's source catalog; must not be <see langword="null"/>.</param>
+    /// <param name="ledger">
+    /// The ledger to record into; must not be <see langword="null"/>.  Sharing one instance
+    /// across accessors is the supported way to make a value resolved on one code path
+    /// scrubbable from text emitted on another — the ledger is internally locked, so concurrent
+    /// resolves through different accessors are safe.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="catalog"/> or <paramref name="ledger"/> is
+    /// <see langword="null"/>.
+    /// </exception>
+    /// <remarks>
+    /// Purely additive and binary-compatible: the pre-existing single-argument constructor
+    /// delegates here with a fresh ledger, so every already-compiled caller keeps its exact
+    /// previous behaviour and no existing member changed shape.  (<c>Vouchfx.Engine.Abstractions</c>
+    /// ships as a NuGet package but carries no public-API freeze gate — that gap is tracked as
+    /// issue #393 and is not addressed here.)
+    /// </remarks>
+    public SecretAccessor(ISecretSourceCatalog catalog, ResolvedSecretLedger ledger)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+        ResolvedSecrets = ledger ?? throw new ArgumentNullException(nameof(ledger));
     }
 
     /// <inheritdoc />

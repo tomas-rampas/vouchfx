@@ -25,12 +25,24 @@ namespace Vouchfx.Engine.Runtime.Secrets;
 /// object allocations.
 /// </para>
 /// <para>
-/// <strong>Each scope carries its OWN <see cref="SecretAccessor.ResolvedSecrets"/> ledger</strong>,
-/// which is the open question REQ-010 owns and this type deliberately does not answer. The probe
-/// path builds its scope before a scenario's own accessor exists, so a passphrase resolved for
-/// the probe is recorded in a ledger the step path's scrubbers never read. The shape that closes
-/// it — one scope shared by both paths, or one ledger registered into by both — is a change to
-/// where the scope is CONSTRUCTED, not to this type.
+/// <strong>REQ-010's answer: the LEDGER is shared across a run, the SCOPE is not.</strong> Pass a
+/// run-scoped <see cref="ResolvedSecretLedger"/> to the constructor and every scope built from it —
+/// the probe's and each scenario's — records into one net, so a passphrase resolved for the probe
+/// is scrubbable from text emitted on the step path and vice versa. Sharing the SCOPE instead was
+/// rejected because the two lifetimes genuinely differ: the probe scope is per-TOPOLOGY and a
+/// scenario scope is per-SCENARIO, so a shared-topology multi-suite run is one probe scope against
+/// N scenario scopes and no single scope object can carry both. Sharing only the ledger decouples
+/// "which values must be scrubbed" (run-scoped) from "who owns the Vault
+/// <see cref="System.Net.Http.HttpClient"/>" (unchanged, per-scope, disposed at each scope's own
+/// end). Omit the argument and the scope keeps a private ledger — the pre-REQ-010 behaviour.
+/// </para>
+/// <para>
+/// <strong>The <c>--watch</c> call site still omits it, and that is a KNOWN GAP, not a case where
+/// nothing is resolved.</strong> The watch path's probe does resolve <c>clientKeyPassword</c>, in
+/// <c>WatchRunner</c>'s own build seam; its scope's private ledger is therefore not the one the
+/// step path's scrubbers read, exactly as <c>ScenarioRunner.RunScenarioAgainstTopologyAsync</c>
+/// records at its own null-ledger site. Closing the watch path's probe→step gap needs a
+/// session-scoped ledger threaded through that public signature — EDGE-007's seam (T8).
 /// </para>
 /// </remarks>
 internal sealed class SecretAccessorScope : IDisposable
@@ -42,10 +54,17 @@ internal sealed class SecretAccessorScope : IDisposable
     /// Initialises a scope over <paramref name="resolvers"/>, taking ownership of their disposal.
     /// </summary>
     /// <param name="resolvers">The run's resolvers, as built by a single shared factory.</param>
-    internal SecretAccessorScope(ISecretResolver[] resolvers)
+    /// <param name="sharedLedger">
+    /// The run-scoped ledger this scope's accessor records revealed values into (REQ-010), or
+    /// <see langword="null"/> to give the accessor a ledger private to this scope.
+    /// </param>
+    internal SecretAccessorScope(ISecretResolver[] resolvers, ResolvedSecretLedger? sharedLedger = null)
     {
         _resolvers = resolvers;
-        Accessor = new SecretAccessor(new SecretSourceCatalog(resolvers));
+        var catalog = new SecretSourceCatalog(resolvers);
+        Accessor = sharedLedger is null
+            ? new SecretAccessor(catalog)
+            : new SecretAccessor(catalog, sharedLedger);
     }
 
     /// <summary>The accessor every resolution in this scope must go through (§17, REQ-010).</summary>

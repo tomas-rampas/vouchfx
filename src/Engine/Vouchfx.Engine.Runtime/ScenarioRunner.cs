@@ -339,6 +339,10 @@ public static class ScenarioRunner
     /// <see cref="BuildSecretResolvers"/> — the accessor a caller resolves through, plus ownership
     /// of the resolvers' disposal (§17, client-key-password REQ-009).
     /// </summary>
+    /// <param name="sharedLedger">
+    /// The run-scoped <see cref="ResolvedSecretLedger"/> the new scope's accessor records into
+    /// (REQ-010), or <see langword="null"/> for a ledger private to the scope.
+    /// </param>
     /// <remarks>
     /// Internal rather than private because the <c>--watch</c> run path
     /// (<c>Vouchfx.Cli.Watch.WatchRunner</c>) builds its own topology, and therefore its own
@@ -346,7 +350,8 @@ public static class ScenarioRunner
     /// SAME factory is what keeps the set of resolvable secret sources identical on both paths —
     /// the property <see cref="s_knownSecretSources"/> already relies on for the validation pass.
     /// </remarks>
-    internal static SecretAccessorScope CreateSecretAccessorScope() => new(BuildSecretResolvers());
+    internal static SecretAccessorScope CreateSecretAccessorScope(
+        ResolvedSecretLedger? sharedLedger = null) => new(BuildSecretResolvers(), sharedLedger);
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -501,6 +506,26 @@ public static class ScenarioRunner
     {
         var runId = Guid.NewGuid().ToString("n");
         var buffer = new List<string>();
+
+        // ── The RUN's one scrub ledger (client-key-password REQ-010) ──────────
+        // Created here, at the top of the run, and handed to BOTH accessors this method
+        // causes to exist: the topology probe's (below) and — threaded down through
+        // RunScenarioAgainstTopologyAsync — the per-scenario step accessor's. The two
+        // accessors stay separate because their LIFETIMES differ (the probe's is released
+        // the moment the topology is up; the scenario's lives for the scenario); the ledger
+        // is the one thing that must span both, because "which values must never appear in
+        // emitted text" is a property of the RUN, not of either scope.
+        //
+        // Without this, a passphrase resolved for the probe was recorded in a ledger no
+        // step-path scrubber ever read, so it survived into a step observation — and a
+        // passphrase resolved for a step was invisible to the environment-error emission
+        // path below. Both directions are now covered by one net.
+        //
+        // Cost, stated rather than discovered later: the ledger retains a plaintext copy of
+        // every value it records (you cannot scrub a value you do not hold) for the whole
+        // run rather than for one scope. Default-ALC, never serialised, collected with this
+        // method's frame.
+        var runSecretLedger = new ResolvedSecretLedger();
 
         // ── Step 2: Validate YAML against composed JSON Schema ────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
@@ -662,12 +687,13 @@ public static class ScenarioRunner
         // health gate — so §17's resolve-at-execution-time rule holds unchanged and no earlier
         // resolution pass is introduced.
         //
-        // OPEN QUESTION, owned by REQ-010 and deliberately not answered here: this scope is
-        // constructed BEFORE the per-scenario SecretAccessor built in
-        // RunScenarioAgainstTopologyAsync, so the two hold DIFFERENT ResolvedSecrets ledgers, and a
-        // passphrase resolved for the probe is invisible to the step path's scrubbers. Closing it
-        // means either sharing one scope across both paths or registering into one ledger; both are
-        // changes to where this scope is constructed, not to what it is.
+        // REQ-010's answer, and it is the LEDGER that is shared, not the scope: this scope is
+        // still constructed BEFORE the per-scenario SecretAccessor built in
+        // RunScenarioAgainstTopologyAsync, but both are handed `runSecretLedger`, so a passphrase
+        // resolved for the probe is scrubbable from text emitted on the step path and vice versa.
+        // Sharing the SCOPE instead was rejected: a scope owns the Vault resolver's HttpClient and
+        // is disposed in the `finally` below, the moment the topology is up — a scenario running
+        // for minutes afterwards must not depend on it.
         //
         // THE SCOPE IS BUILT OUTSIDE THE `try` AND THE ACCESSOR INSIDE IT, and the split is
         // deliberate. `Build` can throw (Path.GetFullPath on a malformed declared path), and
@@ -680,7 +706,7 @@ public static class ScenarioRunner
         // `using var` is NOT the alternative: it would hold the resolvers for the whole method
         // rather than releasing them once the topology is up, which the `finally` below
         // deliberately does.
-        var probeSecrets = CreateSecretAccessorScope();
+        var probeSecrets = CreateSecretAccessorScope(runSecretLedger);
         ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
         SuiteTopology suite;
         try
@@ -758,7 +784,12 @@ public static class ScenarioRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }));
-            buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, now));
+            // Scrubbed (REQ-010): this is the PROBE's own failure path — a `clientKeyPassword`
+            // that resolved and then failed the load arrives here with the resolved value folded
+            // into oex.Info.Detail (SecuredEndpointProbe folds SecurityMaterialException.Message
+            // into the probe-failure text). `runSecretLedger` is the ledger the probe recorded
+            // into, so this is where that value is caught.
+            buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
             buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
             {
                 RunId = runId,
@@ -824,7 +855,8 @@ public static class ScenarioRunner
                 output,
                 seedBaseDirectory,
                 cancellationToken,
-                livePump: livePump).ConfigureAwait(false);
+                livePump: livePump,
+                sharedLedger: runSecretLedger).ConfigureAwait(false);
 
             return (verdict, buffer);
         }
@@ -1303,14 +1335,32 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
         }
 
-        // The probe's own secret scope, and the same REQ-010 open question the single-scenario path
-        // records verbatim: built before any per-scenario SecretAccessor exists, so its
-        // ResolvedSecrets ledger is not the one the step-path scrubbers read.
+        // The SUITE's one scrub ledger (client-key-password REQ-010), and the same answer the
+        // single-scenario path gives in full at its own construction site: the LEDGER is shared
+        // across the run, the SCOPE is not. It is handed to the probe scope below and, per
+        // scenario, to the step accessor built inside RunScenarioCoreAsync.
+        //
+        // ONE ledger for the WHOLE suite, not one per scenario, and the difference is deliberate:
+        // the probe runs ONCE for the shared topology while N scenarios run against it, so a
+        // per-scenario ledger could not contain the probe's values at all.
+        //
+        // THE COST, stated rather than argued away: a value scenario A resolved is blanked from
+        // EVERY other scenario's text for the rest of the run. ResolvedSecretLedger.Record
+        // rejects only null/empty/whitespace — there is no length floor — so a secret resolving
+        // to a low-entropy string such as `8080`, `admin` or `5432` is recorded, and every later
+        // occurrence of that string anywhere in the run is replaced by the redaction marker even
+        // where it is an unrelated coincidence (a port in another scenario's HTTP observation).
+        // Run-scoping widens that collision window from one scenario to N. It is accepted here
+        // because the probe/step cross-path leak REQ-010 exists to close cannot be closed any
+        // other way, and a corrupted diagnostic is recoverable where a leaked secret is not.
+        // Do NOT "fix" it with a minimum-length floor in Record: a short secret is still a
+        // secret, and silently declining to scrub it is a behaviour change of its own.
         //
         // The scope outside the `try`, the accessor inside it, for the reason given in full at the
         // single-scenario site above: a throwing `Build` must not skip the `finally` that disposes
         // these resolvers.
-        var probeSecrets = CreateSecretAccessorScope();
+        var runSecretLedger = new ResolvedSecretLedger();
+        var probeSecrets = CreateSecretAccessorScope(runSecretLedger);
         ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
 
         SuiteTopology suite;
@@ -1367,11 +1417,22 @@ public static class ScenarioRunner
         }
         catch (OrchestrationException oex)
         {
-            // Issue #266, Item 4: oex.Message is usually an infra-fault message, but is
-            // sanitised for consistency with every sibling diagnostic write in this method.
+            // Scrubbed through the run ledger, THEN display-sanitised (client-key-password
+            // REQ-010 + issue #266 Item 4) — the same composition the diagnosis write uses.
+            //
+            // This write is the only place a suite-path topology failure's TEXT is reported: the
+            // return below emits no environment-error event (SuiteResult carries verdicts and a
+            // flag, nothing free-form), so the chokepoint that scrubs that event never runs on
+            // this path — it is one sink, not one of two. `OrchestrationException.Message`
+            // interpolates `OrchestrationErrorInfo.Detail` verbatim (OrchestrationError.cs:164-165),
+            // the same member the chokepoint scrubs, and a probe that reached the client material
+            // resolved `clientKeyPassword` through `probeSecrets` — which records into
+            // `runSecretLedger`. DisplaySanitiser alone would not redact it: it neutralises
+            // control bytes and ANSI sequences, so an ordinary printable passphrase passes
+            // through unchanged.
             await output.WriteLineAsync(
                 DisplaySanitiser.SanitiseForDisplay(
-                    $"RunSuiteAsync: topology failed to start — {oex.Message}"))
+                    runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}")))
                 .ConfigureAwait(false);
 
             // REQ-018: exactly ONE cause of an Environment error exits non-zero without
@@ -1501,7 +1562,11 @@ public static class ScenarioRunner
                             Timestamp = now,
                             ScenarioId = name,
                         }));
-                        buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, now));
+                        // Scrubbed through the suite ledger (REQ-010): the isolation reset's
+                        // Detail folds the store client's own exception message, and by this
+                        // point the probe and every earlier scenario have already recorded
+                        // whatever they resolved.
+                        buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
                         buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
                         {
                             RunId = runId,
@@ -1519,11 +1584,15 @@ public static class ScenarioRunner
                         // would run against an unknown DB state).
                         //
                         // Issue #266, Item 4: 'name' is author-controlled and oex.Message may
-                        // echo untrusted content — sanitise before writing.
+                        // echo untrusted content — sanitise before writing. And scrubbed first
+                        // (REQ-010): oex.Message interpolates the SAME Detail the event line
+                        // above scrubs, so scrubbing one sink and not the other would leave the
+                        // value on the terminal/CI log.
                         await output.WriteLineAsync(
                             DisplaySanitiser.SanitiseForDisplay(
-                                $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
-                                "aborting suite.")).ConfigureAwait(false);
+                                runSecretLedger.Scrub(
+                                    $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
+                                    "aborting suite."))).ConfigureAwait(false);
                         break;
                     }
 
@@ -1547,7 +1616,8 @@ public static class ScenarioRunner
                         seedBaseDirectory,
                         cancellationToken,
                         scriptBaseDirectory: scenarioBaseDirectory,
-                        livePump: livePump).ConfigureAwait(false);
+                        livePump: livePump,
+                        sharedLedger: runSecretLedger).ConfigureAwait(false);
 
                     results.Add((name, scenarioVerdict));
                     suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
@@ -1570,18 +1640,24 @@ public static class ScenarioRunner
                         // event stream (the scenario's own events are already in
                         // allBuffers), so every renderer sees WHICH dependency's
                         // reset failed — parity with the BeginScenarioAsync path.
-                        var isolationFailureLine = EnvironmentErrorEvents.ToLine(
-                            oex.Info, runId, DateTimeOffset.UtcNow);
+                        // Scrubbed through the suite ledger (REQ-010) — same reason as the
+                        // BeginScenarioAsync path above, and this one runs AFTER the scenario,
+                        // so the ledger is at its fullest here.
+                        var isolationFailureLine = EnvironmentErrorLine(
+                            runSecretLedger, oex.Info, runId, DateTimeOffset.UtcNow);
                         allBuffers.Add(isolationFailureLine);
                         var isolationFailureLines = new[] { isolationFailureLine };
                         livePump?.PostRange(isolationFailureLines);
 
                         // Issue #266, Item 4: 'name' is author-controlled and oex.Message may
-                        // echo untrusted content — sanitise before writing.
+                        // echo untrusted content — sanitise before writing. And scrubbed first
+                        // through the ledger the comment above calls "at its fullest here" —
+                        // oex.Message interpolates the same Detail that event line scrubbed.
                         await output.WriteLineAsync(
                             DisplaySanitiser.SanitiseForDisplay(
-                                $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
-                                "aborting suite — subsequent scenarios may run against unclean state."))
+                                runSecretLedger.Scrub(
+                                    $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
+                                    "aborting suite — subsequent scenarios may run against unclean state.")))
                             .ConfigureAwait(false);
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         break;
@@ -2310,7 +2386,15 @@ public static class ScenarioRunner
                     Timestamp = nowR,
                     ScenarioId = scenarioName,
                 }));
-                buffer.Add(EnvironmentErrorEvents.ToLine(oex.Info, runId, nowR));
+                // NO ledger on this path, and the null is a statement rather than an omission
+                // (REQ-010). This is the `--watch` kept-topology entry point: the probe ran in
+                // WatchRunner's OWN build seam, whose scope this method never sees, and the step
+                // accessor is built DOWNSTREAM in RunScenarioCoreAsync — after this reset. So at
+                // this line nothing this method owns has resolved anything, and there is no
+                // ledger that could hold a value to scrub. Closing the watch path's probe→step
+                // gap needs a session-scoped ledger threaded from WatchRunner through this
+                // PUBLIC signature; that is EDGE-007's seam (T8), not a local fix here.
+                buffer.Add(EnvironmentErrorLine(sharedLedger: null, oex.Info, runId, nowR));
                 buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
                 {
                     RunId = runId,
@@ -2484,7 +2568,8 @@ public static class ScenarioRunner
         string? seedBaseDirectory,
         CancellationToken cancellationToken,
         string? scriptBaseDirectory = null,
-        LiveEventPump? livePump = null)
+        LiveEventPump? livePump = null,
+        ResolvedSecretLedger? sharedLedger = null)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
         _ = isolation;
@@ -2631,7 +2716,8 @@ public static class ScenarioRunner
                 seedBaseDirectory,
                 cancellationToken,
                 scriptBaseDirectory: scriptBaseDirectory,
-                livePump: livePump).ConfigureAwait(false);
+                livePump: livePump,
+                sharedLedger: sharedLedger).ConfigureAwait(false);
         }
         finally
         {
@@ -2713,6 +2799,12 @@ public static class ScenarioRunner
     /// <see cref="RunScenarioAgainstTopologyAsync"/>'s parameter of the same name. Threaded
     /// through unchanged to <see cref="BuildReproducibilityEnvelope"/>.
     /// </param>
+    /// <param name="sharedLedger">
+    /// The RUN's <see cref="ResolvedSecretLedger"/> (client-key-password REQ-010), so this
+    /// scenario's step accessor records into the same net the topology probe recorded into.
+    /// <see langword="null"/> gives the accessor a ledger private to this scenario — the
+    /// pre-REQ-010 shape, which is what the <c>--watch</c> kept-topology caller still gets.
+    /// </param>
     private static async Task<Verdict> RunScenarioCoreAsync(
         ScenarioAst ast,
         string scenarioName,
@@ -2728,7 +2820,8 @@ public static class ScenarioRunner
         string? seedBaseDirectory,
         CancellationToken cancellationToken,
         string? scriptBaseDirectory = null,
-        LiveEventPump? livePump = null)
+        LiveEventPump? livePump = null,
+        ResolvedSecretLedger? sharedLedger = null)
     {
         // ── Issue #262: live scenario-started signal ──────────────────────────
         // Posted immediately, before anything else, using its OWN real-time timestamp —
@@ -2761,7 +2854,13 @@ public static class ScenarioRunner
         // HttpClient).  The scope owns them, and the finally below disposes it at scenario
         // end — no HttpClient leaks across the per-scenario boundary, and no static handle
         // holds the connection open.
-        var secretScope = CreateSecretAccessorScope();
+        //
+        // The SCOPE is per-scenario (it owns the resolvers); the LEDGER it records into is the
+        // RUN's, when the caller supplies one (client-key-password REQ-010). That is what makes a
+        // passphrase resolved by the topology probe scrubbable from THIS scenario's observations,
+        // and a passphrase resolved here scrubbable from an environment-error line the suite loop
+        // emits after this scenario returns.
+        var secretScope = CreateSecretAccessorScope(sharedLedger);
         var secretAccessor = secretScope.Accessor;
 
         // ── Per-target client security configuration (REQ-014) ────────────────
@@ -2801,11 +2900,12 @@ public static class ScenarioRunner
         ISecurityConfigurationAccessor securityAccessor = NullSecurityConfigurationAccessor.Instance;
         try
         {
-            // The scenario's OWN accessor is handed the scenario's OWN secret accessor (REQ-009):
-            // on this path the two are one, so a `clientKeyPassword` resolved for a step is
-            // recorded in exactly the ResolvedSecrets ledger the runner's diagnostic and
-            // observation scrubbers read. The probe path's separate scope is the divergence
-            // REQ-010 owns; see the note at its construction site.
+            // The scenario's OWN accessor is handed the scenario's OWN secret accessor (REQ-009),
+            // so a `clientKeyPassword` resolved for a step is recorded in exactly the
+            // ResolvedSecrets ledger the runner's diagnostic and observation scrubbers read.
+            // REQ-010 extends that to the probe: when the caller supplied a shared ledger, the
+            // probe's separately-scoped accessor records into this same net, so neither path's
+            // resolved value can escape through the other's emitted text.
             securityAccessor = SecurityConfigurationAccessor.Build(
                 ast, scriptBaseDirectory ?? seedBaseDirectory, secretAccessor);
 
@@ -3368,6 +3468,96 @@ public static class ScenarioRunner
             : text;
 
     /// <summary>
+    /// Builds the §14 <c>environment-error</c> event line for <paramref name="info"/>, scrubbing
+    /// its free-form text through <paramref name="sharedLedger"/> first (client-key-password
+    /// REQ-010).  <strong>The single place this assembly may call
+    /// <see cref="EnvironmentErrorEvents.ToLine"/> from.</strong>
+    /// </summary>
+    /// <param name="sharedLedger">
+    /// The run's shared ledger of revealed secret values, or <see langword="null"/> on a path
+    /// that owns no ledger (nothing has been resolved that this path could scrub).
+    /// </param>
+    /// <param name="info">The classified orchestration failure.</param>
+    /// <param name="runId">The identifier of the current engine run.</param>
+    /// <param name="timestamp">The emission timestamp, supplied by the caller for determinism.</param>
+    /// <returns>The compact JSON Lines string for the environment-error event.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this exists at all — measured, T4 security review, 2026-08-12.</strong> The
+    /// probe's failure text reaches the event stream through
+    /// <see cref="EnvironmentErrorEvents.ToLine"/>, and NOTHING on that path called
+    /// <see cref="ScrubDiagnostic"/>: that scrub sits on the step-observation and diagnosis
+    /// writes only.  So sharing one ledger between the probe and step scopes does not, on its
+    /// own, make a probe-time passphrase scrubbable — there has to be something on the probe's
+    /// emission path to do the scrubbing.  This is it.
+    /// </para>
+    /// <para>
+    /// <strong>WHICH members are scrubbed, and why only those.</strong> Only
+    /// <see cref="OrchestrationErrorInfo.Detail"/>.  It is the sole free-form member: every
+    /// construction site in <c>Vouchfx.Engine.Orchestration</c> folds an underlying exception
+    /// message into it (<c>OrchestrationErrorClassifier.BuildDetail</c>, <c>SeedApplier</c>,
+    /// <c>ScenarioIsolationErrors</c>, and — the case REQ-010 exists for —
+    /// <c>SecuredEndpointProbe</c>, which splices a <c>SecurityMaterialException.Message</c>
+    /// verbatim).  <c>ResourceName</c> is a declared service/dependency name or an engine
+    /// literal, <c>RegistryHost</c> is parsed out of an image reference, and <c>AuthStatus</c>
+    /// is one of a closed set of engine tokens — none can carry a resolved secret value, and
+    /// scrubbing a declared NAME would corrupt the diagnosis for no gain.
+    /// </para>
+    /// <para>
+    /// <strong>Why the scrub is here and not in <see cref="EnvironmentErrorEvents"/>.</strong>
+    /// That factory lives in <c>Vouchfx.Engine.Orchestration</c>, which does not (and must not)
+    /// reference the secret subsystem.  The chokepoint therefore has to be Runtime-local.
+    /// </para>
+    /// <para>
+    /// <strong>The ledger's structural limit, and where the OTHER guard lives.</strong>
+    /// <c>SecretAccessor.Resolve</c> records into the ledger only after a SUCCESSFUL resolve.
+    /// Every diagnostic raised INSTEAD of a resolve — a malformed reference, a null accessor, a
+    /// resolution failure, a passphrase declared against an unencrypted key — fires with the
+    /// ledger holding nothing for it, and this scrub can never redact it.  Redaction on those
+    /// paths comes from the throw sites not echoing the value in the first place (T4's
+    /// don't-echo guards in <c>SecurityConfigurationAccessor</c>), not from here.  A reader who
+    /// believes this ledger covers everything will site the next guard in the wrong place.
+    /// </para>
+    /// <para>
+    /// It changes event FIELD CONTENT only — never a property name, CLR type or
+    /// <c>[JsonPropertyName]</c>.
+    /// </para>
+    /// <para>
+    /// <strong>The scrub redacts EXACT occurrences, so any transform of a recorded value
+    /// defeats it — including the engine's own.</strong> Three upstream sites truncate the text
+    /// that becomes <see cref="OrchestrationErrorInfo.Detail"/>:
+    /// <c>OrchestrationErrorClassifier</c> (256 characters), <c>ScenarioIsolationErrors.TrimDetail</c>
+    /// (200) and <c>SecuredEndpointProbe.Summarise</c> (200).  A recorded value straddling one of
+    /// those caps arrives here as a PREFIX of itself, which no recorded form matches, and survives.
+    /// It is not reachable on the REQ-010 probe path — <c>SecuredEndpointProbe.Failure</c> builds
+    /// its <c>Detail</c> without truncating — but a new truncation, or a new caller routing
+    /// truncated text here, would reopen it silently.
+    /// </para>
+    /// </remarks>
+    internal static string EnvironmentErrorLine(
+        ResolvedSecretLedger? sharedLedger,
+        OrchestrationErrorInfo info,
+        string runId,
+        DateTimeOffset timestamp)
+    {
+        if (sharedLedger is null)
+        {
+            return EnvironmentErrorEvents.ToLine(info, runId, timestamp);
+        }
+
+        // `with` rather than mutation: OrchestrationErrorInfo is a record and the caller's
+        // instance is also carried on the exception it came from (and re-read by REQ-018's
+        // Kind check), so the scrubbed copy must be local to this line.
+        //
+        // The `!` is an assertion, not a fallback: Scrub is null-in/null-out (its own contract,
+        // and its first statement returns the input for null/empty) and Detail is a
+        // non-nullable string, so the result cannot be null here.
+        var scrubbed = sharedLedger.Scrub(info.Detail)!;
+        return EnvironmentErrorEvents.ToLine(
+            info with { Detail = scrubbed }, runId, timestamp);
+    }
+
+    /// <summary>
     /// Runs the central secret-reference validation pass over every substitutable
     /// field of every step in <paramref name="ast"/> (§17, S05-B-01).
     /// </summary>
@@ -3544,6 +3734,13 @@ public static class ScenarioRunner
     /// stable across runs (the reproducibility property).
     /// </para>
     /// <para>
+    /// <strong>Two scans, not one (client-key-password REQ-010):</strong> the step scan above,
+    /// plus an environment-level pass over every declared <c>security</c> block's
+    /// <c>clientKeyPassword</c> — the only secret-bearing field outside <c>steps</c>. Both feed
+    /// the same reference list and the same resolver-free hashing. See the method body for why
+    /// the sibling path-valued security fields are excluded.
+    /// </para>
+    /// <para>
     /// Fixture hashing reuses <c>SeedFixtures.ComputeContentHash</c> (Orchestration)
     /// so the envelope records the SAME hash the seed applier computes — no
     /// duplicate hashing routine, no project cycle (the Runtime layer references
@@ -3570,14 +3767,50 @@ public static class ScenarioRunner
     {
         // ── 1. Distinct secret references across every substitutable field ──────
         // Reuse the exact compile-time scan used for provenance + validation so the
-        // set of references in the envelope never drifts from the set the engine
+        // set of STEP references in the envelope never drifts from the set the engine
         // actually recognises.  Compute() dedupes by Raw.
+        //
+        // That parity holds for this step half ONLY. Section 1b below adds an environment-level
+        // scan with no counterpart in TryValidateSecretReferences, which still walks ast.Steps
+        // alone — so an environment-level reference naming an unknown source is hashed into the
+        // receipt without having passed the known-source check. The MISSING VALIDATION is not
+        // new (the field was invisible to both scans before REQ-010 extended this one); what is
+        // new is that the two scans no longer see the same set. Closing it is EDGE-003's seam
+        // (T7), not a local fix here.
         var references = new List<SecretReference>();
         foreach (var node in ast.Steps)
         {
             foreach (var text in CollectSubstitutableTexts(node))
             {
                 references.AddRange(SecretReference.FindAll(text));
+            }
+        }
+
+        // ── 1b. Environment-level `security` references (client-key-password REQ-010) ──
+        // The step scan above sees only ast.Steps, so an environment-level
+        // `security.clientKeyPassword` reference was invisible to the envelope — a secret the
+        // run genuinely depends on, silently absent from the reproducibility receipt. §17 says
+        // the envelope hashes the reference for secrets generally; an omission here is a
+        // reproducibility gap, not a scoping choice.
+        //
+        // SecuredTargets.Enumerate is the ONE canonical walk of declared `security` blocks
+        // (its own header records that a second spelling is how two security rules drift), so
+        // it is reused rather than respelled.
+        //
+        // ONLY ClientKeyPassword is scanned. The path-valued fields — `caCert`, `clientCert`,
+        // `clientKey` and `serverArtifacts[].source` — are deliberately excluded: REQ-011
+        // REFUSES a `${secret:}` in any of them, so a reference found there names a value the
+        // engine is about to reject, and hashing it would put an entry in the receipt for a run
+        // that never happened. The omission is a rule, not an oversight.
+        //
+        // Still resolver-free: SecretReference.FindAll reads the verbatim token text, exactly as
+        // the step scan does. The §17 headline guarantee in this method's remarks — the resolver
+        // is never invoked here — is unchanged.
+        foreach (var target in SecuredTargets.Enumerate(ast.Environment))
+        {
+            if (target.Security.ClientKeyPassword is { } clientKeyPassword)
+            {
+                references.AddRange(SecretReference.FindAll(clientKeyPassword));
             }
         }
 

@@ -28,11 +28,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Abstractions.Secrets;
+using Vouchfx.Engine.Orchestration;
 using Vouchfx.Engine.Reporting;
 using Xunit;
 
@@ -681,5 +684,393 @@ public sealed class SecretObservationLeakPenetrationTests
         Assert.Contains("HACKED", captured, StringComparison.Ordinal);
         // ...but no raw ESC byte reaches the terminal.
         Assert.DoesNotContain(esc, captured);
+    }
+
+    // ── 10. client-key-password REQ-010: the RUN-SCOPED ledger ──────────────────
+    //
+    // Criteria 1 and 2 of REQ-010, proven SEPARATELY because they are separate production
+    // paths and neither generalises to the other:
+    //
+    //   • the STEP path emits through ScrubDiagnostic / BuildStepObservation;
+    //   • the PROBE path emits through EnvironmentErrorEvents.ToLine, which — measured, T4
+    //     security review — never called ScrubDiagnostic at all. Sharing one ledger between
+    //     the two scopes does NOT on its own make a probe-time passphrase scrubbable; there
+    //     has to be a scrub ON that emission path, which is ScenarioRunner.EnvironmentErrorLine.
+    //
+    // Every test below therefore asserts on an EMITTED LINE, and each guard has a negative
+    // twin (an unshared ledger) that shows the value surviving — so a green result proves the
+    // sharing and the chokepoint are load-bearing rather than decorative.
+    //
+    // STRUCTURAL LIMIT, recorded here because a reader who misses it will site the next guard
+    // in the wrong place: SecretAccessor.Resolve records into the ledger only after a
+    // SUCCESSFUL resolve. A diagnostic raised INSTEAD of a resolve — a malformed reference, a
+    // null accessor, a resolution failure, a passphrase declared against an unencrypted key —
+    // fires with nothing recorded for it and can never be scrubbed by this ledger. Those paths
+    // are covered by the throw sites not echoing the value (T4's don't-echo guards), which is
+    // a different mechanism tested elsewhere.
+
+    /// <summary>
+    /// Builds a <see cref="SecretAccessor"/> recording into <paramref name="ledger"/> and
+    /// resolves one unique <c>${secret:env/…}</c> reference through it — the production shape
+    /// of a lazily-resolved <c>clientKeyPassword</c>. Passing the SAME ledger to two accessors
+    /// is exactly what the runner does for the probe scope and the step scope.
+    /// </summary>
+    private static (SecretAccessor Accessor, string Revealed, Action Cleanup) AccessorOver(
+        ResolvedSecretLedger ledger, string value)
+    {
+        var envName = "VOUCHFX_PENTEST_CKP_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(envName, value);
+
+        var accessor = new SecretAccessor(
+            new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }),
+            ledger);
+
+        var revealed = accessor.Resolve($"${{secret:env/{envName}}}").Reveal();
+        Assert.Equal(value, revealed);
+
+        return (accessor, revealed, () => Environment.SetEnvironmentVariable(envName, null));
+    }
+
+    /// <summary>
+    /// The probe-failure text the engine really builds: <c>SecuredEndpointProbe</c> folds a
+    /// <c>SecurityMaterialException.Message</c> verbatim into the failure detail, and
+    /// <c>OrchestrationErrorInfo.Detail</c> is the only free-form member of that record —
+    /// <c>ResourceName</c> is a declared name, <c>RegistryHost</c> is parsed from an image
+    /// reference, and <c>AuthStatus</c> is one of a closed set of engine tokens.
+    /// </summary>
+    private static OrchestrationErrorInfo ProbeFailureCarrying(string leakedValue) =>
+        new(
+            Kind: OrchestrationErrorKind.SecurityConfirmation,
+            ResourceName: "broker",
+            RegistryHost: null,
+            AuthStatus: null,
+            Detail: "'broker' declared profile 'mtls' on endpoint '9093', but its client identity "
+                + $"could not be loaded: the declared 'clientKeyPassword' ({leakedValue}) did not "
+                + "decrypt the key.");
+
+    // ── Criterion 1: the STEP path ──────────────────────────────────────────────
+
+    /// <summary>
+    /// (a) GENUINE-LEAK-FIXED, REQ-010 criterion 1. A <c>clientKeyPassword</c> resolved on the
+    /// STEP path must not survive into either free-form surface the step path emits: the
+    /// human diagnosis write (<c>ScrubDiagnostic</c>) or the step observation carried onto the
+    /// event stream (<c>BuildStepObservation</c>). Both are driven through the SAME internals
+    /// the production runner calls.
+    /// </summary>
+    [Fact]
+    public void ClientKeyPassphrase_ResolvedOnTheStepPath_IsScrubbedFromDiagnosticAndObservation()
+    {
+        const string passphrase = "ckp-step-path-4h8w2";
+        var ledger = new ResolvedSecretLedger();
+        var (accessor, revealed, cleanup) = AccessorOver(ledger, passphrase);
+        try
+        {
+            // 1. The diagnosis write.
+            var diagnosis = ScenarioRunner.ScrubDiagnostic(
+                accessor, $"mTLS handshake failed (key passphrase '{revealed}' rejected).");
+
+            Assert.NotNull(diagnosis);
+            Assert.DoesNotContain(revealed, diagnosis!, StringComparison.Ordinal);
+            Assert.Contains(SecretString.RedactedMarker, diagnosis!, StringComparison.Ordinal);
+            // The surrounding diagnostic survives — the scrub is a targeted net, not a wipe.
+            Assert.Contains("mTLS handshake failed", diagnosis!, StringComparison.Ordinal);
+
+            // 2. The step observation, asserted on the EMITTED event line.
+            var line = EmitStepCompletedLine(
+                accessor, "mtls-call", JsonSerializer.Serialize($"key passphrase '{revealed}' rejected"));
+
+            Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
+            Assert.Contains(SecretString.RedactedMarker, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    // ── Criterion 2: the PROBE path (the trap) ──────────────────────────────────
+
+    /// <summary>
+    /// (a) GENUINE-LEAK-FIXED, REQ-010 criterion 2. A <c>clientKeyPassword</c> resolved by the
+    /// TOPOLOGY PROBE's accessor, leaked into the probe failure's
+    /// <c>OrchestrationErrorInfo.Detail</c>, must not reach the §14 event stream.
+    /// <para>
+    /// This drives the REAL emission path — <c>ScenarioRunner.EnvironmentErrorLine</c>, the one
+    /// place the runner may build an <c>environment-error</c> line — and asserts on the emitted
+    /// JSON Lines string. A test that called <c>ScrubDiagnostic</c> directly would go green
+    /// against a production path that never calls it (spec REQ-010, lines 432-444).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ClientKeyPassphrase_ResolvedOnTheProbePath_IsScrubbedFromTheEmittedEnvironmentErrorLine()
+    {
+        const string passphrase = "ckp-probe-path-7m3q9";
+        var runLedger = new ResolvedSecretLedger();
+        var (_, revealed, cleanup) = AccessorOver(runLedger, passphrase);
+        try
+        {
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                runLedger, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
+
+            Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
+            Assert.Contains(SecretString.RedactedMarker, line, StringComparison.Ordinal);
+
+            // The diagnosis is still usable, and the WIRE SHAPE is untouched: same event type,
+            // same ENV_ERROR verdict, same resourceName. REQ-010 changes field CONTENT only.
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            Assert.Equal(EventTypes.EnvironmentError, root.GetProperty("type").GetString());
+            Assert.Equal("ENV_ERROR", root.GetProperty("verdict").GetString());
+            Assert.Equal("broker", root.GetProperty("resourceName").GetString());
+            Assert.Equal(
+                nameof(OrchestrationErrorKind.SecurityConfirmation),
+                root.GetProperty("errorKind").GetString());
+            Assert.Contains(
+                "client identity", root.GetProperty("detail").GetString()!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// The NEGATIVE twin of the test above, and what makes it evidence rather than decoration:
+    /// with the pre-REQ-010 shape — the probe holding a ledger of its OWN, separate from the
+    /// one the emission path reads — the identical passphrase survives verbatim into the
+    /// emitted event line. The SHARING is the mechanism, not an incidental detail.
+    /// </summary>
+    [Fact]
+    public void ClientKeyPassphrase_WithAnUnsharedProbeLedger_SurvivesIntoTheEmittedEnvironmentErrorLine()
+    {
+        const string passphrase = "ckp-unshared-2v6k1";
+        var probeLedger = new ResolvedSecretLedger();
+        var unrelatedRunLedger = new ResolvedSecretLedger();
+        var (_, revealed, cleanup) = AccessorOver(probeLedger, passphrase);
+        try
+        {
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                unrelatedRunLedger, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
+
+            Assert.Contains(revealed, line, StringComparison.Ordinal);
+            Assert.DoesNotContain(SecretString.RedactedMarker, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// The CROSS-PATH direction REQ-010's construction-order problem is actually about: a
+    /// passphrase resolved by the probe's accessor — built before any per-scenario accessor
+    /// exists — must be scrubbable from a STEP's observation. It is, and only because the two
+    /// accessors record into one ledger: the unshared variant in the same test shows the value
+    /// surviving into the emitted step-completed line.
+    /// </summary>
+    [Fact]
+    public void PassphraseResolvedByTheProbeAccessor_IsScrubbedFromAStepObservation_OnlyWhenTheLedgerIsShared()
+    {
+        const string passphrase = "ckp-cross-path-8z4r5";
+        var runLedger = new ResolvedSecretLedger();
+        var (_, revealed, cleanup) = AccessorOver(runLedger, passphrase);
+        try
+        {
+            var observation = JsonSerializer.Serialize($"client identity rejected: '{revealed}'");
+
+            // SHARED: the step accessor is a DIFFERENT accessor (a different scope, with its own
+            // resolvers) recording into the SAME run ledger — exactly the runner's shape.
+            var sharedStepAccessor = new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }),
+                runLedger);
+            var sharedLine = EmitStepCompletedLine(sharedStepAccessor, "mtls-call", observation);
+
+            Assert.DoesNotContain(revealed, sharedLine, StringComparison.Ordinal);
+            Assert.Contains(SecretString.RedactedMarker, sharedLine, StringComparison.Ordinal);
+
+            // UNSHARED (the pre-REQ-010 shape): a private ledger, and the probe's value leaks.
+            var isolatedStepAccessor = new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }));
+            var isolatedLine = EmitStepCompletedLine(isolatedStepAccessor, "mtls-call", observation);
+
+            Assert.Contains(revealed, isolatedLine, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// A null ledger is an explicit "this path owns none" (the <c>--watch</c> kept-topology
+    /// entry point), not a silent scrub failure: the line is still emitted, complete and
+    /// well-formed. Asserted so the null branch is a tested behaviour rather than an
+    /// unexercised fall-through.
+    /// </summary>
+    [Fact]
+    public void EnvironmentErrorLine_WithNoLedger_StillEmitsTheCompleteEvent()
+    {
+        var line = ScenarioRunner.EnvironmentErrorLine(
+            sharedLedger: null, ProbeFailureCarrying("nothing-was-resolved"), Run, DateTimeOffset.UtcNow);
+
+        using var doc = JsonDocument.Parse(line);
+        Assert.Equal(EventTypes.EnvironmentError, doc.RootElement.GetProperty("type").GetString());
+        Assert.Contains("nothing-was-resolved", line, StringComparison.Ordinal);
+    }
+
+    // ── The routing gate: the chokepoint must actually be the chokepoint ─────────
+
+    /// <summary>
+    /// Every <c>environment-error</c> emission in <c>Vouchfx.Engine.Runtime</c> must go through
+    /// <c>ScenarioRunner.EnvironmentErrorLine</c>, the scrubbing chokepoint.
+    /// <para>
+    /// Without this the tests above are the very trap REQ-010 warns about one level up: they
+    /// prove the HELPER scrubs, and would stay green if a call site went back to calling
+    /// <c>EnvironmentErrorEvents.ToLine</c> (or hand-rolled the event via
+    /// <c>EnvironmentErrorEvents.Create</c>) directly. Four emission sites are four ways to
+    /// forget one; this asserts the property instead of trusting the count.
+    /// </para>
+    /// <para>
+    /// Reads the production source, in the shape other file-reading gates in this repo already
+    /// use (<c>SecurityProfileRegistryTests</c>). It scans EVERY <c>.cs</c> file in
+    /// <c>Vouchfx.Engine.Runtime</c>, not just <c>ScenarioRunner.cs</c>, because the property
+    /// the chokepoint's own XML doc claims is assembly-wide: a second emission site added in a
+    /// sibling Runtime file would bypass the scrub exactly as a direct call in the runner does.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryEnvironmentErrorEmission_InRuntime_GoesThroughTheScrubbingChokepoint()
+    {
+        var runtimeRoot = Path.Combine(
+            RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime");
+        var chokepointFile = Path.Combine(runtimeRoot, "ScenarioRunner.cs");
+
+        var sep = Path.DirectorySeparatorChar;
+        var sources = Directory
+            .GetFiles(runtimeRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{sep}bin{sep}", StringComparison.Ordinal)
+                     && !p.Contains($"{sep}obj{sep}", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Contains(chokepointFile, sources);
+
+        var chokepointEmissions = 0;
+        foreach (var file in sources)
+        {
+            var source = File.ReadAllText(file);
+
+            // The sibling escape hatch: building the event by hand would bypass the chokepoint
+            // just as effectively, and would not be caught by the attribution loop below.
+            Assert.DoesNotContain(
+                "EnvironmentErrorEvents.Create(", source, StringComparison.Ordinal);
+
+            var emissions = Regex.Matches(source, @"EnvironmentErrorEvents\.ToLine\(").ToList();
+            if (emissions.Count == 0)
+            {
+                continue;
+            }
+
+            Assert.True(
+                file == chokepointFile,
+                $"'{Path.GetFileName(file)}' calls EnvironmentErrorEvents.ToLine. Only "
+                + "ScenarioRunner.EnvironmentErrorLine may — it is the single place the "
+                + "resolved-secret scrub is applied to an environment-error event "
+                + "(client-key-password REQ-010). An emission elsewhere in this assembly "
+                + "bypasses the scrub and puts a resolved passphrase on the §14 event stream.");
+
+            // Declarations at class-member indentation, in file order, so each emission can be
+            // attributed to the method that contains it.
+            var declarations = Regex.Matches(
+                    source,
+                    @"^    (?:private|internal|public)[^\r\n=]*?\b(\w+)\(",
+                    RegexOptions.Multiline)
+                .Select(m => (Index: m.Index, Name: m.Groups[1].Value))
+                .ToList();
+
+            foreach (var emission in emissions)
+            {
+                var containing = declarations.LastOrDefault(d => d.Index < emission.Index);
+                Assert.True(
+                    containing.Name == "EnvironmentErrorLine",
+                    $"EnvironmentErrorEvents.ToLine is called from '{containing.Name}' at "
+                    + $"character offset {emission.Index}. It may only be called from "
+                    + "EnvironmentErrorLine — that method is the single place the "
+                    + "resolved-secret scrub is applied to an environment-error event "
+                    + "(client-key-password REQ-010). A direct call bypasses the scrub and puts "
+                    + "a resolved passphrase on the §14 event stream.");
+            }
+
+            chokepointEmissions += emissions.Count;
+        }
+
+        // Not vacuous: the chokepoint really does emit.
+        Assert.True(chokepointEmissions > 0);
+    }
+
+    /// <summary>
+    /// Every secret scope the runner builds must be given the run's ledger.
+    /// <para>
+    /// This covers the PLUMBING, which no Docker-free test can otherwise reach: the probe scope
+    /// and the per-scenario step scope are both constructed inside methods that need a live
+    /// topology to run. Dropping the argument at either site compiles cleanly (it is an
+    /// optional parameter), changes no signature, and silently restores the pre-REQ-010
+    /// behaviour where the probe's ledger and the step's ledger are different objects — the
+    /// exact defect this todo exists to close, reintroduced invisibly.
+    /// </para>
+    /// <para>
+    /// <c>ScenarioRunner</c> is scoped deliberately: <c>WatchRunner</c> (in the CLI) does call
+    /// the factory with no ledger, and that is EDGE-007's deferred seam, not a defect here.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EverySecretScopeTheRunnerBuilds_IsGivenTheRunLedger()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs"));
+
+        // Call sites only — the factory's own declaration is `CreateSecretAccessorScope(\n`,
+        // whose parameter list is on the following line.
+        var argumentless = Regex.Matches(source, @"CreateSecretAccessorScope\(\s*\)").Count;
+        Assert.True(
+            argumentless == 0,
+            $"{argumentless} call(s) to CreateSecretAccessorScope in ScenarioRunner pass no "
+            + "ledger. Every scope the runner builds must record into the RUN's shared "
+            + "ResolvedSecretLedger (client-key-password REQ-010); without it a passphrase "
+            + "resolved by the topology probe is invisible to the step path's scrubbers and "
+            + "vice versa.");
+
+        // And the gate is not vacuous: the call sites really are there.
+        Assert.Equal(3, Regex.Matches(source, @"CreateSecretAccessorScope\([A-Za-z]").Count);
+
+        // Pin the ARGUMENT, not merely its shape. Measured: with the assertion above alone,
+        // rewriting a call site as `CreateSecretAccessorScope(new ResolvedSecretLedger())`
+        // restores the exact pre-REQ-010 defect — a scope with a ledger of its own — and the
+        // gate stays green, because `new` also starts with [A-Za-z]. Every site must name the
+        // run's ledger: `runSecretLedger` on the two entry points that create it, `sharedLedger`
+        // on the per-scenario site that receives it as a parameter.
+        var pinned = Regex.Matches(
+            source, @"CreateSecretAccessorScope\((?:runSecretLedger|sharedLedger)\)").Count;
+        Assert.True(
+            pinned == 3,
+            $"{pinned} of the 3 CreateSecretAccessorScope call sites in ScenarioRunner pass the "
+            + "run's own ledger (runSecretLedger / sharedLedger). A site passing any OTHER "
+            + "expression — a freshly constructed ResolvedSecretLedger above all — compiles and "
+            + "silently reinstates the per-scope ledger REQ-010 exists to abolish.");
+    }
+
+    /// <summary>
+    /// Walks up from the test binary to the repository root (the directory holding
+    /// <c>vouchfx.sln</c>) — the same discovery shape the repo's other file-reading gates use.
+    /// </summary>
+    private static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
     }
 }

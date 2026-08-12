@@ -1,7 +1,7 @@
 // Vouchfx.Engine.Abstractions — ResolvedSecretLedger (S11-B-01, §17).
 //
-// A per-scenario, Default-ALC record of the secret VALUES the run actually revealed,
-// used as a DEFENCE-IN-DEPTH net at the reporting boundary.  Type-based redaction
+// A Default-ALC record of the secret VALUES the run actually revealed, used as a
+// DEFENCE-IN-DEPTH net at the reporting boundary.  Type-based redaction
 // (the SecretString carrier — ToString/converter/no-IFormattable) remains the PRIMARY
 // mechanism: every structured surface (event fields, captured-var thread, every
 // renderer) is redacted by construction because it only ever handles the carrier or
@@ -27,13 +27,18 @@
 // Default-ALC SecretAccessor that the runner already holds.  Recording from inside the
 // collectible script's `accessor.Resolve(...)` call executes the Default-ALC method
 // body, which adds to a Default-ALC set — no static, no handle bridging the boundary,
-// so nothing roots the collectible AssemblyLoadContext.  The ledger is scoped to the
-// per-scenario accessor and is collected with it.
+// so nothing roots the collectible AssemblyLoadContext.
 //
-// RETAINED-PLAINTEXT FOOTPRINT: the ledger now retains a plaintext `string` copy of each
-// revealed value for the scenario's lifetime — a deliberate, necessary cost (you cannot
-// scrub a value you do not hold); this copy is Default-ALC, per-scenario, never serialised,
-// and collected with the accessor.
+// LIFETIME IS THE CALLER'S CHOICE, not this type's (client-key-password REQ-010).  Built by
+// SecretAccessor's one-argument constructor it is private to that accessor; passed to the
+// two-argument constructor it is shared, and the engine shares ONE ledger across a whole run
+// so a value resolved by the topology probe is scrubbable from text emitted on the step path
+// and vice versa.  Either way it is Default-ALC and is collected with its last holder.
+//
+// RETAINED-PLAINTEXT FOOTPRINT: the ledger retains a plaintext `string` copy of each revealed
+// value for its own lifetime — a deliberate, necessary cost (you cannot scrub a value you do
+// not hold); this copy is Default-ALC, never serialised, and collected with the ledger.  A
+// run-scoped ledger therefore holds those copies for the run, not for one scenario.
 
 using System;
 using System.Collections.Generic;
@@ -42,12 +47,20 @@ using System.Text.Encodings.Web;
 namespace Vouchfx.Engine.Abstractions.Secrets;
 
 /// <summary>
-/// A per-scenario, Default-ALC record of the secret values a run has revealed, used as a
-/// defence-in-depth scrub net for free-form provider observation text at the reporting
-/// boundary (§17).  Type-based <see cref="SecretString"/> redaction is the primary
-/// mechanism; this ledger is a backstop for the one surface that is not type-checkable.
+/// A Default-ALC record of the secret values a run has revealed, used as a defence-in-depth
+/// scrub net for free-form provider observation text at the reporting boundary (§17).
+/// Type-based <see cref="SecretString"/> redaction is the primary mechanism; this ledger is a
+/// backstop for the one surface that is not type-checkable.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <strong>Scope.</strong>  How far a ledger reaches is decided by whoever constructs it, not
+/// here: <see cref="SecretAccessor(ISecretSourceCatalog)"/> gives an accessor a private one,
+/// while <see cref="SecretAccessor(ISecretSourceCatalog, ResolvedSecretLedger)"/> lets several
+/// accessors share one.  The engine shares a single instance across a run (the topology probe's
+/// accessor and each scenario's), which is what makes a value resolved on one of those paths
+/// scrubbable from text emitted on another.
+/// </para>
 /// <para>
 /// The ledger records a value the moment it is resolved (see
 /// <see cref="SecretAccessor"/>), and <see cref="Scrub(string)"/> replaces every occurrence
