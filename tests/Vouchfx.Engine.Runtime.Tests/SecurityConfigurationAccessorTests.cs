@@ -1528,7 +1528,18 @@ public sealed class SecurityConfigurationAccessorTests
     [InlineData("${secret:env/CLIENT_KEY_PASS}trailing-text")]
     [InlineData("${secret:env/CLIENT_KEY_PASS}\n")]
     [InlineData("${secret:no-slash-so-no-path}")]
-    public void For_ADeclaredPassphraseThatIsNotAWholeReference_IsRefusedWithoutEchoingIt(
+    // A NESTED lead-in inside the path. TryParse ACCEPTS these — its whole-token match simply
+    // spans the inner one — so before this guard was swapped from TryParse to
+    // ValidateSecretBearingField they passed it, and the comment above the guard claimed passing
+    // it "earned" the five downstream QuoteUntrusted sites the right to quote the declared text.
+    // Not CLI-reachable (the validation scan refuses them first) but this guard exists precisely
+    // for the direct-embedding path where that scan never runs.
+    [InlineData("${secret:env/PA${secret:CANARY}")]
+    [InlineData("${secret:nosuchsource/PA${secret:CANARY}")]
+    // A whole, well-formed reference naming a source this engine cannot resolve. Newly refused
+    // HERE by the same swap — it used to reach the resolver and fail there.
+    [InlineData("${secret:nosuchsource/CLIENT_KEY_PASS}")]
+    public void For_ADeclaredPassphraseTheEngineCannotAccept_IsRefusedWithoutEchoingIt(
         string declared)
     {
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
@@ -1551,7 +1562,14 @@ public sealed class SecurityConfigurationAccessorTests
                 "environment.services.payments.security.clientKeyPassword",
                 ex.Message,
                 StringComparison.Ordinal);
-            Assert.Contains("not a single, whole", ex.Message, StringComparison.Ordinal);
+            // The clause is asserted, not just the prefix. It was added in the same commit that
+            // broadened this guard to refuse an unknown SOURCE; without it the message would be
+            // false for the '${secret:nosuchsource/CLIENT_KEY_PASS}' row below, which IS a single,
+            // whole reference — and nothing would catch the regression.
+            Assert.Contains(
+                "not a single, whole secret reference naming a resolvable source",
+                ex.Message,
+                StringComparison.Ordinal);
             Assert.Contains("NOT REPORTED", ex.Message, StringComparison.Ordinal);
 
             // Nothing was resolved, so nothing COULD have been echoed by the resolution path — the
@@ -2126,6 +2144,57 @@ public sealed class SecurityConfigurationAccessorTests
     /// An <see cref="ISecretAccessor"/> that throws on every call and counts them — the probe for
     /// REQ-009's "nothing resolves at <c>Build</c> time".
     /// </summary>
+    /// <summary>
+    /// The SUBSET direction of the shared source set, which nothing else pins: every source the
+    /// validation pass knows must also be ACCEPTED by this run-time guard.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The guard was changed to consult <c>ScenarioRunner.KnownSecretSources</c> so the two layers
+    /// refuse identically. The <c>nosuchsource</c> row above pins the SUPERSET direction (the
+    /// guard does not accept more than validate does). Nothing pinned the other way: silently
+    /// dropping <c>vault</c> from that set would make every <c>${secret:vault/…}</c> passphrase
+    /// fail at certificate-load time with a shape complaint about a reference whose shape is
+    /// perfect — and the suite would still be green here.
+    /// </para>
+    /// <para>
+    /// Asserted as "does NOT fail guard 2" rather than "loads successfully": resolution itself is
+    /// out of scope (the accessor here throws by design), and pinning the guard's own verdict is
+    /// what this test is for.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("env")]
+    [InlineData("vault")]
+    public void For_APassphraseNamingAnyValidateKnownSource_IsNotRefusedByTheShapeGuard(string source)
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+
+        // The premise, measured rather than assumed: the validation pass knows this source.
+        Assert.Contains(source, ScenarioRunner.KnownSecretSources);
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWithSecuredService("payments", MtlsSecurityWithPassphrase($"${{secret:{source}/KEY_PASS}}")),
+            bed.SuiteDirectory,
+            new ThrowingSecretAccessor());
+        try
+        {
+            var certificates = accessor.For("payments")!.Certificates!;
+            var ex = Assert.Throws<SecurityMaterialException>(() => certificates.ClientKeyPassword);
+
+            // It got PAST the shape/source guard and failed at resolution instead — which is the
+            // ThrowingSecretAccessor doing its job, not this guard refusing a valid reference.
+            Assert.DoesNotContain(
+                "not a single, whole secret reference naming a resolvable source",
+                ex.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
     private sealed class ThrowingSecretAccessor : ISecretAccessor
     {
         internal int Calls { get; private set; }

@@ -861,8 +861,9 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                         $"{_fieldPathPrefix}.clientKey: '{_clientKey.Declared}' is an ENCRYPTED private "
                         + $"key ({encryption}) and no 'clientKeyPassword' is declared for it. Declare the "
                         + "passphrase beside 'clientKey' as a secret reference — "
-                        + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved at "
-                        + "step-execution time and never written to a report, an event or the compiled "
+                        + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved when "
+                        + "the key material is first used, after the topology is up, and never "
+                        + "written to a report, an event or the compiled "
                         + "script; a literal passphrase is refused. Only the "
                         + $"'{EncryptedPkcs8Label}' (PKCS#8) form can be opened that way, so a key "
                         + $"marked '{LegacyEncryptedPemHeader}' must first be converted with "
@@ -952,7 +953,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 return null;
             }
 
-            // ── 2. The declared value must be a single WHOLE secret reference ─────────────────
+            // ── 2. The declared value must be a WHOLE secret reference NAMING A KNOWN SOURCE ──
             //
             // AND THE VALUE IS NOT REPORTED, which is the entire point of this guard rather than a
             // stylistic preference. `SecuritySpec.ClientKeyPassword`'s own remarks record that a
@@ -969,22 +970,40 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             // achievable only by not emitting the value in the first place.
             //
             // Placed BEFORE every other refusal for the same reason: each of them quotes the
-            // declared text through QuoteUntrusted, which ESCAPES but does not WITHHOLD. Passing
-            // here is what earns them that right — after this line the text is a well-formed
-            // reference, and a reference is a pointer, never a secret (§17).
+            // declared text through QuoteUntrusted, which ESCAPES but does not WITHHOLD. Only
+            // text that has passed THIS line is known to be a pointer rather than a secret, which
+            // is what §17 permits quoting.
             //
-            // SecretReference.TryParse is the whole-token grammar the schema's `pattern` is the
-            // anchored spelling of (REQ-001), so this refuses exactly what `vouchfx validate`
-            // refuses, in one spelling rather than two.
-            if (!SecretReference.TryParse(_declaredClientKeyPassword, out _))
+            // ValidateSecretBearingField, NOT TryParse alone. TryParse asks only whether one
+            // whole token spans the value, and that is not sufficient: a reference path runs to
+            // the first closing brace and is otherwise unrestricted, so a value can satisfy
+            // TryParse while still carrying a further lead-in swallowed inside the path, after
+            // which the remaining text is arbitrary and unexamined. An earlier form of this
+            // comment asserted that passing TryParse "earns" the downstream quoting sites their
+            // right to quote; that was never true, and the sentence is deleted rather than
+            // softened. ValidateSecretBearingField applies the whole-token rule AND the rule
+            // TryParse omits, and it is the same predicate `vouchfx validate` applies — fed the
+            // same source set, so the two layers refuse exactly the same inputs in one spelling
+            // rather than two.
+            if (!SecretReference.ValidateSecretBearingField(
+                    _declaredClientKeyPassword, ScenarioRunner.KnownSecretSources, out _))
             {
+                // "…naming a resolvable source" covers BOTH modes the predicate refuses, and the
+                // clause was added WITH the predicate rather than after it: gating on
+                // ValidateSecretBearingField made an unknown-source value refusable here for the
+                // first time, and the previous wording ("not a single, whole secret reference")
+                // would have been false for exactly that input — it IS whole. The message still
+                // withholds the value, which is why an or-shaped reason is acceptable: the author
+                // is told which RULES apply, never which one their text broke.
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.clientKeyPassword: the declared value is not a single, whole "
-                    + "secret reference. IT IS DELIBERATELY NOT REPORTED HERE, because a value in "
+                    + "secret reference naming a resolvable source. IT IS DELIBERATELY NOT REPORTED "
+                    + "HERE, because a value in "
                     + "this position may be the passphrase itself. Declare a reference of the form "
                     + "'${secret:<source>/<path>}' and nothing else — for example "
-                    + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved at "
-                    + "step-execution time and never written to a report, an event or the compiled "
+                    + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved when "
+                    + "the key material is first used, after the topology is up, and never "
+                    + "written to a report, an event or the compiled "
                     + "script. A literal passphrase is refused by design (§17), as is a reference "
                     + "with any text around it.");
             }

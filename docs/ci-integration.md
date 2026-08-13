@@ -50,11 +50,17 @@ verdict names:
   escapes the suite directory or does not exist, an artefact `target` that is not an absolute
   in-container file path, or a `profile` with no wiring for the target's kind. No container
   starts and the run exits **4**;
-- the **schema** rejects it first — the per-kind narrowing of `profile` is enforced by the root schema,
-  so a `profile` the target's kind has no wiring for is refused there before the preflight sees it; and
-  more broadly *any* schema error located at or inside a declared `security:` block counts, not only
-  the causes listed above. A mistyped field name, a scalar where a list belongs, or `caCert: [a, b]`
-  all qualify. No container starts and the run exits **4**;
+- the **schema** rejects the document first — and for a document that declares a `security:` block
+  at all, *any* schema error counts, wherever in the document it sits. The reason is that nothing
+  downstream of a schema rejection runs, so the declaration is never validated, never probed and
+  therefore never confirmed; a rejected secured document is unconfirmable whatever the rejection
+  was about. An error inside the block itself is one case of that — a mistyped field name, a scalar
+  where a list belongs, `caCert: [a, b]`, or the per-kind narrowing of `profile` (a `profile` the
+  target's kind has no wiring for is refused by the root schema before the preflight sees it) — but
+  so is a missing `method:` on an unrelated step. No container starts and the run exits **4**. Note
+  the practical consequence: in a suite that declares `security:`, a schema error anywhere now
+  reddens the run, where the same typo in an unsecured suite still exits 0. The run prints a line
+  saying so, rather than leaving the exit code to be guessed at;
 - a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
   different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
   file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.

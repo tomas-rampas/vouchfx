@@ -594,4 +594,171 @@ public sealed class ValidateCommandTests : IDisposable
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
+
+    // ── #387: `${secret:}` on a security field, through the CLI's own validate path ──
+    //
+    // The two halves of the fix, measured where the issue measured the bug — `vouchfx validate`.
+    // Both must keep exit code 4 (Inconclusive): the document is invalid, the scenario never ran,
+    // and neither shape is a product Fail.
+
+    /// <summary>
+    /// REQ-011. A <c>${secret:}</c> in the path-valued <c>clientKey</c> is refused as a misuse of
+    /// reference syntax, with NO filesystem-path message and no garbled resolved path — the exact
+    /// output #387 recorded (<c>file '${secret:env/CLIENT_KEY}' not found (resolved to
+    /// '…\${secret:env\CLIENT_KEY}')</c>) is gone, not merely accompanied.
+    /// </summary>
+    [Fact]
+    public void Execute_SecretReferenceInClientKey_ReturnsInconclusive_WithNoFilesystemMessage()
+    {
+        // clientCert is validated BEFORE clientKey, so it must be a real file for the clientKey
+        // diagnostic to be the one reported.
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        var file = Path.Combine(_root, "secret-key.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "      security:\n" +
+            "        profile: mtls\n" +
+            "        endpoint: 8443\n" +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: \"${secret:env/CLIENT_KEY}\"\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    method: GET\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: false, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("[Pipeline]", rendered, StringComparison.Ordinal);
+        Assert.Contains(
+            "environment.services.api.security.clientKey:", rendered, StringComparison.Ordinal);
+        Assert.Contains("is a secret reference", rendered, StringComparison.Ordinal);
+        Assert.Contains("clientKeyPassword", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("not found", rendered, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("resolved to", rendered, StringComparison.OrdinalIgnoreCase);
+
+        // #387's second defect: the '/' inside the token was eaten by path normalisation, so the
+        // echoed value was split across a directory boundary. The token is echoed VERBATIM now.
+        Assert.Contains("${secret:env/CLIENT_KEY}", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// EDGE-003. An unknown source in the reference-valued <c>clientKeyPassword</c> is diagnosed
+    /// exactly as the same token in a step is — the asymmetry #387 measured, closed.
+    /// </summary>
+    [Fact]
+    public void Execute_UnknownSecretSourceInClientKeyPassword_ReturnsInconclusive_NamingTheSource()
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "bad-source.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "      security:\n" +
+            "        profile: mtls\n" +
+            "        endpoint: 8443\n" +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "        clientKeyPassword: \"${secret:nosuchsource/KEY_PASS}\"\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    method: GET\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: false, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("[Pipeline]", rendered, StringComparison.Ordinal);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", rendered, StringComparison.Ordinal);
+        Assert.Contains("names an unknown source 'nosuchsource'", rendered, StringComparison.Ordinal);
+        Assert.Contains("known sources are:", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("step '", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The disclosure regression, pinned at CLI level because that is the only level at which it
+    /// was ever caught: two rounds of unit-level reasoning produced a guard that looked right and
+    /// leaked, and only driving the real CLI showed it. A nested <c>${secret:</c> inside the PATH
+    /// is schema-valid — the pattern's <c>[^}]+</c> swallows it — so it reaches the secret-
+    /// reference pass from an ordinary suite and its whole declared value used to be interpolated
+    /// into the diagnostic.
+    /// <para>
+    /// Asserted on <c>--json</c> specifically: that document is what a CI job archives, so a leak
+    /// there outlives the console it was printed to.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("${secret:env/PASS${secret:MARKER-ZQ7X}", "MARKER-ZQ7X")]
+    [InlineData("${secret:nosuchsource/PASS${secret:MARKER-ZQ7X}", "MARKER-ZQ7X")]
+    public void Execute_NestedSigilInClientKeyPassword_Json_NeverDisclosesTheDeclaredValue(
+        string declared, string marker)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "nested-sigil.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "      security:\n" +
+            "        profile: mtls\n" +
+            "        endpoint: 8443\n" +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            $"        clientKeyPassword: \"{declared}\"\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    method: GET\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = Execute(file, json: true, sw);
+        var json = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+
+        // Not merely absent from the rendered message — absent from the whole archived document,
+        // in any escaping. System.Text.Json \u-escapes control characters but not letters, so a
+        // plain marker would appear verbatim if it were present at all.
+        Assert.DoesNotContain(marker, json, StringComparison.OrdinalIgnoreCase);
+
+        // …and no PREFIX of it either. A whole-marker assertion alone would pass a diagnostic that
+        // echoed a truncated head of the declared value, which is still disclosure. Four characters
+        // is the shortest prefix that cannot collide with ordinary message text.
+        for (var length = marker.Length; length >= 4; length--)
+        {
+            Assert.DoesNotContain(marker[..length], json, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var document = JsonSerializer.Deserialize<ValidateJsonDocument>(json, CliJsonContract.Options);
+        var scenario = Assert.Single(document!.Scenarios);
+        var diagnostic = Assert.Single(scenario.Diagnostics);
+        Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:",
+            diagnostic.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("not a single, whole secret reference", diagnostic.Message, StringComparison.Ordinal);
+    }
 }

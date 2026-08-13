@@ -121,9 +121,11 @@ internal static class ExitCodes
     /// <c>security</c> block could not be confirmed — REQ-005's probe failed; a security
     /// preflight (REQ-003/REQ-004 certificate and artefact paths, REQ-016 artefact
     /// <c>target</c> shape, REQ-022 profile wiring) rejected the declaration before any container
-    /// started; the root schema rejected it earlier still, which is where REQ-021's per-kind
-    /// narrowing of <c>profile</c> lives and which covers any schema error located at or inside a
-    /// declared <c>security</c> block, not only the causes listed here; or a secured
+    /// started; the root schema rejected the DOCUMENT earlier still — any schema error at all in a
+    /// document that declares <c>security</c>, since nothing downstream of that rejection runs and
+    /// the declaration is therefore never validated, of which an error located at or inside the
+    /// block (where REQ-021's per-kind narrowing of <c>profile</c> arrives) is one case rather than
+    /// the rule; or a secured
     /// multi-scenario suite was refused because its scenarios resolve their declared security
     /// paths against different directories, which likewise starts no container.
     /// <c>ScenarioRunner.SuiteResult.SecurityConfirmationFailed</c> carries the maintained

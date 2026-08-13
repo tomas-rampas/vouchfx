@@ -123,6 +123,154 @@ public sealed class SecretReferenceTests
         Assert.False(string.IsNullOrWhiteSpace(error));
     }
 
+    // ── ValidateSecretBearingField: the withholding sibling (#387 follow-up) ─────────────────
+    //
+    // A field that may hold a SECRET VALUE rather than only a reference to one
+    // (security.clientKeyPassword) must not have its text interpolated into any diagnostic except
+    // the unknown-source one, where the text is provably a whole reference — a pointer, never a
+    // secret (§17). It is a SIBLING METHOD rather than a flag on ValidateField because the two
+    // rules it applies must be atomic and in order: a caller composing them can get the order
+    // wrong, and the wrong order discloses the value.
+
+    /// <summary>
+    /// <see cref="SecretReference.ValidateField"/> IS UNCHANGED, asserted byte for byte rather
+    /// than assumed: every pre-existing caller is a step surface, whose field text is
+    /// author-written template text and must keep being quoted, because that is what makes the
+    /// diagnostic actionable.
+    /// </summary>
+    [Fact]
+    public void ValidateField_MalformedSigil_StillQuotesTheFieldVerbatim()
+    {
+        const string field = "${secret:env}TRAILING-MARKER";
+
+        var ok = SecretReference.ValidateField(field, KnownSources, out var error);
+
+        Assert.False(ok);
+        Assert.Equal(
+            "the field '${secret:env}TRAILING-MARKER' contains a malformed secret reference; "
+            + "the expected form is '${secret:<source>/<path>}' (for example "
+            + "'${secret:env/API_TOKEN}').",
+            error);
+    }
+
+    [Fact]
+    public void ValidateSecretBearingField_MalformedSigil_WithholdsTheFieldValue()
+    {
+        const string field = "${secret:env}TRAILING-MARKER";
+
+        var ok = SecretReference.ValidateSecretBearingField(field, KnownSources, out var error);
+
+        Assert.False(ok);
+        Assert.Equal(SecretReference.WithheldValueMessage, error);
+        Assert.DoesNotContain("TRAILING-MARKER", error!, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A PLAIN LITERAL — no sigil at all — is accepted by <see cref="SecretReference.ValidateField"/>
+    /// by design (a step's field may be ordinary text) and REFUSED by
+    /// <see cref="SecretReference.ValidateSecretBearingField"/>. This is the divergence that makes
+    /// the whole-token rule load-bearing: for a secret-bearing field, a literal IS the plaintext
+    /// secret.
+    /// </summary>
+    [Fact]
+    public void ValidateSecretBearingField_PlainLiteral_IsRefused_WhereValidateFieldAcceptsIt()
+    {
+        const string field = "hunter2-PLAINTEXT-MARKER";
+
+        Assert.True(SecretReference.ValidateField(field, KnownSources, out var permitted));
+        Assert.Null(permitted);
+
+        Assert.False(SecretReference.ValidateSecretBearingField(field, KnownSources, out var refused));
+        Assert.Equal(SecretReference.WithheldValueMessage, refused);
+        Assert.DoesNotContain("PLAINTEXT-MARKER", refused!, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The nested-sigil shape reaches the malformed branch even though
+    /// <see cref="SecretReference.TryParse"/> accepts it — the two disagree, which is exactly why
+    /// both rules have to be applied and why a caller cannot predict which fires.
+    /// </summary>
+    [Fact]
+    public void ValidateSecretBearingField_NestedSigil_TryParseAcceptsItButTheValueIsStillWithheld()
+    {
+        const string field = "${secret:env/PASS${secret:INNER-MARKER}";
+
+        Assert.True(SecretReference.TryParse(field, out _));
+
+        var quoted = SecretReference.ValidateField(field, KnownSources, out var defaultError);
+        Assert.False(quoted);
+        Assert.Contains("INNER-MARKER", defaultError!, System.StringComparison.Ordinal);
+
+        var withheld = SecretReference.ValidateSecretBearingField(field, KnownSources, out var secretError);
+        Assert.False(withheld);
+        Assert.DoesNotContain("INNER-MARKER", secretError!, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The adversarial shape: an unknown source AND a nested sigil. The source check alone would
+    /// route this to the quoting branch; the sigil arithmetic routes it to the withholding one.
+    /// </summary>
+    [Fact]
+    public void ValidateSecretBearingField_UnknownSourceAndNestedSigil_StillWithholds()
+    {
+        const string field = "${secret:nosuchsource/PASS${secret:INNER-MARKER}";
+
+        Assert.True(SecretReference.TryParse(field, out var parsed));
+        Assert.Equal("nosuchsource", parsed!.Source);
+
+        Assert.False(SecretReference.ValidateSecretBearingField(field, KnownSources, out var error));
+        Assert.Equal(SecretReference.WithheldValueMessage, error);
+        Assert.DoesNotContain("INNER-MARKER", error!, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The UNKNOWN-SOURCE message is identical across the two methods: it quotes
+    /// <c>match.Value</c>, a whole well-formed reference, and §17 is explicit that a reference is
+    /// a pointer and never a secret. EDGE-003 requires this message to stay byte-identical across
+    /// the step and security surfaces, so the two are compared to each other directly rather than
+    /// each to a hand-copied literal.
+    /// </summary>
+    [Fact]
+    public void UnknownSource_MessageIsIdenticalAcrossBothMethods()
+    {
+        const string field = "${secret:nosuchsource/TOKEN}";
+
+        var a = SecretReference.ValidateField(field, KnownSources, out var stepError);
+        var b = SecretReference.ValidateSecretBearingField(field, KnownSources, out var securityError);
+
+        Assert.False(a);
+        Assert.False(b);
+        Assert.Equal(stepError, securityError);
+        Assert.Contains("names an unknown source 'nosuchsource'", stepError!, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The happy path: one whole reference naming a known source passes both methods.
+    /// </summary>
+    [Fact]
+    public void ValidateSecretBearingField_WholeReferenceWithKnownSource_IsAccepted()
+    {
+        Assert.True(SecretReference.ValidateSecretBearingField(
+            "${secret:env/CLIENT_KEY_PASS}", KnownSources, out var error));
+        Assert.Null(error);
+    }
+
+    /// <summary>
+    /// The EMPTY-value divergence, pinned rather than left to be rediscovered: permitted by
+    /// <see cref="SecretReference.ValidateField"/> (a step's field may be empty text carrying no
+    /// reference) and refused by <see cref="SecretReference.ValidateSecretBearingField"/> (an
+    /// empty passphrase declaration resolves to nothing and cannot be honoured).
+    /// </summary>
+    [Fact]
+    public void EmptyValue_IsPermittedByValidateField_AndRefusedForASecretBearingField()
+    {
+        Assert.True(SecretReference.ValidateField(string.Empty, KnownSources, out var permitted));
+        Assert.Null(permitted);
+
+        Assert.False(SecretReference.ValidateSecretBearingField(string.Empty, KnownSources, out var refused));
+        Assert.Equal(SecretReference.WithheldValueMessage, refused);
+    }
+
     [Fact]
     public void ValidateField_UnknownSource_ReturnsError()
     {

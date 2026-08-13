@@ -1,9 +1,15 @@
 // Vouchfx.Engine.Abstractions — SecretReference (S05-B-01, §17).
 //
 // A strongly-typed parse of a ${secret:source/path} reference. The engine never
-// stores secret *values* — only references — and resolution happens at step
-// execution time, not compile time (§17). This type carries no value; it is the
+// stores secret *values* — only references — and resolution happens at run time,
+// never at compile time (§17). This type carries no value; it is the
 // compile-time/validation-time representation of a reference.
+//
+// "At run time" rather than "at step-execution time", deliberately: a step's field does
+// resolve at step-execution time, but this type also serves environment-level
+// `security.clientKeyPassword`, which resolves when the certificate material is first used
+// — after the topology is up and BEFORE any step runs. The compile-time prohibition is the
+// invariant common to both; the exact moment is the caller's property, not this type's.
 //
 // Design constraints (§17, CLAUDE.md "Secrets"):
 //   • References only — never literals. This type models the reference syntax.
@@ -23,8 +29,15 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 
 /// <summary>
 /// A parsed <c>${secret:source/path}</c> reference (§17): the declarative pointer
-/// to a secret value that the engine resolves at step-execution time.
+/// to a secret value that the engine resolves at run time, never at compile time.
 /// </summary>
+/// <remarks>
+/// The exact resolution moment belongs to the CONSUMING field, not to this type: a step's
+/// substitutable field resolves at step-execution time, while environment-level
+/// <c>security.clientKeyPassword</c> resolves when the certificate material is first used —
+/// after the topology is up and before any step runs. What both share, and what §17 fixes, is
+/// that neither resolves at compile time.
+/// </remarks>
 /// <param name="Source">
 /// The resolver source identifier (e.g. <c>env</c>, <c>vault</c>) — the segment
 /// between <c>${secret:</c> and the first <c>/</c>.
@@ -58,6 +71,45 @@ public sealed record SecretReference(string Source, string Path, string Raw)
     /// does not contain this substring contains no secret reference at all.
     /// </summary>
     public const string Sigil = "${secret:";
+
+    /// <summary>
+    /// The refusal <see cref="ValidateSecretBearingField"/> reports for a field that MAY ITSELF
+    /// HOLD A SECRET and does not carry a single, whole, well-formed reference — it names the
+    /// fault WITHOUT quoting the declared text.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>There are TWO refusals in the tree for this fault, not one</strong>, and that is a
+    /// deliberate position rather than drift left unrecorded. This one is the VALIDATION-time
+    /// refusal, reported by <see cref="ValidateSecretBearingField"/> and prefixed by the caller
+    /// with a field path. <c>SecurityConfigurationAccessor</c>'s
+    /// <c>SecurityMaterialException</c> is the RUN-time one, raised when the certificate material
+    /// is loaded. They differ in wording, and may: they address different audiences at different
+    /// stages, and the run-time one names <c>clientKeyPassword</c> and carries a corrective
+    /// example because by then the author has one specific field in hand. This text carries no
+    /// example, because it is field-agnostic and an example beside a withheld value invites a
+    /// reader to mistake the one for the other. Both withhold the declared value, which is the
+    /// property that matters; neither may be changed to quote it.
+    /// </para>
+    /// <para>
+    /// <see langword="internal"/>: the only consumers are this type itself and, through
+    /// <c>InternalsVisibleTo</c>, the Abstractions test project. Callers receive the text through
+    /// <c>error</c> and never name it, so it is not part of the shipped surface — which also
+    /// means a correction to it reaches every consumer on recompile rather than being baked into
+    /// their assemblies as a <see langword="const"/> literal would be.
+    /// </para>
+    /// <para>
+    /// The value is WITHHELD rather than escaped: escaping makes text safe to RENDER, and the
+    /// hazard this closes is disclosure, which no amount of escaping addresses.
+    /// </para>
+    /// </remarks>
+    internal static readonly string WithheldValueMessage =
+        "the declared value is not a single, whole secret reference. IT IS DELIBERATELY NOT "
+        + "REPORTED HERE, because a value in this position may be the secret itself. Declare a "
+        + "reference of the form '${secret:<source>/<path>}' and nothing else. Note that a stray "
+        + "'${secret:' INSIDE the path counts: the path runs to the first '}', so a second "
+        + "lead-in is swallowed into it rather than starting a token of its own. A literal is "
+        + "refused by design (§17), as is a reference with any text around it.";
 
     // Compiled-once grammar for a secret reference. Anchored at neither end so it
     // can locate tokens embedded in a larger field value via FindAll; TryParse
@@ -161,10 +213,99 @@ public sealed record SecretReference(string Source, string Path, string Raw)
     /// rule and is deliberately not implemented here). Otherwise
     /// <see langword="false"/>.
     /// </returns>
+    /// <remarks>
+    /// This overload QUOTES the field text in its diagnostics, which is correct for a step's
+    /// substitutable field — author-written template text, and quoting it is what makes the
+    /// message actionable. A field that may hold the SECRET ITSELF must use
+    /// <see cref="ValidateSecretBearingField"/> instead.
+    /// </remarks>
     public static bool ValidateField(
         string fieldValue,
         IReadOnlyCollection<string> knownSources,
+        out string? error) =>
+        ValidateFieldCore(fieldValue, knownSources, out error, fieldMayBeSecret: false);
+
+    /// <summary>
+    /// Validates a field that may itself hold a SECRET VALUE rather than only a reference to one
+    /// (<c>security.clientKeyPassword</c> is the case in this engine): the value must be one
+    /// whole, well-formed reference naming a known source, and no diagnostic on the failing paths
+    /// discloses the declared text.
+    /// </summary>
+    /// <param name="fieldValue">The raw field text to validate.</param>
+    /// <param name="knownSources">The resolver source identifiers the engine can resolve.</param>
+    /// <param name="error">
+    /// On failure, an actionable British-English message; otherwise <see langword="null"/>. The
+    /// caller prefixes it with the field path.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when <paramref name="fieldValue"/> is exactly one well-formed
+    /// reference naming a known source; otherwise <see langword="false"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two rules, applied here ATOMICALLY and in this order</strong>, rather than left to
+    /// the caller to compose:
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     <strong>Whole-token.</strong> <see cref="TryParse"/> — the value must be exactly one
+    ///     reference and nothing else. <see cref="ValidateField"/> alone cannot stand in for
+    ///     this: it deliberately PERMITS a field carrying no sigil at all, which for a
+    ///     secret-bearing field is the plaintext-literal case.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>Known source</strong>, evaluated with the malformed diagnostic in withholding
+    ///     mode.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// They are atomic because a caller composing them from two public calls can get the ORDER
+    /// wrong, and the wrong order discloses the value — the whole reason this method exists.
+    /// </para>
+    /// <para>
+    /// <strong>Divergence from <see cref="ValidateField"/>, deliberate and worth knowing:</strong>
+    /// an EMPTY or <see langword="null"/> value returns <see langword="false"/> here and
+    /// <see langword="true"/> there. <see cref="ValidateField"/> permits it because a step's field
+    /// may legitimately be empty text carrying no reference; for a secret-bearing field an empty
+    /// value is a declaration that resolves to nothing, which cannot be honoured. Same reasoning
+    /// as the plain-literal case, and the same rule 1 refuses both.
+    /// </para>
+    /// <para>
+    /// <strong>The UNKNOWN-SOURCE message is identical to <see cref="ValidateField"/>'s</strong>,
+    /// deliberately: it quotes <c>match.Value</c>, a whole well-formed reference, and §17 is
+    /// explicit that a reference is a pointer and never a secret. That message is the one surface
+    /// where the step and security callers must agree word for word (#387's asymmetry). Only the
+    /// MALFORMED diagnostic differs between the two methods.
+    /// </para>
+    /// <para>
+    /// <strong>Why the withholding decision lives in this type</strong> rather than at the call
+    /// site: the condition selecting the malformed branch is this file's own sigil ARITHMETIC,
+    /// not any property a caller can observe. A predicate written from outside gets it wrong —
+    /// asking "is the source unknown?" is not the same question as "do the sigil counts agree?",
+    /// and <c>${secret:nosuchsource/PASS${secret:LEAKED}</c> (schema-valid, so CLI-reachable)
+    /// answers yes to the first and no to the second, so it takes the malformed branch while an
+    /// outside predicate expects the unknown-source one. Measured leaking, then fixed here.
+    /// </para>
+    /// </remarks>
+    public static bool ValidateSecretBearingField(
+        string fieldValue,
+        IReadOnlyCollection<string> knownSources,
         out string? error)
+    {
+        if (!TryParse(fieldValue, out _))
+        {
+            error = WithheldValueMessage;
+            return false;
+        }
+
+        return ValidateFieldCore(fieldValue, knownSources, out error, fieldMayBeSecret: true);
+    }
+
+    private static bool ValidateFieldCore(
+        string fieldValue,
+        IReadOnlyCollection<string> knownSources,
+        out string? error,
+        bool fieldMayBeSecret)
     {
         error = null;
 
@@ -184,10 +325,11 @@ public sealed record SecretReference(string Source, string Path, string Raw)
         var sigilCount = CountOccurrences(fieldValue, Sigil);
         if (matches.Count < sigilCount)
         {
-            error =
-                $"the field '{fieldValue}' contains a malformed secret reference; " +
-                $"the expected form is '{Sigil}<source>/<path>}}' " +
-                "(for example '${secret:env/API_TOKEN}').";
+            error = fieldMayBeSecret
+                ? WithheldValueMessage
+                : $"the field '{fieldValue}' contains a malformed secret reference; " +
+                  $"the expected form is '{Sigil}<source>/<path>}}' " +
+                  "(for example '${secret:env/API_TOKEN}').";
             return false;
         }
 

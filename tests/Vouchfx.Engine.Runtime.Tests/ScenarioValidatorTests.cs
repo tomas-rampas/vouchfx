@@ -34,6 +34,10 @@
 //     reach IsValid=true (schema, parse, pipeline, AND a real Roslyn compile) with
 //     zero containers.
 
+using Vouchfx.Engine.Abstractions.Secrets;
+using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.DbAssert.Postgres;
@@ -414,5 +418,406 @@ public sealed class ScenarioValidatorTests
         {
             try { Directory.Delete(root, recursive: true); } catch (IOException) { }
         }
+    }
+
+    // ── EDGE-003 (#387): environment-level `security.clientKeyPassword` is reference-validated ──
+    //
+    // The asymmetry #387 measured: the same `${secret:nosuchsource/X}` token was diagnosed
+    // properly in a step and silently mistaken for a filename in a security field, because the
+    // secret-reference pass (Stage 3b) walked `ast.Steps` alone. `clientKeyPassword` is the ONE
+    // reference-VALUED security field, so it is the one the pass was extended to reach; its
+    // path-valued siblings are refused outright by REQ-011 at Stage 3a instead.
+
+    /// <summary>
+    /// EDGE-003 through the seam <c>vouchfx validate</c> actually reaches: an unknown source in
+    /// an environment-level <c>clientKeyPassword</c> fails at the <see cref="ValidationStage.Pipeline"/>
+    /// stage, naming the unknown source and the known ones — with the ENVIRONMENT field path and
+    /// NOT the <c>step '…'</c> prefix, which has no sensible environment-level form.
+    /// </summary>
+    [Fact]
+    public void ValidateScenario_EnvironmentClientKeyPasswordUnknownSource_FailsAtPipelineStage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vouchfx-edge003-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            // The path-valued fields must be real files: EnvironmentSecurityValidator runs at
+            // Stage 3a, BEFORE the secret-reference pass, and would otherwise win the report.
+            File.WriteAllText(Path.Combine(root, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(root, "client.key"), "placeholder");
+
+            const string yaml = """
+                environment:
+                  services:
+                    api:
+                      image: myorg/api:1.0
+                      security:
+                        profile: mtls
+                        endpoint: 8443
+                        clientCert: ./client.pem
+                        clientKey: ./client.key
+                        clientKeyPassword: "${secret:nosuchsource/KEY_PASS}"
+                steps:
+                  - id: call
+                    type: http.rest
+                    target: api
+                    method: GET
+                    path: /health
+                """;
+
+            var sources = new[]
+            {
+                new ScenarioSource(Path.Combine(root, "edge003.e2e.yaml"), yaml, root),
+            };
+
+            var report = ScenarioValidator.Validate(sources, s_registry);
+
+            var entry = Assert.Single(report.Scenarios);
+            Assert.False(entry.IsValid);
+            var diagnostic = Assert.Single(entry.Diagnostics);
+            Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
+
+            // The step surface's own message text, verbatim — the symmetry is the point of #387.
+            Assert.Contains("names an unknown source 'nosuchsource'", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Contains("known sources are:", diagnostic.Message, StringComparison.Ordinal);
+
+            // …carried on an ENVIRONMENT field path, in EnvironmentSecurityValidator's spelling.
+            Assert.Contains(
+                "environment.services.api.security.clientKeyPassword:",
+                diagnostic.Message,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("step '", diagnostic.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// EDGE-003's regression guard at the same seam: a VALID environment-level reference still
+    /// validates clean, all four stages through.
+    /// </summary>
+    [Fact]
+    public void ValidateScenario_EnvironmentClientKeyPasswordKnownSource_IsValid()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vouchfx-edge003-ok-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(root, "client.key"), "placeholder");
+
+            const string yaml = """
+                environment:
+                  services:
+                    api:
+                      image: myorg/api:1.0
+                      security:
+                        profile: mtls
+                        endpoint: 8443
+                        clientCert: ./client.pem
+                        clientKey: ./client.key
+                        clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
+                steps:
+                  - id: call
+                    type: http.rest
+                    target: api
+                    method: GET
+                    path: /health
+                """;
+
+            var sources = new[]
+            {
+                new ScenarioSource(Path.Combine(root, "edge003-ok.e2e.yaml"), yaml, root),
+            };
+
+            var report = ScenarioValidator.Validate(sources, s_registry);
+
+            var entry = Assert.Single(report.Scenarios);
+            Assert.True(
+                entry.IsValid,
+                "Expected a valid document; diagnostics: " + string.Join(" | ", entry.Diagnostics.Select(d => d.Message)));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    // ── EDGE-003 at the pass itself (Stage 3b's internal) ────────────────────────────
+    //
+    // A MALFORMED reference cannot reach ValidateScenario's Stage 3b at all: the schema's
+    // `clientKeyPassword` pattern is the anchored form of SecretReference's own grammar, so a
+    // malformed token is rejected at Stage 1 and the document returns early. It IS reachable
+    // through direct engine embedding, which is why the pass carries the rule rather than
+    // trusting the schema — the same reasoning EnvironmentSecurityValidator's own tests record
+    // for the artefact-target rules. These cases therefore drive the internal directly.
+
+    private static ScenarioAst AstWithSecurity(
+        IReadOnlyDictionary<string, ServiceSpec>? services = null,
+        IReadOnlyDictionary<string, DependencySpec>? dependencies = null) =>
+        new(
+            Metadata: null,
+            Environment: new EnvironmentSpec(services, dependencies, null, null, null),
+            Variables: new Dictionary<string, string>(StringComparer.Ordinal),
+            Steps: Array.Empty<StepNode>());
+
+    private static Dictionary<string, ServiceSpec> OneSecuredService(string name, string? clientKeyPassword) =>
+        new(StringComparer.Ordinal)
+        {
+            [name] = new ServiceSpec("myorg/api:1.0", null, null, null, null)
+            {
+                Security = new SecuritySpec("mtls", "8443", null, "./client.pem", "./client.key", null)
+                {
+                    ClientKeyPassword = clientKeyPassword,
+                },
+            },
+        };
+
+    private static Dictionary<string, DependencySpec> OneSecuredDependency(string name, string? clientKeyPassword) =>
+        new(StringComparer.Ordinal)
+        {
+            [name] = new DependencySpec("kafka", null, null)
+            {
+                Security = new SecuritySpec("mtls", "9093", null, "./client.pem", "./client.key", null)
+                {
+                    ClientKeyPassword = clientKeyPassword,
+                },
+            },
+        };
+
+    /// <summary>
+    /// A malformed value is refused WITHOUT being quoted: <c>SecuritySpec.ClientKeyPassword</c>'s
+    /// own remarks state that a direct embedder can bind a literal here, "so no consumer may
+    /// assume the text is non-secret", and this pass is a consumer.
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_MalformedEnvironmentClientKeyPassword_IsRejectedWithoutQuotingIt()
+    {
+        // '${secret:env}' — the sigil with no '/path' segment. The fixture stands in for a
+        // passphrase bound by a direct embedder, and is distinctive so the DoesNotContain below
+        // cannot pass by accident.
+        const string declared = "${secret:env}CORRECT-HORSE-BATTERY-STAPLE";
+        var ast = AstWithSecurity(services: OneSecuredService("api", declared));
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.NotNull(error);
+        Assert.True(fromSecurity);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", error!, StringComparison.Ordinal);
+        Assert.Contains("not a single, whole secret reference", error, StringComparison.Ordinal);
+
+        // The whole point: the declared text never appears.
+        Assert.DoesNotContain("CORRECT-HORSE-BATTERY-STAPLE", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("step '", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The NESTED-SIGIL shape, and it is reachable from an ordinary schema-valid document rather
+    /// than only from a direct embedder: the schema pattern's path class <c>[^}]+</c> swallows a
+    /// second <c>${secret:</c>. Before the withholding guard, this landed the whole declared value
+    /// in the terminal and in <c>validate --json</c> via <c>ValidateField</c>'s malformed branch.
+    /// <para>
+    /// The first assertion is the measurement that makes this test necessary:
+    /// <c>SecretReference.TryParse</c> ACCEPTS this value (its whole-token match simply spans the
+    /// inner sigil), so the whole-token rule alone does not catch it — the known-source rule's
+    /// own malformed branch is what must withhold, which is why
+    /// <c>ValidateSecretBearingField</c> applies both rather than leaving them to a caller.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_NestedSigilClientKeyPassword_IsRejectedWithoutQuotingIt()
+    {
+        const string declared = "${secret:env/PASS${secret:CORRECT-HORSE-BATTERY-STAPLE}";
+
+        // Measured, not assumed. If this ever answers false, the whole-token rule alone would
+        // suffice for this shape and this test would stop covering the branch it was written for.
+        Assert.True(SecretReference.TryParse(declared, out _));
+
+        var ast = AstWithSecurity(services: OneSecuredService("api", declared));
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.NotNull(error);
+        Assert.True(fromSecurity);
+        Assert.Contains("not a single, whole secret reference", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("CORRECT-HORSE-BATTERY-STAPLE", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The ADVERSARIAL shape: an unknown source AND a nested sigil in one value. It is the case a
+    /// call-site predicate cannot get right — asking "is the source unknown?" answers yes, but the
+    /// branch that actually fires is <c>ValidateField</c>'s MALFORMED one (the sigil counts
+    /// disagree), which interpolates the whole field. Measured leaking through the real CLI in the
+    /// terminal, in <c>run</c>, and in <c>validate --json</c> before <c>fieldMayBeSecret</c>
+    /// moved the decision into the method that owns the arithmetic.
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_UnknownSourceAndNestedSigil_IsRejectedWithoutQuotingIt()
+    {
+        const string declared = "${secret:nosuchsource/PASS${secret:LEAKED_PASSPHRASE}";
+
+        // Both halves of the trap, measured rather than assumed: the value parses as one whole
+        // token (so guard 1 passes) AND names an unknown source (so an "unknown source only"
+        // predicate would have relayed the malformed message verbatim).
+        Assert.True(SecretReference.TryParse(declared, out var parsed));
+        Assert.Equal("nosuchsource", parsed!.Source);
+
+        var ast = AstWithSecurity(services: OneSecuredService("api", declared));
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.NotNull(error);
+        Assert.True(fromSecurity);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", error!, StringComparison.Ordinal);
+        Assert.Contains("not a single, whole secret reference", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("LEAKED_PASSPHRASE", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryValidateSecretReferences_UnknownSourceOnADependency_NamesTheDependenciesFieldPath()
+    {
+        var ast = AstWithSecurity(
+            dependencies: OneSecuredDependency("broker", "${secret:nosuchsource/KEY_PASS}"));
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.NotNull(error);
+        Assert.True(fromSecurity);
+        Assert.Contains(
+            "environment.dependencies.broker.security.clientKeyPassword:", error!, StringComparison.Ordinal);
+
+        // Byte-identical to the step surface's own text — closing #387's asymmetry is the point,
+        // and quoting the whole-token reference here is safe: it is a pointer, never a secret.
+        Assert.Contains(
+            "the secret reference '${secret:nosuchsource/KEY_PASS}' names an unknown source "
+            + "'nosuchsource'; known sources are:",
+            error,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-018's carve-out must stay NARROW: a STEP's bad secret reference is an ordinary
+    /// authoring error, not a failure to confirm a declared security assertion, so the signal is
+    /// <see langword="false"/> even though the pass reports a failure.
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_StepFailure_DoesNotReportASecurityDeclaration()
+    {
+        // Built through the real parser + AstBuilder: a StepNode carries its own YamlMappingNode,
+        // and CollectSubstitutableTexts reads it, so a hand-built node would not exercise the scan.
+        const string yaml = """
+            steps:
+              - id: bad-secret
+                type: http.rest
+                target: svc
+                method: GET
+                path: /health
+                headers:
+                  Authorization: "Bearer ${secret:nosuchsource/TOKEN}"
+            """;
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), s_registry);
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.NotNull(error);
+        Assert.False(fromSecurity);
+        Assert.Contains("step 'bad-secret'", error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryValidateSecretReferences_ValidEnvironmentClientKeyPassword_IsAccepted()
+    {
+        var ast = AstWithSecurity(services: OneSecuredService("api", "${secret:vault/kv/key-pass}"));
+
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.Null(error);
+        Assert.False(fromSecurity);
+    }
+
+    /// <summary>
+    /// Pins the CALL SITE, not the method: the security walk must route through
+    /// <c>SecretReference.ValidateSecretBearingField</c>, never <c>ValidateField</c>. Nothing
+    /// structurally prevents a future caller reaching the quoting overload for this field — the
+    /// only other guard is an XML remark — so the routing is asserted behaviourally, through the
+    /// one input on which the two methods disagree in a way no other rule reproduces.
+    /// <para>
+    /// A plain literal is ACCEPTED by <c>ValidateField</c> (a step's field may be ordinary text)
+    /// and REFUSED by <c>ValidateSecretBearingField</c>. So a scan wired to the wrong overload
+    /// would silently pass a plaintext passphrase — this test fails the moment it is rewired.
+    /// </para>
+    /// </summary>
+    private static readonly string[] s_knownSourcesForRouting = { "env", "vault" };
+
+    [Fact]
+    public void TryValidateSecretReferences_SecurityWalk_RoutesThroughTheSecretBearingOverload()
+    {
+        const string plaintextPassphrase = "hunter2-ROUTING-MARKER";
+
+        // The discriminating property, measured here so the test states its own premise.
+        Assert.True(SecretReference.ValidateField(plaintextPassphrase, s_knownSourcesForRouting, out _));
+
+        var ast = AstWithSecurity(services: OneSecuredService("api", plaintextPassphrase));
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.True(fromSecurity);
+        Assert.Contains("not a single, whole secret reference", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROUTING-MARKER", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Both faults present: the pass reports BOTH messages, step first. Before this, the security
+    /// message was computed and discarded whenever a step fault won, so the exit code went red
+    /// with nothing on screen to explain it.
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_StepAndSecurityFaults_ReportsBothMessages()
+    {
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  security:
+                    profile: mtls
+                    endpoint: 8443
+                    clientCert: ./client.pem
+                    clientKey: ./client.key
+                    clientKeyPassword: "${secret:nosuchsource/PASS}"
+            steps:
+              - id: call
+                type: http.rest
+                target: api
+                method: GET
+                path: /health
+                headers:
+                  Authorization: "Bearer ${secret:nosuchsource/STEP_TOKEN}"
+            """;
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), s_registry);
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.True(fromSecurity);
+        Assert.NotNull(error);
+        Assert.Contains("step 'call'", error!, StringComparison.Ordinal);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", error, StringComparison.Ordinal);
+
+        // Step first — the pre-existing ordering, retained.
+        Assert.True(
+            error!.IndexOf("step 'call'", StringComparison.Ordinal)
+            < error.IndexOf("environment.services.api", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The scan must stay scoped to <c>clientKeyPassword</c>. A security block declaring NO
+    /// passphrase is untouched by it — the path-valued siblings are REQ-011's business, and
+    /// running them through reference validation as well would double-report.
+    /// </summary>
+    [Fact]
+    public void TryValidateSecretReferences_SecurityBlockWithoutAPassphrase_IsAccepted()
+    {
+        var ast = AstWithSecurity(services: OneSecuredService("api", clientKeyPassword: null));
+
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(ast, out var error, out var fromSecurity));
+        Assert.Null(error);
+        Assert.False(fromSecurity);
     }
 }

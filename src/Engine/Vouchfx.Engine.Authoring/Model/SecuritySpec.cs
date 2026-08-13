@@ -101,10 +101,31 @@ public sealed record SecuritySpec(
     /// every sibling field's shape. A direct engine embedder that bypasses the schema CAN bind
     /// a literal here — this parser enforces no shape, by design, and
     /// <c>SecuritySpecBindingTests.Parse_ClientKeyPasswordLiteral_IsStillBound_ParserStaysLenient</c>
-    /// pins exactly that — so no consumer may assume the text is non-secret. §17 requires
-    /// resolution at step-execution time, at first use of the certificate material, so that no
-    /// secret value is ever baked into the compiled script's IL and the reproducibility
-    /// envelope hashes the reference rather than the value.
+    /// pins exactly that — so no consumer may assume the text is non-secret UNTIL IT HAS PROVED
+    /// OTHERWISE. The proof is <c>SecretReference.ValidateSecretBearingField</c> RETURNING TRUE.
+    /// Only then is the text known to be a pointer, and §17 permits quoting a pointer — which is
+    /// why that method's unknown-source diagnostic may name the reference it refuses.
+    /// </para>
+    /// <para>
+    /// <strong><c>SecretReference.TryParse</c> alone is NOT that proof</strong>, and a consumer
+    /// writing <c>if (TryParse(v)) quote(v);</c> reproduces a disclosure defect this branch has
+    /// already had to fix once. <c>TryParse</c> asks only whether one whole token spans the
+    /// value; because a reference path terminates at the first closing brace and is otherwise
+    /// unrestricted, a value can satisfy that while still containing a further lead-in swallowed
+    /// inside the path — and everything after that lead-in is then arbitrary author text that
+    /// <c>TryParse</c> has said nothing about. <c>ValidateSecretBearingField</c> applies the
+    /// remaining rule and withholds such a value.
+    /// </para>
+    /// <para>
+    /// The rule, stated once: PROVE it is a pointer with
+    /// <c>ValidateSecretBearingField</c>, then you may quote it. Never "assume it is a pointer",
+    /// and never "parse it and assume".
+    /// </para>
+    /// <para>
+    /// §17 requires resolution at first USE of the certificate material — which for this field is
+    /// the certificate load, after the topology is up — so that no secret value is ever baked into
+    /// the compiled script's IL and the reproducibility envelope hashes the reference rather than
+    /// the value.
     /// </para>
     /// <para>
     /// This record's compiler-generated <c>ToString()</c> prints this property, so never
