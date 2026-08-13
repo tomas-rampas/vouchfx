@@ -9,6 +9,10 @@
 // path and testing it twice would prove nothing extra. What IS specific to this provider, and is
 // asserted below, is that its own emitted consumer configuration reaches that helper at all — on
 // BOTH the plain and the Avro consume paths.
+//
+// The client-key passphrase (client-key-password, REQ-008) splits the same way: SslKeyPassword is
+// declared on ClientConfig and neither subtype shadows it, so its runtime behaviour is proven in
+// that same assembly, and what belongs here is the §17 property of THIS provider's own emit.
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqExpect.Kafka;
@@ -22,6 +26,10 @@ namespace Vouchfx.Steps.MqExpect.Kafka.Tests;
 /// </summary>
 public sealed class KafkaSecurityWiringTests
 {
+    // Deliberately distinctive so the §17 assertion below cannot pass by accident against some
+    // unrelated substring of the assembled script.
+    private const string KeyPassphrase = "correct-horse-battery-staple-7f3a";
+
     private sealed class StubCompileContext : ICompileContext
     {
         internal StubCompileContext(string stepId) => StepId = stepId;
@@ -105,5 +113,25 @@ public sealed class KafkaSecurityWiringTests
 
         var declarations = csx.Split("static class KafkaSecurity_Helpers", StringSplitOptions.None).Length - 1;
         Assert.Equal(1, declarations);
+    }
+
+    /// <summary>
+    /// §17, applied to the client-key passphrase (client-key-password, REQ-008): the compiled
+    /// script contains no passphrase. Interpolating one at emit time would bake a secret into the
+    /// emitted IL and would defeat compile-once, since the script is compiled before any secret is
+    /// resolved. The helper unwraps the value at step-execution time instead.
+    /// </summary>
+    /// <remarks>
+    /// The positive half asserts the CODE that replaces it, not the identifier: the emitted source
+    /// names <c>ClientKeyPassword</c> in a comment as well, so an identifier-only assertion would
+    /// survive the read being deleted and the comment left behind.
+    /// </remarks>
+    [Fact]
+    public void CompiledCsx_ForAKafkaExpectStep_BakesNoClientKeyPassphrase()
+    {
+        var csx = EmitCsx("events");
+
+        Assert.DoesNotContain(KeyPassphrase, csx, StringComparison.Ordinal);
+        Assert.Contains("certificates?.ClientKeyPassword?.Reveal()", csx, StringComparison.Ordinal);
     }
 }
