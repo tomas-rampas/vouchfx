@@ -4,8 +4,8 @@
 //
 // Written against the public Parse contract only. Two properties are pinned here:
 //   • the declared text is retained VERBATIM and UNRESOLVED — the '${secret:}' sigil is still
-//     in the bound string, because §17 puts secret resolution at step-execution time and this
-//     layer is authoring-surface only; and
+//     in the bound string, because §17 puts secret resolution at RUN time — never at compile
+//     time — and this layer is authoring-surface only; and
 //   • the primary constructor still takes exactly six parameters (see the arity guard at the
 //     foot of this file for why that number is load-bearing).
 
@@ -67,8 +67,10 @@ public sealed class SecuritySpecBindingTests
         var doc = YamlDocumentParser.Parse(yaml);
 
         // Assert — bound as DECLARED TEXT: the reference is retained character for character,
-        // sigil included. Nothing at this layer resolves it (§17: resolution happens at
-        // step-execution time, at first use of the certificate material).
+        // sigil included. Nothing at this layer resolves it (§17: resolution happens at run
+        // time, never at compile time — and for THIS field the run-time moment is first use of
+        // the certificate material, before any step runs, not step execution. An earlier version
+        // of this comment asserted both moments at once, which cannot be true of one field).
         var security = doc.Environment!.Services!["app"].Security;
         Assert.NotNull(security);
         Assert.Equal("${secret:env/CLIENT_KEY_PASS}", security!.ClientKeyPassword);
