@@ -37,12 +37,17 @@ namespace Vouchfx.Engine.Runtime.Secrets;
 /// end). Omit the argument and the scope keeps a private ledger — the pre-REQ-010 behaviour.
 /// </para>
 /// <para>
-/// <strong>The <c>--watch</c> call site still omits it, and that is a KNOWN GAP, not a case where
-/// nothing is resolved.</strong> The watch path's probe does resolve <c>clientKeyPassword</c>, in
-/// <c>WatchRunner</c>'s own build seam; its scope's private ledger is therefore not the one the
-/// step path's scrubbers read, exactly as <c>ScenarioRunner.RunScenarioAgainstTopologyAsync</c>
-/// records at its own null-ledger site. Closing the watch path's probe→step gap needs a
-/// session-scoped ledger threaded through that public signature — EDGE-007's seam (T8).
+/// <strong>The <c>--watch</c> call site shares a SESSION-scoped ledger (EDGE-007), and the wider
+/// scope is forced by CAPTURE ORDER, not merely by breadth.</strong> <c>WatchRunner.RunAsync</c>
+/// builds one ledger for the whole watch session and hands it both to the probe scope in its build
+/// seam and to <c>ScenarioRunner.RunScenarioAgainstKeptTopologyAsync</c>. The narrower scope worth
+/// ruling out is the BUILD SEAM's, and the precise reason is not "the seam runs per save" — it does
+/// not; <c>WatchSession.OnChangeAsync</c> reaches it only when the environment hash changes, so a
+/// seam-scoped ledger would already be shared by every reusing save. It is that the watch loop's
+/// error sinks capture the ledger BY VALUE before the seam runs, so on a REBUILD save the probe
+/// would resolve into a ledger the catch receiving its failure has never seen. Sharing one
+/// session-scoped instance is what makes the probe's value scrubbable both from that catch and
+/// from later saves' step text — the same cross-path gap REQ-010 closed for <c>vouchfx run</c>.
 /// </para>
 /// </remarks>
 internal sealed class SecretAccessorScope : IDisposable

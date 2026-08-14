@@ -2435,9 +2435,26 @@ public static class ScenarioRunner
     /// <c>vouchfx run</c>.
     /// </param>
     /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
+    /// <param name="sharedLedger">
+    /// The watch SESSION's <see cref="ResolvedSecretLedger"/> (client-key-password EDGE-007), so a
+    /// passphrase resolved by the caller's topology probe is scrubbable from text emitted on this
+    /// scenario's step path, and vice versa. <see langword="null"/> — the default — is the
+    /// pre-EDGE-007 shape: this method's own step accessor then gets a ledger private to it, and
+    /// nothing the probe resolved can be recognised here.
+    /// </param>
     /// <param name="cancellationToken">Propagated to all async operations.</param>
     /// <returns>The scenario's aggregate <see cref="Verdict"/>.</returns>
     /// <remarks>
+    /// <para>
+    /// <strong>The ledger parameter is additive and optional by design.</strong> Requiring it
+    /// would force every existing call site to state a value, and defaulting it to a non-null
+    /// ledger would silently change what an existing caller's scenario scrubs against. Defaulting
+    /// to <see langword="null"/> leaves every existing caller byte-identical and makes the sharing
+    /// an opt-in the <c>--watch</c> shell takes. Measured, so the rule is not mistaken for a
+    /// compatibility promise: <c>Vouchfx.Engine.Runtime</c> is <c>IsPackable=false</c> and is not
+    /// among the six packages the release workflow publishes, and it carries no golden gate over
+    /// its public API. This is a design rule about in-tree churn, not an external contract.
+    /// </para>
     /// <para>
     /// Re-validating and re-compiling on every re-run is deliberate: in watch mode the file
     /// changes between runs, so the kept topology may be re-used but the SCENARIO must be
@@ -2468,6 +2485,11 @@ public static class ScenarioRunner
         TextWriter output,
         bool resetAndReseed,
         string? seedBaseDirectory = null,
+        // Ahead of cancellationToken, not after it: CA1068 requires the token to be last on an
+        // externally-visible method. Both in-tree callers pass `cancellationToken:` by name, and
+        // a caller that passed it positionally would fail to compile rather than mis-bind (the
+        // types do not convert), so the insertion cannot silently change any call's meaning.
+        ResolvedSecretLedger? sharedLedger = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(topology);
@@ -2552,15 +2574,17 @@ public static class ScenarioRunner
                     Timestamp = nowR,
                     ScenarioId = scenarioName,
                 }));
-                // NO ledger on this path, and the null is a statement rather than an omission
-                // (REQ-010). This is the `--watch` kept-topology entry point: the probe ran in
-                // WatchRunner's OWN build seam, whose scope this method never sees, and the step
-                // accessor is built DOWNSTREAM in RunScenarioCoreAsync — after this reset. So at
-                // this line nothing this method owns has resolved anything, and there is no
-                // ledger that could hold a value to scrub. Closing the watch path's probe→step
-                // gap needs a session-scoped ledger threaded from WatchRunner through this
-                // PUBLIC signature; that is EDGE-007's seam (T8), not a local fix here.
-                buffer.Add(EnvironmentErrorLine(sharedLedger: null, oex.Info, runId, nowR));
+                // Scrubbed through the SESSION ledger the caller supplies (EDGE-007). This line is
+                // the reason that parameter exists: this is the `--watch` kept-topology entry
+                // point, so nothing THIS method owns has resolved anything by here — the probe
+                // ran in WatchRunner's own build seam, on an earlier save, and the step accessor
+                // is built DOWNSTREAM in RunScenarioCoreAsync, after this reset. The only value
+                // that can be in flight at this line is one the probe resolved on an earlier
+                // save, against the topology this method has been handed — which is precisely
+                // what a session-scoped ledger carries and a ledger scoped to the caller's build
+                // seam does not reach. A null caller (every non-watch caller) keeps the
+                // pre-EDGE-007 behaviour.
+                buffer.Add(EnvironmentErrorLine(sharedLedger, oex.Info, runId, nowR));
                 buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
                 {
                     RunId = runId,
@@ -2584,6 +2608,35 @@ public static class ScenarioRunner
                 // Issue #266, Item 4: earlyMessage carries a schema/pipeline/secret-reference
                 // diagnostic that may echo untrusted YAML content verbatim — sanitise before
                 // writing.
+                //
+                // SANITISED, NOT SCRUBBED — considered under EDGE-007 and deliberately left so.
+                //
+                // BE EXACT ABOUT WHY, because the tempting reason is FALSE on this path. It is
+                // NOT that nothing has resolved yet: on the `--watch` path the probe resolved
+                // `clientKeyPassword` at topology-start time on an EARLIER save, so when this
+                // line runs on save N the session ledger is already non-empty. That is the very
+                // error EDGE-007 corrected one sink over — the retracted comment there reasoned
+                // from what the METHOD had done rather than from what the PATH had done.
+                //
+                // The true reason is narrower and is a property of the TEXT, not of the timing:
+                // earlyMessage cannot CONTAIN a resolved value. TryCompileForRun has exactly
+                // three sources — schema validation errors, TryValidateSecretReferences's
+                // message, and ProviderPipeline's compile failure — and all three are produced
+                // before any step executes, from YAML text and secret REFERENCES. A reference is
+                // not its value.
+                //
+                // Not scrubbed as belt-and-braces either, and that is a judgement rather than an
+                // oversight. This is the author's primary feedback channel under `--watch`: it is
+                // the message telling them what is wrong with the YAML they just saved. Scrubbing
+                // it would expose exactly that message to the over-redaction the session-scoped
+                // ledger makes possible (see WatchRunner's cost note — a short or stale recorded
+                // value rewrites unrelated substrings for the rest of the session), corrupting
+                // the diagnostic the author needs to act on. It would also diverge from
+                // RunSuiteAsync's identical early-exit sink, which this deliberately matches byte
+                // for byte; the two must not drift apart on a judgement only one of them records.
+                //
+                // The EveryEnvironmentErrorEmission_ gate covers EnvironmentErrorLine and does
+                // NOT reach here, which is why the reasoning lives at the site.
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(earlyMessage))
                     .ConfigureAwait(false);
             }
@@ -2605,7 +2658,10 @@ public static class ScenarioRunner
             new NullScenarioIsolation(), // isolation reset handled above.
             output,
             seedBaseDirectory,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            // Named, because the two parameters between here and it (scriptBaseDirectory,
+            // livePump) are both optional and both stay at their defaults on this path.
+            sharedLedger: sharedLedger).ConfigureAwait(false);
 
         TerminalRenderer.Render(buffer, output, diffLookup);
         return verdict;
@@ -2975,8 +3031,12 @@ public static class ScenarioRunner
     /// <param name="sharedLedger">
     /// The RUN's <see cref="ResolvedSecretLedger"/> (client-key-password REQ-010), so this
     /// scenario's step accessor records into the same net the topology probe recorded into.
+    /// On the <c>--watch</c> path it is the SESSION's ledger, threaded in from
+    /// <c>WatchRunner</c> through <see cref="RunScenarioAgainstKeptTopologyAsync"/> (EDGE-007).
     /// <see langword="null"/> gives the accessor a ledger private to this scenario — the
-    /// pre-REQ-010 shape, which is what the <c>--watch</c> kept-topology caller still gets.
+    /// pre-REQ-010 shape. No PRODUCTION caller now takes it; one test does
+    /// (<c>KafkaServiceTargetDockerTests</c> calls the kept-topology entry point without a
+    /// ledger), so the null branch is live and not dead code.
     /// </param>
     private static async Task<Verdict> RunScenarioCoreAsync(
         ScenarioAst ast,

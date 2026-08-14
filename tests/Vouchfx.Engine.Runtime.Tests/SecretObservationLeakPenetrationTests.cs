@@ -1018,8 +1018,11 @@ public sealed class SecretObservationLeakPenetrationTests
     /// exact defect this todo exists to close, reintroduced invisibly.
     /// </para>
     /// <para>
-    /// <c>ScenarioRunner</c> is scoped deliberately: <c>WatchRunner</c> (in the CLI) does call
-    /// the factory with no ledger, and that is EDGE-007's deferred seam, not a defect here.
+    /// <c>ScenarioRunner</c> is scoped deliberately, and the scope is now a file boundary rather
+    /// than a carve-out: <c>WatchRunner</c> (in the CLI) passes its own SESSION-scoped ledger to
+    /// the same factory since EDGE-007, and its call sites are pinned by
+    /// <c>Vouchfx.Cli.Tests.WatchRunnerSecurityLedgerTests</c> — that assembly is where the file
+    /// lives, and this gate cannot see across it.
     /// </para>
     /// </summary>
     [Fact]
@@ -1056,6 +1059,58 @@ public sealed class SecretObservationLeakPenetrationTests
             + "run's own ledger (runSecretLedger / sharedLedger). A site passing any OTHER "
             + "expression — a freshly constructed ResolvedSecretLedger above all — compiles and "
             + "silently reinstates the per-scope ledger REQ-010 exists to abolish.");
+    }
+
+    /// <summary>
+    /// Every environment-error event the runner emits is scrubbed against a REAL ledger — no call
+    /// site passes a literal null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sibling gate above pins the accessor SCOPES; this one pins the EMISSIONS, and they
+    /// fail differently. A scope without a ledger records nothing; an emission with a null ledger
+    /// scrubs nothing, and the two are independent — the environment-error line is built from an
+    /// <c>OrchestrationErrorInfo</c> whose <c>Detail</c> a probe failure fills with a
+    /// <c>SecurityMaterialException</c>'s text, so the null is the whole guard being absent at the
+    /// one sink that carries probe output onto the §14 event stream.
+    /// </para>
+    /// <para>
+    /// The kept-topology (<c>--watch</c>) site is the reason this exists: it passed
+    /// <c>sharedLedger: null</c> until EDGE-007, documented as "a statement rather than an
+    /// omission" because at that line nothing that method owned had resolved anything. That
+    /// reasoning was correct about the METHOD and wrong about the PATH — WatchRunner's probe had
+    /// resolved, one or many saves earlier, into a ledger the method was never handed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryEnvironmentErrorEmission_IsScrubbedAgainstARealLedger()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs"));
+
+        // Five mentions in total: the declaration, whose first parameter is the TYPE, plus four
+        // call sites (the two probe paths, the suite loop's isolation failure, and the --watch
+        // kept-topology reset). One call puts its argument on the FOLLOWING line, so the pattern
+        // has to skip whitespace rather than assume one-line calls.
+        var mentions = Regex.Matches(source, @"EnvironmentErrorLine\(").Count;
+        Assert.Equal(5, mentions);
+
+        var declaration = Regex.Matches(source, @"EnvironmentErrorLine\(\s*ResolvedSecretLedger\b").Count;
+        Assert.Equal(1, declaration);
+
+        var pinned = Regex.Matches(
+            source, @"EnvironmentErrorLine\(\s*(?:runSecretLedger|sharedLedger)\b").Count;
+        Assert.True(
+            pinned == 4,
+            $"{pinned} of the 4 EnvironmentErrorLine call sites in ScenarioRunner name a real "
+            + "ledger (runSecretLedger on the three run-path sites, sharedLedger on the --watch "
+            + "kept-topology path). Every emission must scrub against one — a null there is the "
+            + "REQ-010/EDGE-007 scrub silently absent at the one sink that carries topology-probe "
+            + "text onto the §14 event stream.");
+
+        var nulls = Regex.Matches(
+            source, @"EnvironmentErrorLine\(\s*(?:sharedLedger\s*:\s*)?null\b").Count;
+        Assert.Equal(0, nulls);
     }
 
     /// <summary>

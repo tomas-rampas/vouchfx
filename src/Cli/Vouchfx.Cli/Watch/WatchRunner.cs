@@ -13,6 +13,7 @@
 using System.Reflection;
 using Vouchfx.Cli.Watch;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
@@ -48,6 +49,15 @@ internal static class WatchRunner
     /// exits cleanly (watch mode does not break CI — the last verdict is reported per run, but
     /// the loop's own exit is a clean stop).
     /// </returns>
+    /// <remarks>
+    /// REQ-018's verdict-to-exit-code carve-out has NO counterpart here, and its absence is
+    /// deliberate rather than an omission: this method returns only
+    /// <see cref="ExitCodes.UsageError"/> or <see cref="ExitCodes.Success"/> and never calls
+    /// <c>ExitCodes.FromVerdict</c>, because the sentence above — watch mode does not break CI —
+    /// is the whole design. A flag that carved an exit code out of a verdict here would have no
+    /// consumer: the per-run verdict is reported, and the loop's exit says only whether the loop
+    /// itself stopped cleanly.
+    /// </remarks>
     internal static async Task<int> RunAsync(
         IReadOnlyList<DiscoveredScenario> selected,
         StepKindRegistry registry,
@@ -86,6 +96,62 @@ internal static class WatchRunner
         // seam can pass it to the engine.  Disposed alongside the topology it belongs to.
         IScenarioIsolation? isolation = null;
 
+        // ── The watch SESSION's resolved-secret ledger (client-key-password EDGE-007) ──
+        //
+        // ONE ledger for the whole session, and SESSION scope is the load-bearing word. The
+        // topology is KEPT across saves, so the probe below resolves `clientKeyPassword` ONCE per
+        // topology while the step path runs on every save after it.
+        //
+        // BE PRECISE ABOUT THE BUILD SEAM: it is per-REBUILD, not per-save.
+        // WatchSession.OnChangeAsync invokes it only when the environment hash CHANGES (or on the
+        // first run) — a steps-only edit re-uses the topology and never reaches it. So a
+        // build-seam-scoped ledger would already be shared across every reusing save, and stating
+        // the reason as "otherwise it would be per-save" would overstate the failure and invite a
+        // maintainer to narrow the scope back on a premise that was never true.
+        //
+        // THE REASON THE SCOPE MUST BE THE SESSION IS CAPTURE ORDER, AND IT BITES ON THE REBUILD
+        // SAVE ITSELF. The guard captures this variable BY VALUE before the build seam runs:
+        // RunOnceFromDiskAsync reads it at the call site below, hands that instance to
+        // ProcessChangeGuardedAsync, and only then does session.OnChangeAsync reach the build
+        // seam. Under any narrower scope the rebuild save's probe resolves into ledger N and
+        // throws, while the OrchestrationException catch — the one sink that exists to receive a
+        // probe failure — is already holding ledger N-1 and scrubs against the wrong object. The
+        // sink and the resolution must therefore share an instance that predates both.
+        //
+        // Every consumer below (the probe scope, the run seam, all four sinks) gets THIS instance.
+        //
+        // ── The costs, both of them, stated rather than argued away ──
+        //
+        // 1. RETAINED PLAINTEXT, FOR LONGER THAN ANYWHERE ELSE IN THE ENGINE.
+        //    ResolvedSecretLedger holds a plaintext `string` copy of each revealed value for its
+        //    own lifetime — unavoidable, since you cannot scrub a value you do not hold — and its
+        //    own remarks note that a run-scoped ledger holds those copies "for the run, not for
+        //    one scenario". A session-scoped one holds them for as long as `--watch` is left
+        //    running, which is a developer's whole afternoon rather than a run's few minutes. The
+        //    copies are Default-ALC and never serialised; they are NOT meaningfully reclaimed
+        //    before exit, because this session ends only when Ctrl-C unwinds RunAsync and the
+        //    process follows it out.
+        //
+        // 2. A WIDER SCRUB WINDOW, which is a correctness cost and not merely a memory one.
+        //    The run seam feeds this same ledger to the step path, so EVERY secret any step
+        //    resolves accumulates here too, for the session. Scrub replaces every ordinal
+        //    occurrence of every recorded value, so a short or common value resolved on save 1
+        //    goes on redacting unrelated substrings from every later save's output. Before
+        //    EDGE-007 that accumulation was bounded by one re-run.
+        //
+        //    NOTHING CLEARS A RECORDED VALUE WITHIN A SESSION. An author who edits a
+        //    `${secret:…}` reference mid-session leaves the OLD value recorded for the rest of
+        //    it, so a value that was short or common goes on corrupting later diagnostics — a
+        //    one-character secret redacts a single letter everywhere it appears. THE REMEDY IS
+        //    TO RESTART `--watch`: the ledger is a plain field of this method's frame and a new
+        //    session starts with an empty one. Deliberately no length floor: over-redaction
+        //    fails safe and is conspicuous, whereas a floor would silently under-redact a short
+        //    secret, which is the failure that matters.
+        //
+        // Both are accepted for the same reason: the alternative is a resolved passphrase
+        // surviving into a rendered diagnostic on a later save, and that is worse than either.
+        var sessionSecretLedger = new ResolvedSecretLedger();
+
         await using var session = new WatchSession<SuiteTopology>(
             // Compile seam: re-read happens in OnChangeAsync (file content is passed in); here we
             // validate + build the AST and compute the environment hash that drives reuse.
@@ -117,6 +183,14 @@ internal static class WatchRunner
                 // stays lazy: it happens inside the certificate load, which StartAsync reaches only
                 // after the health gate.
                 //
+                // The SCOPE is per-REBUILD (it owns the resolvers, and this seam runs only when
+                // the environment hash changes); the LEDGER it records into is the SESSION's
+                // (EDGE-007). That split is the same one ScenarioRunner makes per-scenario, for
+                // the same reason: a passphrase resolved HERE must be scrubbable from text the
+                // step path emits on a later save against this same kept topology — and, per the
+                // capture-order note at the ledger's declaration, from the catch that receives
+                // THIS seam's own failure.
+                //
                 // THE SCOPE OUTSIDE THE `try`, THE ACCESSOR INSIDE IT. `Build` can throw
                 // (Path.GetFullPath on a malformed declared path), and constructed before the
                 // `try` its failure skipped the `finally` below, leaking this scope's resolvers
@@ -125,7 +199,7 @@ internal static class WatchRunner
                 // `Build` fails repeatedly leaks once per save for as long as `--watch` is left
                 // running. The scope's own construction allocates two objects and touches
                 // nothing, so a failure there leaves nothing to dispose.
-                var probeSecrets = ScenarioRunner.CreateSecretAccessorScope();
+                var probeSecrets = ScenarioRunner.CreateSecretAccessorScope(sessionSecretLedger);
                 ISecurityConfigurationAccessor probeSecurity =
                     NullSecurityConfigurationAccessor.Instance;
                 try
@@ -169,6 +243,10 @@ internal static class WatchRunner
                     output,
                     resetAndReseed: resetAndReseed,
                     seedBaseDirectory: Path.GetDirectoryName(filePath),
+                    // EDGE-007: the step path records into — and scrubs against — the SAME ledger
+                    // the probe above resolved into. Omitting this compiles (the parameter is
+                    // optional) and leaves the engine building a ledger of its own per re-run.
+                    sharedLedger: sessionSecretLedger,
                     cancellationToken: ct).ConfigureAwait(false);
             },
 
@@ -190,17 +268,35 @@ internal static class WatchRunner
             // watch-loop's re-run seam instead. Sanitising HERE, at the single sink, covers
             // this call today and any future WatchSession _report call without needing a
             // separate fix at each call site.
-            report: line => output.WriteLine(DisplaySanitiser.SanitiseForDisplay(line)));
+            //
+            // EDGE-007: scrubbed through the session ledger first — see ScrubThenSanitise for why
+            // that order, and not the other one, is the one that holds.
+            //
+            // COVERAGE, PLAINLY: this lambda is the ONE sink pinned by text alone. Its body is
+            // executed under test through ScrubThenSanitise, which the two catch sinks drive on a
+            // real emission path; what a test cannot reach is the lambda's own construction,
+            // because it happens inside RunAsync, past the Docker line. Extracting a factory to
+            // make one line executable would move the sink's definition away from the constructor
+            // argument that consumes it and add a production method whose only caller is a test —
+            // a worse trade than naming the limit here and gating it with the census.
+            report: line => output.WriteLine(ScrubThenSanitise(line, sessionSecretLedger)));
 
+        // Issue #266, Item 4: `filePath` is author/CLI-supplied and reaches a terminal verbatim
+        // here. Sanitised, not scrubbed: this line is written BEFORE the first run, so no probe
+        // has resolved anything and there is nothing in the ledger a scrub could match. It is the
+        // banner's only untrusted component.
         await output.WriteLineAsync(
-            $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while the "
-            + "environment is unchanged).  Press Ctrl-C to stop.").ConfigureAwait(false);
+            DisplaySanitiser.SanitiseForDisplay(
+                $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while the "
+                + "environment is unchanged).  Press Ctrl-C to stop.")).ConfigureAwait(false);
 
         // ── Initial run ───────────────────────────────────────────────────────
-        await RunOnceFromDiskAsync(session, filePath, output, cancellationToken).ConfigureAwait(false);
+        await RunOnceFromDiskAsync(session, filePath, output, sessionSecretLedger, cancellationToken)
+            .ConfigureAwait(false);
 
         // ── Watch loop ──────────────────────────────────────────────────────────
-        await WatchUntilCancelledAsync(session, filePath, output, cancellationToken)
+        await WatchUntilCancelledAsync(
+                session, filePath, output, sessionSecretLedger, cancellationToken)
             .ConfigureAwait(false);
 
         return ExitCodes.Success;
@@ -214,6 +310,10 @@ internal static class WatchRunner
         WatchSession<SuiteTopology> session,
         string filePath,
         TextWriter output,
+        // Non-nullable: the sole caller path always has the session's ledger in hand. Only
+        // ProcessChangeGuardedAsync's parameter is nullable, and that is load-bearing rather than
+        // defensive — it keeps the three pre-EDGE-007 three-argument tests compiling unchanged.
+        ResolvedSecretLedger sessionSecretLedger,
         CancellationToken cancellationToken)
     {
         string content;
@@ -224,7 +324,18 @@ internal static class WatchRunner
         catch (IOException ex)
         {
             // A save in progress can briefly lock the file; report and wait for the next event.
-            await output.WriteLineAsync($"--watch: could not read '{filePath}': {ex.Message}")
+            //
+            // Routed through the same helper as every other post-probe sink. It was raw — neither
+            // scrubbed nor sanitised — and being raw is exactly why the sink census could not see
+            // it: a gate that counts helper calls is blind to a site that calls no helper. Both
+            // halves earn their place here. Sanitise: `filePath` is author/CLI-supplied and
+            // `ex.Message` embeds it (issue #266, Item 4), and this is reached on EVERY save, not
+            // just the first. Scrub: this fires after the topology is up, so the session ledger
+            // may already hold a resolved passphrase, and defence-in-depth does not get to pick
+            // which sink an unexpected value arrives at.
+            await output.WriteLineAsync(
+                ScrubThenSanitise(
+                    $"--watch: could not read '{filePath}': {ex.Message}", sessionSecretLedger))
                 .ConfigureAwait(false);
             return;
         }
@@ -232,7 +343,8 @@ internal static class WatchRunner
         await ProcessChangeGuardedAsync(
             ct => session.OnChangeAsync(content, ct),
             output,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            sessionSecretLedger).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -248,6 +360,11 @@ internal static class WatchRunner
     /// </param>
     /// <param name="output">The writer that receives the concise error line on a caught failure.</param>
     /// <param name="cancellationToken">Cancels the action; an OCE is re-thrown, never swallowed.</param>
+    /// <param name="sessionSecretLedger">
+    /// The watch session's <see cref="ResolvedSecretLedger"/> (EDGE-007), which both messages
+    /// below are scrubbed through before they are sanitised. <see langword="null"/> — the default
+    /// — skips the scrub and leaves the pre-EDGE-007 behaviour exactly as it was.
+    /// </param>
     /// <remarks>
     /// Extracted so the keep-watching policy is exercised at the unit level (B1) without a
     /// FileSystemWatcher or a container: a test passes a fake action that throws a non-OCE
@@ -259,7 +376,8 @@ internal static class WatchRunner
     internal static async Task ProcessChangeGuardedAsync(
         Func<CancellationToken, Task> processChange,
         TextWriter output,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ResolvedSecretLedger? sessionSecretLedger = null)
     {
         try
         {
@@ -277,8 +395,10 @@ internal static class WatchRunner
             // KEEP WATCHING so the next save can retry, rather than crashing the loop.
             // Issue #266, Item 4: oex.Message reflects author environment.services/dependencies
             // config (e.g. an EnvironmentMapper diagnostic quoting a declared name) — sanitise.
+            // EDGE-007: and scrub first — this is the sink a failed secured build reaches, and a
+            // SecuredEndpointProbe failure folds a SecurityMaterialException's text into it.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay($"--watch: environment error during run: {oex.Message}"))
+                ScrubThenSanitise($"--watch: environment error during run: {oex.Message}", sessionSecretLedger))
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -293,11 +413,53 @@ internal static class WatchRunner
             // Issue #266, Item 4: ex.Message can carry author-declared config (e.g. the
             // ArgumentException from a malformed environment block) — sanitise before writing;
             // reachable on every save-triggered re-run.
+            // EDGE-007: and scrub first. This catch takes whatever the platform or a provider
+            // happens to throw, so it is the sink most likely to carry text nobody designed —
+            // the "never any captured secret/token" claim above is a property of the message
+            // SHAPE, which says nothing about what an arbitrary ex.Message interpolated.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    $"--watch: error during run ({ex.GetType().Name}): {ex.Message}"))
+                ScrubThenSanitise(
+                    $"--watch: error during run ({ex.GetType().Name}): {ex.Message}",
+                    sessionSecretLedger))
                 .ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Redacts any secret value the watch session has resolved from <paramref name="text"/>, then
+    /// renders what remains inert for a terminal — the one composition every post-probe sink in
+    /// this class writes through (EDGE-007).
+    /// </summary>
+    /// <param name="text">The free-form diagnostic text about to be written.</param>
+    /// <param name="ledger">
+    /// The session ledger, or <see langword="null"/> to skip the scrub (pre-EDGE-007 behaviour,
+    /// and what the tests that predate it exercise).
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE ORDER IS LOAD-BEARING, AND IT IS SCRUB FIRST.</strong>
+    /// <see cref="DisplaySanitiser"/> REWRITES text — control bytes and ANSI escape sequences are
+    /// its whole subject — so a passphrase containing one no longer matches the ledger's recorded
+    /// form once the sanitiser has been over it, and scrubbing second would leave the printable
+    /// remainder on the terminal. Scrubbing first sees the value exactly as it was resolved,
+    /// replaces it whole, and hands the sanitiser a redaction marker it passes through unchanged.
+    /// (<c>ScenarioRunner</c>'s isolation-failure sink composes them in this same order, for this
+    /// same reason.)
+    /// </para>
+    /// <para>
+    /// <strong>The sanitiser is NOT redundant and is not being replaced.</strong> It is
+    /// control-character/ANSI-aware only, by its own header — an ordinary printable passphrase
+    /// passes through it unchanged, so it was never the guard against a secret. The ledger scrub
+    /// is that guard; the sanitiser remains the guard against a terminal-corrupting byte. Each
+    /// covers what the other cannot.
+    /// </para>
+    /// </remarks>
+    internal static string? ScrubThenSanitise(string? text, ResolvedSecretLedger? ledger)
+    {
+        // Null-in/null-out, matching BOTH components it composes — so it drops into any sink
+        // that already tolerated the sanitiser's own nullable contract.
+        var scrubbed = ledger is null ? text : ledger.Scrub(text);
+        return DisplaySanitiser.SanitiseForDisplay(scrubbed);
     }
 
     /// <summary>
@@ -308,6 +470,9 @@ internal static class WatchRunner
         WatchSession<SuiteTopology> session,
         string filePath,
         TextWriter output,
+        // Non-nullable for the same reason as RunOnceFromDiskAsync's: it only ever forwards the
+        // session's own ledger.
+        ResolvedSecretLedger sessionSecretLedger,
         CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(filePath);
@@ -372,7 +537,8 @@ internal static class WatchRunner
                     break;
                 }
 
-                await RunOnceFromDiskAsync(session, filePath, output, cancellationToken)
+                await RunOnceFromDiskAsync(
+                        session, filePath, output, sessionSecretLedger, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
