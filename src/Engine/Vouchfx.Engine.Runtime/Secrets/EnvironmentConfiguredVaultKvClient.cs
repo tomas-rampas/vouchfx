@@ -4,7 +4,9 @@
 // requiring Vault to be configured at registry-build / validation time:
 //   • the SOURCE 'vault' is always known (so ${secret:vault/...} validates at compile
 //     time regardless of whether VAULT_ADDR/VAULT_TOKEN happen to be set then);
-//   • the CONNECTION is resolved LAZILY, on first read at step-execution time, from
+//   • the CONNECTION is resolved LAZILY, on first read at RUN time — which for a step's own
+//     field is that step executing, and for `security.clientKeyPassword` is the certificate
+//     load, before any step runs — from
 //     the run environment (§17 — a reference/config, never a YAML literal).
 //
 // If a scenario references a vault secret but the environment is not configured, the

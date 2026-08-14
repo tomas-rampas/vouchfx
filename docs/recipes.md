@@ -221,7 +221,7 @@ steps:
 
 **When to use:** You need to pass a credential (API key, bearer token, password) into a step without embedding it in source control or logs.
 
-**How it works:** A `${secret:env/VAR_NAME}` reference is resolved at **step-execution time** (never at compile time), replaced with the value of the environment variable `VAR_NAME`, and then redacted from all output and reports (displayed as `(redacted)` in logs and the HTML report). The resolved value is **never compiled into the C# IL**, never persists in the reproducibility envelope, and **never appears in `--events` JSON output** (only the reference path appears).
+**How it works:** A `${secret:env/VAR_NAME}` reference in a step's own field is resolved as that step executes — at run time, never at compile time — replaced with the value of the environment variable `VAR_NAME`, and then redacted from all output and reports (displayed as `(redacted)` in logs and the HTML report). The resolved value is **never compiled into the C# IL**, never persists in the reproducibility envelope, and **never appears in `--events` JSON output** (only the reference path appears).
 
 ### Example: API key in a header
 

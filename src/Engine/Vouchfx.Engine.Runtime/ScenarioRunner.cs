@@ -335,10 +335,14 @@ public static class ScenarioRunner
     //
     // Static-init safety: BuildSecretResolvers() must NOT read the environment or open a
     // connection at construction — it only NAMES the sources here.  The Vault connection
-    // is resolved lazily, at step-execution time, by EnvironmentConfiguredVaultKvClient
+    // is resolved lazily, at RUN time, by EnvironmentConfiguredVaultKvClient
     // (so ${secret:vault/...} validates at compile time even when VAULT_ADDR/VAULT_TOKEN
     // are not set at validation time; a missing config surfaces as an EnvironmentError
-    // only if a step actually resolves a vault secret).
+    // only if SOMETHING actually resolves a vault secret — a step's own field as that step
+    // executes, or an environment-level `security.clientKeyPassword` at the certificate load,
+    // which happens BEFORE any step runs.  The earlier wording said "only if a step actually
+    // resolves" and was a false statement about behaviour once clientKeyPassword shipped, not
+    // merely a stale adjective).
     private static readonly string[] s_knownSecretSources =
         BuildSecretResolvers().Select(r => r.Source).ToArray();
 

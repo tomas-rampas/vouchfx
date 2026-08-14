@@ -1,7 +1,10 @@
 // Vouchfx.Engine.Abstractions — VaultSecretResolver (S08-B-01, §17).
 //
 // The 'vault' secret source: resolves a ${secret:vault/<kvPath>#<field>} reference
-// against a HashiCorp Vault KV v2 store at STEP-EXECUTION TIME, returning a redacted
+// against a HashiCorp Vault KV v2 store AT RUN TIME — rather than "at step-execution time",
+// deliberately: the moment belongs to the FIELD carrying the reference, not to the reference.
+// A step's own field resolves as that step executes; `security.clientKeyPassword` resolves at
+// first use of the certificate material, before any step runs.  Returning a redacted
 // SecretString.  It is the second MVP secret source, joining 'env' (S05) through the
 // pluggable-source seam (ISecretResolver) with no change to that contract.
 //
