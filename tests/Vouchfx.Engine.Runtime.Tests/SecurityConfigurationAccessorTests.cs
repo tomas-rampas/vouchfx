@@ -1895,18 +1895,20 @@ public sealed class SecurityConfigurationAccessorTests
     /// the original predicate never saw them.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// U+2028 LINE SEPARATOR is the measured one and it is YAML-REACHABLE — the schema pattern's
     /// path class <c>[^}]+</c> admits it — and it is a LINE BREAK in HTML, where #371 records
     /// <c>HtmlRenderer.HtmlEscape</c> passing control characters straight through. So a crafted
     /// reference forges an apparent line of engine output in the report, which is exactly the
     /// hazard the C0 arm exists to prevent, reached by a character the C0 arm cannot see. The bidi
     /// controls reorder what a reader SEES without changing what a machine reads.
-    /// </remarks>
-    /// <remarks>
+    /// </para>
+    /// <para>
     /// The rows carry CODE POINTS rather than characters, and the expected escape is DERIVED from
     /// the code point rather than restated beside it. An invisible character typed as a literal
     /// into a row is invisible to a reader of this file too, and a row whose declared character
     /// and declared escape disagreed would assert nothing while looking thorough.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData(0x2028)] // LINE SEPARATOR - the measured one, and YAML-reachable.

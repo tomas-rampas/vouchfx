@@ -19,18 +19,20 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// value is absent at the source.
 /// </summary>
 /// <remarks>
+/// <para>
 /// "At run time" rather than "at step-execution time": this exception serves both resolution
 /// moments the engine has. A step's substitutable field resolves at step-execution time and a
 /// provider maps the failure to a per-step environment error; environment-level
 /// <c>security.clientKeyPassword</c> resolves at first use of the certificate material, before
 /// any step runs, and the failure aborts the run there instead. See
 /// <see cref="SecretReference"/>'s own remarks.
-/// </remarks>
-/// <remarks>
+/// </para>
+/// <para>
 /// The exception exposes <see cref="SecretSource"/> and <see cref="SecretPath"/> so
 /// callers can compose an actionable message, but it never carries a secret <em>value</em>
 /// (none exists when resolution fails). Providers map this to a per-step
 /// <see cref="Verdict.EnvironmentError"/> (§12.1).
+/// </para>
 /// </remarks>
 public sealed class SecretResolutionException : Exception
 {

@@ -31,13 +31,6 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// A parsed <c>${secret:source/path}</c> reference (§17): the declarative pointer
 /// to a secret value that the engine resolves at run time, never at compile time.
 /// </summary>
-/// <remarks>
-/// The exact resolution moment belongs to the CONSUMING field, not to this type: a step's
-/// substitutable field resolves at step-execution time, while environment-level
-/// <c>security.clientKeyPassword</c> resolves when the certificate material is first used —
-/// after the topology is up and before any step runs. What both share, and what §17 fixes, is
-/// that neither resolves at compile time.
-/// </remarks>
 /// <param name="Source">
 /// The resolver source identifier (e.g. <c>env</c>, <c>vault</c>) — the segment
 /// between <c>${secret:</c> and the first <c>/</c>.
@@ -54,6 +47,13 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// and lets callers perform a literal replacement on the original field.
 /// </param>
 /// <remarks>
+/// <para>
+/// The exact resolution moment belongs to the CONSUMING field, not to this type: a step's
+/// substitutable field resolves at step-execution time, while environment-level
+/// <c>security.clientKeyPassword</c> resolves when the certificate material is first used —
+/// after the topology is up and before any step runs. What both share, and what §17 fixes, is
+/// that neither resolves at compile time.
+/// </para>
 /// <para>
 /// This record models the <em>reference</em> only. It deliberately carries no
 /// resolved value and exposes no value-bearing member: redaction is enforced at
