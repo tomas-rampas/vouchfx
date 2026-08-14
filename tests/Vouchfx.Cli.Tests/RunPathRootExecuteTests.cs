@@ -425,6 +425,153 @@ public sealed class RunPathRootExecuteTests : IDisposable
             "environment.services.api.security.clientKeyPassword:", rendered, StringComparison.Ordinal);
     }
 
+    // ── A STEP fault vs a security PREFLIGHT fault — the row that is BROKEN (#399) ─────────
+    //
+    // The combination the matrix above never reached. Everything above pairs a step fault with a
+    // security-block SECRET fault, which both run paths compute in the SAME pass; this pairs it
+    // with a security PREFLIGHT fault (a clientCert file that does not exist, REQ-003/REQ-004),
+    // which only ProviderPipeline.Compile computes — and the two paths call that at DIFFERENT
+    // points relative to the step secret pass.
+    //
+    //   RunScenarioOwningTopologyAsync (--parallel) . Compile FIRST, secret pass second
+    //   RunSuiteAsync (no --parallel, the DEFAULT) .. secret pass FIRST, Compile second
+    //
+    // So on the default path the step fault `continue`s before the preflight fault is ever
+    // computed, and the refusal is neither reported nor counted.
+
+    private const string PreflightFaultScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "      security:\n" +
+        "        profile: mtls\n" +
+        "        endpoint: 8443\n" +
+        // The security fault: a clientCert naming a file that is not there. Inside the suite
+        // directory, so this is REQ-004's existence refusal (IsSecurityPreflight), not REQ-003's
+        // containment one — the door is ProviderPipeline.Compile, NOT the secret pass.
+        "        clientCert: ./no-such-cert.pem\n" +
+        "        clientKey: ./client.key\n" +
+        "steps:\n" +
+        "  - id: call\n" +
+        "    type: http.rest\n" +
+        "    target: api\n" +
+        "    method: GET\n" +
+        "    path: /health\n" +
+        // The step fault, in the same document.
+        "    headers:\n" +
+        "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n";
+
+    /// <summary>
+    /// <strong>This test asserts a DEFECT, not a decision.</strong> It records the CURRENT measured
+    /// behaviour of {step fault} × {security PREFLIGHT fault} on both run paths, because they
+    /// disagree and one of them is wrong. Filed as <strong>#399</strong>.
+    /// <para>
+    /// MEASURED, real CLI, this exact document:
+    /// </para>
+    /// <list type="table">
+    /// <item><description>preflight fault alone, no <c>--parallel</c> ....... exit 4, refusal printed</description></item>
+    /// <item><description>preflight fault alone, <c>--parallel 1</c> ........ exit 4, refusal printed</description></item>
+    /// <item><description>plus a step fault, <c>--parallel 1</c> ............ exit 4, refusal printed</description></item>
+    /// <item><description>plus a step fault, no <c>--parallel</c> (DEFAULT) . <strong>exit 0, refusal NEVER printed</strong></description></item>
+    /// </list>
+    /// <para>
+    /// The last row is the defect in its plainest form: ADDING a fault turns a red build green, on
+    /// the path the CLI takes by default. It is the same masking shape already fixed at the schema
+    /// door (see <c>ExecuteAsync_SecurityFaultPlusUnrelatedSchemaError_StillExitsNonZero</c>) and at
+    /// the security-secret door (<c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c>), surviving
+    /// at a third.
+    /// </para>
+    /// <para>
+    /// <strong>Why the current behaviour is asserted rather than the arm being <c>Skip</c>ped.</strong>
+    /// A skipped arm executes nothing, so when #399 is fixed nothing goes red to say this row must
+    /// change — and this file already carries the scar of a test that pinned a decision by not
+    /// exercising it (see the vacuous-tag-filter note on
+    /// <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c>). Asserted, the row is a
+    /// TRIPWIRE: the fix makes it fail here, at a named line, with the required end state written
+    /// out below.
+    /// </para>
+    /// <para>
+    /// <strong>WHEN #399 IS FIXED</strong>, delete the per-path branch: BOTH arms must then expect
+    /// <c>ExitCodes.Inconclusive</c> and must report BOTH faults, exactly as
+    /// <c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c> already does for the secret-fault
+    /// pairing. Do NOT instead delete the <c>null</c> arm — narrowing the row to the parallel path
+    /// is how this gap escaped four review gates in the first place.
+    /// </para>
+    /// <para>
+    /// The MESSAGE is asserted on both arms, in both directions. Several doors on this surface
+    /// produce exit 4, and a malformed fixture produces 4 via the all-parse-failure rule, so an exit
+    /// code alone would not prove which door ran — and on the failing arm the exit code is 0, where
+    /// the only evidence of the masking is the refusal's ABSENCE from the output.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_StepFaultMasksASecurityPreflightFault_Issue399(int? parallel)
+    {
+        // clientCert is deliberately NOT created; clientKey is, so the preflight refusal names
+        // the cert and nothing else.
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "step-and-preflight.e2e.yaml");
+        File.WriteAllText(file, PreflightFaultScenario);
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        if (parallel is null)
+        {
+            // ── THE DEFECT (#399) ──────────────────────────────────────────────────────────
+            // RunSuiteAsync's step secret door `continue`s before ProviderPipeline.Compile, so
+            // the preflight refusal is never computed: the run is green and the security fault
+            // is invisible. Both assertions below are recording a BUG, and both must be
+            // inverted by the fix.
+            Assert.Equal(ExitCodes.Success, exitCode);
+            Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+            Assert.DoesNotContain("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        }
+        else
+        {
+            // ── The correct end state, which one path already reaches ───────────────────────
+            // ProviderPipeline.Compile runs first here, so IsSecurityPreflight is set and the
+            // refusal is both printed and counted. (The step fault is not reported on this arm
+            // because the pipeline door returns first — a reporting gap of its own, but not the
+            // one that changes an exit code, so it is left to #399's fix to unify.)
+            Assert.Equal(ExitCodes.Inconclusive, exitCode);
+            Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The control for the row above: the SAME security preflight fault with NO step fault exits 4
+    /// on BOTH paths. Without it, the failing arm's exit 0 could be misread as "a missing clientCert
+    /// simply does not redden a build", when the measured cause is the step fault masking it.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecurityPreflightFaultAlone_ExitsNonZeroOnBothPaths(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "preflight-only.e2e.yaml");
+        File.WriteAllText(
+            file,
+            PreflightFaultScenario.Replace(
+                "    headers:\n"
+                + "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n",
+                string.Empty,
+                StringComparison.Ordinal));
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("step 'call'", rendered, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// The fourth combination — a secured suite with NO secret fault — so the cases above cannot be
     /// satisfied by an implementation that simply exits non-zero for any secured suite.

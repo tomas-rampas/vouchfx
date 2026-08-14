@@ -80,7 +80,9 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// </remarks>
 public sealed class ResolvedSecretLedger
 {
-    // Ordinal set of revealed values seen this scenario.  A HashSet gives O(1) record and
+    // Ordinal set of revealed values seen over this ledger's lifetime — the whole run, as the
+    // engine constructs it (see the header and the type remarks; the scope is the CONSTRUCTOR's
+    // choice, not this field's).  A HashSet gives O(1) record and
     // de-duplicates when the same secret is resolved at many sinks.  Plain strings only —
     // never a SecretString — so the ledger cannot itself become a value-comparison oracle
     // across the boundary (it lives wholly in the Default ALC).

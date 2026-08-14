@@ -3934,16 +3934,41 @@ public static class ScenarioRunner
     /// <strong>The justification is deliberately NARROW: "before its security declaration could be
     /// validated at all", not "before any container started".</strong> The broader wording was
     /// measured to describe a rule the engine does not implement. Two LATER doors also reject a
-    /// secured suite before any container starts and correctly exit 0 — the provider-pipeline door
-    /// (e.g. a <c>script.csharp</c> <c>file:</c> that does not resolve) and the step
-    /// secret-reference door — because by then <c>EnvironmentSecurityValidator.Validate</c> HAS
-    /// run inside <c>ProviderPipeline.Compile</c>, ahead of step model validation, so the
-    /// declaration was actually validated and only something else failed. At THIS door nothing was
-    /// validated at all, which is the whole distinction. Those doors' exit 0 is a decision made on
-    /// evidence, and BOTH are pinned by test in <c>RunPathRootExecuteTests</c> — the pipeline door
-    /// by <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c> and the step-secret door
-    /// by <c>ExecuteAsync_UnknownSecretSourceInAStep_IsNotCarvedOut</c>. Do not "fix" either to
-    /// match a broader reading of this sentence.
+    /// secured suite before any container starts and exit 0 — the provider-pipeline door (e.g. a
+    /// <c>script.csharp</c> <c>file:</c> that does not resolve) and the step secret-reference
+    /// door. At THIS door nothing about the declaration was examined; at those two something was,
+    /// and that is the whole distinction the narrow wording draws.
+    /// </para>
+    /// <para>
+    /// <strong>That reading is sound on ONE of the two run paths, and DOOR ORDER is why.</strong>
+    /// In <see cref="RunScenarioOwningTopologyAsync"/> — the single-scenario core that
+    /// <c>--parallel</c> drives — <c>ProviderPipeline.Compile</c> runs FIRST and the step secret
+    /// pass second, so <c>EnvironmentSecurityValidator.Validate</c> has already run when either
+    /// door fires and the declaration really was validated. In <see cref="RunSuiteAsync"/> — the
+    /// shared-topology path the CLI takes when <c>--parallel</c> is ABSENT, i.e. the DEFAULT — the
+    /// order is REVERSED: the step secret door <c>continue</c>s before <c>ProviderPipeline.Compile</c>
+    /// is ever reached, so a security-preflight fault in the same document is neither computed nor
+    /// reported.
+    /// </para>
+    /// <para>
+    /// MEASURED, real CLI, one secured single-file suite whose <c>clientCert</c> names a missing
+    /// file: alone it exits 4 on both paths; add a step-level <c>${secret:nosuchsource/…}</c> and it
+    /// still exits 4 under <c>--parallel 1</c> but exits 0 by DEFAULT, with the preflight refusal
+    /// never printed. Adding a fault makes the build greener — the same masking shape already fixed
+    /// at the schema door and at the security-secret door, surviving at this one. That is filed as
+    /// <strong>#399 and is NOT settled here</strong>: the exit-0 decision above holds on the parallel
+    /// path and is OPEN on the suite path. This comment is not where that decision gets recorded, and
+    /// nothing here should be read as an argument against resolving it.
+    /// </para>
+    /// <para>
+    /// What is pinned by test, and by WHICH test, in <c>RunPathRootExecuteTests</c>:
+    /// <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c> pins the PIPELINE door on a
+    /// SECURED suite, both paths. <c>ExecuteAsync_UnknownSecretSourceInAStep_IsNotCarvedOut</c> pins
+    /// the step-secret door on an UNSECURED document — its fixture declares no <c>security</c> block
+    /// at all, so it is a carve-out-narrowness control and says nothing about a secured suite; an
+    /// earlier form of this paragraph cited it as though it did.
+    /// <c>ExecuteAsync_StepFaultMasksASecurityPreflightFault_Issue399</c> records the gap above as
+    /// measured, per path, and is the row to flip when #399 is resolved.
     /// </para>
     /// <para>
     /// <strong>Emitted on the SAME disjunction the flag uses</strong>, never on

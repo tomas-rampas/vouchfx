@@ -246,8 +246,12 @@ public static class KafkaSecurityHelper
         "            // '!= null' rather than string.IsNullOrEmpty, deliberately, and the reason is\n" +
         "            // about WHO OWNS THE RULE rather than about which values reach here. An empty\n" +
         "            // RESOLVED value is refused by the engine accessor with a diagnostic that can\n" +
-        "            // say why (SecurityConfigurationAccessor.cs:1131) — but that guard covers ONE\n" +
-        "            // IMPLEMENTATION, not this interface. ISecurityCertificateMaterial's\n" +
+        "            // say why (the empty-value guard in SecurityConfigurationAccessor's\n" +
+        "            // ResolveClientKeyPassword — cited by METHOD because this literal is a public\n" +
+        "            // const that INLINES into every consuming assembly, so a line number here goes\n" +
+        "            // stale inside shipped IL that no rebuild of this project can correct) — but\n" +
+        "            // that guard covers ONE IMPLEMENTATION, not this interface.\n" +
+        "            // ISecurityCertificateMaterial's\n" +
         "            // ClientKeyPassword is a default-implemented public v1 member, so material\n" +
         "            // supplied by a direct engine embedder can hand this seam an empty\n" +
         "            // SecretString and arrive outside that refusal, exactly the bypass the 'tls'\n" +
@@ -280,7 +284,8 @@ public static class KafkaSecurityHelper
         "            // 'fix' it in isolation. REQ-008 scopes its unconditional-read constraint to\n" +
         "            // the 'mtls' branch, because the read exists to guard a key this branch never\n" +
         "            // presents. The schema forbids 'clientKeyPassword' under 'tls' outright\n" +
-        "            // (root-language-schema.json:430), so the only way to declare one here is the\n" +
+        "            // (the boolean-'false' subschema in the 'security' $def's own allOf, in\n" +
+        "            // root-language-schema.json), so the only way to declare one here is the\n" +
         "            // same embedder bypass the contradiction guard above addresses, and the\n" +
         "            // consequence is a missing diagnostic rather than a weakened connection:\n" +
         "            // nothing is decrypted, nothing is presented, no key reaches librdkafka.\n" +

@@ -54,7 +54,17 @@ verdict names:
 - a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
   escapes the suite directory or does not exist, an artefact `target` that is not an absolute
   in-container file path, or a `profile` with no wiring for the target's kind. No container
-  starts and the run exits **4**;
+  starts and the run exits **4**. One measured exception applies to this arm, on the default
+  (non-`--parallel`) path only, and it is a defect rather than a design — pre-existing, tracked as
+  issue #399. The preflight can only refuse a document that reaches it, and on that path a
+  **step-level** secret reference the engine refuses (a `${secret:...}` naming a source it cannot
+  resolve, for instance) is judged first and stops the document short of the preflight. A scenario
+  carrying both faults therefore loses the security refusal altogether — the printed diagnostic as
+  well as the exit code — and the run exits **0** on the step fault's own ordinary terms, which are
+  Inconclusive and gated by `--fail-on-inconclusive` like any other authoring error. Both faults
+  must sit in the **same** scenario document to collide. A security fault with no step fault beside
+  it exits 4 as described, on either path, and `--parallel` reaches the preflight first and exits 4
+  either way;
 - the **schema** rejects the document first — and for a document that declares a `security:` block
   at all, *any* schema error counts, wherever in the document it sits. The reason is that nothing
   downstream of a schema rejection runs, so the declaration is never validated, never probed and
