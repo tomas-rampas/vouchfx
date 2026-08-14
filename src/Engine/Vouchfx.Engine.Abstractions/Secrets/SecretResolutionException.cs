@@ -1,6 +1,6 @@
 // Vouchfx.Engine.Abstractions — SecretResolutionException (S05-B-02, §17).
 //
-// Thrown when a secret reference cannot be resolved at step-execution time: the
+// Thrown when a secret reference cannot be resolved at run time: the
 // source is unknown, or the value is absent at the source. The exception carries
 // the SOURCE and PATH (the reference coordinates) but NEVER a value — there is no
 // value to carry when resolution fails, and even partial state must not leak.
@@ -15,9 +15,17 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 
 /// <summary>
 /// Raised when a <c>${secret:source/path}</c> reference cannot be resolved at
-/// step-execution time (§17): the source is not configured for the run, or the
+/// run time (§17): the source is not configured for the run, or the
 /// value is absent at the source.
 /// </summary>
+/// <remarks>
+/// "At run time" rather than "at step-execution time": this exception serves both resolution
+/// moments the engine has. A step's substitutable field resolves at step-execution time and a
+/// provider maps the failure to a per-step environment error; environment-level
+/// <c>security.clientKeyPassword</c> resolves at first use of the certificate material, before
+/// any step runs, and the failure aborts the run there instead. See
+/// <see cref="SecretReference"/>'s own remarks.
+/// </remarks>
 /// <remarks>
 /// The exception exposes <see cref="SecretSource"/> and <see cref="SecretPath"/> so
 /// callers can compose an actionable message, but it never carries a secret <em>value</em>

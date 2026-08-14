@@ -27,7 +27,7 @@ namespace Vouchfx.Engine.Abstractions.Secrets.Vault;
 
 /// <summary>
 /// Resolves secrets from a HashiCorp Vault KV v2 store — the MVP <c>vault</c> source
-/// (§17).  Resolution happens at step-execution time via the injected
+/// (§17).  Resolution happens at run time via the injected
 /// <see cref="IVaultKvClient"/>; the resolved value is wrapped in a redacted
 /// <see cref="SecretString"/> minted here at the source.
 /// </summary>
@@ -114,7 +114,7 @@ public sealed class VaultSecretResolver : ISecretResolver, IDisposable
                 "'#password').");
         }
 
-        // Resolution happens HERE, at step-execution time — never at compile time (§17).
+        // Resolution happens HERE, at run time — never at compile time (§17).
         // The client throws SecretResolutionException (path-only message) on an absent
         // path / unauthorised / transport failure.
         IReadOnlyDictionary<string, string> data = _client.ReadKeyValues(kvPath);

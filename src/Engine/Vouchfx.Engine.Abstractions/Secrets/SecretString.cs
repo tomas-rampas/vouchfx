@@ -127,7 +127,7 @@ public sealed class SecretStringJsonConverter : JsonConverter<SecretString>
         JsonSerializerOptions options)
         => throw new NotSupportedException(
             "A SecretString cannot be deserialised from JSON; secret values are " +
-            "minted only by a resolver at step-execution time (§17).");
+            "minted only by a resolver at run time (§17).");
 
     /// <summary>
     /// Writes <see cref="SecretString.RedactedMarker"/> instead of the value.

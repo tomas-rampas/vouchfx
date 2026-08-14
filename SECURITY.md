@@ -50,8 +50,8 @@ A good report lets us reproduce and triage fast. Please include, where possible:
 - Your assessment of **severity** and any known mitigations or workarounds.
 
 > 🔐 **Redact secrets before sending.** vouchfx references secrets by reference
-> only (`${secret:source/path}`) and resolves them at step-execution time, so
-> well-formed suites should never *contain* secret values (see "Secrets posture"
+> only (`${secret:source/path}`) and resolves them at run time, never at compile
+> time, so well-formed suites should never *contain* secret values (see "Secrets posture"
 > below). If your reproduction nonetheless surfaces a credential in a log or
 > dump, redact it before sending us the report.
 
@@ -145,9 +145,14 @@ networks, and supply-chain weaknesses in the CI/release templates.
 By design, vouchfx never embeds secret *values* in suites or compiled output:
 
 - Suites reference secrets only as `${secret:source/path}` — **never literals**.
-- Secrets resolve **at step-execution time, not compile time**, so values are
+- Secrets resolve **at run time, never at compile time**, so values are
   never baked into the emitted IL or the reproducibility envelope (which hashes
-  the *reference*, never the value).
+  the *reference*, never the value). The exact run-time moment belongs to the
+  field: a step's own field resolves as that step executes, while
+  `security.clientKeyPassword` resolves at first use of the certificate material
+  it unlocks — after the topology is up and before any step runs. *Never at
+  compile time* is the property in scope for a report; *at step execution* is
+  true of a step's fields only and is not the guarantee being claimed here.
 - Resolution returns a typed `SecretString` with no value-returning
   `ToString()`/`IFormattable`, so accidental interpolation redacts at the source.
 

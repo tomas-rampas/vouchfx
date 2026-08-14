@@ -48,8 +48,9 @@ verdict names:
   connection lands here rather than in a list that has to be kept current: the endpoint refuses the
   connection or does not speak TLS, its certificate does not chain to the declared `caCert`, it
   refuses the declared client certificate, or the declared client identity cannot be **loaded** at
-  all — which covers a `clientKeyPassword` that cannot be resolved, that resolves to an empty value,
-  or that does not decrypt the key. The run aborts before any step executes and exits **3**;
+  all — which covers a well-formed `clientKeyPassword` that cannot be resolved, that resolves to an
+  empty value, or that does not decrypt the key. The run aborts before any step executes and exits
+  **3**;
 - a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
   escapes the suite directory or does not exist, an artefact `target` that is not an absolute
   in-container file path, or a `profile` with no wiring for the target's kind. No container
@@ -65,6 +66,15 @@ verdict names:
   the practical consequence: in a suite that declares `security:`, a schema error anywhere now
   reddens the run, where the same typo in an unsecured suite still exits 0. The run prints a line
   saying so, rather than leaving the exit code to be guessed at;
+- the **secret reference** a `security:` block declares is refused before the topology is built:
+  `clientKeyPassword` naming a source the engine cannot resolve, or holding anything other than one
+  whole, well-formed `${secret:<source>/<path>}` reference. A declaration the engine cannot honour is
+  one it cannot confirm. No container starts and the run exits **4**. Mind the boundary against the
+  probe bullet above, because the two read alike and carry different codes: this door judges the
+  reference's **form and source** from the YAML alone, before anything starts; a well-formed
+  reference naming a known source that then fails to *resolve*, resolves empty, or does not open the
+  key is the probe's case and exits **3**. The same fault in a *step's* field is an ordinary
+  authoring error and carries no unconditional exit at all;
 - a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
   different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
   file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.

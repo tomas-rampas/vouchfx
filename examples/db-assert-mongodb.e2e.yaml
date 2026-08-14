@@ -36,10 +36,13 @@ environment:
         # Container-native connection string, resolved to the mongodb dependency's
         # database resource (never the host-published localhost:randomport) — see
         # the SUT configuration surface (`env:`).  A secret reference is NOT valid
-        # here: env: values resolve at container-BUILD time, before the topology
-        # starts, whereas ${secret:...} deliberately resolves only at
-        # step-execution time (§17) — baking a secret into a container's
-        # environment would expose it via `docker inspect`.
+        # here, and the reason is exposure rather than timing: a container's
+        # environment is fixed when it starts and is readable by anyone who can
+        # run `docker inspect` against it, so a resolved secret written here would
+        # be handed to every reader of the container's configuration.  The bar is
+        # on THIS map, not on `environment:` as a whole — `security.clientKeyPassword`
+        # does take a ${secret:...} reference, and the engine uses its value to open
+        # a private key in its own process without ever writing it into a container.
         MONGO_CONNECTION: "${conn:orders-mongo}"
 
   dependencies:

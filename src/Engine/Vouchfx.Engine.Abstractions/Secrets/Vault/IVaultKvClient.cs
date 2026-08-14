@@ -27,8 +27,10 @@ namespace Vouchfx.Engine.Abstractions.Secrets.Vault;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Implementations resolve <strong>at step-execution time only</strong>; no read
-/// happens at compile time, so no secret value is ever baked into the emitted IL.
+/// Implementations resolve <strong>at run time, never at compile time</strong>; no read
+/// happens at compile time, so no secret value is ever baked into the emitted IL. Which
+/// run-time moment is the calling field's property, not this interface's — see
+/// <see cref="Vouchfx.Engine.Abstractions.Secrets.SecretReference"/>'s own remarks.
 /// </para>
 /// <para>
 /// The interface lives in <c>Vouchfx.Engine.Abstractions</c> so the

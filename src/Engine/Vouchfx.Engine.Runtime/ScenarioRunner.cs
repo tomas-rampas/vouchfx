@@ -151,9 +151,10 @@ public sealed record SuiteResult(
     ///       <item><description>
     ///         <strong>Scenario against scenario.</strong> Its scenarios resolve their declared
     ///         paths against different directories. Requires <c>compilations.Count &gt;= 2</c>, so
-    ///         only a multi-scenario suite reaches it — which is why the published surfaces
-    ///         (<c>docs/ci-integration.md</c>, <c>ExitCodes</c>' own summary) describe the refusal
-    ///         as a multi-scenario one.
+    ///         only a multi-scenario suite reaches it — which is why the published surface
+    ///         (<c>docs/ci-integration.md</c>) describes the refusal as a multi-scenario one.
+    ///         <c>ExitCodes</c> once carried a second summary saying the same thing and has been
+    ///         rewritten to point here instead, precisely because it had already gone stale.
     ///       </description></item>
     ///       <item><description>
     ///         <strong>Scenario against seed root</strong> (m4, fix round eight). The scenarios'

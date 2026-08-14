@@ -339,7 +339,7 @@ vouchfx run tests/secure
 **Key points:**
 
 - Vault sources are configured at runtime via environment variables (`VOUCHFX_VAULT_ADDR`, `VOUCHFX_VAULT_TOKEN`, etc.).
-- A `${secret:vault/path/to/secret}` reference is resolved from Vault at step-execution time.
+- A `${secret:vault/path/to/secret}` reference is resolved from Vault at run time, never at compile time. In a step's own field that is immediately before the step executes; the one environment-level field that takes a reference, `security.clientKeyPassword`, resolves earlier — at first use of the certificate material, before any step runs (`docs/01` §17.1.1).
 - In `script.csharp` steps, a resolved secret is available as a `SecretString` (see `docs/01` §17) — a type that prevents accidental logging or serialization of the value.
 - The reference path (e.g., `vault/database/prod`) appears in output and the reproducibility envelope; the resolved value does not.
 - For the full Vault configuration and API, see `docs/01` §17 (Secrets).
