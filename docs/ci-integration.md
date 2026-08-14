@@ -43,9 +43,13 @@ A suite that declares a `security:` block the engine **cannot confirm** exits no
 `--fail-on-env-error` and no `--fail-on-inconclusive`. Each cause keeps the exit code its own
 verdict names:
 
-- the post-health-gate **secured-confirmation probe** fails — the declared endpoint refuses the
-  connection, does not speak TLS, presents a certificate that does not chain to the declared `caCert`,
-  or refuses the declared client certificate. The run aborts before any step executes and exits **3**;
+- the post-health-gate **secured-confirmation probe** fails. The probe connects to the declared
+  endpoint with exactly the material a step would use, so *anything* that stops it completing that
+  connection lands here rather than in a list that has to be kept current: the endpoint refuses the
+  connection or does not speak TLS, its certificate does not chain to the declared `caCert`, it
+  refuses the declared client certificate, or the declared client identity cannot be **loaded** at
+  all — which covers a `clientKeyPassword` that cannot be resolved, that resolves to an empty value,
+  or that does not decrypt the key. The run aborts before any step executes and exits **3**;
 - a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
   escapes the suite directory or does not exist, an artefact `target` that is not an absolute
   in-container file path, or a `profile` with no wiring for the target's kind. No container
