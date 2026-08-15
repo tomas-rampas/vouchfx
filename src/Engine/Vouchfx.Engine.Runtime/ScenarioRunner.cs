@@ -132,11 +132,14 @@ public sealed record SuiteResult(
 /// </para>
 /// <para>
 /// <strong>The enumeration anchor this paragraph used to carry is GONE, not corrected.</strong> It
-/// designated <c>grep "new ScenarioCoreResult("</c> as the authoritative producer list — a grep
+/// designated a grep for this record's constructor as the authoritative producer list — a grep
 /// blind to the two implicit-conversion operators on this very record (both of which hard-coded
 /// <c>false</c>) and to the tuple returns routing through them. A list that cannot enumerate
 /// itself is the same class of defect as the doors it documented. There is no producer list under
 /// the derived rule: see <see cref="SecurityAssurance"/>.
+/// (The retired grep is described here, not quoted: a retraction that spells out the string it
+/// retracts is still found by every future sweep for that string, which is how a dead claim gets
+/// re-litigated. State what was retired; let the reader reconstruct it if they need it.)
 /// </para>
 /// </remarks>
 /// <param name="Verdict">The scenario's aggregate verdict.</param>

@@ -1063,9 +1063,17 @@ internal static class RunCommand
         // It used to be two, one per schema door, each computing for itself whether the document
         // declared security. Both are gone: this reads the same assurance the exit code reads, so
         // a non-zero exit and its explanation cannot come apart — and it now covers every door
-        // that raises, not only the schema one. Four shapes reach it that previously exited 0 in
-        // silence: a step-level secret fault, an unresolvable `script.csharp file:`, a
-        // `${conn:typo}` and a protocol conflict, each in a suite that declares `security`.
+        // that raises, not only the schema one.
+        //
+        // WHICH SHAPES REACH IT IS A PROPERTY, NOT A LIST. An authoring refusal that left some
+        // declared target unconfirmed, or a refusal located in the declaration itself, reaches
+        // this line; which door it came from is not consulted, because `Unconfirmed` is derived
+        // once from the assurance rather than decided per door — so the set grows with the doors
+        // and needs no maintenance here. A list was written here first and was short the day it was written:
+        // it named the step-level secret fault, the unresolvable `script.csharp file:`, the
+        // `${conn:typo}` and the protocol conflict, and omitted the shared-`environment`
+        // divergence guard, which prints this notice and exits 3 (measured, real CLI). Read the
+        // property; the secured rows of SecurityAssuranceMatrixTests pin the shapes measured so far.
         //
         // Suppressed for a failed PROBE: that path already reports a measured security failure in
         // its own words, and a generic line after it would add nothing.

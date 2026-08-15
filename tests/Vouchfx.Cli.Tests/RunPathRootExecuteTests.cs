@@ -526,9 +526,9 @@ public sealed class RunPathRootExecuteTests : IDisposable
     /// <para>
     /// <strong>Why the current behaviour is asserted rather than the arm being <c>Skip</c>ped.</strong>
     /// A skipped arm executes nothing, so when #399 is fixed nothing goes red to say this row must
-    /// change — and this file already carries the scar of a test that pinned a decision by not
-    /// exercising it (see the vacuous-tag-filter note on
-    /// <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c>). Asserted, the row is a
+    /// change — and this suite already carries the scar of a test that pinned a decision by not
+    /// exercising it (the vacuous-tag-filter note, which moved to <c>SecurityAssuranceMatrixTests</c>'s
+    /// Row 6 when the test carrying it was deleted). Asserted, the row is a
     /// TRIPWIRE: the fix makes it fail here, at a named line, with the required end state written
     /// out below.
     /// </para>
@@ -606,49 +606,12 @@ public sealed class RunPathRootExecuteTests : IDisposable
         Assert.DoesNotContain("step 'call'", rendered, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// The fourth combination — a secured suite with NO secret fault — so the cases above cannot be
-    /// satisfied by an implementation that simply exits non-zero for any secured suite.
-    /// <para>
-    /// An earlier form of this test used a tag filter matching nothing, and was VACUOUS: selection
-    /// short-circuits before compilation, so zero scenarios ran and no door was reached — the same
-    /// filter applied to a document with a genuine EDGE-003 fault also exits 0. It is instead
-    /// driven with a document whose scenario carries a NON-security early verdict (an unresolvable
-    /// <c>script.csharp</c> <c>file:</c> reference), so the pre-topology doors DO run, the flag
-    /// stays false, and no topology is built.
-    /// </para>
-    /// </summary>
-    [Theory]
-    [InlineData(null)]
-    [InlineData(1)]
-    public async Task ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut(int? parallel)
-    {
-        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
-        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
-        var file = Path.Combine(_root, "clean-secured.e2e.yaml");
-        File.WriteAllText(
-            file,
-            SecuredScenarioHead +
-            "        clientCert: ./client.pem\n" +
-            "        clientKey: ./client.key\n" +
-            "        clientKeyPassword: \"${secret:env/CLIENT_KEY_PASS}\"\n" +
-            "steps:\n" +
-            "  - id: helper\n" +
-            "    type: script.csharp\n" +
-            "    file: no-such-helper.csx\n");
-
-        var sw = new StringWriter();
-        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
-        var rendered = sw.ToString();
-
-        // The doors genuinely ran: the pipeline reported the missing file, which only happens
-        // downstream of the schema and secret-reference doors this suite is testing.
-        Assert.Contains("no-such-helper.csx", rendered, StringComparison.Ordinal);
-
-        // …and the flag stayed false, so REQ-018's carve-out did NOT fire: exit 0 without
-        // --fail-on-inconclusive, despite `security` being declared.
-        Assert.Equal(ExitCodes.Success, exitCode);
-    }
+    // ── ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut USED TO SIT HERE ───────────
+    //
+    // It asserted the rule security-assurance-derivation overturned, and it is DELETED rather than
+    // rewritten because its rewritten form would have been a second copy of
+    // SecurityAssuranceMatrixTests' Row 6. The retraction — the old rule, the decision that
+    // overturned it, and why — is recorded there, at the row that now owns this fixture shape.
 
     /// <summary>
     /// The FIFTH combination, and the one that shipped broken: a security fault plus an UNRELATED

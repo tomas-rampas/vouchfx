@@ -331,6 +331,54 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
 
     // ── Row 6: an unresolvable `script.csharp file:` ALONE ────────────────────────────────
     //   secured ○ → 4    unsecured 0, unchanged
+    //
+    // ── RETRACTION: THE RULE THIS ROW OVERTURNED ──────────────────────────────────────────
+    //
+    // `RunPathRootExecuteTests.ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut` asserted
+    // the OPPOSITE of the secured row below, on both run paths, over this same fixture shape: a
+    // secured document whose only fault is an unresolvable `script.csharp file:` exits 0, because
+    // REQ-018's carve-out did not reach that door.
+    //
+    // THE OLD RULE WAS DELIBERATELY OVERTURNED, not found defective on its own terms. It was true
+    // and load-bearing while the carve-out was NARROW: the flag was raised by named doors, this was
+    // not one of them, and the test's job was to prove the narrowness was a decision rather than an
+    // accident — so that the security rows either side of it could not be satisfied by an
+    // implementation that simply reddened every secured suite.
+    //
+    // WHY IT NO LONGER HOLDS. The derived rule is WIDE by decision (spec REQ-003, stated as a
+    // user-visible consequence in REQ-004): an authoring refusal that leaves a declared target
+    // unconfirmed raises, because nothing downstream of the refusal ever validates the
+    // declaration — and which door refused is not consulted. (Not "whatever refused it": Row 09's
+    // unparseable secured document is refused before any container starts and does NOT raise, its
+    // own row asserting the notice is absent. The identity of the door is irrelevant; the
+    // predicate is not.) An unresolvable `script.csharp file:` is one such refusal. The
+    // row therefore flips from 0 to 4 — and that flip IS the requirement, so a test asserting the
+    // 0 was, from that decision onward, a test asserting the defect.
+    //
+    // WHY DELETED RATHER THAN REWRITTEN IN PLACE. Rewritten, it would have become this row: same
+    // document shape, same two arms, same assertion — one rule asserted twice in two files, which
+    // is the drift this whole spec exists to close. The surviving spelling is the one that also
+    // carries the unsecured control.
+    //
+    // WHAT THE DELETED TEST'S JOB IS NOW — AND THE COVERAGE THAT WENT WITH IT. Its guard did not
+    // move file; it moved TIER, and that is worth stating plainly rather than leaving to be
+    // inferred. "A secured suite does not simply always exit non-zero" is still proved HERE for
+    // UNSECURED documents by the control below, but no Docker-free test at THIS tier drives a
+    // SECURED document to exit 0 any more, and the tier has nowhere to put one. The guard
+    // therefore lives at the record tier, in SecurityConfirmationExitCodeTests, where a declared
+    // `security` block still exits 0:
+    // `FromVerdict_SecuredSuiteWhoseHealthGateFailed_StillExitsSuccess`,
+    // `FromVerdict_TopologyUpAndProbeConfirmed_MapsPerTaxonomy` and
+    // `Unconfirmed_AuthoringRefusalBesideAFullyConfirmedProbe_DoesNotRaise`; and end-to-end in
+    // `KafkaSecurityConfirmationDrillDockerTests`, which needs Docker. The residual risk is
+    // named rather than hidden: a regression confined to CLI WIRING that reddened a secured suite
+    // which ought to exit 0 would leave all three record-tier guards green.
+    //
+    // THE SCAR IT CARRIED, kept here because #399's row in RunPathRootExecuteTests cites it. An
+    // earlier form of the deleted test drove this case with a tag filter matching nothing and was
+    // VACUOUS: selection short-circuits before compilation, so no door ran at all — the same filter
+    // over a document with a genuine security fault also exits 0. It was re-driven with the
+    // `script.csharp file:` fixture this row now uses.
 
     [Theory]
     [InlineData(null)]
@@ -449,8 +497,9 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     //   secured ○ → 4    unsecured 0, unchanged
     //
     // The door whose own written rationale this change overturns: "a protocol conflict is an
-    // authoring error, not a failure to confirm a security assertion". Under the derived rule a
-    // secured document refused before any container starts is unconfirmable WHATEVER refused it.
+    // authoring error, not a failure to confirm a security assertion". Under the derived rule the
+    // door's own classification of its fault is not consulted: an authoring refusal that leaves a
+    // declared target unconfirmed raises whichever door recorded it.
     //
     // `run` ONLY, and the absence is structural rather than an omission: the suite-level guard
     // exists because ONE shared topology stages one value per target for every scenario. Under
