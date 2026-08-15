@@ -94,7 +94,7 @@ code — a pipeline keying on the taxonomy reads the same outcome it always did:
 | The run's verdict | Exit | The usual shape behind it for a secured suite |
 |---|---|---|
 | Inconclusive | **4** | the document was refused on an authoring fault — the common case for anything caught before the topology exists |
-| EnvironmentError | **3** | the confirmation probe measured the declaration not to hold; or the suite aborted as an environment error rather than reporting a per-scenario verdict |
+| EnvironmentError | **3** | the confirmation probe measured the declaration not to hold; or a suite-level guard refused the suite with an environment error |
 | Fail | **1** | unconditional already; the rule changes nothing here |
 
 A refusal is therefore not automatically a 4 — the fault decides the verdict and the verdict decides
