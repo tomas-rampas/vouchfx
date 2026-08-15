@@ -1380,7 +1380,12 @@ public static class ScenarioRunner
         // CLASSIFICATION — AND THIS BRANCH'S OWN WRITTEN RATIONALE IS OVERTURNED HERE, deliberately
         // and on the record rather than quietly dropped. It used to argue: "a protocol conflict is
         // an authoring error, not a failure to confirm a security assertion", and declined to raise.
-        // The schema door, forty lines above, argued the opposite of the same question and widened.
+        // The schema door, elsewhere in this same method, argued the opposite of the same question
+        // and widened. (No distance is quoted: an earlier wording said "forty lines above", which
+        // is the base-directory guard's distance from this seam — correctly stated twice elsewhere
+        // in this file — and not the schema door's, which is ~188 lines at HEAD and was ~195 at the
+        // branch point. Two neighbouring true uses of the figure are what made the false one read
+        // as checked.)
         // Both were sound in isolation; they cannot both be the rule, and while both shipped, door
         // ORDER decided an exit code.
         //

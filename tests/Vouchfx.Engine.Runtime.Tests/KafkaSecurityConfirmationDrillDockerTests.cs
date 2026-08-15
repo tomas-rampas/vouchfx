@@ -342,9 +342,10 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     {
         // The abort came from REQ-005's PROBE, not from the pre-topology security preflight. Worth
         // pinning separately, because the assurance reads UNCONFIRMED for BOTH — a preflight
-        // rejection (a path that escapes the suite directory, a file that is not there) sets the
-        // same flag — and the two edges are specifically about failures no pre-topology check can
-        // see. `SecurityConfirmation` is OrchestrationErrorKind's own name for the probe's arm.
+        // rejection (a path that escapes the suite directory, a file that is not there) records a
+        // refusal of its own — and the two edges are specifically about failures no pre-topology
+        // check can see. `SecurityConfirmation` is OrchestrationErrorKind's own name for the
+        // probe's arm.
         Assert.Equal("SecurityConfirmation", drill.AbortKind);
 
         // …and from the network arm THIS row's edge belongs to, so TLS was actually attempted and

@@ -26,8 +26,8 @@ a product defect:
 | **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – | `run` always; `plan` when no gaps or `--fail-on-gap` not set |
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
-| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** a `security:` declaration the probe measured not to hold, or a secured suite refused before its topology was built, which always break CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in — **except** a rejected `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
+| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,

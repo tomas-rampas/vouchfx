@@ -152,10 +152,12 @@ internal static class ExitCodes
     /// <para>
     /// An unconfirmed <paramref name="securityAssurance"/> can arrive with THREE verdicts, and
     /// forces the verdict's OWN opt-in code rather than substituting a single fixed one on the two
-    /// that have one, so the code a pipeline reads still identifies the outcome: a failed probe
-    /// aborts the topology and aggregates to <see cref="Verdict.EnvironmentError"/> → 3, while a
-    /// pre-topology refusal is an authoring error that aggregates to
-    /// <see cref="Verdict.Inconclusive"/> → 4. Both are non-zero, which is the whole of what
+    /// that have one, so the code a pipeline reads still identifies the outcome:
+    /// <see cref="Verdict.EnvironmentError"/> → 3, <see cref="Verdict.Inconclusive"/> → 4. WHICH of
+    /// the two a given refusal produces is decided by the verdict that refusal carries, never by
+    /// whether a container had started — measured, the suite-level shared-<c>environment</c>
+    /// divergence guard refuses before any container starts and still aggregates to
+    /// <see cref="Verdict.EnvironmentError"/> → 3. Both are non-zero, which is the whole of what
     /// REQ-018 requires.
     /// </para>
     /// <para>
@@ -174,11 +176,11 @@ internal static class ExitCodes
     /// <para>
     /// The DISCARD arm (<c>_ =&gt;</c>) is the one place it DOES substitute a fixed code —
     /// <see cref="EnvironmentError"/> (3) — and it is the exception that proves the own-code rule
-    /// rather than a contradiction of it, because nothing it covers is reachable with the flag set.
-    /// It covers <see cref="Verdict.Pass"/> and, deliberately, anything else that is not a declared
-    /// enum member (an out-of-range cast, or a member a later release adds) — and that breadth is
-    /// the point rather than an accident, since a fail-closed default is worth exactly as much as
-    /// the set of unforeseen inputs it catches. For Pass the unreachability is structural: the
+    /// rather than a contradiction of it, because nothing it covers is reachable with an
+    /// unconfirmed assurance. It covers <see cref="Verdict.Pass"/> and, deliberately, anything
+    /// else that is not a declared enum member (an out-of-range cast, or a member a later release
+    /// adds) — and that breadth is the point rather than an accident, since a fail-closed default
+    /// is worth exactly as much as the set of unforeseen inputs it catches. For Pass the unreachability is structural: the
     /// precedence <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c> means any scenario
     /// carrying a security failure elevates the aggregate above Pass, and Pass has no opt-in code
     /// to prefer in any case. It is nonetheless written to fail CLOSED rather than to fall through
