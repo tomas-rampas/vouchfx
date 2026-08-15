@@ -1549,12 +1549,18 @@ public static class ScenarioRunner
                     runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}")))
                 .ConfigureAwait(false);
 
-            // REQ-018: exactly ONE cause of an Environment error exits non-zero without
-            // --fail-on-env-error, and THIS DISCRIMINATOR IS UNTOUCHED by the derivation. The
-            // classified kind on the exception decides — not the message text and not the verdict
-            // — so an unhealthy container, an unpullable image and an unrelated seed failure all
-            // still reach this same catch, record TopologyUnavailable, and still exit 0 by
+            // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
+            // discriminator — not the message text and not the verdict — and IT IS UNTOUCHED by
+            // the derivation. An unhealthy container, an unpullable image and an unrelated seed
+            // failure all reach this same catch, record TopologyUnavailable, and still exit 0 by
             // default. That is #390, deliberately still open.
+            //
+            // Scoped to this catch deliberately. An earlier wording said "exactly ONE cause of an
+            // Environment error exits non-zero without --fail-on-env-error", which was true when
+            // the probe was the only one; the shared-`environment` divergence gate is now a second,
+            // and it never reaches this catch at all — it returns an EnvironmentError verdict with
+            // no exception to classify. A count of causes stated from inside one catch goes stale
+            // the moment a cause appears outside it.
             //
             // `Refusing` keeps the more consequential refusal, so a scenario already refused at a
             // compile-time door does not have its record overwritten by a topology that then

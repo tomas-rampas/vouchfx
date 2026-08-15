@@ -26,7 +26,7 @@ a product defect:
 | **0** | Success — Pass, or EnvironmentError/Inconclusive when not opted in | – | `run` always; `plan` when no gaps or `--fail-on-gap` not set |
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
-| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
+| **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** a `security:` declaration the probe measured not to hold, or a secured suite refused before its topology was built, which always break CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
 | **4** | Inconclusive — timeout, partition outlasted grace, unmet capture | Only when opted in — **except** a rejected `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally if every scenario fails to parse |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
@@ -40,62 +40,101 @@ the board) is classified Inconclusive and exits 4 regardless of the opt-in flag,
 of `vouchfx validate`.
 
 A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
-`--fail-on-env-error` and no `--fail-on-inconclusive`. Each cause keeps the exit code its own
-verdict names:
+`--fail-on-env-error` and no `--fail-on-inconclusive`.
 
-- the post-health-gate **secured-confirmation probe** fails. The probe connects to the declared
-  endpoint with exactly the material a step would use, so *anything* that stops it completing that
-  connection lands here rather than in a list that has to be kept current: the endpoint refuses the
-  connection or does not speak TLS, its certificate does not chain to the declared `caCert`, it
-  refuses the declared client certificate, or the declared client identity cannot be **loaded** at
-  all — which covers a well-formed `clientKeyPassword` that cannot be resolved, that resolves to an
-  empty value, or that does not decrypt the key. The run aborts before any step executes and exits
-  **3**;
-- a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
-  escapes the suite directory or does not exist, an artefact `target` that is not an absolute
-  in-container file path, or a `profile` with no wiring for the target's kind. No container
-  starts and the run exits **4**. One measured exception applies to this arm, on the default
-  (non-`--parallel`) path only, and it is a defect rather than a design — pre-existing, tracked as
-  issue #399. The preflight can only refuse a document that reaches it, and on that path a
-  **step-level** secret reference the engine refuses (a `${secret:...}` naming a source it cannot
-  resolve, for instance) is judged first and stops the document short of the preflight. A scenario
-  carrying both faults therefore loses the security refusal altogether — the printed diagnostic as
-  well as the exit code — and the run exits **0** on the step fault's own ordinary terms, which are
-  Inconclusive and gated by `--fail-on-inconclusive` like any other authoring error. Both faults
-  must sit in the **same** scenario document to collide. A security fault with no step fault beside
-  it exits 4 as described, on either path, and `--parallel` reaches the preflight first and exits 4
-  either way;
-- the **schema** rejects the document first — and for a document that declares a `security:` block
-  at all, *any* schema error counts, wherever in the document it sits. The reason is that nothing
-  downstream of a schema rejection runs, so the declaration is never validated, never probed and
-  therefore never confirmed; a rejected secured document is unconfirmable whatever the rejection
-  was about. An error inside the block itself is one case of that — a mistyped field name, a scalar
-  where a list belongs, `caCert: [a, b]`, or the per-kind narrowing of `profile` (a `profile` the
-  target's kind has no wiring for is refused by the root schema before the preflight sees it) — but
-  so is a missing `method:` on an unrelated step. No container starts and the run exits **4**. Note
-  the practical consequence: in a suite that declares `security:`, a schema error anywhere now
-  reddens the run, where the same typo in an unsecured suite still exits 0. The run prints a line
-  saying so, rather than leaving the exit code to be guessed at;
-- the **secret reference** a `security:` block declares is refused before the topology is built:
-  `clientKeyPassword` naming a source the engine cannot resolve, or holding anything other than one
-  whole, well-formed `${secret:<source>/<path>}` reference. A declaration the engine cannot honour is
-  one it cannot confirm. No container starts and the run exits **4**. Mind the boundary against the
-  probe bullet above, because the two read alike and carry different codes: this door judges the
-  reference's **form and source** from the YAML alone, before anything starts; a well-formed
-  reference naming a known source that then fails to *resolve*, resolves empty, or does not open the
-  key is the probe's case and exits **3**. The same fault in a *step's* field is an ordinary
-  authoring error and carries no unconditional exit at all;
-- a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
-  different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
-  file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.
-  No container starts and the run exits **4**. Suites declaring no `security:` block are unaffected,
-  as is `--parallel`, where each scenario owns its own topology and its own directory.
+#### What "cannot confirm" means
 
-Every *other* cause of an environment error — an unhealthy container, an unpullable image, a seed
-failure unrelated to security — is unaffected and still exits 0 by default. The reasoning behind the
-carve-out: an unconfirmable security assertion is not an infrastructure flake the way a failed image
-pull is. It is an assertion the author explicitly wrote into the suite, and treating it as opt-in-only
-would hand a team that forgot a flag a green pipeline on a security suite that verified nothing.
+A run vouches for a declared `security:` block only when it confirmed **every** target that block
+declares — each secured endpoint reached, over the transport the declaration names, with the material
+the declaration names. Two shapes raise:
+
+- the post-health-gate **confirmation probe ran and measured the declaration not to hold**. The probe
+  connects to the declared endpoint with exactly the material a step would use, so anything that stops
+  it completing that connection lands here: the endpoint refuses the connection or does not speak TLS,
+  its certificate does not chain to the declared `caCert`, it refuses the declared client certificate,
+  or the declared client identity cannot be **loaded** at all — a well-formed `clientKeyPassword` that
+  cannot be resolved, that resolves to an empty value, or that does not decrypt the key. The run
+  aborts before any step executes.
+- **something refused the document** before it could be confirmed. Nothing downstream of a refusal
+  runs, so the declaration is never validated, never probed and therefore never confirmed.
+
+Ending without that confirmation is not by itself the rule, and one shape sits outside both bullets: a
+topology that came **up** and then failed its health gate leaves the declaration unprobed and still
+exits 0. That is the deliberate exception recorded under *What does not break CI* below.
+
+**What the refusal was about is not consulted, and that is the whole of the rule.** The engine does
+not ask whether the fault was a security fault; it asks whether the refusal left a declared target
+unconfirmed. So a schema error on an unrelated step, an unresolvable `script.csharp` `file:`, a
+`${conn:…}` naming no dependency, a step-level `${secret:…}` the engine cannot resolve, a target
+addressed by two protocol families, a certificate path that escapes the suite directory or does not
+exist, a `clientKeyPassword` that is not one whole `${secret:<source>/<path>}` reference — every one
+of these is an **instance** of the property, and none of them is a definition of it. The rule holds
+for causes not named here, and this page does not maintain a list of them. The practical consequence
+is the one to plan for: **in a suite that declares `security:`, an authoring fault that stops the run
+before the declaration can be confirmed reddens it — whatever that fault was about — where the same
+fault in an unsecured suite still exits 0.**
+
+A rejection located **at or inside** the declaration counts even when the declaration is malformed
+enough that no block binds at all: `security: mtls` — the profile name written where the block
+belongs — reddens the run rather than passing as a document that declared nothing.
+
+#### The exit code is the run's own verdict code
+
+The rule decides whether a verdict breaks CI. It never changes the verdict, and it introduces no new
+code — a pipeline keying on the taxonomy reads the same outcome it always did:
+
+| The run's verdict | Exit | The usual shape behind it for a secured suite |
+|---|---|---|
+| Inconclusive | **4** | the document was refused on an authoring fault — the common case for anything caught before the topology exists |
+| EnvironmentError | **3** | the confirmation probe measured the declaration not to hold; or the suite aborted as an environment error rather than reporting a per-scenario verdict |
+| Fail | **1** | unconditional already; the rule changes nothing here |
+
+A refusal is therefore not automatically a 4 — the fault decides the verdict and the verdict decides
+the code. Measured on the built CLI with neither gating flag, both rows on the default path: a secured
+suite whose scenarios declare **different `environment` blocks** exits **3**, while one whose
+scenarios **resolve their declared security paths against different directories** exits **4**. Both
+guards exist because the scenarios of one suite share a single topology, so neither applies under
+`--parallel`, where each scenario builds its own topology and resolves its declared paths against its
+own directory.
+
+#### The exit code is never the only evidence
+
+Every raising path except a failed probe prints, after the fault it did report:
+
+> This suite declares a 'security' block that this run could not confirm, so it exits non-zero
+> whatever the fault reported above was: a run that cannot confirm a declared security assertion
+> cannot vouch for it. Each door reports only the faults it reached, so what is reported above need
+> not be the last fix before a run can confirm this suite's security block.
+
+A failed probe is the exception because it already reports a measured security failure in its own
+words. Note the reach: this line goes to **stdout only** — it is in neither `--junit` nor `--events`,
+so a job that reads only the machine-readable artefacts sees a bare non-zero exit and nothing else.
+
+#### What does *not* break CI
+
+- **A topology that came up and then failed its health gate.** That suite still exits 0 by default,
+  with or without a `security:` block, exactly as any other environment error does. Narrowing this is
+  [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390); until it lands, an unhealthy
+  container anywhere in a secured suite can leave the declaration unprobed and the pipeline green.
+- **Every other cause of an environment error** — an unhealthy container, an unpullable image, a seed
+  failure unrelated to security — is unaffected and still exits 0 by default.
+- **The same document with no `security:` block.** Measured on pairs differing in nothing else, both
+  run paths: the secured document exits 4 where the unsecured one exits 0.
+- **A run whose every scenario fails to parse.** It exits 4 through the parse rule above, not this
+  one, and prints no security line: a document that cannot be parsed cannot be shown to declare
+  anything.
+- **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
+  what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
+  declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated
+  by `--fail-on-inconclusive` like any other. Two limits on that. A refusal located **at or inside the
+  declaration itself** raises on its own and no later confirmation forgives it — `security: mtls`
+  reddens the run whatever the probe went on to confirm. And confirming *some* of what was declared is
+  not confirming it: a suite declaring two secured targets, one confirmed and one not, still breaks CI.
+
+The reasoning behind the carve-out: an unconfirmable security assertion is not an infrastructure flake
+the way a failed image pull is. It is an assertion the author explicitly wrote into the suite, and
+treating it as opt-in-only would hand a team that forgot a flag a green pipeline on a security suite
+that verified nothing.
 
 ### Artefacts
 

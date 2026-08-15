@@ -57,10 +57,19 @@ public enum SecurityAbortKind
     /// <strong>The wide reading is deliberate and overturns a written decision.</strong> The
     /// suite-level protocol-conflict guard used to argue in its own comment that "a protocol
     /// conflict is an authoring error, not a failure to confirm a security assertion", and declined
-    /// to raise. The schema door, forty lines away in the same method, argued the opposite and
-    /// widened. Both were sound in isolation and they cannot both be the rule. The wide one wins: a
-    /// secured document that aborts before any container starts is unconfirmable <em>whatever</em>
-    /// aborted it, because nothing downstream of the refusal ever runs to confirm it.
+    /// to raise. The schema door, elsewhere in the same method, argued the opposite and widened.
+    /// Both were sound in isolation and they cannot both be the rule. The wide one wins: which door
+    /// refused is not consulted, because nothing downstream of the refusal ever runs to confirm the
+    /// declaration.
+    /// </para>
+    /// <para>
+    /// <strong>"Whatever refused it" is the door's identity, not the predicate.</strong> An earlier
+    /// wording said a document aborting before any container starts is unconfirmable whatever
+    /// aborted it. That is wider than <see cref="SecurityAssurance.Unconfirmed"/>: this member
+    /// raises only in conjunction with a declared target left unconfirmed, so an unparseable secured
+    /// document binds no declaration and does not raise here (its row asserts the notice is absent),
+    /// and a refusal beside siblings whose probe confirmed every declared target does not either.
+    /// The door is irrelevant; the predicate is not.
     /// </para>
     /// </remarks>
     AuthoringFault,
