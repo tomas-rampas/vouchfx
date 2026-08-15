@@ -22,6 +22,7 @@
 // alone), does not probe the endpoint (REQ-005, a later PR), and does not orchestrate the
 // actual container-file copy (REQ-016, a later PR).
 
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
 
@@ -35,10 +36,18 @@ namespace Vouchfx.Engine.Runtime;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two rules, checked in this fixed order for every DECLARED path (REQ-003, EDGE-006 —
-/// containment before existence):
+/// Three rules, checked in this fixed order for every DECLARED path (REQ-011 first, then
+/// REQ-003/EDGE-006 containment before REQ-004 existence):
 /// </para>
 /// <list type="number">
+///   <item><description>
+///   <strong>No secret-reference syntax</strong> — a value containing
+///   <see cref="SecretReference.Sigil"/> is refused outright (REQ-011, #387), whether the
+///   reference is the whole value or embedded in a longer path. These fields name
+///   a host FILE for the engine to read and copy, and the secrets subsystem yields a VALUE,
+///   which is not a file and has no path — and resolving no path for such a value is also
+///   what stops the refusal echoing a garbled host path back at the author.
+///   </description></item>
 ///   <item><description>
 ///   <strong>Containment</strong> — the path, resolved relative to the suite
 ///   directory, must not escape it.
@@ -124,7 +133,8 @@ internal static class EnvironmentSecurityValidator
                     return shapeFailure;
                 }
 
-                var failure = ValidateSecurity(spec.Security, "services", name, resolvedSuiteDirectory);
+                var failure = ValidateSecurity(
+                    spec.Security, SecuredTargets.ServicesFieldSegment, name, resolvedSuiteDirectory);
                 if (failure is not null)
                 {
                     return failure;
@@ -137,7 +147,8 @@ internal static class EnvironmentSecurityValidator
         {
             foreach (var (name, spec) in dependencies)
             {
-                var failure = ValidateSecurity(spec.Security, "dependencies", name, resolvedSuiteDirectory);
+                var failure = ValidateSecurity(
+                    spec.Security, SecuredTargets.DependenciesFieldSegment, name, resolvedSuiteDirectory);
                 if (failure is not null)
                 {
                     return failure;
@@ -362,12 +373,30 @@ internal static class EnvironmentSecurityValidator
     }
 
     /// <summary>
-    /// Validates a single declared path-valued field: containment first (REQ-003,
-    /// EDGE-006), then existence (REQ-004). Returns <see langword="null"/> without
-    /// performing either check when <paramref name="declaredPath"/> is <see
-    /// langword="null"/> — i.e. absent (REQ-004(b) — an undeclared optional field is
-    /// absent, not missing).
+    /// Validates a single declared path-valued field: the secret-reference refusal first
+    /// (REQ-011, #387), then containment (REQ-003, EDGE-006), then existence (REQ-004).
+    /// Returns <see langword="null"/> without performing any check when
+    /// <paramref name="declaredPath"/> is <see langword="null"/> — i.e. absent (REQ-004(b) —
+    /// an undeclared optional field is absent, not missing).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This one method is the chokepoint every HOST-path-valued security field flows through —
+    /// exactly the four REQ-011 names: <c>caCert</c>, <c>clientCert</c>, <c>clientKey</c> and
+    /// every <c>serverArtifacts[].source</c> — which is why REQ-011's refusal is written here
+    /// once rather than four times at the call sites. <c>SecuredTargets</c>' own header records
+    /// what the alternative costs: one security predicate had grown three spellings in three
+    /// assemblies, each asserting in prose that it agreed with the others.
+    /// </para>
+    /// <para>
+    /// <strong>Not every path-valued field in the block.</strong>
+    /// <c>serverArtifacts[].target</c> is also path-valued but is a CONTAINER path, validated by
+    /// <see cref="ValidateArtifactTarget"/> against POSIX rules and never resolved against the
+    /// host filesystem — so it does not reach here and carries no sigil check. REQ-011 scopes
+    /// itself to the four host paths, so that is conformant rather than an omission; the gap is
+    /// filed as issue #397, not closed here.
+    /// </para>
+    /// </remarks>
     private static ValidationFailure? ValidatePath(
         string? declaredPath,
         string fieldName,
@@ -381,6 +410,102 @@ internal static class EnvironmentSecurityValidator
         }
 
         var fieldPath = $"environment.{ownerKindPlural}.{ownerName}.security.{fieldName}";
+
+        // REQ-011 (#387): a `${secret:}` reference in a PATH-valued field is refused outright,
+        // FIRST — before the blank, rooted, containment and existence checks below.
+        //
+        // Measured behaviour before this rule, with CLIENT_KEY genuinely set in the environment
+        // so a working resolver would have succeeded:
+        //
+        //   environment.dependencies.broker.security.clientKey: file '${secret:env/CLIENT_KEY}'
+        //     not found (resolved to '...\probe\${secret:env\CLIENT_KEY}').
+        //
+        // Two defects, and the second is the worse one. It blamed the FILESYSTEM for a misuse of
+        // reference syntax; and the '/' inside the token was consumed as a directory separator by
+        // Path.GetFullPath, so the echoed path was split across a directory boundary that could
+        // never have existed — even an author who suspected the sigil got a garbled echo back.
+        // Going first is what removes both: no resolved path is ever computed for such a value,
+        // so none can be echoed.
+        //
+        // The ordering against the ROOTED check below is OBSERVABLE, not merely nominal, and the
+        // colliding input is reachable from YAML: `clientKey: "/etc/${secret:env/CLIENT_KEY}"` is
+        // both rooted and sigil-bearing, and this check is what makes the author see the sigil
+        // diagnosis rather than "must be a path relative to the suite directory" — which would
+        // send them to fix the wrong thing. (An earlier form of this comment claimed no collision
+        // could exist because Path.IsPathRooted is false for a reference token. That is true of a
+        // BARE token and false of the mixed value above, so it stated a property of the wrong
+        // input class. Pinned by
+        // EnvironmentSecurityValidatorTests.Validate_RootedPathContainingASecretReference_….)
+        //
+        // SecretReference.Sigil, never a respelt "${secret:" literal: the sigil is the secrets
+        // subsystem's own constant and this is a second CONSUMER of it, not a second definition.
+        //
+        // The declared value is echoed verbatim, and the licence for that is §17 plus a MEASURED
+        // property of this surface, not consistency with the four messages below. The property,
+        // stated rather than counted, and NOT illustrated by a partial list either — an earlier
+        // form said "two" of a set that is four, and its replacement then named two of the four as
+        // examples inside this very sentence, which is the same habit wearing a different hat:
+        // EVERY write of a ValidationFailure.Message to a terminal wraps it in
+        // DisplaySanitiser.SanitiseForDisplay, and `--json` is System.Text.Json-escaped rather
+        // than sanitised. Grep `Failure.Message` for the writes — that is the enumeration, and it
+        // is always current (grepping the sanitiser instead returns 30+ unrelated call sites and
+        // answers a different question).
+        // Do not
+        // re-derive the licence from "the siblings already do it": ANSI/ESC does NOT in fact
+        // reach those messages (DocumentValidator's YAML→JSON bridge emits \e/\xNN, which STJ
+        // rejects, so such a document dies at the SCHEMA stage — only BS and CR get this far), so
+        // that argument was right about the conclusion and wrong about the reason, and it would
+        // license a sixth raw concatenation here the day someone removes the sanitiser.
+        if (declaredPath.Contains(SecretReference.Sigil, StringComparison.Ordinal))
+        {
+            // The clientKey clause is field-specific, deliberately: an author reaching for
+            // `${secret:}` on THIS field is almost certainly trying to avoid a plaintext private
+            // key at rest, and `clientKeyPassword` is the supported way to achieve exactly that.
+            // Offering it on caCert or clientCert would be noise — neither is secret material.
+            var remedy = fieldName == "clientKey"
+                ? " To keep the key from sitting in plaintext at rest, encrypt the key FILE and "
+                  + "declare its passphrase in 'clientKeyPassword', which does take a "
+                  + "'${secret:<source>/<path>}' reference."
+                : string.Empty;
+
+            // The reason is SCOPING, not timing. An earlier form of this message said a reference
+            // "cannot be resolved here: this material is loaded before any step runs, which is
+            // when secret references resolve" — and then recommended `clientKeyPassword`, which is
+            // resolved at that SAME pre-step moment (SecurityConfigurationAccessor's Lazy is first
+            // touched by the REQ-005 probe) and works. A message that refuses X on a ground its own
+            // remedy also stands on teaches the author nothing. #387's own "Fix" section and
+            // REQ-011 both inherited that imprecision; the true reason is that these fields name a
+            // host FILE for the engine to read and copy, and the secrets subsystem yields VALUES,
+            // not files — there is no file for a resolved secret to be.
+            //
+            // THE OPENING CLAUSE IS A CONTAINMENT CLAIM BECAUSE THE GUARD IS A CONTAINMENT TEST.
+            // It used to open "'{declaredPath}' is a secret reference", which asserts more than
+            // `Contains` established: it is true of a value that IS one whole reference and FALSE
+            // of `/etc/${secret:env/CLIENT_KEY}` or `./certs/${secret:env/NAME}.pem` — paths that
+            // merely CARRY one, are reachable from ordinary YAML, and are caught by this very
+            // line (the first is already an input above, in the rooted-ordering test). "Uses
+            // secret-reference syntax" holds for every value the guard catches, including the
+            // bare token, since a value that is a reference also uses the syntax; and the sigil
+            // is NAMED so the author can see exactly which characters were found, which is what
+            // makes the claim checkable against their own text rather than a verdict about it.
+            // Interpolated from SecretReference.Sigil for the same reason the guard reads it
+            // there — one definition of the grammar, not a second spelling in a message.
+            //
+            // The "whole or embedded" clause is not padding: it is the half the retracted wording
+            // got wrong, and it tells the mixed-value author that trimming the path around the
+            // token will not help.
+            return new ValidationFailure(
+                $"{fieldPath}: '{declaredPath}' uses secret-reference syntax "
+                + $"('{SecretReference.Sigil}'), but this field takes a PATH — a file that must "
+                + "exist inside the suite directory. The syntax is refused wherever it appears in "
+                + "the value, whole or embedded in a longer path, because a secret reference "
+                + "cannot name a file: the engine reads and copies the FILE this field points at, "
+                + "while the secrets subsystem yields a VALUE, which is not a file and has no path."
+                + remedy)
+            {
+                IsSecurityPreflight = true,
+            };
+        }
 
         // A DECLARED but blank value is a different case from an absent one (REQ-004(b)
         // above): the schema's 'minLength: 1' already rejects a literal "" outright on a

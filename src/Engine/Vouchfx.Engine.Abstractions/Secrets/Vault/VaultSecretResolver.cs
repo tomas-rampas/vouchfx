@@ -1,7 +1,10 @@
 // Vouchfx.Engine.Abstractions — VaultSecretResolver (S08-B-01, §17).
 //
 // The 'vault' secret source: resolves a ${secret:vault/<kvPath>#<field>} reference
-// against a HashiCorp Vault KV v2 store at STEP-EXECUTION TIME, returning a redacted
+// against a HashiCorp Vault KV v2 store AT RUN TIME — rather than "at step-execution time",
+// deliberately: the moment belongs to the FIELD carrying the reference, not to the reference.
+// A step's own field resolves as that step executes; `security.clientKeyPassword` resolves at
+// first use of the certificate material, before any step runs.  Returning a redacted
 // SecretString.  It is the second MVP secret source, joining 'env' (S05) through the
 // pluggable-source seam (ISecretResolver) with no change to that contract.
 //
@@ -27,7 +30,7 @@ namespace Vouchfx.Engine.Abstractions.Secrets.Vault;
 
 /// <summary>
 /// Resolves secrets from a HashiCorp Vault KV v2 store — the MVP <c>vault</c> source
-/// (§17).  Resolution happens at step-execution time via the injected
+/// (§17).  Resolution happens at run time via the injected
 /// <see cref="IVaultKvClient"/>; the resolved value is wrapped in a redacted
 /// <see cref="SecretString"/> minted here at the source.
 /// </summary>
@@ -114,7 +117,7 @@ public sealed class VaultSecretResolver : ISecretResolver, IDisposable
                 "'#password').");
         }
 
-        // Resolution happens HERE, at step-execution time — never at compile time (§17).
+        // Resolution happens HERE, at run time — never at compile time (§17).
         // The client throws SecretResolutionException (path-only message) on an absent
         // path / unauthorised / transport failure.
         IReadOnlyDictionary<string, string> data = _client.ReadKeyValues(kvPath);

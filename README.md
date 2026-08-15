@@ -107,7 +107,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Topological parity.** The compiled delegate depends *only* on a typed `ScriptGlobalVariables`, and
   orchestration is its sole producer. That one contract is what lets a suite run unchanged on a laptop,
   in CI, or against a remote fabric.
-- **Secrets as references.** `${secret:env/…}` and `${secret:vault/…}` resolve at step-execution time,
+- **Secrets as references.** `${secret:env/…}` and `${secret:vault/…}` resolve at run time,
   never at compile time, and return a typed `SecretString` with no value-returning `ToString()`. The
   reproducibility envelope hashes the reference, never the value. The redaction path has passed a
   penetration test.

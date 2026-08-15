@@ -22,9 +22,15 @@
 //
 // WHY PATHS, NOT CERTIFICATE OBJECTS. librdkafka accepts FILE PATHS for its trust anchor, client
 // certificate and client key and never an X509Certificate2 — the exact asymmetry that made
-// REQ-014's accessor expose both views. This helper therefore reads ONLY
-// ISecurityCertificateMaterial's path view, and reads it through the interface's own properties so
-// the containment re-check those getters perform (REQ-003, defence in depth) still applies.
+// REQ-014's accessor expose both views. Of the two CERTIFICATE views this helper therefore reads
+// only the path one, and reads it through the interface's own properties so the containment
+// re-check those getters perform (REQ-003, defence in depth) still applies.
+//
+// The one non-path thing it reads is the client-key PASSPHRASE (client-key-password, REQ-008), for
+// the same reason inverted: librdkafka takes a passphrase only as characters, so there is no object
+// form to hand it instead. Within the 'mtls' branch — the only branch that presents a client key
+// at all — that read is unconditional, and its siting is constrained. See the comments at the read
+// itself, and the note in the 'tls' arm recording why no equivalent read belongs there.
 //
 // Design constraints (§13.3.1), identical to SecretHelper's and SecurityHelper's:
 //   • Static class prefixed 'KafkaSecurity_' so it cannot collide with a provider-specific helper.
@@ -177,6 +183,39 @@ public static class KafkaSecurityHelper
         "            // the declared (relative) path — never an opaque librdkafka failure.\n" +
         "            var clientCertificatePath = certificates?.ClientCertificatePath;\n" +
         "            var clientKeyPath = certificates?.ClientKeyPath;\n" +
+        "            // THE PASSPHRASE IS READ UNCONDITIONALLY, AND READ HERE (client-key-password,\n" +
+        "            // REQ-008). Those are two claims of DIFFERENT WEIGHT, and collapsing them into\n" +
+        "            // one word would misprice the second.\n" +
+        "            //\n" +
+        "            // The first is a SAFETY property: whenever this branch hands librdkafka a\n" +
+        "            // client key, the accessor's checks on the declared passphrase have run. It\n" +
+        "            // holds on every path an author can reach and is what the gate test pins.\n" +
+        "            //\n" +
+        "            // The second is a DIAGNOSTIC PREFERENCE: it decides which of two\n" +
+        "            // SecurityMaterialException messages an embedder sees on a path the schema\n" +
+        "            // already refuses. Getting it wrong costs a worse message, never a weaker\n" +
+        "            // connection.\n" +
+        "            //\n" +
+        "            // UNCONDITIONAL, because on the production material this property is where the\n" +
+        "            // checking happens. ClientKeyPassword is lazy: the refusal of a passphrase\n" +
+        "            // declared against a key that is not actually encrypted, the refusal of one\n" +
+        "            // declared with no clientKey, and the fail-closed handling of an unresolvable or\n" +
+        "            // empty reference ALL run on the first read of this property, and reading\n" +
+        "            // ClientKeyPath does not trigger any of them. A helper that read only the paths,\n" +
+        "            // or that hid this read behind a test on something else, would hand librdkafka a\n" +
+        "            // key while leaving every one of those controls unexecuted.\n" +
+        "            //\n" +
+        "            // HERE — ahead of the client-identity guard below — because the accessor's own\n" +
+        "            // 'passphrase declared without a matching clientKey' diagnostic names the field\n" +
+        "            // and says what to do about it, where the generic 'requires a client identity'\n" +
+        "            // message would only report the symptom. The two path reads still come first, so\n" +
+        "            // an escaping path keeps the containment diagnostic it has today.\n" +
+        "            //\n" +
+        "            // Reveal() is the deliberate, greppable audit point: librdkafka takes a\n" +
+        "            // passphrase only as characters, so the value is unwrapped and goes straight\n" +
+        "            // into the client configuration below — never into a diagnostic, a Vars key or\n" +
+        "            // anything that outlives this call.\n" +
+        "            var clientKeyPassword = certificates?.ClientKeyPassword?.Reveal();\n" +
         "            if (clientCertificatePath == null || clientKeyPath == null)\n" +
         "            {\n" +
         "                // Declared mutual TLS, nothing to present. Continuing would set\n" +
@@ -192,6 +231,38 @@ public static class KafkaSecurityHelper
         "            config.SecurityProtocol = Confluent.Kafka.SecurityProtocol.Ssl;\n" +
         "            config.SslCertificateLocation = clientCertificatePath;\n" +
         "            config.SslKeyLocation = clientKeyPath;\n" +
+        "            // ASSIGNED ONLY WHEN NON-NULL, the same shape as the ssl.ca.location guard\n" +
+        "            // below and resting on the same MEASURED fact about the pinned\n" +
+        "            // Confluent.Kafka 2.14.2: ClientConfig is a keyed property bag, assigning null\n" +
+        "            // REMOVES 'ssl.key.password' while assigning \"\" ADDS it with an empty value.\n" +
+        "            // Those are different configurations. Guarding the assignment rather than\n" +
+        "            // assigning a possibly-null value and relying on the removal behaviour keeps\n" +
+        "            // the intent legible and does not depend on that library detail staying true.\n" +
+        "            //\n" +
+        "            // What librdkafka would do with an empty ssl.key.password is NOT measured\n" +
+        "            // here — it is a question about that library's config parser and OpenSSL, not\n" +
+        "            // about this engine — and nothing in this helper depends on the answer.\n" +
+        "            //\n" +
+        "            // '!= null' rather than string.IsNullOrEmpty, deliberately, and the reason is\n" +
+        "            // about WHO OWNS THE RULE rather than about which values reach here. An empty\n" +
+        "            // RESOLVED value is refused by the engine accessor with a diagnostic that can\n" +
+        "            // say why (the empty-value guard in SecurityConfigurationAccessor's\n" +
+        "            // ResolveClientKeyPassword — cited by METHOD because this literal is a public\n" +
+        "            // const that INLINES into every consuming assembly, so a line number here goes\n" +
+        "            // stale inside shipped IL that no rebuild of this project can correct) — but\n" +
+        "            // that guard covers ONE IMPLEMENTATION, not this interface.\n" +
+        "            // ISecurityCertificateMaterial's\n" +
+        "            // ClientKeyPassword is a default-implemented public v1 member, so material\n" +
+        "            // supplied by a direct engine embedder can hand this seam an empty\n" +
+        "            // SecretString and arrive outside that refusal, exactly the bypass the 'tls'\n" +
+        "            // arm below names. Re-spelling the rule here would still not fix that: a\n" +
+        "            // second copy could only drift from the one that owns it, and could report\n" +
+        "            // nothing an author could act on. Null keeps one meaning — no passphrase was\n" +
+        "            // declared — and the empty case stays the accessor's to diagnose.\n" +
+        "            if (clientKeyPassword != null)\n" +
+        "            {\n" +
+        "                config.SslKeyPassword = clientKeyPassword;\n" +
+        "            }\n" +
         "        }\n" +
         "        else if (string.Equals(profile, \"tls\", System.StringComparison.Ordinal))\n" +
         "        {\n" +
@@ -209,6 +280,17 @@ public static class KafkaSecurityHelper
         "                    \"declared client certificate, or remove both fields.\");\n" +
         "            }\n" +
         "\n" +
+        "            // NO PASSPHRASE READ HERE, AND THAT IS A DECISION, not an omission — do not\n" +
+        "            // 'fix' it in isolation. REQ-008 scopes its unconditional-read constraint to\n" +
+        "            // the 'mtls' branch, because the read exists to guard a key this branch never\n" +
+        "            // presents. The schema forbids 'clientKeyPassword' under 'tls' outright\n" +
+        "            // (the boolean-'false' subschema in the 'security' $def's own allOf, in\n" +
+        "            // root-language-schema.json), so the only way to declare one here is the\n" +
+        "            // same embedder bypass the contradiction guard above addresses, and the\n" +
+        "            // consequence is a missing diagnostic rather than a weakened connection:\n" +
+        "            // nothing is decrypted, nothing is presented, no key reaches librdkafka.\n" +
+        "            // Refusing the declaration belongs where declarations are refused, not in a\n" +
+        "            // read performed for its side effect.\n" +
         "            config.SecurityProtocol = Confluent.Kafka.SecurityProtocol.Ssl;\n" +
         "        }\n" +
         "        else\n" +

@@ -70,21 +70,25 @@ public sealed class SchemaRejectedCorpusTests
     /// files — a bare "at least one" would still pass if a glob/path
     /// regression silently dropped all but a single fixture, letting every
     /// OTHER <see cref="RejectedDocument_IsInvalidAtExpectedLocation"/> case
-    /// vanish instead of failing loudly. Raised from 15 to 40 (critic NIT-9):
-    /// the original floor was set when the committed count was 25 and never
-    /// tightened as fixtures accumulated, leaving it comfortable enough (15
-    /// against 44, pre-this-PR) to silently tolerate losing dozens of
-    /// fixtures to a regression. The committed count as of this PR is 45 (44
-    /// pre-existing, plus <c>security-serverartifacts-target-not-absolute.e2e.yaml</c>,
-    /// MINOR-4); 40 is sensibly below-but-near that — tight enough that
-    /// dropping several fixtures fails loudly, with enough headroom that
-    /// routine single-fixture additions/reorganisation do not require raising
-    /// it every time. Safe to raise again as fixtures accumulate further.
+    /// vanish instead of failing loudly. Raised from 15 to 40 (critic NIT-9),
+    /// then from 40 to 55: the original floor was set when the committed count
+    /// was 25 and never tightened as fixtures accumulated, and 40 had gone the
+    /// same way — it was set against a committed count of 45 and left standing
+    /// while the corpus grew half as large again, so it would have tolerated
+    /// losing seventeen fixtures in silence. The committed count is <b>57</b>,
+    /// counted directly off the tree (every <c>*.e2e.yaml</c> under
+    /// <c>Corpus/Rejected</c>, recursively — the same enumeration
+    /// <see cref="RejectedFiles"/> itself performs), not carried forward from
+    /// the previous revision of this comment. 55 is sensibly below-but-near
+    /// that — tight enough that dropping several fixtures fails loudly, with
+    /// enough headroom that routine single-fixture additions/reorganisation do
+    /// not require raising it every time. Safe to raise again as fixtures
+    /// accumulate further; recount rather than increment when doing so.
     /// </summary>
     [Fact]
     public void RejectedFiles_DiscoversAtLeastOneFile()
     {
-        const int minRejectedFiles = 40;
+        const int minRejectedFiles = 55;
 
         var count = RejectedFiles().Count();
 

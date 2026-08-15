@@ -118,16 +118,26 @@ internal static class ExitCodes
     /// </param>
     /// <param name="securityConfirmationFailed">
     /// REQ-018's narrow carve-out. <see langword="true"/> when the run aborted because a declared
-    /// <c>security</c> block could not be confirmed — REQ-005's probe failed; a security
-    /// preflight (REQ-003/REQ-004 certificate and artefact paths, REQ-016 artefact
-    /// <c>target</c> shape, REQ-022 profile wiring) rejected the declaration before any container
-    /// started; the root schema rejected it earlier still, which is where REQ-021's per-kind
-    /// narrowing of <c>profile</c> lives and which covers any schema error located at or inside a
-    /// declared <c>security</c> block, not only the causes listed here; or a secured
-    /// multi-scenario suite was refused because its scenarios resolve their declared security
-    /// paths against different directories, which likewise starts no container.
-    /// <c>ScenarioRunner.SuiteResult.SecurityConfirmationFailed</c> carries the maintained
-    /// enumeration; this is a summary of it. Defaulted to <see langword="false"/> so every
+    /// <c>security</c> block could not be confirmed.
+    /// <para>
+    /// <strong>The PROPERTY, stated here; the LIST, maintained elsewhere.</strong> What every
+    /// producer shares — and the whole of what this parameter needs to know — is that the document
+    /// DECLARED a <c>security</c> block and the engine could not establish that it holds: either
+    /// REQ-005's probe failed against a started topology, or the declaration was rejected before
+    /// any container started at all. This file keeps no enumeration of its own. Grep
+    /// <c>SecurityConfirmationFailed</c> in
+    /// <c>src/Engine/Vouchfx.Engine.Runtime/ScenarioRunner.cs</c>: its remarks on
+    /// <c>SuiteResult.SecurityConfirmationFailed</c> are the maintained account of what each
+    /// producer MEANS, and they state in their own words that the list is OPEN.
+    /// </para>
+    /// <para>
+    /// This paragraph used to carry a four-item summary of that list, and by the time it was read
+    /// the list was five: the secret-reference door (EDGE-003, #387) had been added and this copy
+    /// had not. The habit, not the count, is the defect — <c>ScenarioCoreResult</c>'s own summary
+    /// of the same list went stale twice before it was rewritten as a derivation, for exactly this
+    /// reason. A pointer cannot fall out of step with what it points at.
+    /// </para>
+    /// Defaulted to <see langword="false"/> so every
     /// existing call site and every existing parameterised test case keeps compiling and keeps
     /// its current result — that default is what makes the carve-out provably narrow.
     /// </param>

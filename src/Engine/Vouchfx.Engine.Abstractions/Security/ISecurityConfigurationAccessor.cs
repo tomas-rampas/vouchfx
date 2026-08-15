@@ -28,6 +28,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
+using Vouchfx.Engine.Abstractions.Secrets;
 
 namespace Vouchfx.Engine.Abstractions.Security;
 
@@ -106,11 +107,16 @@ public interface ISecurityConfiguration
 /// implementation of this interface is constructed.
 /// </para>
 /// <para>
-/// <strong>Containment is re-checked on BOTH views, on every read.</strong> All five members
-/// below that surface declared material — the three paths and the two certificate
-/// objects — throw <see cref="SecurityMaterialException"/> for a declared path that resolves
-/// outside the suite directory, so the guarantee does not depend on which view a consumer
-/// happens to want. That matters because the two views have disjoint consumers: librdkafka
+/// <strong>Containment is re-checked on BOTH views, on every read.</strong> Every PATH-VALUED
+/// member below — the paths themselves, and the certificate objects derived from them — throws
+/// <see cref="SecurityMaterialException"/> for a declared path that resolves outside the suite
+/// directory, so the guarantee does not depend on which view a consumer happens to want. Stated
+/// as a property of the member rather than as a count of members, so that a member added later
+/// cannot silently falsify it: one surfacing no path at all — <see cref="ClientKeyPassword"/>, a
+/// passphrase — is outside this rule rather than an exception to it.
+/// </para>
+/// <para>
+/// The two views matter because they have disjoint consumers: librdkafka
 /// reads only the paths and never the objects. It is DEFENCE IN DEPTH, not the primary
 /// control — <c>EnvironmentSecurityValidator</c> has already rejected an escaping path on
 /// every production route, before any container starts — and it is measured NOT to catch a
@@ -177,6 +183,58 @@ public interface ISecurityCertificateMaterial
     /// the certificate, or a declared path resolves outside the suite directory (REQ-003).
     /// </exception>
     X509Certificate2? ClientCertificate { get; }
+
+    /// <summary>
+    /// The resolved passphrase for an encrypted client private key, or
+    /// <see langword="null"/> when the target declares no <c>clientKeyPassword</c> — the
+    /// ordinary case, an unencrypted key (client-key-password spec, REQ-004).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <see cref="SecretString"/> rather than a <see cref="string"/> BECAUSE THE TYPE IS THE
+    /// REDACTION CONTROL (§17): its <c>ToString()</c> returns
+    /// <see cref="SecretString.RedactedMarker"/>, it is deliberately not
+    /// <see cref="System.IFormattable"/>, its JSON converter writes the marker rather than the
+    /// value, and it exposes no public length. A plain <c>string?</c> on an interface an
+    /// emitted CSX block names by type would put a plaintext passphrase one interpolation away
+    /// from the §14 event stream. A consumer that genuinely needs the characters — librdkafka
+    /// takes a passphrase only as text — calls <see cref="SecretString.Reveal"/> explicitly,
+    /// and that call is the deliberate, greppable audit point.
+    /// </para>
+    /// <para>
+    /// <strong>The obligation that comes with that call</strong>, which the generic
+    /// <see cref="SecretString.Reveal"/> documentation cannot state because it does not know
+    /// where its value came from: the value MUST have been resolved through
+    /// <see cref="ISecretAccessor.Resolve"/>, whose <see cref="SecretAccessor.ResolvedSecrets"/>
+    /// ledger is what the runner's diagnostic and observation scrubbers read; a passphrase
+    /// resolved by calling a resolver directly is invisible to them. Feed the revealed string
+    /// straight into its sink — never into a local that outlives the call, a <c>Vars</c> key, or
+    /// any diagnostic string.
+    /// </para>
+    /// <para>
+    /// <strong>What the type does NOT give is ledger membership</strong>, and an earlier draft
+    /// of these remarks claimed otherwise. <see cref="SecretString"/>'s constructor is
+    /// <see langword="internal"/> (<c>SecretString.cs</c>), with <c>InternalsVisibleTo</c>
+    /// granted only to <c>Vouchfx.Engine.Abstractions.Tests</c>, so the load path cannot MINT a
+    /// <see cref="SecretString"/>: it must obtain one from a resolver. That is a strictly
+    /// narrower guarantee than "the value is in the scrub ledger", because a resolver called
+    /// DIRECTLY registers nothing — <c>EnvironmentSecretResolver</c> is a public sealed class
+    /// whose public <c>Resolve</c> ends by constructing a <see cref="SecretString"/>
+    /// (<c>Secrets/ISecretResolver.cs</c>), <c>VaultSecretResolver</c> has the same shape, and
+    /// <c>ScenarioRunner.BuildSecretResolvers</c> already constructs both inside
+    /// <c>Vouchfx.Engine.Runtime</c>. Only <see cref="ISecretAccessor.Resolve"/> records into
+    /// <see cref="SecretAccessor.ResolvedSecrets"/> (<c>Secrets/ISecretAccessor.cs</c>). The
+    /// obligation stated above is therefore a DISCIPLINE that NO type enforces — not this one,
+    /// and not any other in the engine. It holds only for as long as callers keep it.
+    /// </para>
+    /// <para>
+    /// DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
+    /// engine-supplied interface others implement: every existing implementor — the production
+    /// material and the test doubles — keeps compiling untouched, and the default's own
+    /// <see langword="null"/> means "no passphrase declared", never "not yet loaded".
+    /// </para>
+    /// </remarks>
+    SecretString? ClientKeyPassword => null;
 
     /// <summary>
     /// Decides whether a remote (server) certificate is trusted under THIS target's declared

@@ -43,10 +43,12 @@ metadata:
     generated, git-ignored and thrown away. Do not put a production identity
     there. If you adapt this example to your own infrastructure, have your PKI
     issue the suite a DEDICATED, SHORT-LIVED, NON-PRODUCTION certificate scoped
-    to what the test needs — the key has to sit unencrypted inside the suite
-    directory, which is the wrong home for anything that matters. That
-    constraint is a boundary of the current release, not a design position: see
-    issue #384.
+    to what the test needs — the key has to sit inside the suite directory,
+    which is the wrong home for anything that matters. The key this example
+    generates is unencrypted because it is disposable; an encrypted key can stay
+    encrypted, with its passphrase declared as `clientKeyPassword` (see the note
+    beside `clientKey` below). Containment inside the suite directory applies
+    either way.
 
     AND ADD YOUR OWN IGNORE RULE. You inherit this example's scripts, not this
     repository's .gitignore. Whatever directory your suite generates key
@@ -135,18 +137,39 @@ environment:
 
         # THE IDENTITY THIS SUITE PRESENTS, as a separate certificate/key PAIR.
         # Two fields rather than one bundle because the engine reads a PEM
-        # certificate and a matching UNENCRYPTED PEM private key; there is no
-        # field for a PKCS#12 bundle and none for a key passphrase.
+        # certificate and a matching PEM private key; there is no field for a
+        # PKCS#12 bundle.
         #
-        # A corporate PKI hands out an encrypted key, and the answer is NOT to
-        # decrypt that one. Two properties are being asked of this file at once —
-        # unencrypted, and inside the suite directory — and together they make it
-        # unsuitable for any identity you would mind losing: it sits in a working
-        # tree, it gets copied by whatever copies the tree, and only a .gitignore
-        # stands between it and a commit. Have the PKI issue the suite its own
-        # short-lived, non-production certificate, scoped to what the test needs,
-        # and treat it as disposable. See issue #384 — the passphrase gap is a
-        # boundary of this release, not a design position.
+        # THE KEY HERE IS UNENCRYPTED, and that is a property of this example
+        # rather than a limit of the engine. The certificates are generated,
+        # git-ignored and thrown away on every run, so there is nothing to
+        # protect; keeping the file plaintext also keeps the example runnable in
+        # CI with no secret to supply. A corporate PKI hands out an ENCRYPTED
+        # key, and the answer is not to decrypt it — declare its passphrase
+        # beside it, as a whole `${secret:<source>/<path>}` reference (a literal
+        # is refused), and leave the key as the PKI issued it:
+        #
+        #     clientCert:        ./security-mtls/certs/client.pem
+        #     clientKey:         ./security-mtls/certs/client-key.pem
+        #     clientKeyPassword: ${secret:env/CLIENT_KEY_PASS}
+        #
+        # The reference is resolved at first use of this material, inside the
+        # certificate load and after the topology is up, so no passphrase is
+        # baked into the compiled script, and none reaches an event or a
+        # report. (The resolved value does pass THROUGH the compiled script on
+        # the Kafka path — this suite's own broker steps splice a helper that
+        # sets `ssl.key.password` — but it is never written into the script
+        # text at compile time.) Only the
+        # `ENCRYPTED PRIVATE KEY` (PKCS#8) form can be opened that way; an
+        # openssl legacy key marked `Proc-Type: 4,ENCRYPTED` needs
+        # `openssl pkcs8 -topk8` first.
+        #
+        # A PLAINTEXT key still deserves the warning it always did: it sits in a
+        # working tree, it gets copied by whatever copies the tree, and only a
+        # .gitignore stands between it and a commit. Whichever form you use,
+        # have the PKI issue the suite its own short-lived, non-production
+        # certificate, scoped to what the test needs, and treat it as
+        # disposable.
         clientCert: ./security-mtls/certs/client.pem
         clientKey: ./security-mtls/certs/client-key.pem
 

@@ -181,4 +181,686 @@ public sealed class RunPathRootExecuteTests : IDisposable
         // ...but no raw ESC byte reaches the terminal.
         Assert.DoesNotContain((char)0x1B, rendered);
     }
+
+    // ── REQ-018 on the `run` path: a security-block fault exits non-zero with NO flag (#387/#390) ──
+    //
+    // These pin the carve-out where it actually lives. `vouchfx validate` already exits 4 for any
+    // invalid document, so a validate-path test cannot distinguish "carved out" from "invalid";
+    // `run` can, and MEASURED before the fix it did:
+    //
+    //   REQ-011 refusal in clientKey ............................. exit 4
+    //   EDGE-003 unknown source in clientKeyPassword ............. exit 0   ← the defect
+    //   BOTH faults in one document ............................. exit 0   ← and it MASKED the 4
+    //
+    // The masking is the reason the third case is here as its own test rather than as a corollary:
+    // on this path the secret-reference scan runs BEFORE ProviderPipeline.Compile, so it short-
+    // circuits the REQ-011 refusal that had been setting the flag. Adding a fault made the build
+    // greener, which is the failure mode REQ-018 exists to prevent.
+    //
+    // No topology is started for any of them: every scenario carries an early verdict, so
+    // RunSuiteAsync's all-early guard returns before the Aspire build (this file needs no Docker).
+
+    private const string SecuredScenarioHead =
+        "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "      security:\n" +
+        "        profile: mtls\n" +
+        "        endpoint: 8443\n";
+
+    private const string SecuredScenarioTail =
+        "steps:\n" +
+        "  - id: call\n" +
+        "    type: http.rest\n" +
+        "    target: api\n" +
+        "    method: GET\n" +
+        "    path: /health\n";
+
+    /// <summary>Writes a suite whose <c>security</c> block carries the supplied field lines.</summary>
+    private string WriteSecuredScenario(string fileName, string securityFieldLines)
+    {
+        // The path-valued fields must name real files unless the test's own fault is one of them.
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+
+        var file = Path.Combine(_root, fileName);
+        File.WriteAllText(file, SecuredScenarioHead + securityFieldLines + SecuredScenarioTail);
+        return file;
+    }
+
+    /// <summary>
+    /// Drives <see cref="RunCommand.ExecuteAsync"/> at a chosen <c>--parallel</c> value. The two
+    /// run paths (<c>RunSuiteAsync</c> and <c>ParallelSuiteRunner</c>) reach these pre-topology
+    /// doors differently, and the first BLOCKER in this series was a masking defect on ONE path,
+    /// so every case below is exercised on both.
+    /// </summary>
+    private static Task<int> ExecuteAtParallelismAsync(string path, int? parallel, TextWriter output) =>
+        RunCommand.ExecuteAsync(
+            path: path,
+            criteria: SelectionCriteria.None,
+            parallel: parallel,
+            watch: false,
+            failOnEnvironmentError: false,
+            failOnInconclusive: false,
+            htmlReportPath: null,
+            junitReportPath: null,
+            eventsReportPath: null,
+            eventsStreamPath: null,
+            decorate: false,
+            output: output,
+            telemetryHook: null,
+            cancellationToken: default);
+
+    /// <summary>
+    /// EDGE-003 alone. Before the fix this exited 0 — a suite that verified nothing, reported as a
+    /// green build.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_UnknownSecretSourceInClientKeyPassword_ExitsNonZeroWithoutAnyFlag(
+        int? parallel)
+    {
+        var sw = new StringWriter();
+        var file = WriteSecuredScenario(
+            "edge003.e2e.yaml",
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "        clientKeyPassword: \"${secret:nosuchsource/KEY_PASS}\"\n");
+
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", sw.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-011 alone. This arm exited 4 before the fix too, but only by inheriting
+    /// <c>ValidationFailure.IsSecurityPreflight</c> through the preflight door — nothing tested it,
+    /// so nothing would have caught its loss.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecretReferenceInClientKey_ExitsNonZeroWithoutAnyFlag(int? parallel)
+    {
+        var sw = new StringWriter();
+        var file = WriteSecuredScenario(
+            "req011.e2e.yaml",
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: \"${secret:env/CLIENT_KEY}\"\n");
+
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+
+        // The refusal reaches the terminal with its containment claim and the sigil it names
+        // intact — the run path renders ValidationFailure.Message verbatim, so a message that
+        // over-claimed here would over-claim to the author. "…is a secret reference" is asserted
+        // absent because the guard behind this text is a `Contains` test, and the identity claim
+        // is false for a path that merely carries a token.
+        var rendered = sw.ToString();
+        Assert.Contains("uses secret-reference syntax ('${secret:')", rendered, StringComparison.Ordinal);
+        Assert.Contains("whole or embedded in a longer path", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Both faults in one document. The anti-masking case: adding the EDGE-003 fault to the
+    /// REQ-011 suite must not make the run greener than the REQ-011 suite alone.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_BothSecurityFaultsInOneDocument_StillExitsNonZero(int? parallel)
+    {
+        var sw = new StringWriter();
+        var file = WriteSecuredScenario(
+            "both.e2e.yaml",
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: \"${secret:env/CLIENT_KEY}\"\n" +
+            "        clientKeyPassword: \"${secret:nosuchsource/KEY_PASS}\"\n");
+
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
+    /// <summary>
+    /// The carve-out stays NARROW: the same bad reference in a STEP is an ordinary authoring
+    /// error, exits 0 without <c>--fail-on-inconclusive</c>, and 4 with it. Without this control
+    /// the three tests above would equally pass an implementation that flagged every secret-
+    /// reference failure.
+    /// </summary>
+    [Theory]
+    [InlineData(false, ExitCodes.Success, null)]
+    [InlineData(true, ExitCodes.Inconclusive, null)]
+    [InlineData(false, ExitCodes.Success, 1)]
+    [InlineData(true, ExitCodes.Inconclusive, 1)]
+    public async Task ExecuteAsync_UnknownSecretSourceInAStep_IsNotCarvedOut(
+        bool failOnInconclusive, int expectedExitCode, int? parallel)
+    {
+        var sw = new StringWriter();
+        var file = Path.Combine(_root, "step-secret.e2e.yaml");
+        File.WriteAllText(file, StepFaultScenario);
+
+        var exitCode = await RunCommand.ExecuteAsync(
+            path: file,
+            criteria: SelectionCriteria.None,
+            parallel: parallel,
+            watch: false,
+            failOnEnvironmentError: false,
+            failOnInconclusive: failOnInconclusive,
+            htmlReportPath: null,
+            junitReportPath: null,
+            eventsReportPath: null,
+            eventsStreamPath: null,
+            decorate: false,
+            output: sw,
+            telemetryHook: null,
+            cancellationToken: default);
+
+        Assert.Equal(expectedExitCode, exitCode);
+        Assert.Contains("step 'call'", sw.ToString(), StringComparison.Ordinal);
+    }
+
+    private const string StepFaultScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "steps:\n" +
+        "  - id: call\n" +
+        "    type: http.rest\n" +
+        "    target: api\n" +
+        "    method: GET\n" +
+        "    path: /health\n" +
+        "    headers:\n" +
+        "      Authorization: \"Bearer ${secret:nosuchsource/TOKEN}\"\n";
+
+    // ── A STEP fault must not MASK a SECURITY fault (#387/#390 follow-up) ──────────────────
+    //
+    // The four combinations, because the defect lived in exactly one of them and three-quarters
+    // coverage found nothing. MEASURED before the fix, real CLI:
+    //
+    //   step-only ......... exit 0   (correct — an ordinary authoring error)
+    //   security-only ..... exit 4   (correct)
+    //   step + security ... exit 0   ← the defect: adding a fault made the build GREENER
+    //
+    // Cause: the secret-reference pass returned on the FIRST fault, so a step fault short-
+    // circuited the security walk and the REQ-018 flag was never computed. The flag now answers
+    // "does this document contain a security-declaration secret fault?" — a property of the
+    // document — so the search order cannot change it.
+    //
+    // Both `--parallel` values are exercised: the two run paths reach these doors differently,
+    // and the original BLOCKER in this series was a masking defect on one path only.
+
+    private const string StepAndSecurityFaultSecurityLines =
+        "        clientCert: ./client.pem\n" +
+        "        clientKey: ./client.key\n" +
+        "        clientKeyPassword: \"${secret:nosuchsource/PASS}\"\n";
+
+    private const string StepFaultHeaderLines =
+        "    headers:\n" +
+        "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n";
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_StepFaultDoesNotMaskASecurityFault(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "step-and-security.e2e.yaml");
+        File.WriteAllText(
+            file,
+            SecuredScenarioHead + StepAndSecurityFaultSecurityLines
+            + SecuredScenarioTail + StepFaultHeaderLines);
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+
+        // BOTH faults are reported, not just the one that happened to be found first. Before this,
+        // two documents differing only in the presence of the security fault produced BYTE-
+        // IDENTICAL output and differed only in exit code — the fault that turned the build red
+        // was never printed, so the red was unexplained.
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+        Assert.Contains(
+            "environment.services.api.security.clientKeyPassword:", rendered, StringComparison.Ordinal);
+    }
+
+    // ── A STEP fault vs a security PREFLIGHT fault — the row that is BROKEN (#399) ─────────
+    //
+    // The combination the matrix above never reached. Everything above pairs a step fault with a
+    // security-block SECRET fault, which both run paths compute in the SAME pass; this pairs it
+    // with a security PREFLIGHT fault (a clientCert file that does not exist, REQ-003/REQ-004),
+    // which only ProviderPipeline.Compile computes — and the two paths call that at DIFFERENT
+    // points relative to the step secret pass.
+    //
+    //   RunScenarioOwningTopologyAsync (--parallel) . Compile FIRST, secret pass second
+    //   RunSuiteAsync (no --parallel, the DEFAULT) .. secret pass FIRST, Compile second
+    //
+    // So on the default path the step fault `continue`s before the preflight fault is ever
+    // computed, and the refusal is neither reported nor counted.
+
+    private const string PreflightFaultScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "      security:\n" +
+        "        profile: mtls\n" +
+        "        endpoint: 8443\n" +
+        // The security fault: a clientCert naming a file that is not there. Inside the suite
+        // directory, so this is REQ-004's existence refusal (IsSecurityPreflight), not REQ-003's
+        // containment one — the door is ProviderPipeline.Compile, NOT the secret pass.
+        "        clientCert: ./no-such-cert.pem\n" +
+        "        clientKey: ./client.key\n" +
+        "steps:\n" +
+        "  - id: call\n" +
+        "    type: http.rest\n" +
+        "    target: api\n" +
+        "    method: GET\n" +
+        "    path: /health\n" +
+        // The step fault, in the same document.
+        "    headers:\n" +
+        "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n";
+
+    /// <summary>
+    /// <strong>This test asserts a DEFECT, not a decision.</strong> It records the CURRENT measured
+    /// behaviour of {step fault} × {security PREFLIGHT fault} on both run paths, because they
+    /// disagree and one of them is wrong. Filed as <strong>#399</strong>.
+    /// <para>
+    /// MEASURED, real CLI, this exact document:
+    /// </para>
+    /// <list type="table">
+    /// <item><description>preflight fault alone, no <c>--parallel</c> ....... exit 4, refusal printed</description></item>
+    /// <item><description>preflight fault alone, <c>--parallel 1</c> ........ exit 4, refusal printed</description></item>
+    /// <item><description>plus a step fault, <c>--parallel 1</c> ............ exit 4, refusal printed</description></item>
+    /// <item><description>plus a step fault, no <c>--parallel</c> (DEFAULT) . <strong>exit 0, refusal NEVER printed</strong></description></item>
+    /// </list>
+    /// <para>
+    /// The last row is the defect in its plainest form: ADDING a fault turns a red build green, on
+    /// the path the CLI takes by default. It is the same masking shape already fixed at the schema
+    /// door (see <c>ExecuteAsync_SecurityFaultPlusUnrelatedSchemaError_StillExitsNonZero</c>) and at
+    /// the security-secret door (<c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c>), surviving
+    /// at a third.
+    /// </para>
+    /// <para>
+    /// <strong>Why the current behaviour is asserted rather than the arm being <c>Skip</c>ped.</strong>
+    /// A skipped arm executes nothing, so when #399 is fixed nothing goes red to say this row must
+    /// change — and this file already carries the scar of a test that pinned a decision by not
+    /// exercising it (see the vacuous-tag-filter note on
+    /// <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c>). Asserted, the row is a
+    /// TRIPWIRE: the fix makes it fail here, at a named line, with the required end state written
+    /// out below.
+    /// </para>
+    /// <para>
+    /// <strong>WHEN #399 IS FIXED</strong>, delete the per-path branch: BOTH arms must then expect
+    /// <c>ExitCodes.Inconclusive</c> and must report BOTH faults, exactly as
+    /// <c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c> already does for the secret-fault
+    /// pairing. Do NOT instead delete the <c>null</c> arm — narrowing the row to the parallel path
+    /// is how this gap escaped four review gates in the first place.
+    /// </para>
+    /// <para>
+    /// The MESSAGE is asserted on both arms, in both directions. Several doors on this surface
+    /// produce exit 4, and a malformed fixture produces 4 via the all-parse-failure rule, so an exit
+    /// code alone would not prove which door ran — and on the failing arm the exit code is 0, where
+    /// the only evidence of the masking is the refusal's ABSENCE from the output.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_StepFaultMasksASecurityPreflightFault_Issue399(int? parallel)
+    {
+        // clientCert is deliberately NOT created; clientKey is, so the preflight refusal names
+        // the cert and nothing else.
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "step-and-preflight.e2e.yaml");
+        File.WriteAllText(file, PreflightFaultScenario);
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        if (parallel is null)
+        {
+            // ── THE DEFECT (#399) ──────────────────────────────────────────────────────────
+            // RunSuiteAsync's step secret door `continue`s before ProviderPipeline.Compile, so
+            // the preflight refusal is never computed: the run is green and the security fault
+            // is invisible. Both assertions below are recording a BUG, and both must be
+            // inverted by the fix.
+            Assert.Equal(ExitCodes.Success, exitCode);
+            Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+            Assert.DoesNotContain("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        }
+        else
+        {
+            // ── The correct end state, which one path already reaches ───────────────────────
+            // ProviderPipeline.Compile runs first here, so IsSecurityPreflight is set and the
+            // refusal is both printed and counted. (The step fault is not reported on this arm
+            // because the pipeline door returns first — a reporting gap of its own, but not the
+            // one that changes an exit code, so it is left to #399's fix to unify.)
+            Assert.Equal(ExitCodes.Inconclusive, exitCode);
+            Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The control for the row above: the SAME security preflight fault with NO step fault exits 4
+    /// on BOTH paths. Without it, the failing arm's exit 0 could be misread as "a missing clientCert
+    /// simply does not redden a build", when the measured cause is the step fault masking it.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecurityPreflightFaultAlone_ExitsNonZeroOnBothPaths(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "preflight-only.e2e.yaml");
+        File.WriteAllText(
+            file,
+            PreflightFaultScenario.Replace(
+                "    headers:\n"
+                + "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n",
+                string.Empty,
+                StringComparison.Ordinal));
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("step 'call'", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The fourth combination — a secured suite with NO secret fault — so the cases above cannot be
+    /// satisfied by an implementation that simply exits non-zero for any secured suite.
+    /// <para>
+    /// An earlier form of this test used a tag filter matching nothing, and was VACUOUS: selection
+    /// short-circuits before compilation, so zero scenarios ran and no door was reached — the same
+    /// filter applied to a document with a genuine EDGE-003 fault also exits 0. It is instead
+    /// driven with a document whose scenario carries a NON-security early verdict (an unresolvable
+    /// <c>script.csharp</c> <c>file:</c> reference), so the pre-topology doors DO run, the flag
+    /// stays false, and no topology is built.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "clean-secured.e2e.yaml");
+        File.WriteAllText(
+            file,
+            SecuredScenarioHead +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "        clientKeyPassword: \"${secret:env/CLIENT_KEY_PASS}\"\n" +
+            "steps:\n" +
+            "  - id: helper\n" +
+            "    type: script.csharp\n" +
+            "    file: no-such-helper.csx\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        // The doors genuinely ran: the pipeline reported the missing file, which only happens
+        // downstream of the schema and secret-reference doors this suite is testing.
+        Assert.Contains("no-such-helper.csx", rendered, StringComparison.Ordinal);
+
+        // …and the flag stayed false, so REQ-018's carve-out did NOT fire: exit 0 without
+        // --fail-on-inconclusive, despite `security` being declared.
+        Assert.Equal(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// The FIFTH combination, and the one that shipped broken: a security fault plus an UNRELATED
+    /// schema error. MEASURED before the fix — deleting one required key from a step (so the schema
+    /// error lands at <c>/steps/0</c>, outside the <c>security</c> block) took this suite from exit
+    /// 4 to exit 0, because the schema door <c>continue</c>s past both the secret pass and the
+    /// provider pipeline, and the located-inside-the-block test answers false for <c>/steps/0</c>.
+    /// <para>
+    /// For a single-file secured suite — the common shape — one typo anywhere in the document was
+    /// enough to turn every security refusal green.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecurityFaultPlusUnrelatedSchemaError_StillExitsNonZero(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "sec-plus-schema.e2e.yaml");
+        File.WriteAllText(
+            file,
+            SecuredScenarioHead +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "        clientKeyPassword: \"${secret:nosuchsource/KEY_PASS}\"\n" +
+            // 'method' omitted — a REQUIRED key, so the schema error is located at /steps/0,
+            // deliberately OUTSIDE the security block.
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+
+        // The MESSAGE is asserted as well as the code: three different doors on this surface all
+        // produce exit 4, and an all-parse-failure suite produces it too, so a bare code assertion
+        // would pass against a fixture that never reached the door under test.
+        Assert.Contains("method", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
+    /// <summary>
+    /// The behaviour change this broadening makes, asserted as an intended decision rather than
+    /// left to be inferred from a comment about masking: a secured suite with NO security fault at
+    /// all — valid <c>clientKeyPassword</c>, real certificate files — now exits non-zero when the
+    /// document carries an INNOCENT schema error elsewhere. It exited 0 before.
+    /// <para>
+    /// That is REQ-018's documented meaning applied literally ("a declared <c>security</c> block
+    /// could not be confirmed"): the document is rejected before any container starts, so the
+    /// declared assertion is never confirmed, whatever the rejection was about. It is deliberately
+    /// "declares security at all" and NOT "a security refusal was masked" — the narrower predicate
+    /// is exactly what let a schema error at <c>/steps/0</c> turn every security refusal green, and
+    /// there is no way to tell a masked refusal from an unmasked one at that door without running
+    /// the very passes the rejection has already skipped.
+    /// </para>
+    /// <para>
+    /// User-visible: one typo anywhere in a secured suite now reddens a build that was green. Both
+    /// run paths, and both directions — the unsecured control below proves it is not collateral.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecuredSuiteWithInnocentSchemaError_ExitsNonZero(int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "innocent-schema.e2e.yaml");
+        File.WriteAllText(
+            file,
+            SecuredScenarioHead +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "        clientKeyPassword: \"${secret:env/CLIENT_KEY_PASS}\"\n" +
+            // The ONLY defect: 'method' omitted. Nothing about security is wrong here.
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("method", rendered, StringComparison.Ordinal);
+
+        // …and the exit code is EXPLAINED. Without this the run exited 4 showing only the schema
+        // error, so the reason for the non-zero exit was invisible — an unexplained red.
+        // The FULL wording, not truncated one clause early. An earlier form of this assertion
+        // stopped at "exits non-zero", which is exactly where the sentence stopped being pinned —
+        // and the next clause then shipped a falsehood for an in-block schema error.
+        Assert.Contains(
+            "declares a 'security' block, so it exits non-zero even though nothing reported above "
+            + "lies inside that block: the document was rejected before its security declaration "
+            + "could be validated at all",
+            rendered,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The schema error INSIDE the <c>security</c> block. The notice must not then claim the error
+    /// "is not itself inside that block" — measured saying exactly that for
+    /// <c>profile: bogusprofile</c>, whose error is located in the block by definition.
+    /// <para>
+    /// This is the one case neither the emission gate nor the flag distinguished: both are driven
+    /// by "declares security", while the omitted clause is driven by "the error is located inside
+    /// the block", which <c>RejectsASecurityDeclaration</c> already answers on the adjacent line.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SchemaErrorInsideTheSecurityBlock_NoticeDoesNotClaimItIsOutside(
+        int? parallel)
+    {
+        File.WriteAllText(Path.Combine(_root, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(_root, "client.key"), "placeholder");
+        var file = Path.Combine(_root, "in-block-schema.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "      security:\n" +
+            // The defect is IN the security block: an unregistered profile name.
+            "        profile: bogusprofile\n" +
+            "        endpoint: 8443\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    method: GET\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("bogusprofile", rendered, StringComparison.Ordinal);
+
+        // The notice still appears — the exit code still needs explaining…
+        Assert.Contains(
+            "declares a 'security' block, so it exits non-zero: the document was rejected before "
+            + "its security declaration could be validated at all",
+            rendered,
+            StringComparison.Ordinal);
+
+        // …but WITHOUT the clause that would misdescribe the author's own document.
+        Assert.DoesNotContain("lies inside that block", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A schema error located AT the <c>security</c> node that binds NO <c>SecuritySpec</c>:
+    /// <c>security: mtls</c>, the realistic typo of writing the profile name where the block
+    /// belongs. The flag fires (the error is inside the block) but <c>SecuredTargets.Any</c> is
+    /// false, so gating the notice on "declares security" alone produced exit 4 in silence —
+    /// the unexplained red this series has fixed three times, in its third disguise.
+    /// <para>
+    /// The notice and the flag are now driven by ONE disjunction, so this shape cannot exit
+    /// non-zero without saying why. The opening clause stays true: the document does carry a
+    /// <c>security</c> key, whatever it failed to bind to.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_SecurityKeyThatBindsNoBlock_ExitsNonZeroWithTheNotice(int? parallel)
+    {
+        var file = Path.Combine(_root, "security-scalar.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            // A scalar where the block belongs: schema error AT the node, no SecuritySpec bound.
+            "      security: mtls\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    method: GET\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("should be \"object\"", rendered, StringComparison.Ordinal);
+
+        // The exit code is explained — and with the in-block wording, since the error IS at the
+        // security node.
+        Assert.Contains(
+            "declares a 'security' block, so it exits non-zero: the document was rejected before "
+            + "its security declaration could be validated at all",
+            rendered,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("lies inside that block", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other direction, so the broadening is provably not collateral damage: the SAME innocent
+    /// schema error in an UNSECURED suite still exits 0 without <c>--fail-on-inconclusive</c>, and
+    /// prints no security notice.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task ExecuteAsync_UnsecuredSuiteWithTheSameSchemaError_StillExitsZero(int? parallel)
+    {
+        var file = Path.Combine(_root, "unsecured-schema.e2e.yaml");
+        File.WriteAllText(
+            file,
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "steps:\n" +
+            "  - id: call\n" +
+            "    type: http.rest\n" +
+            "    target: api\n" +
+            "    path: /health\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Contains("method", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+    }
 }

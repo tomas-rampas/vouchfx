@@ -221,7 +221,7 @@ steps:
 
 **When to use:** You need to pass a credential (API key, bearer token, password) into a step without embedding it in source control or logs.
 
-**How it works:** A `${secret:env/VAR_NAME}` reference is resolved at **step-execution time** (never at compile time), replaced with the value of the environment variable `VAR_NAME`, and then redacted from all output and reports (displayed as `(redacted)` in logs and the HTML report). The resolved value is **never compiled into the C# IL**, never persists in the reproducibility envelope, and **never appears in `--events` JSON output** (only the reference path appears).
+**How it works:** A `${secret:env/VAR_NAME}` reference in a step's own field is resolved as that step executes — at run time, never at compile time — replaced with the value of the environment variable `VAR_NAME`, and then redacted from all output and reports (displayed as `(redacted)` in logs and the HTML report). The resolved value is **never compiled into the C# IL**, never persists in the reproducibility envelope, and **never appears in `--events` JSON output** (only the reference path appears).
 
 ### Example: API key in a header
 
@@ -339,7 +339,7 @@ vouchfx run tests/secure
 **Key points:**
 
 - Vault sources are configured at runtime via environment variables (`VOUCHFX_VAULT_ADDR`, `VOUCHFX_VAULT_TOKEN`, etc.).
-- A `${secret:vault/path/to/secret}` reference is resolved from Vault at step-execution time.
+- A `${secret:vault/path/to/secret}` reference is resolved from Vault at run time, never at compile time. In a step's own field that is immediately before the step executes; the one environment-level field that takes a reference, `security.clientKeyPassword`, resolves earlier — at first use of the certificate material, before any step runs (`docs/01` §17.1.1).
 - In `script.csharp` steps, a resolved secret is available as a `SecretString` (see `docs/01` §17) — a type that prevents accidental logging or serialization of the value.
 - The reference path (e.g., `vault/database/prod`) appears in output and the reproducibility envelope; the resolved value does not.
 - For the full Vault configuration and API, see `docs/01` §17 (Secrets).

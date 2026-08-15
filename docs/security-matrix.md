@@ -57,29 +57,43 @@ probe rather than an HTTP one, because a container health check cannot present a
 and an HTTPS probe against a mutual-TLS listener would hold a working topology unhealthy forever.
 Declare an explicit `healthCheck` against a separate unsecured port if you want a stronger probe.
 
-### The client key must be an unencrypted PEM, inside the suite directory
+### The client pair must be PEM, inside the suite directory — an encrypted key needs `clientKeyPassword`
 
-This is the limit most likely to bite an enterprise adopter first, because a corporate PKI hands out
-an encrypted key by default.
+`clientCert` and `clientKey` are read as a PEM certificate and its matching PEM private key. A key
+encrypted at rest — the form a corporate PKI hands out by default — is usable as it stands: leave it
+encrypted and declare its passphrase beside it, as a whole `${secret:<source>/<path>}` reference and
+nothing else, since a literal passphrase is refused.
 
-`clientCert` and `clientKey` are read as a PEM certificate and its matching PEM private key. There is
-no field for a key passphrase anywhere in the `security:` block, so a key encrypted at rest cannot be
-used, and neither can a PKCS#12/PFX bundle carrying the certificate and key together. The Kafka
-providers hand the same two paths straight to their client library, also with no passphrase. Export
-the key as an unencrypted PEM — a `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block, never
-`ENCRYPTED PRIVATE KEY` — before you declare it.
+```yaml
+clientCert:        certs/client.pem
+clientKey:         certs/client-key.pem
+clientKeyPassword: ${secret:env/CLIENT_KEY_PASS}
+```
+
+The reference is resolved at first use of the certificate material — inside the certificate load,
+once the topology is up — never at compile time, so no passphrase is baked into the compiled script
+and the reproducibility envelope hashes the reference rather than the value. The Kafka providers set their
+client library's `ssl.key.password` from the same resolved value, so both halves of a suite open the
+same encrypted key. Only the `ENCRYPTED PRIVATE KEY` (PKCS#8) form can be opened this way: an openssl
+legacy key, marked `Proc-Type: 4,ENCRYPTED`, must first be converted with `openssl pkcs8 -topk8`. A
+passphrase declared against a key that is not encrypted, one declared with no `clientKey` at all, and
+a reference resolving to an empty value are each refused with a diagnostic rather than ignored.
+
+What remains unavailable is a **PKCS#12/PFX bundle** carrying the certificate and key together —
+there is no field for one — and a passphrase for `caCert`, a trust anchor being a public certificate
+with no private key to unlock.
 
 Both files must also sit inside the directory tree containing the `.e2e.yaml`. Every path in the
 block is written relative to that directory and must resolve inside it; an absolute path is rejected
 by name even when it points at the file you meant, so material kept in a shared machine-wide location
-has to be copied in beside the suite.
+has to be copied in beside the suite. A `${secret:…}` reference is no way round that: in a
+path-valued field — `caCert`, `clientCert`, `clientKey`, `serverArtifacts[].source` — it is refused,
+naming the field, because the engine reads and copies the file such a field points at while the
+secrets subsystem yields a value, which is not a file.
 
 `caCert` is the asymmetric case, and it invites the wrong generalisation: the trust anchor is loaded
 through a path constructor that auto-detects PEM and DER, so one field is format-tolerant and the
 other is not.
-
-A `clientKeyPassword` field could be added later without breaking any suite that validates today —
-this is a boundary of the current release, not a permanent design choice.
 
 ## How the division was derived
 

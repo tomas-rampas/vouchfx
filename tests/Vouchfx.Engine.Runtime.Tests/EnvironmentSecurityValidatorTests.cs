@@ -963,4 +963,209 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Null(EnvironmentSecurityValidator.Validate(
             BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir));
     }
+
+    // ── REQ-011 (#387): a `${secret:}` reference in a PATH-valued field is refused ──
+    //
+    // Measured behaviour before this rule (issue #387, CLI built from be12ebd):
+    //
+    //   environment.dependencies.broker.security.clientKey: file '${secret:env/CLIENT_KEY}'
+    //     not found (resolved to '...\probe\${secret:env\CLIENT_KEY}').
+    //
+    // Two defects in one message: it blames the filesystem for a misuse of reference syntax,
+    // and the '/' inside the token was eaten by path normalisation, so the echoed path is
+    // split across a directory boundary that could never have existed. Both halves are pinned
+    // below — the new text AND the ABSENCE of the old one. Asserting only the new text would
+    // pass while the filesystem message still emitted alongside it.
+    //
+    // REQ-011's acceptance is explicit that this is "verified per field, measured separately,
+    // not generalised from one", so there are four cases rather than one Theory: the clientKey
+    // message is deliberately NOT the same as its three siblings', and a Theory over the four
+    // would have to assert the weakest common text.
+
+    private const string SecretReferenceValue = "${secret:env/CLIENT_KEY}";
+
+    /// <summary>
+    /// The shared half of REQ-011's assertion: the refusal names the field and the declared
+    /// reference, says what the field takes instead and why a reference cannot work here, and
+    /// echoes NO resolved filesystem path.
+    /// </summary>
+    private void AssertRefusedAsSecretReference(ValidationFailure? result, string fieldPath)
+    {
+        Assert.NotNull(result);
+        Assert.True(result!.IsSecurityPreflight);
+        Assert.Contains(fieldPath, result.Message, StringComparison.Ordinal);
+        Assert.Contains(SecretReferenceValue, result.Message, StringComparison.Ordinal);
+        // The opening claim must be one the CONTAINMENT guard actually established, and it must
+        // NAME the sigil it found. "…is a secret reference" is asserted absent rather than merely
+        // replaced: it was true of these four bare-token inputs and false of a path that merely
+        // carries a token (pinned separately, on the mixed input, below), so a regression to it
+        // would pass every assertion in this helper while being wrong about the wider input class
+        // the guard catches.
+        Assert.Contains(
+            "uses secret-reference syntax ('${secret:')", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", result.Message, StringComparison.Ordinal);
+        Assert.Contains("must exist inside the suite directory", result.Message, StringComparison.Ordinal);
+
+        // The refusal must say WHY, and the reason is SCOPING, not timing. An earlier message said
+        // a reference cannot resolve because "this material is loaded before any step runs, which
+        // is when secret references resolve" — then recommended `clientKeyPassword`, which resolves
+        // at that SAME pre-step moment and works, so the stated reason refuted its own remedy.
+        // The true reason: these fields name a host FILE, and the secrets subsystem yields a VALUE.
+        Assert.Contains("yields a VALUE", result.Message, StringComparison.Ordinal);
+        Assert.Contains("is not a file and has no path", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("before any step runs", result.Message, StringComparison.Ordinal);
+
+        // The filesystem message must be GONE, not merely joined by a better one.
+        Assert.DoesNotContain("not found", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("resolved to", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("resolves outside", result.Message, StringComparison.OrdinalIgnoreCase);
+
+        // The garbled echo is half of #387: no resolved host path of any kind appears.
+        Assert.DoesNotContain(_suiteDir, result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_CaCertIsASecretReference_IsRefusedWithoutAFilesystemMessage()
+    {
+        var security = new SecuritySpec("tls", "6380", SecretReferenceValue, null, null, null);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("cache", security)), _suiteDir);
+
+        AssertRefusedAsSecretReference(result, "environment.dependencies.cache.security.caCert");
+
+        // Field-specific: the clientKeyPassword pointer belongs to clientKey ALONE.
+        Assert.DoesNotContain("clientKeyPassword", result!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_ClientCertIsASecretReference_IsRefusedWithoutAFilesystemMessage()
+    {
+        WriteSuiteFile("certs/client-key.pem");
+        var security = new SecuritySpec(
+            "mtls", "9093", null, SecretReferenceValue, "./certs/client-key.pem", null);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("mq", security)), _suiteDir);
+
+        AssertRefusedAsSecretReference(result, "environment.dependencies.mq.security.clientCert");
+        Assert.DoesNotContain("clientKeyPassword", result!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>clientKey</c> is the ONE field whose refusal also names <c>clientKeyPassword</c>: it is
+    /// the supported way to keep the key encrypted at rest, which is what an author reaching for
+    /// <c>${secret:}</c> here was almost certainly trying to achieve (#387, REQ-011).
+    /// </summary>
+    [Fact]
+    public void Validate_ClientKeyIsASecretReference_IsRefused_AndNamesClientKeyPassword()
+    {
+        WriteSuiteFile("certs/client.pem");
+        var security = new SecuritySpec(
+            "mtls", "9093", null, "./certs/client.pem", SecretReferenceValue, null);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("mq", security)), _suiteDir);
+
+        AssertRefusedAsSecretReference(result, "environment.dependencies.mq.security.clientKey");
+        Assert.Contains("clientKeyPassword", result!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_ServerArtifactSourceIsASecretReference_IsRefusedWithoutAFilesystemMessage()
+    {
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new(SecretReferenceValue, "/etc/kafka/secrets/keystore.jks"),
+        };
+        var security = new SecuritySpec("tls", "9093", null, null, null, artifacts);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("events-kafka", security)), _suiteDir);
+
+        AssertRefusedAsSecretReference(
+            result, "environment.dependencies.events-kafka.security.serverArtifacts[0].source");
+        Assert.DoesNotContain("clientKeyPassword", result!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The sigil check must win over the ROOTED check that sits immediately below it, on an input
+    /// where the ordering is OBSERVABLE. <c>/etc/${secret:env/CLIENT_KEY}</c> is both rooted and
+    /// sigil-bearing, is reachable from ordinary YAML, and is refused as a secret reference —
+    /// which is the actionable diagnosis; "must be a path relative to the suite directory" would
+    /// send the author to fix the wrong thing.
+    /// <para>
+    /// An earlier form of this test used a BARE token, for which
+    /// <see cref="Path.IsPathRooted(string)"/> is <see langword="false"/> — so the ordering was
+    /// unobservable and a reordering mutant survived it. Both inputs are asserted here: the bare
+    /// one for the property it does pin, the mixed one for the ordering.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Validate_RootedPathContainingASecretReference_IsRefusedAsASecretReferenceNotAsRooted()
+    {
+        // The bare token is not rooted, which is why it alone cannot exercise the ordering.
+        Assert.False(Path.IsPathRooted(SecretReferenceValue));
+
+        const string rootedAndSigilBearing = "/etc/${secret:env/CLIENT_KEY}";
+        Assert.True(Path.IsPathRooted(rootedAndSigilBearing));
+
+        var security = new SecuritySpec("tls", "6380", rootedAndSigilBearing, null, null, null);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("cache", security)), _suiteDir);
+
+        Assert.NotNull(result);
+        Assert.Contains(
+            "uses secret-reference syntax ('${secret:')", result!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "must be a path relative to the suite directory", result.Message, StringComparison.Ordinal);
+
+        // THIS input is the one the retracted wording was FALSE about, so the accuracy of the
+        // replacement is pinned here rather than only in the shared helper. '/etc/${secret:…}' is
+        // a PATH that carries a reference; it is not itself one. The refusal must therefore make
+        // a containment claim, must say the embedded shape is refused too (an author who reads
+        // "is a secret reference" of this value will try trimming the path around the token), and
+        // must not assert the identity the guard never tested.
+        Assert.Contains("whole or embedded in a longer path", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", result.Message, StringComparison.Ordinal);
+        Assert.Contains(rootedAndSigilBearing, result.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-011's regression guard: the refusal must refuse ONLY the sigil. An ordinary relative
+    /// path in every one of the four path-valued fields at once still validates clean.
+    /// </summary>
+    [Fact]
+    public void Validate_OrdinaryRelativePathsInAllFourPathFields_StillValidateClean()
+    {
+        WriteSuiteFile("certs/ca.pem");
+        WriteSuiteFile("certs/client.pem");
+        WriteSuiteFile("certs/client-key.pem");
+        WriteSuiteFile("certs/kafka.server.keystore.jks");
+        var artifacts = new List<SecurityServerArtifactSpec>
+        {
+            new("./certs/kafka.server.keystore.jks", "/etc/kafka/secrets/keystore.jks"),
+        };
+        var security = new SecuritySpec(
+            "mtls", "9093", "./certs/ca.pem", "./certs/client.pem", "./certs/client-key.pem", artifacts);
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(
+            BuildAst(dependencies: OneDependency("mq", security)), _suiteDir));
+    }
+
+    /// <summary>
+    /// A service's <c>security</c> block reaches the same chokepoint — the rule is not
+    /// dependency-only (the field-path prefix is the only difference).
+    /// </summary>
+    [Fact]
+    public void Validate_ServiceCaCertIsASecretReference_IsRefusedNamingTheServicePath()
+    {
+        var security = new SecuritySpec("tls", "8443", SecretReferenceValue, null, null, null);
+
+        var result = EnvironmentSecurityValidator.Validate(
+            BuildAst(services: OneService("api", security)), _suiteDir);
+
+        AssertRefusedAsSecretReference(result, "environment.services.api.security.caCert");
+    }
 }

@@ -3,9 +3,17 @@
 //
 // A resolver knows how to turn a source-specific PATH into a SecretString for a
 // single source (e.g. "env"). The EnvironmentSecretResolver is the first place in
-// the engine that an environment variable is actually read — and it is read only
-// at step-execution time, never at compile time (§17). Vault drops in as a sibling
-// resolver in Sprint 8 with no change to this contract.
+// the engine that an environment variable is actually read — and it is read at run
+// time, never at compile time (§17). Vault drops in as a sibling resolver in
+// Sprint 8 with no change to this contract.
+//
+// "At run time" rather than "at step-execution time", deliberately, and for the reason
+// SecretReference's own header states at length: which run-time moment a resolver is
+// called at is the CALLER's property, not this interface's. A step's substitutable field
+// resolves at step-execution time; environment-level security.clientKeyPassword resolves
+// when the certificate material is first used — after the topology is up and BEFORE any
+// step runs. The compile-time prohibition is the invariant common to both, and it is the
+// only one this file may state.
 
 using System;
 
@@ -16,8 +24,15 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// a single source into a redacted <see cref="SecretString"/> (§17).
 /// </summary>
 /// <remarks>
-/// Implementations resolve <strong>at step-execution time only</strong>: no value
+/// Implementations resolve <strong>at run time, never at compile time</strong>: no value
 /// is read at compile time, so no value is ever baked into the emitted IL (§17).
+/// <para>
+/// WHICH run-time moment belongs to the CALLING field, not to this interface. A step's
+/// substitutable field resolves at step-execution time; environment-level
+/// <c>security.clientKeyPassword</c> resolves when the certificate material is first used,
+/// after the topology is up and before any step runs. See <see cref="SecretReference"/>'s own
+/// remarks — an implementation may be called at either moment and must assume neither.
+/// </para>
 /// </remarks>
 public interface ISecretResolver
 {
@@ -40,8 +55,8 @@ public interface ISecretResolver
 
 /// <summary>
 /// Resolves secrets from process environment variables — the MVP <c>env</c> source
-/// (§17). This is the sole place an environment variable is read, and it happens at
-/// step-execution time, never at compile time.
+/// (§17). This is the sole place an environment variable is read, and it happens at run
+/// time, never at compile time.
 /// </summary>
 public sealed class EnvironmentSecretResolver : ISecretResolver
 {

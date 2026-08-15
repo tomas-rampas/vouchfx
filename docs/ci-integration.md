@@ -43,18 +43,48 @@ A suite that declares a `security:` block the engine **cannot confirm** exits no
 `--fail-on-env-error` and no `--fail-on-inconclusive`. Each cause keeps the exit code its own
 verdict names:
 
-- the post-health-gate **secured-confirmation probe** fails — the declared endpoint refuses the
-  connection, does not speak TLS, presents a certificate that does not chain to the declared `caCert`,
-  or refuses the declared client certificate. The run aborts before any step executes and exits **3**;
+- the post-health-gate **secured-confirmation probe** fails. The probe connects to the declared
+  endpoint with exactly the material a step would use, so *anything* that stops it completing that
+  connection lands here rather than in a list that has to be kept current: the endpoint refuses the
+  connection or does not speak TLS, its certificate does not chain to the declared `caCert`, it
+  refuses the declared client certificate, or the declared client identity cannot be **loaded** at
+  all — which covers a well-formed `clientKeyPassword` that cannot be resolved, that resolves to an
+  empty value, or that does not decrypt the key. The run aborts before any step executes and exits
+  **3**;
 - a pre-topology **security preflight** rejects the declaration — a certificate or artefact path that
   escapes the suite directory or does not exist, an artefact `target` that is not an absolute
   in-container file path, or a `profile` with no wiring for the target's kind. No container
-  starts and the run exits **4**;
-- the **schema** rejects it first — the per-kind narrowing of `profile` is enforced by the root schema,
-  so a `profile` the target's kind has no wiring for is refused there before the preflight sees it; and
-  more broadly *any* schema error located at or inside a declared `security:` block counts, not only
-  the causes listed above. A mistyped field name, a scalar where a list belongs, or `caCert: [a, b]`
-  all qualify. No container starts and the run exits **4**;
+  starts and the run exits **4**. One measured exception applies to this arm, on the default
+  (non-`--parallel`) path only, and it is a defect rather than a design — pre-existing, tracked as
+  issue #399. The preflight can only refuse a document that reaches it, and on that path a
+  **step-level** secret reference the engine refuses (a `${secret:...}` naming a source it cannot
+  resolve, for instance) is judged first and stops the document short of the preflight. A scenario
+  carrying both faults therefore loses the security refusal altogether — the printed diagnostic as
+  well as the exit code — and the run exits **0** on the step fault's own ordinary terms, which are
+  Inconclusive and gated by `--fail-on-inconclusive` like any other authoring error. Both faults
+  must sit in the **same** scenario document to collide. A security fault with no step fault beside
+  it exits 4 as described, on either path, and `--parallel` reaches the preflight first and exits 4
+  either way;
+- the **schema** rejects the document first — and for a document that declares a `security:` block
+  at all, *any* schema error counts, wherever in the document it sits. The reason is that nothing
+  downstream of a schema rejection runs, so the declaration is never validated, never probed and
+  therefore never confirmed; a rejected secured document is unconfirmable whatever the rejection
+  was about. An error inside the block itself is one case of that — a mistyped field name, a scalar
+  where a list belongs, `caCert: [a, b]`, or the per-kind narrowing of `profile` (a `profile` the
+  target's kind has no wiring for is refused by the root schema before the preflight sees it) — but
+  so is a missing `method:` on an unrelated step. No container starts and the run exits **4**. Note
+  the practical consequence: in a suite that declares `security:`, a schema error anywhere now
+  reddens the run, where the same typo in an unsecured suite still exits 0. The run prints a line
+  saying so, rather than leaving the exit code to be guessed at;
+- the **secret reference** a `security:` block declares is refused before the topology is built:
+  `clientKeyPassword` naming a source the engine cannot resolve, or holding anything other than one
+  whole, well-formed `${secret:<source>/<path>}` reference. A declaration the engine cannot honour is
+  one it cannot confirm. No container starts and the run exits **4**. Mind the boundary against the
+  probe bullet above, because the two read alike and carry different codes: this door judges the
+  reference's **form and source** from the YAML alone, before anything starts; a well-formed
+  reference naming a known source that then fails to *resolve*, resolves empty, or does not open the
+  key is the probe's case and exits **3**. The same fault in a *step's* field is an ordinary
+  authoring error and carries no unconditional exit at all;
 - a secured multi-scenario suite is refused over its **directory layout** — its scenarios live in
   different directories, so a relative path such as `caCert: ./certs/ca.pem` would name a different
   file per scenario and the pre-run probe could no longer be evidence about every scenario's steps.

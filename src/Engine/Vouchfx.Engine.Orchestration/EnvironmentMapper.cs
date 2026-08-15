@@ -1012,8 +1012,8 @@ public static class EnvironmentMapper
         // Validate every service's `env:` mapping eagerly (SUT configuration surface) — every
         // ${conn:name}/${conn:name.part} reference must name a declared dependency and, for the
         // '.part' form, a part supported by that dependency's kind; a ${secret:...} reference is
-        // rejected outright (§17 — secrets resolve at step-execution time, never baked into a
-        // container's environment).  Validating before any builder mutation keeps Map() eager,
+        // rejected outright (§17 — a secret is never baked into a container's environment,
+        // whatever moment it would resolve at).  Validating before any builder mutation keeps Map() eager,
         // consistent with the two loops above.
         foreach (var (serviceName, spec) in env.Services ?? new Dictionary<string, ServiceSpec>())
         {
@@ -1579,8 +1579,9 @@ public static class EnvironmentMapper
     /// service-shape and dependency-type validation above).
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// Thrown when the value contains a <c>${secret:...}</c> reference (§17 — secrets resolve
-    /// at step-execution time, never at container-build time), names an unknown dependency,
+    /// Thrown when the value contains a <c>${secret:...}</c> reference (§17 — a container's
+    /// environment is the wrong PLACE for a secret, whatever moment it would resolve at),
+    /// names an unknown dependency,
     /// names an <c>azureservicebus</c> dependency (unsupported by <c>env:</c> in v1), or uses
     /// an unsupported <c>.part</c> accessor for the referenced dependency's kind.
     /// </exception>
@@ -1595,14 +1596,27 @@ public static class EnvironmentMapper
         // ones, so a malformed token such as '${secret:env}' (missing '/path') must be rejected
         // too — it would otherwise silently pass through as opaque literal text instead of
         // surfacing the author's mistake.
+        //
+        // THE RATIONALE BELOW IS ABOUT PLACE, AND IT USED TO BE ABOUT TIMING. The message opened
+        // with "Secrets resolve at step-execution time, never at container-build time", which the
+        // client-key-password series made false: environment-level `security.clientKeyPassword`
+        // resolves at first use of the certificate material — after the topology is up and BEFORE
+        // any step runs — so "step-execution time" was never a property of secret resolution, only
+        // of a STEP's own field. See SecretReference's header for the invariant that survives (at
+        // run time, never at compile time), and EnvironmentSecurityValidator's own sigil refusal
+        // for the sibling that abandoned the same timing argument for a scoping one. The refusal
+        // itself never rested on the timing claim: what makes a container's environment wrong for
+        // a secret is that anyone who can run `docker inspect` reads it, which is true at every
+        // moment. Do not reintroduce a resolution-moment argument here.
         if (envValue.Contains(SecretReference.Sigil, StringComparison.Ordinal))
         {
             throw new ArgumentException(
                 $"Service '{serviceName}' env entry '{envKey}' references a ${{secret:...}} value. " +
-                "Secrets resolve at step-execution time, never at container-build time (§17): " +
-                "baking a secret into a container's environment would expose it via 'docker " +
-                "inspect' and corrupt the reproducibility envelope (which hashes the reference, " +
-                "never the value). Configure the SUT to resolve the secret itself instead.",
+                "A container's environment is the wrong PLACE for a secret, whenever it would " +
+                "resolve (§17): baking a secret into a container's environment would expose it " +
+                "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
+                "reference, never the value). Configure the SUT to resolve the secret itself " +
+                "instead.",
                 nameof(envValue));
         }
 

@@ -138,7 +138,7 @@ The reconciliation is a layering: MCP tools are the *deterministic tool layer*; 
 
 ### 7.1 Secrets never cross the AI boundary
 
-The engine's secrets invariant (blueprint section 17) extends across the AI boundary unchanged. Suites contain only `${secret:source/path}` references, so the model reads and writes references, never values. The Generator is *incapable* of embedding a secret value in a suite it did not receive one for, and the redaction-at-source design (`SecretString` with no value-returning conversions) means the event stream the Healer reads never contains a value either — the reproducibility envelope hashes references, not values. The vouchfxai server adds one obligation of its own: no tool may resolve a secret reference; resolution remains exclusively a step-execution-time engine concern.
+The engine's secrets invariant (blueprint section 17) extends across the AI boundary unchanged. Suites contain only `${secret:source/path}` references, so the model reads and writes references, never values. The Generator is *incapable* of embedding a secret value in a suite it did not receive one for, and the redaction-at-source design (`SecretString` with no value-returning conversions) means the event stream the Healer reads never contains a value either — the reproducibility envelope hashes references, not values. The vouchfxai server adds one obligation of its own: no tool may resolve a secret reference; resolution remains exclusively a run-time engine concern.
 
 ### 7.2 Every mutation is a proposal
 

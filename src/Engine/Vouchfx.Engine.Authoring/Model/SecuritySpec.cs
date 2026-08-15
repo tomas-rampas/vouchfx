@@ -83,7 +83,67 @@ public sealed record SecuritySpec(
     string? CaCert,
     string? ClientCert,
     string? ClientKey,
-    IReadOnlyList<SecurityServerArtifactSpec>? ServerArtifacts);
+    IReadOnlyList<SecurityServerArtifactSpec>? ServerArtifacts)
+{
+    /// <summary>
+    /// The passphrase for an encrypted <see cref="ClientKey"/>, as DECLARED TEXT: a
+    /// <c>${secret:&lt;source&gt;/&lt;path&gt;}</c> reference, retained verbatim and
+    /// UNRESOLVED at this layer (client-key-password spec, REQ-003).
+    /// <see langword="null"/> when the author declares no <c>clientKeyPassword</c> — the
+    /// ordinary case, an unencrypted key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference is never resolved here, and on any schema-validated path this record
+    /// holds only a REFERENCE, never a passphrase value: that the text is a single whole
+    /// <c>${secret:}</c> reference and never a literal is enforced by the JSON Schema layer's
+    /// own <c>pattern</c> (<c>root-language-schema.json</c>'s <c>$defs/security</c>), like
+    /// every sibling field's shape. A direct engine embedder that bypasses the schema CAN bind
+    /// a literal here — this parser enforces no shape, by design, and
+    /// <c>SecuritySpecBindingTests.Parse_ClientKeyPasswordLiteral_IsStillBound_ParserStaysLenient</c>
+    /// pins exactly that — so no consumer may assume the text is non-secret UNTIL IT HAS PROVED
+    /// OTHERWISE. The proof is <c>SecretReference.ValidateSecretBearingField</c> RETURNING TRUE.
+    /// Only then is the text known to be a pointer, and §17 permits quoting a pointer — which is
+    /// why that method's unknown-source diagnostic may name the reference it refuses.
+    /// </para>
+    /// <para>
+    /// <strong><c>SecretReference.TryParse</c> alone is NOT that proof</strong>, and a consumer
+    /// writing <c>if (TryParse(v)) quote(v);</c> reproduces a disclosure defect this branch has
+    /// already had to fix once. <c>TryParse</c> asks only whether one whole token spans the
+    /// value; because a reference path terminates at the first closing brace and is otherwise
+    /// unrestricted, a value can satisfy that while still containing a further lead-in swallowed
+    /// inside the path — and everything after that lead-in is then arbitrary author text that
+    /// <c>TryParse</c> has said nothing about. <c>ValidateSecretBearingField</c> applies the
+    /// remaining rule and withholds such a value.
+    /// </para>
+    /// <para>
+    /// The rule, stated once: PROVE it is a pointer with
+    /// <c>ValidateSecretBearingField</c>, then you may quote it. Never "assume it is a pointer",
+    /// and never "parse it and assume".
+    /// </para>
+    /// <para>
+    /// §17 requires resolution at first USE of the certificate material — which for this field is
+    /// the certificate load, after the topology is up — so that no secret value is ever baked into
+    /// the compiled script's IL and the reproducibility envelope hashes the reference rather than
+    /// the value.
+    /// </para>
+    /// <para>
+    /// This record's compiler-generated <c>ToString()</c> prints this property, so never
+    /// interpolate a <see cref="SecuritySpec"/> whole into a diagnostic, event or report —
+    /// name the field you need. Deliberately NOT closed by a hand-written
+    /// <c>PrintMembers</c> override: an explicit override must enumerate all seven members, so
+    /// a future eighth field would be silently dropped from <c>ToString()</c> — a worse drift
+    /// trap than the hazard it closes.
+    /// </para>
+    /// <para>
+    /// Declared as an init-only property rather than a positional record parameter, per
+    /// this record's own binary-compatibility rule in the remarks above: an init-only
+    /// property is purely additive, whereas a seventh positional parameter would change
+    /// the primary constructor's arity and the compiler-generated <c>Deconstruct</c>.
+    /// </para>
+    /// </remarks>
+    public string? ClientKeyPassword { get; init; }
+}
 
 /// <summary>
 /// A single <c>{ source, target }</c> pair declared under a <see cref="SecuritySpec.ServerArtifacts"/>

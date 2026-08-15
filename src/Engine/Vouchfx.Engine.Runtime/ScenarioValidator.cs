@@ -264,7 +264,10 @@ public static class ScenarioValidator
         // Topology-free by construction (it scans AST text only; it never resolves a
         // secret), so it runs here as part of the SAME "Pipeline" stage the run path
         // treats it as — reusing ScenarioRunner's exact check, not a re-implementation.
-        if (ScenarioRunner.TryValidateSecretReferences(ast, out var secretError))
+        // REQ-018's signal is DISCARDED here, deliberately: `vouchfx validate` reports validity,
+        // not a run verdict, and an invalid document already exits 4 whatever made it invalid —
+        // the carve-out exists to stop a RUN going green, and there is no run here to gate.
+        if (ScenarioRunner.TryValidateSecretReferences(ast, out var secretError, out _))
         {
             return SingleDiagnostic(path, ValidationStage.Pipeline, secretError!);
         }

@@ -2579,7 +2579,14 @@ public sealed class EnvironmentMapperTests
         // Act + Assert
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
         Assert.Contains("secret", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // The reason is SCOPE, not timing. This pair of assertions replaced a
+        // Contains("step-execution") that had become false: environment-level
+        // `security.clientKeyPassword` resolves before any step runs, so "step-execution time" was
+        // never a property of secret resolution — only of a STEP's own field. What makes a
+        // container's environment wrong for a secret is true at every moment.
+        Assert.Contains("docker inspect", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -2616,7 +2623,10 @@ public sealed class EnvironmentMapperTests
         // Act + Assert
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
         Assert.Contains("secret", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Same scope-not-timing pin as the well-formed arm above; see its own note.
+        Assert.Contains("docker inspect", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("step-execution", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // -----------------------------------------------------------------------
@@ -3023,11 +3033,11 @@ public sealed class EnvironmentMapperTests
         // argument.
         const string expected =
             "Service 'api' env entry 'P' references a ${secret:...} value. " +
-            "Secrets resolve at step-execution time, never at container-build time (§17): " +
-            "baking a secret into a container's environment would expose it via 'docker " +
-            "inspect' and corrupt the reproducibility envelope (which hashes the reference, " +
-            "never the value). Configure the SUT to resolve the secret itself instead. " +
-            "(Parameter 'envValue')";
+            "A container's environment is the wrong PLACE for a secret, whenever it would " +
+            "resolve (§17): baking a secret into a container's environment would expose it " +
+            "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
+            "reference, never the value). Configure the SUT to resolve the secret itself " +
+            "instead. (Parameter 'envValue')";
 
         Assert.Equal(expected, ex.Message, StringComparer.Ordinal);
     }

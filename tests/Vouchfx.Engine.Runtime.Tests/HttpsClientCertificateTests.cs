@@ -26,6 +26,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -112,6 +113,16 @@ public sealed class HttpsClientCertificateTests
             Variables: new Dictionary<string, string>(StringComparer.Ordinal),
             Steps: Array.Empty<StepNode>());
 
+    /// <summary>
+    /// <c>SecurityConfigurationAccessor.Build</c> for this class, none of whose suites declare a
+    /// <c>clientKeyPassword</c>: the <see langword="null"/> secret accessor is stated once here
+    /// rather than at every call site. See the same helper in
+    /// <c>SecurityConfigurationAccessorTests</c> for why the parameter itself stays required.
+    /// </summary>
+    private static ISecurityConfigurationAccessor BuildWithNoSecretAccessor(
+        ScenarioAst ast, string? suiteDirectory) =>
+        SecurityConfigurationAccessor.Build(ast, suiteDirectory, secrets: null);
+
     private static HttpRestModel GetModel(int? expectedStatus = null) =>
         new(
             Target: TargetName,
@@ -177,7 +188,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(AstWith(MtlsSecurity()), bed.SuiteDirectory);
+        var accessor = BuildWithNoSecretAccessor(AstWith(MtlsSecurity()), bed.SuiteDirectory);
         try
         {
             var vars = await RunStepsAsync(
@@ -190,6 +201,155 @@ public sealed class HttpsClientCertificateTests
             // the suite declared.
             Assert.Equal(
                 TestCertificateAuthority.ClientSubjectCommonName, responder.LastClientCertificateCommonName);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// REQ-005's acceptance, EXECUTED: the same suite with its client key encrypted at rest and a
+    /// <c>clientKeyPassword</c> declared completes the mutual-TLS handshake and presents the same
+    /// identity. The arm above is the control — the only differences are the encryption of the key
+    /// on disk and the one extra declared field.
+    /// </summary>
+    /// <remarks>
+    /// Written HERE, against a real listener, and not only as a non-null certificate in
+    /// <c>SecurityConfigurationAccessorTests</c>, because REQ-005 asks for a HANDSHAKE and this
+    /// repo has already measured the difference: a certificate straight out of the PEM loader
+    /// reports <c>HasPrivateKey=true</c> and then FAILS TLS client authentication on Windows,
+    /// because SChannel cannot use its ephemeral key. Only a handshake proves the PKCS#12 round
+    /// trip in <c>LoadClient</c> ran on the ENCRYPTED branch too — a branch that skipped it would
+    /// pass every assertion in that class and still be unusable on the platform half this project's
+    /// pilots run on.
+    /// </remarks>
+    [Fact]
+    public async Task Execute_MtlsProfileWithEncryptedClientKey_CompletesTheHandshakeUsingThePassphrase()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        using var responder = MtlsResponder.Start(bed.ServerCertificate);
+
+        const string passphrase = "pilot-passphrase";
+        TestCertificateAuthority.EncryptClientKeyInPlace(bed.SuiteDirectory, passphrase);
+
+        var variable = TestCertificateAuthority.UniqueClientKeyPassphraseVariableName();
+        Environment.SetEnvironmentVariable(variable, passphrase);
+        try
+        {
+            var security = MtlsSecurity() with
+            {
+                ClientKeyPassword = "${secret:env/" + variable + "}",
+            };
+
+            // A REAL SecretAccessor over a REAL resolver: SecretString's constructor is internal to
+            // Vouchfx.Engine.Abstractions and this project holds no InternalsVisibleTo grant, so a
+            // passphrase reaches the accessor here exactly the way a production one does.
+            var accessor = SecurityConfigurationAccessor.Build(
+                AstWith(security),
+                bed.SuiteDirectory,
+                new SecretAccessor(
+                    new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })));
+            try
+            {
+                var vars = await RunStepsAsync(
+                    new[] { ("call-api", GetModel(expectedStatus: 200)) }, responder.BaseUrl, accessor);
+
+                var outcome = OutcomeOf(vars, "call-api");
+                Assert.Equal(Verdict.Pass, outcome.Verdict);
+
+                // Observed at the SERVER, as in the control: the encrypted key really produced an
+                // identity the listener accepted, and it is the declared one.
+                Assert.Equal(
+                    TestCertificateAuthority.ClientSubjectCommonName,
+                    responder.LastClientCertificateCommonName);
+            }
+            finally
+            {
+                (accessor as IDisposable)?.Dispose();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, null);
+        }
+    }
+
+    /// <summary>
+    /// EDGE-002, EXECUTED: a well-formed <c>clientKeyPassword</c> reference that CANNOT BE RESOLVED
+    /// yields an <see cref="Verdict.EnvironmentError"/> — never a <see cref="Verdict.Fail"/> — and
+    /// the secret subsystem's own message survives into the observation an author reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The taxonomy distinction is the requirement, not a detail of it (§12.1). An unset secret is
+    /// an environment/configuration fault: the suite never got to test anything, and only
+    /// <c>Fail</c> breaks CI by default, so misfiling this as a defect is what "conflating an env
+    /// error with a defect destroys trust in the tool" names. Asserted BOTH ways — the verdict is
+    /// <c>EnvironmentError</c> AND is explicitly not <c>Fail</c> — because a single equality would
+    /// go green against a future taxonomy edit that renamed rather than reclassified.
+    /// </para>
+    /// <para>
+    /// Written HERE, driving the real provider through Emit → Assemble → CompileOnce →
+    /// RunIsolatedAsync, rather than as an exception-type assertion against the accessor: the
+    /// accessor throwing is not the requirement — the VERDICT the throw becomes, three layers down
+    /// through the provider's guarded region, is. The environment variable is deliberately never
+    /// set, and its name is unique per run, so nothing on the host can make this pass by accident.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Execute_MtlsProfileWithAnUnresolvablePassphrase_IsAnEnvironmentErrorNotAFail()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        using var responder = MtlsResponder.Start(bed.ServerCertificate);
+
+        // The key IS encrypted, so REQ-006's contradiction guard passes and the failure under test
+        // is the RESOLUTION, not the declaration.
+        TestCertificateAuthority.EncryptClientKeyInPlace(bed.SuiteDirectory, "pilot-passphrase");
+
+        // Never set. Unique per run, so no leftover value on the host can satisfy it.
+        var variable = TestCertificateAuthority.UniqueClientKeyPassphraseVariableName();
+        Assert.Null(Environment.GetEnvironmentVariable(variable));
+
+        var security = MtlsSecurity() with
+        {
+            ClientKeyPassword = "${secret:env/" + variable + "}",
+        };
+
+        // A REAL environment secret accessor, as in the positive arm — the point is that the
+        // subsystem's own resolution failure is what reaches the verdict.
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWith(security),
+            bed.SuiteDirectory,
+            new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })));
+        try
+        {
+            var vars = await RunStepsAsync(
+                new[] { ("call-api", GetModel(expectedStatus: 200)) }, responder.BaseUrl, accessor);
+
+            var outcome = OutcomeOf(vars, "call-api");
+
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.NotEqual(Verdict.Fail, outcome.Verdict);
+
+            // The engine's own framing: which field, and that resolution is what failed.
+            Assert.Contains("clientKeyPassword", outcome.Observation, StringComparison.Ordinal);
+            Assert.Contains("could not be resolved", outcome.Observation, StringComparison.Ordinal);
+
+            // THE RESOLVER'S OWN MESSAGE SURVIVES, which is what makes the diagnostic actionable —
+            // it names the variable an author has to define. Asserted on a fragment carrying no
+            // apostrophes, because the quoting helper escapes the delimiter inside nested text.
+            Assert.Contains(
+                "is not set; define it in the run environment",
+                outcome.Observation,
+                StringComparison.Ordinal);
+            Assert.Contains(variable, outcome.Observation, StringComparison.Ordinal);
+
+            // Fail-closed: nothing was presented. An unresolvable passphrase must not degrade to an
+            // anonymous connection against a listener that requests but does not enforce a client
+            // certificate.
+            Assert.Null(responder.LastClientCertificateCommonName);
         }
         finally
         {
@@ -220,7 +380,7 @@ public sealed class HttpsClientCertificateTests
             ClientKey: null,
             ServerArtifacts: null);
 
-        var accessor = SecurityConfigurationAccessor.Build(AstWith(tlsOnly), bed.SuiteDirectory);
+        var accessor = BuildWithNoSecretAccessor(AstWith(tlsOnly), bed.SuiteDirectory);
         try
         {
             var vars = await RunStepsAsync(
@@ -284,7 +444,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(
+        var accessor = BuildWithNoSecretAccessor(
             AstWith(MtlsSecurity() with { CaCert = null }), bed.SuiteDirectory);
         try
         {
@@ -327,7 +487,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(
+        var accessor = BuildWithNoSecretAccessor(
             AstWith(MtlsSecurity() with { Profile = "kerberos" }), bed.SuiteDirectory);
         try
         {
@@ -368,7 +528,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(
+        var accessor = BuildWithNoSecretAccessor(
             AstWith(MtlsSecurity() with { Profile = "tls" }), bed.SuiteDirectory);
         try
         {
@@ -409,7 +569,7 @@ public sealed class HttpsClientCertificateTests
             ClientKey: null,
             ServerArtifacts: null);
 
-        var accessor = SecurityConfigurationAccessor.Build(
+        var accessor = BuildWithNoSecretAccessor(
             AstWith(mtlsWithoutClientIdentity), bed.SuiteDirectory);
         try
         {
@@ -457,7 +617,7 @@ public sealed class HttpsClientCertificateTests
             ClientKey: null,
             ServerArtifacts: null);
 
-        var accessor = SecurityConfigurationAccessor.Build(AstWith(tlsOnly), bed.SuiteDirectory);
+        var accessor = BuildWithNoSecretAccessor(AstWith(tlsOnly), bed.SuiteDirectory);
         try
         {
             // The listener answers 400 when no client certificate arrives, and this is a `tls`
@@ -487,7 +647,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(AstWith(MtlsSecurity()), bed.SuiteDirectory);
+        var accessor = BuildWithNoSecretAccessor(AstWith(MtlsSecurity()), bed.SuiteDirectory);
         try
         {
             var vars = await RunStepsAsync(
@@ -521,7 +681,7 @@ public sealed class HttpsClientCertificateTests
         using var bed = TestCertificateAuthority.CreateSuiteDirectory();
         using var responder = MtlsResponder.Start(bed.ServerCertificate);
 
-        var accessor = SecurityConfigurationAccessor.Build(AstWith(MtlsSecurity()), bed.SuiteDirectory);
+        var accessor = BuildWithNoSecretAccessor(AstWith(MtlsSecurity()), bed.SuiteDirectory);
         try
         {
             var vars = await RunStepsAsync(
