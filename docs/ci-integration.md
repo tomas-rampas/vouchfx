@@ -55,12 +55,16 @@ the declaration names. Two shapes raise:
   or the declared client identity cannot be **loaded** at all — a well-formed `clientKeyPassword` that
   cannot be resolved, that resolves to an empty value, or that does not decrypt the key. The run
   aborts before any step executes.
-- **something refused the document** before it could be confirmed. Nothing downstream of a refusal
-  runs, so the declaration is never validated, never probed and therefore never confirmed.
+- **something refused the document** before it could be confirmed **and left some declared target
+  unconfirmed**. Nothing downstream of a refusal runs, so the declaration is never validated, never
+  probed and therefore never confirmed. Both halves carry weight: a refusal beside siblings whose
+  probe went on to confirm every declared target leaves nothing unconfirmed and does not raise (see
+  *What does not break CI* below).
 
 Ending without that confirmation is not by itself the rule, and one shape sits outside both bullets: a
-topology that came **up** and then failed its health gate leaves the declaration unprobed and still
-exits 0. That is the deliberate exception recorded under *What does not break CI* below.
+topology that came **up** and then failed its health gate leaves the declaration unprobed, and a run
+whose **only** fault is that gate still exits 0. That is the deliberate exception recorded under
+*What does not break CI* below.
 
 **What the refusal was about is not consulted, and that is the whole of the rule.** The engine does
 not ask whether the fault was a security fault; it asks whether the refusal left a declared target
@@ -70,9 +74,13 @@ addressed by two protocol families, a certificate path that escapes the suite di
 exist, a `clientKeyPassword` that is not one whole `${secret:<source>/<path>}` reference — every one
 of these is an **instance** of the property, and none of them is a definition of it. The rule holds
 for causes not named here, and this page does not maintain a list of them. The practical consequence
-is the one to plan for: **in a suite that declares `security:`, an authoring fault that stops the run
-before the declaration can be confirmed reddens it — whatever that fault was about — where the same
-fault in an unsecured suite still exits 0.**
+is the one to plan for: **in a suite that declares `security:`, an authoring fault the engine can
+locate in a document it parsed reddens it when it stops that declaration being confirmed — whatever
+that fault was about — where the same fault in an unsecured suite still exits 0.**
+
+The qualification "in a document it parsed" is the one shape outside that sentence, and it is a
+measured hole rather than a nuance of the rule: a file the engine cannot parse binds no declaration
+it can see, so it raises nothing of its own. See the parse bullet under *What does not break CI*.
 
 A rejection located **at or inside** the declaration counts even when the declaration is malformed
 enough that no block binds at all: `security: mtls` — the profile name written where the block
@@ -112,17 +120,31 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
 
 #### What does *not* break CI
 
-- **A topology that came up and then failed its health gate.** That suite still exits 0 by default,
-  with or without a `security:` block, exactly as any other environment error does. Narrowing this is
-  [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390); until it lands, an unhealthy
-  container anywhere in a secured suite can leave the declaration unprobed and the pipeline green.
+- **A topology that came up and then failed its health gate, when that is the run's *only* fault.**
+  Such a suite exits 0 by default, with or without a `security:` block, exactly as any other
+  environment error does. The qualification is load-bearing rather than cautious: a health-gate
+  failure never *clears* a refusal the same run already recorded, so a secured suite in which one
+  scenario was refused on an authoring fault before the topology failed its gate exits non-zero on
+  that refusal. Measured on the built CLI with neither gating flag: a two-scenario secured suite
+  whose first scenario omits a required `method:` and whose topology then fails to provision exits
+  **3**, where the identical pair with no `security:` block exits **0**. Narrowing the only-fault
+  case is [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390); until it lands, an
+  unhealthy container in a secured suite that is otherwise clean can leave the declaration unprobed
+  and the pipeline green.
 - **Every other cause of an environment error** — an unhealthy container, an unpullable image, a seed
-  failure unrelated to security — is unaffected and still exits 0 by default.
+  failure unrelated to security — raises nothing of its own, and a run whose only fault is one of
+  them still exits 0 by default.
 - **The same document with no `security:` block.** Measured on pairs differing in nothing else, both
   run paths: the secured document exits 4 where the unsecured one exits 0.
-- **A run whose every scenario fails to parse.** It exits 4 through the parse rule above, not this
-  one, and prints no security line: a document that cannot be parsed cannot be shown to declare
-  anything.
+- **A scenario that fails to parse — whether or not its siblings do.** A document that cannot be
+  parsed cannot be shown to declare anything, so it never reaches this rule and never prints the
+  security line. Where *every* scenario fails to parse the run still exits 4, through the parse rule
+  above rather than this one. Where a secured unparseable file sits **beside a parseable sibling**,
+  it contributes nothing at all and the suite's answer comes from the siblings alone — measured, a
+  directory pairing an unparseable secured file with an unsecured one carrying a step-secret fault
+  exits **0** with no security line, where the secured file alone exits 4. That gap is
+  [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411), and it is pinned by a test
+  asserting today's behaviour so that closing it turns that test red.
 - **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
   what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
   declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated

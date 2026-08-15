@@ -24,9 +24,10 @@ namespace Vouchfx.Engine.Runtime;
 /// went unconfirmed.
 /// </summary>
 /// <remarks>
-/// This enum names a CAUSE, never a verdict and never an exit code. Two of its members can raise
-/// REQ-018's non-zero exit and one deliberately cannot; that decision lives in
-/// <see cref="SecurityAssurance.Unconfirmed"/> and nowhere else.
+/// This enum names a CAUSE, never a verdict and never an exit code. Three of its members can raise
+/// REQ-018's non-zero exit — <see cref="AuthoringFault"/> only in conjunction with a declared target
+/// left unconfirmed, the other two unconditionally — and the fourth deliberately cannot. Every one
+/// of those decisions lives in <see cref="SecurityAssurance.Unconfirmed"/> and nowhere else.
 /// </remarks>
 public enum SecurityAbortKind
 {
@@ -67,8 +68,9 @@ public enum SecurityAbortKind
     /// wording said a document aborting before any container starts is unconfirmable whatever
     /// aborted it. That is wider than <see cref="SecurityAssurance.Unconfirmed"/>: this member
     /// raises only in conjunction with a declared target left unconfirmed, so an unparseable secured
-    /// document binds no declaration and does not raise here (its row asserts the notice is absent),
-    /// and a refusal beside siblings whose probe confirmed every declared target does not either.
+    /// document binds no declaration and does not raise here (its rows assert the notice is absent —
+    /// and beside a parseable sibling that costs an exit 0, which is issue #411), and a refusal
+    /// beside siblings whose probe confirmed every declared target does not either.
     /// The door is irrelevant; the predicate is not.
     /// </para>
     /// </remarks>
@@ -94,10 +96,20 @@ public enum SecurityAbortKind
     /// </para>
     /// <para>
     /// It is NOT a tenth door. A door still records only WHAT IT REFUSED (here: something located
-    /// in the declaration itself); the single predicate in
-    /// <see cref="SecurityAssurance.Unconfirmed"/> still makes the whole decision. The alternative
-    /// — a second spelling of "does this document declare security" that reads the raw YAML rather
-    /// than the AST — is exactly what <c>SecuredTargets</c>' own header exists to prevent.
+    /// in the declaration itself), and no door decides the OUTCOME. The alternative — a second
+    /// spelling of "does this document declare security" that reads the raw YAML rather than the
+    /// AST — is exactly what <c>SecuredTargets</c>' own header exists to prevent.
+    /// </para>
+    /// <para>
+    /// <strong>What is NOT claimed: that the predicate derives every outcome.</strong> This kind and
+    /// <see cref="TopologyUnavailable"/> are written into
+    /// <see cref="SecurityAssurance.Unconfirmed"/> by name — one always raising, one never — so for
+    /// those two the answer is hard-coded rather than derived from <c>Declared</c> against
+    /// <c>Confirmed</c>. Both are named exceptions carrying their reasons (this one's is the
+    /// paragraph above; the other's is on its own member). What the derivation delivers is narrower
+    /// and is the whole of what it should be read as promising: for the DERIVED case — an ordinary
+    /// authoring refusal, which is every door but these two — no door decides the outcome, and door
+    /// order therefore cannot decide an exit code.
     /// </para>
     /// </remarks>
     SecurityDeclarationRejected,
@@ -107,12 +119,25 @@ public enum SecurityAbortKind
     /// unhealthy container, an image that cannot be pulled, a seed failure, a health-gate timeout.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <strong>This member never raises, and that is the fence rather than an oversight.</strong> A
-    /// secured suite that reaches the topology and fails the health gate still exits 0 by default;
-    /// that is issue #390 and it is deliberately out of scope here. It needs a resource-scoped
-    /// narrowing plus an endpoint-resolvability preflight, and its own blast-radius measurement —
-    /// closing it from inside this derivation would be one clause in the same expression and would
-    /// redden every suite whose unrelated container was slow to come up.
+    /// secured suite whose ONLY fault is a topology that came up and failed its health gate exits 0
+    /// by default; that is issue #390 and it is deliberately out of scope here. It needs a
+    /// resource-scoped narrowing plus an endpoint-resolvability preflight, and its own blast-radius
+    /// measurement — closing it from inside this derivation would be one clause in the same
+    /// expression and would redden every suite whose unrelated container was slow to come up.
+    /// </para>
+    /// <para>
+    /// <strong>"Never raises" is a property of this MEMBER, not of the run that recorded it — and
+    /// the unqualified form was wrong on four doc surfaces.</strong>
+    /// <see cref="SecurityAssurance.Refusing"/> keeps
+    /// the HIGHER precedence and this kind ranks lowest, so a scenario already refused as
+    /// <see cref="AuthoringFault"/> keeps that refusal when the shared topology then fails its gate,
+    /// and the suite raises on it. Measured on the built CLI: a two-scenario secured suite whose
+    /// first scenario omits a required <c>method:</c> and whose topology then fails to provision
+    /// exits 3, where the identical pair with no <c>security</c> block exits 0. Every surface
+    /// stating this fence states it with the only-fault qualification for that reason.
+    /// </para>
     /// </remarks>
     TopologyUnavailable,
 
@@ -166,8 +191,8 @@ public enum SecurityAbortKind
 /// diagnostic, event or report"), and a record that holds an array of them is exactly that with no
 /// guard: nothing today interpolates this record, and the next diagnostic to interpolate it would
 /// not know it was crossing a line. Nothing here ever needed more than the names — the predicate
-/// below compares what was declared against what was confirmed — so the specs are not carried at
-/// all rather than carried carefully.
+/// below compares what was declared against what was confirmed on its authoring arm — so the specs
+/// are not carried at all rather than carried carefully.
 /// </para>
 /// <para>
 /// Neither this record nor <c>ScenarioCoreResult</c>/<c>SuiteResult</c> is golden-gated, and
@@ -214,6 +239,19 @@ public sealed record SecurityAssurance(
     /// secured targets, one confirmed and one not, would stop raising and exit 0 — the same class of
     /// false negative, reached one step later. A run vouches for a declaration only when it
     /// confirmed ALL of it.
+    /// </para>
+    /// <para>
+    /// <strong>The comparison lives INSIDE the first disjunct, not above the three, and that is
+    /// what the safety of this expression actually rests on.</strong> All three disjuncts require a
+    /// specific non-null <see cref="Refusal"/>, so a run that reaches normal completion with a
+    /// declared target missing from <see cref="Confirmed"/> and NO refusal recorded does not raise
+    /// and exits 0. Nothing in this expression prevents that shape; it is unreachable today only
+    /// because <c>SecuredEndpointProbe.ConfirmAsync</c> emits exactly one confirmation per declared
+    /// target or throws — a convention in ANOTHER ASSEMBLY. It is therefore pinned where it is
+    /// produced, by <c>SecuredEndpointProbeTests.Confirm_TwoDeclaredTargets_ConfirmsEachOfThem</c>,
+    /// and its exit-0 consequence is pinned at the record tier by
+    /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_DeclaredShortfallWithNoRefusal_DoesNotRaise</c>,
+    /// so a probe change that skipped a target turns a test red rather than a pipeline green.
     /// </para>
     /// <para>
     /// The third disjunct is a DEVIATION from REQ-003's two-clause formula, taken deliberately and
@@ -282,6 +320,14 @@ public sealed record SecurityAssurance(
     /// collapse, so a caller may pass the same declaration once per scenario without inflating
     /// anything the predicate reads.
     /// </param>
+    /// <remarks>
+    /// <strong>REPLACES what an earlier call attached; it does not accumulate</strong> — and
+    /// <c>ParallelSuiteRunner</c> depends on that, re-attaching a slot's own declaration over the
+    /// assurance its core already returned rather than expecting the two to union. Pinned by
+    /// <c>SecurityConfirmationExitCodeTests.Declaring_And_Confirming_ReplaceRatherThanAccumulate</c>,
+    /// because a rename to <c>WithDeclared</c> this late would move a member on a type the CLI and
+    /// both runners already read.
+    /// </remarks>
     public SecurityAssurance Declaring(IReadOnlyList<SecuredTarget> declared)
     {
         ArgumentNullException.ThrowIfNull(declared);
@@ -291,6 +337,7 @@ public sealed record SecurityAssurance(
 
     /// <summary>Attaches what REQ-005's probe confirmed once the topology was up, by NAME.</summary>
     /// <param name="confirmed">The topology's own <c>SecurityConfirmations</c>.</param>
+    /// <remarks>Replaces rather than accumulates, exactly as <see cref="Declaring"/> does.</remarks>
     public SecurityAssurance Confirming(IReadOnlyList<SecurityConfirmation> confirmed)
     {
         ArgumentNullException.ThrowIfNull(confirmed);
@@ -327,6 +374,17 @@ public sealed record SecurityAssurance(
     /// called <c>a.e2e.yaml</c> or <c>z.e2e.yaml</c>. A FILENAME decided whether a security notice
     /// appeared, which is the same class of accident — an ordering deciding an answer — that door
     /// order used to be.
+    /// </para>
+    /// <para>
+    /// <strong>The invariant that buys is order-independence in <see cref="Unconfirmed"/> and
+    /// <see cref="Refusal"/> — named, because it does NOT hold of the record's identity.</strong>
+    /// Those two projections are the whole of what a folded suite assurance is read for (the exit
+    /// code and the notice), and neither depends on argument order. The record itself does: two
+    /// non-raising <see cref="SecurityAbortKind.AuthoringFault"/> assurances differing only in
+    /// <see cref="Declared"/> tie on both tests below, the tie goes to <paramref name="left"/>, and
+    /// <c>Worse(a, b)</c> and <c>Worse(b, a)</c> therefore return DIFFERENT records carrying the
+    /// same answer. Nothing reads <see cref="Declared"/> off a folded assurance — measured across
+    /// <c>src/</c> — so the weaker invariant is the one to state and the one the tests assert.
     /// </para>
     /// </remarks>
     public static SecurityAssurance Worse(SecurityAssurance left, SecurityAssurance right)

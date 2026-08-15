@@ -187,9 +187,16 @@ public sealed class SecurityConfirmationExitCodeTests
 
     /// <summary>
     /// <strong>THE FENCE (#390), stated as a test rather than as a comment.</strong> A secured
-    /// suite that reaches the topology and fails the health gate exits 0 — unchanged, deliberately,
-    /// and OUT OF SCOPE for this derivation. An implementation that reddens this row has built
-    /// something the spec forbids.
+    /// suite whose ONLY refusal is a topology that reached the health gate and failed it exits 0 —
+    /// unchanged, deliberately, and OUT OF SCOPE for this derivation. An implementation that reddens
+    /// this row has built something the spec forbids.
+    /// <para>
+    /// The only-refusal qualification is what this row measures and is not decoration:
+    /// <c>Refusing</c> keeps the higher precedence, so a suite that recorded an
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> before the gate failed keeps THAT refusal and
+    /// raises on it. This row therefore says nothing about such a suite, and the doc surfaces
+    /// stating the fence carry the same qualification.
+    /// </para>
     /// <para>
     /// Both spellings of the row are here: the unhealthy resource being the declared secured target
     /// and it being an unrelated one. The engine cannot tell them apart at this seam — the
@@ -210,6 +217,82 @@ public sealed class SecurityConfirmationExitCodeTests
 
         Assert.False(assurance.Unconfirmed);
         Assert.Equal(ExitCodes.Success, ExitFor(Verdict.EnvironmentError, assurance));
+    }
+
+    /// <summary>
+    /// <strong>The other half of the fence: a health-gate failure does not FORGIVE a refusal.</strong>
+    /// <see cref="SecurityAssurance.Refusing"/> keeps the higher precedence and
+    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> ranks lowest, so a secured suite that
+    /// recorded an authoring refusal and THEN failed its health gate still carries the authoring
+    /// refusal and raises. The behaviour is correct and pre-existing; what was wrong was four doc
+    /// surfaces stating the fence unqualified ("that suite still exits 0"), which is true of the
+    /// enum member and false of the suite. Pinned here so the qualification has a measurement behind
+    /// it rather than only prose.
+    /// <para>
+    /// Measured end to end on the built CLI: a two-scenario secured suite whose first scenario omits
+    /// a required <c>method:</c> and whose topology then fails to provision exits 3, where the same
+    /// pair with no <c>security</c> block exits 0.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Unconfirmed_HealthGateFailureAfterAnAuthoringRefusal_StillRaises()
+    {
+        var refusedThenUnhealthy = Secured(SecurityAbortKind.AuthoringFault)
+            .Refusing(SecurityAbortKind.TopologyUnavailable);
+
+        Assert.Equal(SecurityAbortKind.AuthoringFault, refusedThenUnhealthy.Refusal);
+        Assert.True(refusedThenUnhealthy.Unconfirmed);
+        Assert.Equal(
+            ExitCodes.EnvironmentError,
+            ExitFor(Verdict.EnvironmentError, refusedThenUnhealthy));
+    }
+
+    /// <summary>
+    /// <strong>The shape the predicate cannot see, pinned as the known hole it is.</strong> All
+    /// three disjuncts of <see cref="SecurityAssurance.Unconfirmed"/> require a specific non-null
+    /// <c>Refusal</c>, so a run that reaches normal completion with a declared target missing from
+    /// <c>Confirmed</c> and NO refusal recorded does not raise and exits 0.
+    /// <para>
+    /// That is safe today for a reason living in ANOTHER ASSEMBLY and asserted by nothing in the
+    /// derivation: <c>SecuredEndpointProbe.ConfirmAsync</c> walks
+    /// <c>SecuredTargets.Enumerate</c> and emits exactly one confirmation per declared target or
+    /// throws. The convention is pinned where it is produced, by
+    /// <c>SecuredEndpointProbeTests.Confirm_TwoDeclaredTargets_ConfirmsEachOfThem</c>; this row
+    /// pins what it costs if that ever stops holding, so the pair reads as one fact rather than as
+    /// an accident nobody wrote down.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Unconfirmed_DeclaredShortfallWithNoRefusal_DoesNotRaise()
+    {
+        var shortfall = new SecurityAssurance(
+            Declared: new[] { "api", "broker" },
+            Confirmed: new[] { "api" },
+            Refusal: null);
+
+        Assert.False(shortfall.Unconfirmed);
+        Assert.Equal(ExitCodes.Success, ExitFor(Verdict.Pass, shortfall));
+    }
+
+    /// <summary>
+    /// <see cref="SecurityAssurance.Declaring"/> and <see cref="SecurityAssurance.Confirming"/>
+    /// REPLACE what an earlier call attached; they do not accumulate. <c>ParallelSuiteRunner</c>
+    /// depends on it — it re-attaches a slot's own declaration over the assurance the core already
+    /// returned, and an accumulating projection would union one scenario's declaration into
+    /// another's — and nothing pinned it, which is how a rename to <c>WithDeclared</c> would have
+    /// looked like the only way to say so.
+    /// </summary>
+    [Fact]
+    public void Declaring_And_Confirming_ReplaceRatherThanAccumulate()
+    {
+        var twice = SecurityAssurance.None
+            .Declaring(s_oneDeclaredTarget)
+            .Declaring(Array.Empty<SecuredTarget>())
+            .Confirming(s_oneConfirmation)
+            .Confirming(Array.Empty<SecurityConfirmation>());
+
+        Assert.Empty(twice.Declared);
+        Assert.Empty(twice.Confirmed);
     }
 
     /// <summary>

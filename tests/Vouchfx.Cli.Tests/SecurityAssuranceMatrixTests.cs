@@ -584,6 +584,10 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     // Both spellings are WRITTEN, not merely claimed: the sentence above asserted a pair and only
     // the secured half existed, which is the shape of claim this file's own header rejects
     // everywhere else.
+    //
+    // AND THE RESCUE IS WHAT MAKES THIS ROW GREEN — put the same secured unparseable file beside a
+    // parseable sibling and #278's rule no longer applies, so the suite exits 0 with no security
+    // notice. Row 09b below pins that, deliberately asserting today's wrong answer (issue #411).
 
     [Theory]
     [InlineData(null, true)]
@@ -610,6 +614,57 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         // …and NOT through the security signal: the parse never produced an environment, so the
         // engine cannot know the document declared anything.
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <strong>Row 09's mixed spelling, and it asserts the CURRENT WRONG behaviour on purpose.</strong>
+    /// The single-file row above exits 4 through issue #278's all-parse-failure rule, which rescues
+    /// it. Put the same secured unparseable file BESIDE a parseable sibling and that rescue does not
+    /// apply: <c>RunCommand</c> drops unparseable files into its <c>failures</c> list before the
+    /// runner is called, so the declaration never reaches <c>SecuredTargets.Enumerate</c>,
+    /// <c>Declared</c> is empty, nothing raises — and the suite exits 0 with no security notice
+    /// while a file in it plainly asserts <c>mtls</c>.
+    /// <para>
+    /// That is the documented hole [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411),
+    /// and it is pinned rather than described because a measured row is worth more than prose: when
+    /// #411 closes, THIS TEST GOES RED and is inverted to assert the non-zero exit and the notice.
+    /// The fix is a behaviour change in <c>RunCommand</c>'s parse handling and is deliberately not
+    /// part of this branch.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Row09b_SecuredUnparseableBesideAParseableSibling_ExitsSuccessWithNoNotice()
+    {
+        var dir = Path.Combine(_root, "r09b");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(dir, "client.key"), "placeholder");
+
+        // The SECURED file, unparseable: it declares a full mtls block AND an unknown step type.
+        File.WriteAllText(
+            Path.Combine(dir, "a.e2e.yaml"),
+            Suite(
+                SecurityBlock(),
+                string.Empty,
+                "steps:\n  - id: x\n    type: not-a-real-provider\n"));
+
+        // …beside an UNSECURED sibling that parses and is then refused on an ordinary authoring
+        // fault, so the run never needs a container and the exit code is the suite's own.
+        File.WriteAllText(
+            Path.Combine(dir, "b.e2e.yaml"),
+            Suite(securityBlock: null, string.Empty, StepSecretFaultStep));
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel: null, sw);
+        var rendered = sw.ToString();
+
+        // Both faults are reported — the run saw both files.
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+
+        // …and yet: no security notice, and a green build.
+        Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
     }
 
     // ── Row 10: base-directory divergence ─────────────────────────────────────────────────

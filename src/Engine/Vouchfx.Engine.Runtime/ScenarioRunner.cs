@@ -91,11 +91,14 @@ public sealed record SuiteResult(
     /// <strong>There is no producer list to maintain, and that is the change.</strong> This member
     /// used to be a <c>bool</c> whose meaning was documented here as an OPEN, hand-maintained
     /// enumeration of the doors that set it — a list that went stale three times, on the very
-    /// surface three other doc sites designated as its authority. No door decides anything now: a
-    /// door records only <c>Refusal</c> (WHICH door), <c>RunSuiteAsync</c> walks
+    /// surface three other doc sites designated as its authority. No door decides the OUTCOME now:
+    /// a door records only <c>Refusal</c> (WHICH door), <c>RunSuiteAsync</c> walks
     /// <c>SecuredTargets.Enumerate</c> ONCE for the suite to fill <c>Declared</c> (WHAT the
     /// document asserted), and <see cref="SecurityAssurance.Unconfirmed"/> is the single predicate
-    /// over the two.
+    /// over the two. Read that as scoped to the DERIVED case: two of
+    /// <see cref="SecurityAbortKind"/>'s members are named in that predicate and hard-code their
+    /// answer — <c>SecurityDeclarationRejected</c> always raises, <c>TopologyUnavailable</c> never
+    /// does — each for a reason recorded on the member itself.
     /// </para>
     /// <para>
     /// Init-only rather than a positional parameter, so every existing
@@ -658,7 +661,8 @@ public static class ScenarioRunner
         // verdict, because RunCommand has no broad catch (see SecuredEndpointProbe's own note on
         // that seam). Reporting a document's faults as a property of the document is worth taking
         // the exposure the other path already lived with; narrowing it belongs with the missing
-        // top-level catch, not here.
+        // top-level catch, not here — filed as issue #413, so the acceptance carries a number
+        // rather than only a rationale.
         //
         // The `fromSecurityDeclaration` out-value is DISCARDED, and that is the change rather than
         // an oversight: this door used to classify itself, reporting the flag only when the fault
@@ -1129,25 +1133,62 @@ public static class ScenarioRunner
             var envJson = SerialiseEnvironment(scenarios[i].Environment);
             if (!string.Equals(envJson, firstEnvJson, StringComparison.Ordinal))
             {
+                var divergentEnvironment =
+                    $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
+                    "environment block than the first scenario.  All scenarios in a suite " +
+                    "must share one topology.  Suite aborted with EnvironmentError.";
+
                 // Issue #266, Item 4: scenarioNames[i] is author-controlled (a scenario's
-                // metadata.name or file-derived identity) — sanitise before writing.
+                // metadata.name or file-derived identity) — sanitise before writing. Printed HERE,
+                // once for the suite, and the completion path is told so it prints no duplicate —
+                // the same two-halves arrangement the two guards below use.
                 await output.WriteLineAsync(
-                    DisplaySanitiser.SanitiseForDisplay(
-                        $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
-                        "environment block than the first scenario.  All scenarios in a suite " +
-                        "must share one topology.  Suite aborted with EnvironmentError."))
+                    DisplaySanitiser.SanitiseForDisplay(divergentEnvironment))
                     .ConfigureAwait(false);
 
                 // One of the five returns that could not raise the old flag at all. Scenarios
                 // declaring different environment blocks is an authoring fault, and no container
                 // has started, so a SECURED suite refused here is unconfirmable on exactly the
                 // terms every other pre-topology refusal is. An unsecured one is untouched.
-                return new SuiteResult(
-                    Verdict.EnvironmentError,
-                    Array.Empty<(string, Verdict)>())
-                {
-                    Assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault),
-                };
+                //
+                // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult
+                // (peer-review MAJOR-1, fix round ten). This was the THIRD instance of the defect
+                // this branch already diagnosed and fixed at the two seams below — a bare return
+                // skips the ScenarioStarted/Completed events, the --events-stream pump, the
+                // terminal render and FileReportWriter.WriteFileReports. MEASURED on this shape
+                // with --junit/--html/--events all requested: `junit exists = False, html exists =
+                // False, events exists = False`, beside an exit of 3 for the secured spelling — a
+                // red build with an empty results directory, which the same seam's own note two
+                // guards below calls out as the worst combination of the two. Verdict and exit code
+                // are unchanged (Elevate over N EnvironmentErrors is EnvironmentError, which is
+                // what the bare return said); only the artefacts now exist.
+                //
+                // THE SCENARIO LIST IS BUILT FROM THE PARAMETERS, NOT FROM `compilations`, and that
+                // is forced rather than chosen: this guard runs ABOVE the compilation loop, so
+                // there is nothing compiled to stamp. Moving the guard below that loop would have
+                // let it share StampInconclusiveWhereUnjudged with its neighbours — and would have
+                // changed which diagnostic an author sees first, trading a reporting gap for a
+                // behaviour change. The list is therefore synthesised here, in declaration order,
+                // with the suite-level verdict and cause on every scenario, which is exactly what
+                // the stamp produces for its own callers.
+                return await CompleteWithoutTopologyAsync(
+                        EveryScenarioRefusedBeforeCompilation(
+                            scenarios,
+                            scenarioNames,
+                            scenarioBaseDirectories,
+                            seedBaseDirectory,
+                            Verdict.EnvironmentError,
+                            divergentEnvironment),
+                        assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                        output,
+                        decorate,
+                        diffLookup,
+                        htmlReportPath,
+                        junitReportPath,
+                        eventsReportPath,
+                        eventsStreamPath,
+                        alreadyPrintedMessage: divergentEnvironment)
+                    .ConfigureAwait(false);
             }
         }
 
@@ -1965,11 +2006,13 @@ public static class ScenarioRunner
     /// sees.
     /// </para>
     /// <para>
-    /// THREE CALLERS, and the latter two are why every scenario must be handed in already carrying
+    /// FOUR CALLERS, and the latter three are why every scenario must be handed in already carrying
     /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
-    /// above, and the two suite-level guards — base-directory divergence and protocol conflict —
-    /// which STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
-    /// <see cref="StampInconclusiveWhereUnjudged"/>). A caller that leaves an <c>EarlyVerdict</c>
+    /// above; the two suite-level guards — base-directory divergence and protocol conflict — which
+    /// STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
+    /// <see cref="StampInconclusiveWhereUnjudged"/>); and the shared-<c>environment</c> divergence
+    /// guard, which runs ABOVE the compilation loop and therefore SYNTHESISES the whole list (see
+    /// <see cref="EveryScenarioRefusedBeforeCompilation"/>). A caller that leaves an <c>EarlyVerdict</c>
     /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
     /// is a <c>Nullable&lt;Verdict&gt;</c>, and <c>.Value</c> on an empty one throws
     /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (m1,
@@ -1982,8 +2025,10 @@ public static class ScenarioRunner
     /// NIT-3, same fix round): the previous form paired a parameterised
     /// <c>Verdict = earlyVerdict.Value</c> with a fixed <c>Inconclusive = 1</c>, so the first caller
     /// to stamp anything other than Inconclusive would have emitted a record whose verdict and
-    /// counts contradicted each other. Every stamp is Inconclusive today, so this changes no
-    /// emitted byte on any current path — it removes the trap rather than fixing a live defect.
+    /// counts contradicted each other. THAT CALLER NOW EXISTS: the shared-<c>environment</c>
+    /// divergence guard stamps <see cref="Verdict.EnvironmentError"/>, and its scenarios emit
+    /// <c>envError = 1</c> — the trap was removed one fix round before the path that would have
+    /// sprung it.
     /// </para>
     /// </remarks>
     /// <param name="alreadyPrintedMessage">
@@ -2082,9 +2127,10 @@ public static class ScenarioRunner
     /// <remarks>
     /// A scenario stopped before the topology ran no steps at all, so these counts are not a tally
     /// of anything — they are the scenario's own single outcome expressed in the shape the wire
-    /// contract's <c>counts</c> object has. Every stamp is Inconclusive today, which is why
-    /// this reproduces the previously-hardcoded <c>{ Inconclusive = 1 }</c> byte for byte on every
-    /// live path.
+    /// contract's <c>counts</c> object has. Every stamp WAS Inconclusive when this was extracted,
+    /// which is why it reproduced the previously-hardcoded <c>{ Inconclusive = 1 }</c> byte for
+    /// byte; the shared-<c>environment</c> divergence guard now stamps
+    /// <see cref="Verdict.EnvironmentError"/> and is the live path that needs the other arm.
     /// </remarks>
     private static VerdictCounts CountsFor(Verdict verdict) => verdict switch
     {
@@ -2136,6 +2182,69 @@ public static class ScenarioRunner
         string.Join(
             "\n",
             new[] { pipelineFailure, stepSecretFault }.Where(m => !string.IsNullOrEmpty(m)));
+
+    /// <summary>
+    /// The compilation list for a suite refused BEFORE the per-scenario compilation loop ran:
+    /// every scenario, in declaration order, carrying one suite-level verdict and its cause.
+    /// </summary>
+    /// <param name="scenarios">The parsed ASTs, exactly as <c>RunSuiteAsync</c> received them.</param>
+    /// <param name="scenarioNames">Their names, in the same order.</param>
+    /// <param name="scenarioBaseDirectories">
+    /// The per-scenario directories (#268), or <see langword="null"/> from a pre-#268 caller.
+    /// </param>
+    /// <param name="seedBaseDirectory">The fallback for a null element or a null list.</param>
+    /// <param name="verdict">The suite-level verdict every scenario is stamped with.</param>
+    /// <param name="cause">The suite-level diagnostic, stamped as every scenario's own cause.</param>
+    /// <remarks>
+    /// <para>
+    /// The sibling of <see cref="StampInconclusiveWhereUnjudged"/> for the one guard that runs
+    /// ABOVE the compilation loop (the shared-<c>environment</c> divergence guard) and therefore has
+    /// no compilations to stamp. It is a separate helper rather than a parameterised stamp because
+    /// the two take different inputs — that one refines a list, this one builds one — and because
+    /// nothing here can ever preserve a MORE SPECIFIC per-scenario message: at this point in the
+    /// method no scenario has one.
+    /// </para>
+    /// <para>
+    /// <c>Pipeline</c> is <see langword="null"/> on every entry, which is what
+    /// <see cref="CompleteWithoutTopologyAsync"/> already expects of a scenario carrying an early
+    /// verdict — it reads the name, the verdict and the message and nothing else.
+    /// </para>
+    /// </remarks>
+    private static List<(
+        string ScenarioName,
+        ScenarioAst Ast,
+        PipelineResult? Pipeline,
+        Verdict? EarlyVerdict,
+        string? EarlyMessage,
+        string? ScenarioBaseDirectory)> EveryScenarioRefusedBeforeCompilation(
+        IReadOnlyList<ScenarioAst> scenarios,
+        IReadOnlyList<string> scenarioNames,
+        IReadOnlyList<string?>? scenarioBaseDirectories,
+        string? seedBaseDirectory,
+        Verdict verdict,
+        string cause)
+    {
+        var refused = new List<(
+            string ScenarioName,
+            ScenarioAst Ast,
+            PipelineResult? Pipeline,
+            Verdict? EarlyVerdict,
+            string? EarlyMessage,
+            string? ScenarioBaseDirectory)>(scenarios.Count);
+
+        for (int i = 0; i < scenarios.Count; i++)
+        {
+            refused.Add((
+                scenarioNames[i],
+                scenarios[i],
+                null,
+                verdict,
+                cause,
+                scenarioBaseDirectories?[i] ?? seedBaseDirectory));
+        }
+
+        return refused;
+    }
 
     /// <summary>
     /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
@@ -2738,6 +2847,13 @@ public static class ScenarioRunner
         // ValidationFailure.IsSecurityPreflight — so there is nothing here to accumulate INTO, and
         // inventing a flag with no consumer would read like coverage that does not exist. Watch
         // mode's blanket absence of REQ-018 predates this scan and is not narrowed by it.
+        //
+        // THE PASS ORDER HERE IS ALSO THE RETIRED ONE: the secret pass runs BEFORE
+        // ProviderPipeline.Compile and returns at its first fault, which is exactly the ordering
+        // #399 removed from `run` and `--parallel` (both now run the two together and report both).
+        // Left as it is deliberately — unifying it is a behaviour change on a third path with its
+        // own diagnostics, filed as issue #412 — so read the "both run paths agree" claims
+        // elsewhere as scoped to `run` and `run --parallel`, which is what they say.
         if (TryValidateSecretReferences(ast, out var secretError, out _))
         {
             EmitInconclusive();

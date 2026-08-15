@@ -514,6 +514,74 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.Empty(confirmations);
     }
 
+    /// <summary>
+    /// <strong>ONE CONFIRMATION PER DECLARED TARGET — the convention another assembly's exit-code
+    /// predicate silently depends on.</strong> <c>SecurityAssurance.Unconfirmed</c> raises only in
+    /// conjunction with a recorded refusal, so a run that completes normally having confirmed FEWER
+    /// targets than it declared exits 0. Nothing in that predicate prevents it; what does is this
+    /// method — <c>ConfirmAsync</c> walks <c>SecuredTargets.Enumerate</c> and either adds a
+    /// confirmation for every target or throws.
+    /// <para>
+    /// Pinned HERE, at the producer, because that is where a future change would break it: a probe
+    /// that learned to skip a target (an unreachable one, a kind it could not reason about, a
+    /// short-circuit on the first success) would turn this test red instead of turning a secured
+    /// pipeline green. The record-tier consequence is pinned by
+    /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_DeclaredShortfallWithNoRefusal_DoesNotRaise</c>.
+    /// </para>
+    /// <para>
+    /// The names are asserted against the declaration's own walk rather than against literals, so
+    /// this also pins that the two sides are comparable BY CONSTRUCTION — the property
+    /// <c>SecurityAssurance</c>'s doc claims when it compares declared names against confirmed ones.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Confirm_TwoDeclaredTargets_ConfirmsEachOfThem()
+    {
+        var (port, serving, listener) = ListenTls(StayQuiet);
+
+        // Two secured services, one TLS listener: what varies is the number of DECLARED targets,
+        // which is the only variable this row is about.
+        var environment = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["sut"] = new ServiceSpec("acme/sut:1", null, null, null, null)
+                {
+                    Security = Profile("tls"),
+                },
+                ["second"] = new ServiceSpec("acme/second:1", null, null, null, null)
+                {
+                    Security = Profile("tls"),
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        try
+        {
+            var confirmations = await ProbeAsync(
+                environment,
+                new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["sut"] = $"localhost:{port}",
+                    ["second"] = $"localhost:{port}",
+                },
+                new FakeAccessor()
+                    .With("sut", "tls", new FakeMaterial(_bed, withClientIdentity: false, declareCa: true))
+                    .With("second", "tls", new FakeMaterial(_bed, withClientIdentity: false, declareCa: true)));
+
+            Assert.Equal(
+                SecuredTargets.Enumerate(environment).Select(target => target.Name).ToArray(),
+                confirmations.Select(confirmation => confirmation.TargetName).ToArray());
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
     // ── EDGE-004: the declared endpoint is a plaintext listener ───────────────────────────
 
     /// <summary>

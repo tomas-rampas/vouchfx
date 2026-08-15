@@ -717,6 +717,118 @@ public sealed class RunSuiteAsyncTests
         }
     }
 
+    private static readonly string[] s_sharedEnvironmentScenarioNames = { "env-a", "env-b" };
+
+    /// <summary>
+    /// The THIRD instance of the same artefact gap, at the shared-<c>environment</c> divergence
+    /// guard (peer-review MAJOR-1, fix round ten) — the seam the two fixes above left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED RED FIRST on the branch as it stood: this shape exited 3 with
+    /// <c>junit exists = False, html exists = False, events exists = False</c>. It is the worst
+    /// spelling of the defect the sibling test above describes — a NON-ZERO exit beside an empty
+    /// results directory — and it is the one seam of the three that produces
+    /// <see cref="Verdict.EnvironmentError"/> rather than Inconclusive, so its scenarios map to
+    /// JUnit's <c>&lt;error&gt;</c> primitive and its counts to <c>envError</c>.
+    /// </para>
+    /// <para>
+    /// The guard runs ABOVE the per-scenario compilation loop, so the completion path is handed a
+    /// scenario list synthesised from the parameters rather than one stamped onto compilations.
+    /// Moving the guard below that loop would have shared the stamp — and changed which diagnostic
+    /// an author sees first, which is a behaviour change this fix deliberately did not make.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SecuredSuiteWithDivergingEnvironments_WritesEveryRequestedReport()
+    {
+        const string first = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  security:
+                    profile: tls
+                    endpoint: 8443
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        // Byte-identical but for the image tag — so the divergence is never the security block.
+        var second = first.Replace("myorg/api:1.0", "myorg/api:2.0", StringComparison.Ordinal);
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var firstAst = AstBuilder.Build(YamlDocumentParser.Parse(first), registry);
+        var secondAst = AstBuilder.Build(YamlDocumentParser.Parse(second), registry);
+
+        var directory = Directory.CreateTempSubdirectory("vouchfx-env-divergence-reports-");
+        try
+        {
+            var junitPath = Path.Combine(directory.FullName, "results.xml");
+            var htmlPath = Path.Combine(directory.FullName, "report.html");
+            var eventsPath = Path.Combine(directory.FullName, "events.jsonl");
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: new[] { firstAst, secondAst },
+                scenarioNames: s_sharedEnvironmentScenarioNames,
+                yamlTexts: new[] { first, second },
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                htmlReportPath: htmlPath,
+                junitReportPath: junitPath,
+                eventsReportPath: eventsPath);
+
+            Assert.True(
+                File.Exists(junitPath),
+                "The shared-environment divergence guard must write the requested JUnit report — "
+                + "this seam exits non-zero for a secured suite.");
+            Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
+            Assert.True(File.Exists(eventsPath), "…and the requested events stream.");
+
+            // Both scenarios present, both EnvironmentError — JUnit's <error> primitive, not
+            // <skipped>, which is what makes CountsFor's non-Inconclusive arm a live path.
+            var xml = File.ReadAllText(junitPath);
+            Assert.Contains("tests=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("errors=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"env-a\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"env-b\"", xml, StringComparison.Ordinal);
+            Assert.Equal(
+                2,
+                CountOccurrences(xml, "<property name=\"vouchfx.verdict\" value=\"ENV_ERROR\"/>"));
+
+            Assert.Equal(4, File.ReadAllLines(eventsPath).Length);
+
+            // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
+            Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+            Assert.True(result.Assurance.Unconfirmed);
+            Assert.Equal(2, result.ScenarioVerdicts.Count);
+            Assert.All(result.ScenarioVerdicts, entry => Assert.Equal(Verdict.EnvironmentError, entry.Verdict));
+
+            // One print, not two: the divergence is one suite-level fact, and it is also stamped as
+            // each scenario's own cause.
+            var rendered = sw.ToString();
+            var diagnostic = rendered
+                .Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .FirstOrDefault(line => line.StartsWith("RunSuiteAsync: scenario ", StringComparison.Ordinal))
+                ?? string.Empty;
+            Assert.NotEmpty(diagnostic);
+            Assert.Equal(1, CountOccurrences(rendered, diagnostic));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
     private static int CountOccurrences(string haystack, string needle)
     {
