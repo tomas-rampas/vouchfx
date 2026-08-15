@@ -82,110 +82,30 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
-    /// <see langword="true"/> when at least one scenario in this suite could not have a declared
-    /// <c>security</c> block confirmed (authenticated-infrastructure-mtls, REQ-018).
+    /// What this suite established about the <c>security</c> blocks it declared: what was declared,
+    /// what REQ-005's probe confirmed, and which door (if any) refused
+    /// (security-assurance-derivation, REQ-001).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every producer means the same thing — "the author asserted security and the engine could not
-    /// satisfy the assertion" — and they are enumerated rather than counted, deliberately: the
-    /// earlier form here said "Two producers" over a two-item list and was left behind by the two
-    /// added since, on the surface three other doc sites designate as the full contract. The
-    /// producers currently in the code are:
-    /// </para>
-    /// <list type="bullet">
-    ///   <item><description>
-    ///     <strong>The schema door.</strong> The root schema rejected a document that DECLARES
-    ///     <c>security</c> — anywhere in the document, not only inside the block. Nothing
-    ///     downstream of this door runs, so the declaration is never validated, let alone
-    ///     confirmed; a rejected secured document is therefore unconfirmable whatever the
-    ///     rejection was about. An error located at or inside the block
-    ///     (<c>RejectsASecurityDeclaration</c>, which is where REQ-021's per-kind narrowing of
-    ///     <c>profile</c> arrives) is ONE case of that rule rather than its definition, and it is
-    ///     the case that additionally suppresses the notice's "nothing above lies inside that
-    ///     block" clause. Measured: two documents differing only in whether they declare
-    ///     <c>security</c>, both with <c>method:</c> omitted from a step — the secured one exits
-    ///     4, the unsecured one 0. Aggregates to
-    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <strong>The preflight door.</strong> A pre-topology security preflight rejected the
-    ///     declaration — a certificate or artefact path that escapes the suite directory or does
-    ///     not exist (REQ-003/REQ-004), an artefact <c>target</c> that is not an absolute
-    ///     in-container file path (REQ-016), or a <c>(profile, target-kind)</c> pair with no
-    ///     registered wiring (REQ-022), among others: <c>EnvironmentSecurityValidator</c> and
-    ///     <c>SecurityProfileWiringValidator</c> are the authority for the full set, and this is
-    ///     an illustration of it rather than a copy — surfacing as a <c>ValidationFailure</c>
-    ///     carrying <c>IsSecurityPreflight</c> and aggregating to
-    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>. EDGE-010(a) requires
-    ///     this path to exit non-zero too: the suite whose <c>clientCert</c> file was deleted
-    ///     must not report a clean pipeline.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <strong>The probe.</strong> REQ-005's post-health-gate probe raised an
-    ///     <c>OrchestrationException</c> whose <c>Info.Kind</c> is
-    ///     <c>OrchestrationErrorKind.SecurityConfirmation</c> — the run aborted before any step
-    ///     executed, and the aggregate verdict is
-    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.EnvironmentError"/>. This is the one
-    ///     producer whose verdict is not <c>Inconclusive</c>.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <strong>The secret-reference door</strong> (client-key-password EDGE-003, #387). The
-    ///     central secret-reference pass found a fault in a declared
-    ///     <c>security.clientKeyPassword</c> — an unknown source, or a value that is not one
-    ///     whole well-formed reference. The declaration cannot be honoured, so it cannot be
-    ///     confirmed. Aggregates to <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
-    ///     A bad reference in a STEP is deliberately NOT a producer: that is an ordinary
-    ///     authoring error. The signal is a property of the DOCUMENT rather than of whichever
-    ///     fault the pass reported first — see <c>TryValidateSecretReferences</c>'s own
-    ///     <c>fromSecurityDeclaration</c> remarks for the defect that distinction closed.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <strong>The base-directory divergence guard — TWO arms, and this is the site that must
-    ///     carry both.</strong> A suite that declares <c>security</c> is refused before the topology
-    ///     is built when either arm fires, and passes the flag as a LITERAL
-    ///     <see langword="true"/> rather than through the accumulating local — see that guard's
-    ///     own note, and <c>RunSuiteAsync</c>'s note over the local, for why. Aggregates to
-    ///     <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>.
-    ///     <list type="bullet">
-    ///       <item><description>
-    ///         <strong>Scenario against scenario.</strong> Its scenarios resolve their declared
-    ///         paths against different directories. Requires <c>compilations.Count &gt;= 2</c>, so
-    ///         only a multi-scenario suite reaches it — which is why the published surface
-    ///         (<c>docs/ci-integration.md</c>) describes the refusal as a multi-scenario one.
-    ///         <c>ExitCodes</c> once carried a second summary saying the same thing and has been
-    ///         rewritten to point here instead, precisely because it had already gone stale.
-    ///       </description></item>
-    ///       <item><description>
-    ///         <strong>Scenario against seed root</strong> (m4, fix round eight). The scenarios'
-    ///         base directory is not the directory the topology resolves
-    ///         <c>security.serverArtifacts</c> against, so client and server material split across
-    ///         two roots. This arm is a property of the two PARAMETERS, not of scenario count, and
-    ///         fires at <c>compilations.Count == 1</c> as readily — so the "multi-scenario" scoping
-    ///         above does NOT describe it. Those surfaces are nevertheless correct as written,
-    ///         because this arm is CLI-UNREACHABLE: <c>RunCommand</c> derives
-    ///         <c>suiteBaseDirectory</c> as <c>scenarioBaseDirectories[0]</c>, literally the same
-    ///         string, so the pair is equal by construction on every CLI path. It is reachable only
-    ///         by a direct engine embedder passing the two independently.
-    ///       </description></item>
-    ///     </list>
-    ///   </description></item>
-    /// </list>
-    /// <para>
-    /// The list is OPEN. A producer added later must appear here, and must not be counted in prose
-    /// anywhere: the mechanics live beside the accumulating local in <c>RunSuiteAsync</c>, which is
-    /// the single place that states which producers reach the local and which bypass it.
+    /// <strong>There is no producer list to maintain, and that is the change.</strong> This member
+    /// used to be a <c>bool</c> whose meaning was documented here as an OPEN, hand-maintained
+    /// enumeration of the doors that set it — a list that went stale three times, on the very
+    /// surface three other doc sites designated as its authority. No door decides anything now: a
+    /// door records only <c>Refusal</c> (WHICH door), <c>RunSuiteAsync</c> walks
+    /// <c>SecuredTargets.Enumerate</c> ONCE for the suite to fill <c>Declared</c> (WHAT the
+    /// document asserted), and <see cref="SecurityAssurance.Unconfirmed"/> is the single predicate
+    /// over the two.
     /// </para>
     /// <para>
     /// Init-only rather than a positional parameter, so every existing
     /// <c>new SuiteResult(verdict, verdicts)</c> call site — and every test constructing one —
-    /// keeps compiling and defaults to <see langword="false"/>. It carries NO verdict semantics
-    /// of its own: it is read by the CLI's exit-code decision alone
-    /// (<c>ExitCodes.FromVerdict</c>'s own <c>securityConfirmationFailed</c> parameter) and never
-    /// by the taxonomy, the renderers or the event stream.
+    /// keeps compiling and defaults to <see cref="SecurityAssurance.None"/>. It carries NO verdict
+    /// semantics of its own: it is read by the CLI's exit-code decision alone
+    /// (<c>ExitCodes.FromVerdict</c>) and never by the taxonomy, the renderers or the event stream.
     /// </para>
     /// </remarks>
-    public bool SecurityConfirmationFailed { get; init; }
+    public SecurityAssurance Assurance { get; init; } = SecurityAssurance.None;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,29 +120,23 @@ public sealed record SuiteResult(
 /// <para>
 /// Replaces the <c>(Verdict, List&lt;string&gt;)</c> tuple this seam used before slice E, because
 /// the parallel runner needs the security signal to reach its own
-/// <see cref="SuiteResult.SecurityConfirmationFailed"/> — otherwise REQ-018's carve-out would
+/// <see cref="SuiteResult.Assurance"/> — otherwise REQ-018's carve-out would
 /// silently not apply under <c>--parallel</c>, which is the same green-pipeline-on-an-unverified-
 /// security-suite failure the requirement exists to prevent, reached through an opt-in flag.
 /// </para>
 /// <para>
 /// The implicit conversion from the old tuple shape is deliberate and is what keeps the change
 /// narrow: every <c>return (verdict, buffer);</c> in the long core method, and every existing test
-/// double built against the old shape, compiles unchanged and defaults the flag to
-/// <see langword="false"/>. Only the sites that can actually observe a security failure spell the
-/// flag out — the PROPERTY, stated once rather than enumerated: every such site spells
-/// <c>SecurityConfirmationFailed =</c> inside a <c>new ScenarioCoreResult(</c> initialiser, so a
-/// grep for <c>new ScenarioCoreResult(</c> in this file IS the list, always current. Anchor on the
-/// CONSTRUCTOR, not on the property name alone — the property is spelled identically in
-/// <see cref="SuiteResult"/> initialisers, which are SUITE-level and a different set, so the bare
-/// property name over-matches and a reader following it literally would double-count. (This
-/// sentence used to enumerate, and carried a parenthetical admitting the enumeration had gone
-/// stale twice — it then went stale a third time. The parenthetical drew the right lesson and did
-/// not apply it to itself; the first replacement then chose an anchor that matched both sets.
-/// <see cref="SuiteResult.SecurityConfirmationFailed"/> holds the maintained account of what each
-/// producer MEANS, which is the part a grep cannot supply.) This is the same
-/// "additive, init-only, defaults to false" shape
-/// <c>ValidationFailure.IsSecurityPreflight</c> already established for the same signal one layer
-/// down.
+/// double built against the old shape, compiles unchanged and defaults the assurance to
+/// <see cref="SecurityAssurance.None"/>.
+/// </para>
+/// <para>
+/// <strong>The enumeration anchor this paragraph used to carry is GONE, not corrected.</strong> It
+/// designated <c>grep "new ScenarioCoreResult("</c> as the authoritative producer list — a grep
+/// blind to the two implicit-conversion operators on this very record (both of which hard-coded
+/// <c>false</c>) and to the tuple returns routing through them. A list that cannot enumerate
+/// itself is the same class of defect as the doors it documented. There is no producer list under
+/// the derived rule: see <see cref="SecurityAssurance"/>.
 /// </para>
 /// </remarks>
 /// <param name="Verdict">The scenario's aggregate verdict.</param>
@@ -233,25 +147,27 @@ public sealed record SuiteResult(
 public sealed record ScenarioCoreResult(Verdict Verdict, List<string> Buffer)
 {
     /// <summary>
-    /// <see langword="true"/> when this scenario failed because a declared <c>security</c> block
-    /// could not be confirmed. See <see cref="SuiteResult.SecurityConfirmationFailed"/> for the
-    /// enumeration of producers, which is where that list is maintained.
+    /// What this scenario established about the <c>security</c> blocks its document declared —
+    /// carrying, from this seam, the <see cref="SecurityAssurance.Refusal"/> and (on the success
+    /// path) the <see cref="SecurityAssurance.Confirmed"/> halves.
     /// </summary>
     /// <remarks>
-    /// The producers that reach THIS type are the ones enumerated on
-    /// <see cref="SuiteResult.SecurityConfirmationFailed"/> MINUS the suite-level base-directory
-    /// divergence guard, which is inherently not one of them: it is a property of a multi-scenario
-    /// suite and sets the suite flag directly without producing a scenario result. Stated as a
-    /// derivation rather than a list on purpose — this summary has been counted wrong twice (it
-    /// read "REQ-005's probe, or a pre-topology security preflight", a closed "X, or Y" already
-    /// one short; then "Three producers", left behind by the secret-reference door added for
-    /// EDGE-003). A derivation cannot fall out of step with the list it derives from.
+    /// <para>
+    /// <strong><see cref="SecurityAssurance.Declared"/> is deliberately NOT filled here.</strong>
+    /// This method validates (Step 2) before it parses (Step 3), so two of its doors return before
+    /// any AST exists — and answering "does this document declare security" at those doors is what
+    /// forced the speculative re-parse this change removed. The caller
+    /// (<c>ParallelSuiteRunner.RunParallelCoreAsync</c>) takes the parsed ASTs as a PARAMETER, so it
+    /// can walk <c>SecuredTargets.Enumerate</c> once per scenario on every path, including the ones
+    /// that abort before this method has parsed anything. A door reports which door it is; the
+    /// verdict-assembly site reports what the document asserted.
+    /// </para>
     /// </remarks>
-    public bool SecurityConfirmationFailed { get; init; }
+    public SecurityAssurance Assurance { get; init; } = SecurityAssurance.None;
 
     /// <summary>
     /// Converts the pre-slice-E <c>(Verdict, Buffer)</c> tuple shape, defaulting
-    /// <see cref="SecurityConfirmationFailed"/> to <see langword="false"/>.
+    /// <see cref="Assurance"/> to <see cref="SecurityAssurance.None"/>.
     /// </summary>
     public static implicit operator ScenarioCoreResult((Verdict Verdict, List<string> Buffer) result) =>
         new(result.Verdict, result.Buffer);
@@ -619,66 +535,27 @@ public static class ScenarioRunner
             // still post it explicitly for a live tail to observe it.
             livePump?.PostRange(buffer);
 
-            // REQ-018, matching RunSuiteAsync's own schema branch: a rejected `security`
-            // declaration exits non-zero with no flag, whether the rejection came from the
-            // preflight or — as REQ-021's per-kind narrowing does — from the root schema.
+            // THE SPECULATIVE RE-PARSE THIS BRANCH USED TO CARRY IS GONE, and its absence is the
+            // check that the derivation moved (security-assurance-derivation, REQ-002). It existed
+            // for one reason: the flag was decided HERE, and deciding it needed "does this document
+            // declare security" — a question with no AST to ask, because this method validates
+            // (Step 2) before it parses (Step 3). Nothing here decides any longer. This door
+            // records only WHAT it refused; ParallelSuiteRunner, which takes the parsed ASTs as a
+            // parameter, walks SecuredTargets.Enumerate once per scenario and supplies the other
+            // half on every path — including this one.
             //
-            // BROADENED to "declares security at all", for the reason RunSuiteAsync's twin door
-            // records in full: the located-inside-the-block test alone let a schema error ANYWHERE
-            // in the document mask every security refusal, because this branch returns before the
-            // secret pass and before ProviderPipeline.Compile, so no other door can set the flag.
-            //
-            // THE PARSE IS SPECULATIVE, and deliberately so. Unlike RunSuiteAsync — which binds
-            // `ast` before validating — this method validates (Step 2) before it parses (Step 3),
-            // so there is no AST here to ask. Parsing again costs one parse on a path that is
-            // ALREADY TERMINAL for this scenario (it returns Inconclusive on the next line and no
-            // topology is ever built), which is why the duplicate is affordable here and would not
-            // be on the success path. Reordering Step 3 above Step 2 was the alternative and was
-            // rejected: it would change which error an author sees first for a document that is
-            // both unparseable and schema-invalid, and this branch is not the place to relitigate
-            // reported-error precedence.
-            //
-            // SecuredTargets.Any is the ONE canonical walk, the same predicate the twin door uses
-            // — not a second spelling of "does this document declare security".
-            // The `try` scopes the PARSE alone, not the walk. SecuredTargets.Any is a pure,
-            // null-safe enumeration that cannot throw, so nothing is lost by excluding it — but a
-            // fail-closed control should not have a fail-open interior, and keeping the guarded
-            // region minimal is what stops a later edit inside it from being silently swallowed.
-            ScenarioAst? speculativeAst = null;
-            try
-            {
-                speculativeAst = AstBuilder.Build(YamlDocumentParser.Parse(yamlText), registry);
-            }
-            catch (Exception)
-            {
-                // Swallowing is CORRECT here, not a shortcut: a document that cannot be parsed
-                // cannot be shown to declare anything, so the honest answer is "unknown", and
-                // leaving the flag false is EXACTLY the behaviour that shipped before this block
-                // existed. The catch therefore preserves rather than degrades — it can only ever
-                // fail to ADD a signal, never remove one, and an unparseable document is already
-                // reported and already Inconclusive. Deliberately catch-all: this is a diagnostic
-                // side-question on an error path, and no parser or binder fault occurring while
-                // answering it may be allowed to replace the schema error the author needs to see.
-            }
-
-            var declaresSecurity = SecuredTargets.Any(speculativeAst?.Environment);
+            // The located-in-the-block distinction survives as EVIDENCE rather than as a decision:
+            // a schema error at or inside a `security` node is a refusal OF the declaration, which
+            // is the one shape the canonical walk cannot see (`security: mtls` binds no
+            // SecuritySpec at all). See SecurityAbortKind.SecurityDeclarationRejected.
             var errorIsInsideTheSecurityBlock = RejectsASecurityDeclaration(validationResult.Errors);
-
-            // ONE predicate for the flag and for the notice: whenever this door exits non-zero for
-            // a security reason it must also say so. Gating the notice on `declaresSecurity` alone
-            // left `security: mtls` (a schema error AT the node, binding no SecuritySpec) exiting 4
-            // in silence.
-            var securityUnconfirmable = errorIsInsideTheSecurityBlock || declaresSecurity;
-
-            if (securityUnconfirmable)
-            {
-                await WriteSecurityUnconfirmableNoticeAsync(output, errorIsInsideTheSecurityBlock)
-                    .ConfigureAwait(false);
-            }
 
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                SecurityConfirmationFailed = securityUnconfirmable,
+                Assurance = SecurityAssurance.None.Refusing(
+                    errorIsInsideTheSecurityBlock
+                        ? SecurityAbortKind.SecurityDeclarationRejected
+                        : SecurityAbortKind.AuthoringFault),
             };
         }
 
@@ -715,87 +592,127 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
 
             livePump?.PostRange(buffer);
-            return (Verdict.Inconclusive, buffer);
-        }
 
-        // ── Step 4: Provider pipeline — bind / validate / resources / emit ───
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
-        if (pipelineResult.Failure is not null)
-        {
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-            }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
-            // Issue #266, Item 4: the pipeline-failure Message can echo untrusted YAML
-            // content (a step id, a field value) back verbatim — sanitise before writing.
-            await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(pipelineResult.Failure.Message))
-                .ConfigureAwait(false);
-            livePump?.PostRange(buffer);
-
-            // REQ-018 / EDGE-010(a): a security-preflight rejection is still an authoring error
-            // and still Inconclusive, but it must not exit 0 — see SuiteResult's own remarks.
+            // An unparseable document is an authoring fault before any container started, like
+            // every other pre-topology refusal. It cannot be SHOWN to declare anything, so the
+            // caller's own walk supplies an empty `Declared` and this raises nothing — the honest
+            // answer, and byte-for-byte the behaviour that shipped.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                SecurityConfirmationFailed = pipelineResult.Failure.IsSecurityPreflight,
+                Assurance = SecurityAssurance.None.Refusing(SecurityAbortKind.AuthoringFault),
             };
         }
 
-        // ── Step 5c: Validate secret references (§17, S05-B-01) ──────────────
-        // A central, provider-uniform pass over every substitutable field text.
-        // Runs BEFORE the topology is started and BEFORE CompileOnce so a bad
-        // secret reference is caught without spinning up any containers — the
+        // The AST exists from here on, so this method can answer WHAT the document declared for
+        // itself rather than leaving every downstream return to the caller. One walk, the canonical
+        // one, used by all four returns below.
+        //
+        // ParallelSuiteRunner nonetheless re-attaches its own walk of the same AST to whatever this
+        // method returns — unconditionally, not "when empty". It is the only source for the two
+        // doors ABOVE, which return before any AST exists, and one unconditional rule there is
+        // worth more than a conditional that has to be reasoned about. The two values are equal by
+        // construction: same AST, same SecuredTargets.Enumerate.
+        //
+        // WHAT THIS LOCAL DOES NOT BUY: a core whose result is self-describing for a direct caller.
+        // An earlier form of this comment claimed exactly that. It is false at the two doors above,
+        // which return SecurityAssurance.None.Refusing(...) with NO Declaring — so a secured
+        // document rejected by an out-of-block schema error, or unparseable, comes back from this
+        // method reading Unconfirmed == false. ParallelSuiteRunner repairs it (its
+        // `result.Assurance.Declaring(declared)` fold); nothing else does. THE CONTRACT IS
+        // THEREFORE: the assurance this core returns is complete only from the AST onwards, and a
+        // caller that is not the aggregator must supply its own Declaring for the earlier doors
+        // rather than trust what it is handed. Passing the declared set INTO the core would make it
+        // self-describing everywhere, and is not done here because it changes ScenarioCoreFunc's
+        // signature, which REQ-002 pins. Filed as issue #409.
+        var declaredTargets = SecuredTargets.Enumerate(ast.Environment).ToArray();
+
+        // ── Steps 4 + 5c: the pre-topology authoring passes, run TOGETHER ─────
+        //
+        // Provider pipeline (bind / validate / resources / emit) and the central, provider-uniform
+        // secret-reference pass over every substitutable field text. Both run BEFORE the topology
+        // is started and BEFORE CompileOnce, so an authoring fault costs no containers — the
         // scenario never ran, so the verdict is Inconclusive, not Fail.
-        if (TryValidateSecretReferences(ast, out var secretError, out var secretFromSecurityBlock))
+        //
+        // THEY ARE ONE DOOR REPORTING BOTH FAULTS, and that is #399's actual remainder. They used
+        // to be two sequential doors, and the shared-topology path ran them in the OPPOSITE order,
+        // so a document with a security preflight fault AND a step secret fault reported the
+        // preflight one under `--parallel` and the step one under `run` — two paths naming
+        // different faults in the same document, with an exit code (4, from at least four doors on
+        // this surface) that could not tell an author which. Neither pass READS THE OTHER'S RESULT
+        // — that independence is what makes running both sound — and running both and reporting
+        // both makes the reported diagnosis a property of the DOCUMENT rather than of which pass
+        // ran first, which is the same rule the assurance derivation applies to the exit code.
+        //
+        // "BOTH ARE PURE WALKS OVER THE SAME AST" IS RETRACTED: it was true of the secret pass and
+        // false of ProviderPipeline.Compile, which reads the filesystem (Directory.
+        // GetCurrentDirectory, then EnvironmentSecurityValidator's existence checks) and calls
+        // ReflectBind, documented UNGUARDED at BindAllSteps — a provider's throwing Bind propagates
+        // straight out of Compile to this caller (contrast HostResources, caught two lines below
+        // it). THE TRADE IS ACCEPTED, EXPLICITLY: this door used to reach the secret pass first on
+        // the `run` path and return before Compile ran at all — MEASURED at baseline, where two
+        // fixtures printed only the step-secret fault — so `run` now carries the unguarded-Bind
+        // exposure `--parallel` always had. A throwing Bind aborts with a stack trace instead of a
+        // verdict, because RunCommand has no broad catch (see SecuredEndpointProbe's own note on
+        // that seam). Reporting a document's faults as a property of the document is worth taking
+        // the exposure the other path already lived with; narrowing it belongs with the missing
+        // top-level catch, not here.
+        //
+        // The `fromSecurityDeclaration` out-value is DISCARDED, and that is the change rather than
+        // an oversight: this door used to classify itself, reporting the flag only when the fault
+        // sat in a declared `security` block. Under the derived rule the classification is not this
+        // door's to make — a secured document refused before any container started is unconfirmable
+        // whatever the fault was, and an unsecured one is not, whatever the fault was. The helper
+        // keeps the out-parameter for its own direct tests.
+        //
+        // A DOCUMENT WHOSE ONLY FAULT IS A STEP-SECRET FAULT NOW BUILDS A FULL CSX EMIT AND THROWS
+        // IT AWAY — `pipelineResult.Assembled` is dropped by the return below. That is the price of
+        // the two paths agreeing, and it is recorded here so it is not "optimised" back into a
+        // short-circuit: guarding the Compile call on `stepSecretFault is null` would restore
+        // exactly the ordering divergence #399 was filed for, silently, because both paths would
+        // still exit 4. The cost is bounded — one in-memory emit for a scenario that is about to be
+        // refused, no topology, no container, no Roslyn ALC load (CompileOnce runs far below this
+        // return).
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
+        var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
+            ? secretError
+            : null;
+        if (pipelineResult.Failure is not null || stepSecretFault is not null)
         {
-            var now5c = DateTimeOffset.UtcNow;
+            var nowAuthoring = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
                 RunId = runId,
-                Timestamp = now5c,
+                Timestamp = nowAuthoring,
                 ScenarioId = scenarioName,
             }));
             buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
             {
                 RunId = runId,
-                Timestamp = now5c,
+                Timestamp = nowAuthoring,
                 ScenarioId = scenarioName,
                 Verdict = Verdict.Inconclusive,
                 Counts = new VerdictCounts { Inconclusive = 1 },
             }));
-            // Issue #266, Item 4: secretError names the offending step id/field text from
-            // untrusted YAML — sanitise before writing.
-            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(secretError))
+            // Issue #266, Item 4: both halves can echo untrusted YAML content (a step id, a field
+            // value, a secret reference) back verbatim — sanitise before writing.
+            await output.WriteLineAsync(
+                DisplaySanitiser.SanitiseForDisplay(
+                    JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault)))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
 
-            // REQ-018, CLASSIFICATION adjudicated at this door rather than inherited (the
-            // precedent RunSuiteAsync's protocol-conflict branch sets): a bad secret reference in
-            // a declared `security` block is a failure to confirm a declared security assertion —
-            // the fault is IN the declaration, so the declaration cannot be honoured and therefore
-            // cannot be confirmed — so it exits non-zero with no flag, like the schema door above
-            // and the preflight door below. (This reasoning used to be derived by quoting
-            // ExitCodes' "any schema error located at or inside a declared `security` block". That
-            // citation is retired rather than re-pointed: the schema door has since broadened past
-            // the sentence, and this door never depended on it — it stands on the fault being in
-            // the declaration, which is true independently.) A bad reference in a
-            // STEP is not, and reports false, or the carve-out would fire for a non-security
-            // reason. Returned as a spelled-out ScenarioCoreResult rather than the (verdict,
-            // buffer) tuple: the tuple's implicit conversion defaults the flag to false, which is
-            // exactly how this door shipped exit 0 for an unconfirmable security suite.
+            // EDGE-010(a) and every other pre-topology refusal alike: an authoring fault before any
+            // container started. NO CLASSIFICATION IS ADJUDICATED HERE. `IsSecurityPreflight` is not
+            // consulted, and neither is which field the fault sat in — under the derived rule a
+            // secured document refused at this door is unconfirmable whatever the refusal was
+            // about, and a document declaring no security raises nothing whatever it was about. The
+            // narrower questions these two doors used to ask are what let an unresolvable
+            // `script.csharp file:`, and a step-level secret fault, in a secured suite exit 0.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                SecurityConfirmationFailed = secretFromSecurityBlock,
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Refusing(SecurityAbortKind.AuthoringFault),
             };
         }
 
@@ -901,7 +818,17 @@ public static class ScenarioRunner
                 DisplaySanitiser.SanitiseForDisplay($"Environment configuration error: {aex.Message}"))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
-            return (Verdict.Inconclusive, buffer);
+
+            // THE BOUNDARY IS "NO CONTAINER STARTED", NOT "BEFORE THE StartAsync CALL". Map's
+            // eager validation runs as StartAsync's Step 1, ahead of DCP, so a `${conn:typo}` or
+            // an unknown dependency starts nothing — and this return, which had no way to raise
+            // the old flag at all, was the least defensible of the five that could not.
+            return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
+            {
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Refusing(SecurityAbortKind.AuthoringFault),
+            };
         }
         catch (OrchestrationException oex)
         {
@@ -929,13 +856,19 @@ public static class ScenarioRunner
             livePump?.PostRange(buffer);
 
             // REQ-018: exactly ONE cause of an Environment error exits non-zero without
-            // --fail-on-env-error. The discriminator is the classified kind on the exception, not
-            // the verdict and not the message — an unhealthy container, an unpullable image and an
-            // unrelated seed failure all reach this same catch and still exit 0 by default.
+            // --fail-on-env-error, and THIS DISCRIMINATOR IS UNTOUCHED by the derivation. The
+            // classified kind on the exception decides — not the verdict and not the message — so
+            // an unhealthy container, an unpullable image and an unrelated seed failure all reach
+            // this same catch, record TopologyUnavailable, and still exit 0 by default. That is
+            // #390, and it is deliberately still open (see SecurityAbortKind.TopologyUnavailable).
             return new ScenarioCoreResult(Verdict.EnvironmentError, buffer)
             {
-                SecurityConfirmationFailed =
-                    oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation,
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Refusing(
+                        oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
+                            ? SecurityAbortKind.ProbeUnconfirmed
+                            : SecurityAbortKind.TopologyUnavailable),
             };
         }
         finally
@@ -986,7 +919,16 @@ public static class ScenarioRunner
                 livePump: livePump,
                 sharedLedger: runSecretLedger).ConfigureAwait(false);
 
-            return (verdict, buffer);
+            // The topology came up and every declared block was confirmed — reaching here at all
+            // means that (a failure aborts StartAsync). What was confirmed is carried rather than
+            // discarded: a boolean could not tell an authenticated round trip from a transport-only
+            // confirmation, which is the whole subject of REQ-005.
+            return new ScenarioCoreResult(verdict, buffer)
+            {
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Confirming(suite.SecurityConfirmations),
+            };
         }
     }
 
@@ -1151,6 +1093,30 @@ public static class ScenarioRunner
         // registry and threaded into the suite-level TerminalRenderer.Render call.
         var diffLookup = BuildDiffLookup(registry);
 
+        // ── The suite's ONE security assurance (security-assurance-derivation, REQ-002) ───────
+        //
+        // `Declared` is walked ONCE, here, from the canonical SecuredTargets.Enumerate — before
+        // any door runs and from a PARAMETER, so no early return below can skip it.
+        //
+        // THE WALK IS OVER EVERY SCENARIO, NOT scenarios[0], and the difference is a measured exit-0
+        // false negative rather than tidiness. Every scenario in a shared-topology suite is required
+        // to declare a byte-identical `environment` block — but the gate that enforces that is the
+        // one door BELOW that reads this value, so at that door the requirement is precisely what
+        // has not been established. Deriving from scenarios[0] there meant a suite whose SECOND file
+        // carried the `security` block reached the divergence gate with an empty declaration and
+        // exited 0, while the same two files with the block in the other one exited 3: a rename
+        // flipped a CI build's colour. Everywhere else this value is read the environments are
+        // already byte-identical, so the union equals scenarios[0]'s walk and costs nothing —
+        // measured as the blast radius of the change. Names are deduplicated by `Declaring`, so the
+        // N identical copies a conforming suite contributes collapse to one set.
+        //
+        // The doors below record only WHICH door refused. Nothing about the exit code is decided
+        // at any of them: that is SecurityAssurance.Unconfirmed's single job, and it is why this
+        // replaced a bool that nine door-local sites each set for themselves — and, because those
+        // doors are mutually exclusive early returns, never all set.
+        var assurance = SecurityAssurance.None.Declaring(
+            scenarios.SelectMany(s => SecuredTargets.Enumerate(s.Environment)).ToArray());
+
         // ── Validate shared-environment assumption ─────────────────────────────
         // All scenarios must share the environment declared in scenario[0].
         // If any scenario diverges, return EnvironmentError for the whole suite.
@@ -1169,29 +1135,18 @@ public static class ScenarioRunner
                         "must share one topology.  Suite aborted with EnvironmentError."))
                     .ConfigureAwait(false);
 
+                // One of the five returns that could not raise the old flag at all. Scenarios
+                // declaring different environment blocks is an authoring fault, and no container
+                // has started, so a SECURED suite refused here is unconfirmable on exactly the
+                // terms every other pre-topology refusal is. An unsecured one is untouched.
                 return new SuiteResult(
                     Verdict.EnvironmentError,
-                    Array.Empty<(string, Verdict)>());
+                    Array.Empty<(string, Verdict)>())
+                {
+                    Assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                };
             }
         }
-
-        // REQ-018's narrow signal. THIS LOCAL accumulates, without counting them: a schema
-        // rejection that locates a declared `security` block, and a security-preflight failure
-        // from the provider pipeline (both in the compilation loop below), plus REQ-005's probe
-        // raising a SecurityConfirmation OrchestrationException from StartAsync.
-        //
-        // It is NOT the whole account of the flag the CLI finally reads (gatekeeper MAJOR, fix
-        // round seven — the earlier form said "both of its producers" and read as exhaustive). The
-        // base-directory-divergence guard below bypasses this local entirely and passes
-        // `securityConfirmationFailed: true` to CompleteWithoutTopologyAsync LITERALLY, because
-        // that refusal is unconditional rather than accumulated — see its own note there.
-        //
-        // Kept as a local rather
-        // than derived from the verdict, because the verdict is exactly what must NOT change:
-        // an ordinary environment error and an unconfirmable security assertion produce the same
-        // Verdict.EnvironmentError and must keep doing so (§12.1) — they differ only in whether
-        // CI is broken without an opt-in flag.
-        var securityConfirmationFailed = false;
 
         // ── Per-scenario compilation (pre-topology) ───────────────────────────
         // Validate + compile each scenario's YAML before we pay the topology build cost.
@@ -1221,89 +1176,61 @@ public static class ScenarioRunner
             var validationResult = DocumentValidator.Validate(yaml, registry);
             if (!validationResult.IsValid)
             {
-                // REQ-018, and the half of its carve-out the code had not yet delivered. Both
-                // ExitCodes' own remarks and docs/ci-integration.md name "a `profile` with no
-                // wiring for the target's kind" as an unconditional non-zero case — but REQ-021's
-                // narrowing is enforced by the ROOT SCHEMA (the per-kind `allOf`), so it arrives
-                // here rather than through EnvironmentSecurityValidator, and this branch set no
-                // flag. Measured: `profile: mtls` on a redis dependency reported the right message
-                // and exited 0. A documented exception that does not exist is the same defect as an
-                // undocumented one, on the surface whose entire job is to refuse false assurance.
+                // THREE ADJACENT DOORS USED TO GIVE THREE DIFFERENT ANSWERS TO THE SAME QUESTION,
+                // and this was the widest of them: it asked "does this document declare security,
+                // or is the error inside the block". Its neighbour below asked "is the fault in a
+                // declared `security` block". The third asked "was it the security preflight". No
+                // principle distinguished them — only which door was patched when.
                 //
-                // BROADENED (round 4): the located-inside-the-block test alone was not enough,
-                // and it defeated refusals this same change introduced. MEASURED, real CLI,
-                // single-file secured suite: deleting one required key from a STEP (so the schema
-                // error lands at `/steps/0`, outside the `security` block) took an EDGE-003
-                // unknown-source fault from exit 4 to exit 0, and did the same to a REQ-011 sigil
-                // refusal and a missing-key-file refusal. This `continue` skips BOTH the secret
-                // pass and ProviderPipeline.Compile, so no other door could set the flag either,
-                // and `LocatesADeclaredSecurityBlock` answers false for `/steps/0` by design.
+                // All three now record the SAME thing, because it is the same fact: an authoring
+                // fault refused this scenario before any container started. Whether that raises is
+                // decided once, from `Declared`, by SecurityAssurance.Unconfirmed.
                 //
-                // The second disjunct restores the flag's DOCUMENTED meaning — "a declared
-                // `security` block could not be confirmed", not "the schema error was located
-                // inside one". A schema-rejected document that declares security at all is
-                // unconfirmable by construction: nothing downstream of this line runs, so no
-                // probe, no preflight and no secret scan will ever get the chance to confirm it.
-                //
-                // `ast` is bound here (the parse succeeded; only schema validation failed), so
-                // SecuredTargets.Enumerate — the ONE canonical walk — answers directly, with no
-                // second spelling of "does this document declare security".
-                var declaresSecurity = SecuredTargets.Any(ast.Environment);
+                // The located-in-the-block distinction survives as EVIDENCE, not as a decision: a
+                // schema error at or inside a `security` node is a refusal OF the declaration, and
+                // is the one shape `Declared` cannot see (`security: mtls` binds no SecuritySpec).
                 var errorIsInsideTheSecurityBlock = RejectsASecurityDeclaration(validationResult.Errors);
+                assurance = assurance.Refusing(
+                    errorIsInsideTheSecurityBlock
+                        ? SecurityAbortKind.SecurityDeclarationRejected
+                        : SecurityAbortKind.AuthoringFault);
 
-                // ONE predicate for the flag and for the notice — see the twin door in
-                // RunScenarioOwningTopologyAsync for the shape that separated them.
-                var securityUnconfirmable = errorIsInsideTheSecurityBlock || declaresSecurity;
-                securityConfirmationFailed |= securityUnconfirmable;
-
-                // The exit code must never be the only evidence. Without this line a clean secured
-                // suite carrying one innocent schema typo exited 4 showing ONLY the schema error,
-                // so the reason for the non-zero exit was invisible — the same "unexplained red"
-                // defect this series already fixed once, reintroduced at a newer door. The
-                // out-of-block clause is conditional on `errorIsInsideTheSecurityBlock`, so the
-                // notice can never claim an in-block error sits outside the block.
-                var schemaMessage = string.Join("; ", validationResult.Errors.Select(e => e.Message));
+                // The notice that used to be spliced onto this message has moved to the ONE site
+                // that reads the assurance (RunCommand): the exit code must never be the only
+                // evidence, and it is now non-zero at doors this branch cannot see.
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
-                    securityUnconfirmable
-                        ? schemaMessage + "\n" + BuildSecurityUnconfirmableNotice(errorIsInsideTheSecurityBlock)
-                        : schemaMessage,
+                    string.Join("; ", validationResult.Errors.Select(e => e.Message)),
                     scenarioBaseDirectory));
                 continue;
             }
 
-            // Secret-reference validation (§17, S05-B-01) — engine-level, runs
-            // before the topology is built so a bad reference costs no containers.
-            if (TryValidateSecretReferences(ast, out var secretError, out var secretFromSecurityBlock))
-            {
-                // REQ-018, and the door that made the carve-out demonstrably unsound before this
-                // line existed. MEASURED, red first: a suite whose ONLY fault was
-                // `${secret:nosuchsource/…}` in `security.clientKeyPassword` exited 0 — and adding
-                // that fault to a suite that correctly exited 4 for a REQ-011 refusal made the
-                // combined suite exit 0, because this door `continue`s BEFORE
-                // ProviderPipeline.Compile runs on this path, masking the refusal that had set the
-                // flag. See the door in RunScenarioOwningTopologyAsync for the classification.
-                securityConfirmationFailed |= secretFromSecurityBlock;
-
-                compilations.Add((name, ast, null, Verdict.Inconclusive, secretError, scenarioBaseDirectory));
-                continue;
-            }
-
-            // Provider pipeline compile — resolves `file:`/other relative step fields against
-            // THIS scenario's own directory (#268), not the suite-wide seed base directory.
+            // The pre-topology authoring passes, run TOGETHER and reported together — the twin of
+            // the merged door in RunScenarioOwningTopologyAsync, in the SAME order, which is the
+            // whole point of merging them. Provider pipeline compile (which resolves `file:`/other
+            // relative step fields against THIS scenario's own directory (#268), not the suite-wide
+            // seed base directory) and the secret-reference pass (§17, S05-B-01), both before the
+            // topology is built so an authoring fault costs no containers.
+            //
+            // THIS PATH USED TO RUN THEM IN THE OPPOSITE ORDER TO THE OTHER PATH, and each stopped
+            // at its first fault, so a document carrying a security preflight fault AND a step
+            // secret fault reported a DIFFERENT one on each path (#399's remainder). Both faults
+            // are real, both are computed, both are reported.
+            //
+            // The `fromSecurityDeclaration` out-value is DISCARDED, and `IsSecurityPreflight` is not
+            // consulted: a step-level fault in a SECURED document is an authoring fault like any
+            // other, which is the widening this change makes — MEASURED as taking that shape from
+            // exit 0 to exit 4 on both run paths.
             var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, scenarioBaseDirectory);
-            if (pipelineResult.Failure is not null)
+            var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
+                ? secretError
+                : null;
+            if (pipelineResult.Failure is not null || stepSecretFault is not null)
             {
-                // REQ-018 / EDGE-010(a): a SECURITY-preflight rejection — a certificate path that
-                // escapes the suite directory or does not exist (REQ-003/REQ-004), or a
-                // (profile, target-kind) pair with no registered wiring (REQ-022) — is still an
-                // authoring error and still Inconclusive, but it must not exit 0. A team whose
-                // clientCert file went missing would otherwise get a green pipeline on a security
-                // suite that verified nothing, which is the exact failure REQ-005 exists to
-                // prevent, reached through the validation door instead of the probe's.
-                securityConfirmationFailed |= pipelineResult.Failure.IsSecurityPreflight;
+                assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
 
                 compilations.Add((name, ast, null, Verdict.Inconclusive,
-                    pipelineResult.Failure.Message, scenarioBaseDirectory));
+                    JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault),
+                    scenarioBaseDirectory));
                 continue;
             }
 
@@ -1329,7 +1256,7 @@ public static class ScenarioRunner
         {
             return await CompleteWithoutTopologyAsync(
                     compilations,
-                    securityConfirmationFailed,
+                    assurance,
                     output,
                     decorate,
                     diffLookup,
@@ -1364,14 +1291,16 @@ public static class ScenarioRunner
         // pump, the terminal render and FileReportWriter.WriteFileReports. MEASURED on the
         // divergence shape with --junit/--html/--events all requested: `junit exists = False,
         // html exists = False, events exists = False` — and unlike the conflict seam this one exits
-        // NON-ZERO (SecurityConfirmationFailed = true), so a CI job gets a red build beside an empty
-        // results directory and a JUnit publisher reporting "no test results". Verdict, flag and
-        // exit code are unchanged here; only the artefacts now exist.
+        // NON-ZERO, so a CI job gets a red build beside an empty results directory and a JUnit
+        // publisher reporting "no test results". Verdict and exit code are unchanged here; only the
+        // artefacts now exist.
         //
-        // CLASSIFICATION UNCHANGED, deliberately: `securityConfirmationFailed: true` is passed
-        // literally rather than accumulated, because this guard is about security material — a
-        // suite whose declared 'caCert'/'clientCert'/'clientKey' would resolve to two different
-        // files is exactly a declaration the engine cannot confirm (REQ-018).
+        // THE LITERAL `true` THIS GUARD USED TO PASS IS GONE, and its absence is the point. It
+        // bypassed the accumulating local entirely — the one producer that could not be read off
+        // the local the doc comments designated as the account of the flag — because its refusal
+        // was unconditional where the others were accumulated. It records an authoring refusal like
+        // every other door now, and raises for the same reason they do: this guard only fires for a
+        // suite that declares security, so `Declared` is non-empty by construction whenever it runs.
         //
         // WHY THIS ONE ITERATES ALL COMPILATIONS WHILE ITS NEIGHBOUR FILTERS TO RUNNABLE
         // (m-runnability, gatekeeper, fix round nine). Two adjacent guards apply opposite
@@ -1397,7 +1326,7 @@ public static class ScenarioRunner
 
             return await CompleteWithoutTopologyAsync(
                     StampInconclusiveWhereUnjudged(compilations, divergence),
-                    securityConfirmationFailed: true,
+                    assurance.Refusing(SecurityAbortKind.AuthoringFault),
                     output,
                     decorate,
                     diffLookup,
@@ -1445,15 +1374,22 @@ public static class ScenarioRunner
         // that split the families across themselves are exactly as rejected as before — that is the
         // split row this guard was written for, and both its scenarios are runnable by construction.
         //
-        // CLASSIFICATION, measured rather than assumed: the per-scenario seam returns a plain
-        // ValidationFailure (IsSecurityPreflight stays false), which maps to Verdict.Inconclusive
-        // with REQ-018's carve-out OFF — exit 0 by default, exit 4 under --fail-on-inconclusive.
-        // This path reproduces that exactly. It deliberately does NOT set SecurityConfirmationFailed
-        // the way the divergence check above does: a protocol conflict is an authoring error, not a
-        // failure to confirm a security assertion, and setting the flag would fire REQ-018's
-        // unconditional non-zero exit for a non-security reason — the very thing REQ-005's own text
-        // warns against. The accumulated value is carried through unchanged, so a suite that ALSO
-        // had a security-preflight rejection in a non-blocking scenario keeps it.
+        // CLASSIFICATION — AND THIS BRANCH'S OWN WRITTEN RATIONALE IS OVERTURNED HERE, deliberately
+        // and on the record rather than quietly dropped. It used to argue: "a protocol conflict is
+        // an authoring error, not a failure to confirm a security assertion", and declined to raise.
+        // The schema door, forty lines above, argued the opposite of the same question and widened.
+        // Both were sound in isolation; they cannot both be the rule, and while both shipped, door
+        // ORDER decided an exit code.
+        //
+        // THE WIDE READING WINS (security-assurance-derivation, decision 3). A secured document
+        // that aborts before any container starts is unconfirmable WHATEVER aborted it, because
+        // nothing downstream of the refusal ever runs to confirm it. What the old rationale got
+        // right is preserved by `Declared`, not by this branch: a suite declaring no security is
+        // untouched here, exactly as before — exit 0 by default, exit 4 under
+        // --fail-on-inconclusive — because an empty `Declared` raises nothing.
+        //
+        // USER-VISIBLE: a secured suite whose scenarios split the two protocol families now reddens
+        // a build that was green. That is the widening, stated rather than discovered.
         //
         // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
         // MAJOR, fix round five). Parity between the two seams is what this whole guard is for, and
@@ -1494,7 +1430,7 @@ public static class ScenarioRunner
 
             return await CompleteWithoutTopologyAsync(
                     StampInconclusiveWhereUnjudged(compilations, protocolConflict),
-                    securityConfirmationFailed,
+                    assurance.Refusing(SecurityAbortKind.AuthoringFault),
                     output,
                     decorate,
                     diffLookup,
@@ -1581,9 +1517,13 @@ public static class ScenarioRunner
             var inconclusiveVerdicts = compilations
                 .Select(c => (c.ScenarioName, Verdict.Inconclusive))
                 .ToList();
+            // The boundary is "no container started", not "before the StartAsync call": Map is
+            // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
+            // fault like every pre-topology one. It used to carry the accumulated flag through
+            // UNCHANGED — a return that could observe the fault and had no way to record it.
             return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts)
             {
-                SecurityConfirmationFailed = securityConfirmationFailed,
+                Assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault),
             };
         }
         catch (OrchestrationException oex)
@@ -1607,20 +1547,24 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
 
             // REQ-018: exactly ONE cause of an Environment error exits non-zero without
-            // --fail-on-env-error, and this is where it is distinguished from every other. The
-            // discriminator is the classified kind on the exception itself, not the message text
-            // and not the verdict — an unhealthy container, an unpullable image and an unrelated
-            // seed failure all still reach this same catch and still exit 0 by default.
-            securityConfirmationFailed |=
-                oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation;
-
-            // Every scenario receives EnvironmentError.
+            // --fail-on-env-error, and THIS DISCRIMINATOR IS UNTOUCHED by the derivation. The
+            // classified kind on the exception decides — not the message text and not the verdict
+            // — so an unhealthy container, an unpullable image and an unrelated seed failure all
+            // still reach this same catch, record TopologyUnavailable, and still exit 0 by
+            // default. That is #390, deliberately still open.
+            //
+            // `Refusing` keeps the more consequential refusal, so a scenario already refused at a
+            // compile-time door does not have its record overwritten by a topology that then
+            // failed to come up.
             var errVerdicts = compilations
                 .Select(c => (c.ScenarioName, Verdict.EnvironmentError))
                 .ToList();
             return new SuiteResult(Verdict.EnvironmentError, errVerdicts)
             {
-                SecurityConfirmationFailed = securityConfirmationFailed,
+                Assurance = assurance.Refusing(
+                    oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
+                        ? SecurityAbortKind.ProbeUnconfirmed
+                        : SecurityAbortKind.TopologyUnavailable),
             };
         }
         finally
@@ -1862,7 +1806,7 @@ public static class ScenarioRunner
 
             return new SuiteResult(suiteAggregate, results)
             {
-                // Threaded on the normal-completion path too, and REACHABLE with a true value —
+                // Threaded on the normal-completion path too, and REACHABLE carrying a refusal —
                 // corrected in fix round eight (m3, peer-review critic). This note twice claimed
                 // the opposite, and the reasoning is recorded rather than the conclusion, because
                 // "unreachable" is what licenses a later reader to delete the assignment.
@@ -1874,19 +1818,22 @@ public static class ScenarioRunner
                 //
                 // What it misses is that the byte-identical gate compares the parsed AST
                 // (SerialiseEnvironment over ScenarioAst.Environment), not the YAML. The SCHEMA
-                // producer fires on a shape the AST cannot carry: `$defs/security` closes with
+                // door fires on a shape the AST cannot carry: `$defs/security` closes with
                 // `unevaluatedProperties: false`, so an unknown key inside ONE scenario's
                 // `security` block is a schema error located inside that block — while SecuritySpec
                 // has no catch-all member, so the key is dropped and both scenarios' ASTs serialise
                 // identically. The environment gate therefore passes, that scenario alone takes an
-                // early verdict at the schema branch of the compilation loop (setting the local),
+                // early verdict at the schema branch of the compilation loop (recording a refusal),
                 // the all-early guard does not fire because a sibling scenario is still runnable,
-                // and the suite runs to this return carrying a true flag. The same holds for any
-                // other schema error inside the block that AstBuilder tolerates.
+                // and the suite runs to this return carrying it.
                 //
                 // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
                 // and dropping it would report exit 0 on a rejected security declaration.
-                SecurityConfirmationFailed = securityConfirmationFailed,
+                //
+                // `Confirming` records what the probe established for the suite that DID run, so a
+                // TransportConfirmed run is distinguishable from an AuthenticatedRoundTrip one by
+                // something other than the terminal text.
+                Assurance = assurance.Confirming(suite.SecurityConfirmations),
             };
         }
     }
@@ -2046,7 +1993,7 @@ public static class ScenarioRunner
             Verdict? EarlyVerdict,
             string? EarlyMessage,
             string? ScenarioBaseDirectory)> compilations,
-        bool securityConfirmationFailed,
+        SecurityAssurance assurance,
         TextWriter output,
         bool decorate,
         Func<string, JsonElement, string?> diffLookup,
@@ -2110,7 +2057,7 @@ public static class ScenarioRunner
 
         return new SuiteResult(suiteAggregate, results)
         {
-            SecurityConfirmationFailed = securityConfirmationFailed,
+            Assurance = assurance,
         };
     }
 
@@ -2132,6 +2079,49 @@ public static class ScenarioRunner
         Verdict.EnvironmentError => new VerdictCounts { EnvError = 1 },
         _ => new VerdictCounts { Inconclusive = 1 },
     };
+
+    /// <summary>
+    /// The single diagnostic for the merged pre-topology authoring door: every fault it found, in
+    /// a fixed order, joined the way the schema door already joins its own error list.
+    /// </summary>
+    /// <param name="pipelineFailure">The provider-pipeline refusal, or <see langword="null"/>.</param>
+    /// <param name="stepSecretFault">The secret-reference refusal, or <see langword="null"/>.</param>
+    /// <remarks>
+    /// <para>
+    /// The ORDER is fixed here rather than at the two call sites, because "which fault is reported
+    /// first" being a property of the call site is the defect this exists to remove: the two run
+    /// paths ran the two passes in opposite orders and each reported only its first, so the same
+    /// document was diagnosed differently by <c>run</c> and by <c>run --parallel</c>.
+    /// </para>
+    /// <para>
+    /// At least one argument is non-empty at every call site (both are guarded by
+    /// <c>failure is not null || fault is not null</c>), so this never returns the empty string on
+    /// a live path.
+    /// </para>
+    /// <para>
+    /// <strong>The separator is a NEWLINE, not <c>"; "</c>, because both halves are complete
+    /// sentences ending in a full stop.</strong> The semicolon form rendered
+    /// <c>…no-such-cert.pem').; step 'call': …</c> — a stop and a semicolon adjacent, mid-line, in
+    /// the one diagnostic an author reads to find two unrelated faults. The security half of
+    /// <see cref="TryValidateSecretReferences"/> already joins its own two messages with <c>"\n"</c>
+    /// for exactly this reason.
+    /// </para>
+    /// <para>
+    /// <c>"\n"</c> is available HERE, and the constraint that forbids it there does not apply: that
+    /// site's string reaches the schema-versioned <c>validate --json</c> document, where
+    /// <c>Environment.NewLine</c> would make one document differ between a Windows and a Linux
+    /// runner — and <c>"\n"</c> is the platform-independent answer to that, not an escape from it.
+    /// This helper's two call sites are BOTH run-path terminal: one writes straight to the run's
+    /// output writer through <c>DisplaySanitiser</c> (which preserves <c>\n</c> and
+    /// strips <c>\r</c>), the other becomes an <c>EarlyMessage</c>, whose only consumers are that
+    /// same terminal print and an ordinal equality check — <c>ScenarioCompletedEvent</c> carries no
+    /// message field, so no artefact channel sees this string at all (#372).
+    /// </para>
+    /// </remarks>
+    private static string JoinAuthoringFaults(string? pipelineFailure, string? stepSecretFault) =>
+        string.Join(
+            "\n",
+            new[] { pipelineFailure, stepSecretFault }.Where(m => !string.IsNullOrEmpty(m)));
 
     /// <summary>
     /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
@@ -3845,22 +3835,21 @@ public static class ScenarioRunner
     /// </remarks>
     /// <param name="fromSecurityDeclaration">
     /// <see langword="true"/> when THE DOCUMENT CONTAINS a secret fault in a declared
-    /// <c>security</c> block — REQ-018's carve-out signal, which the caller accumulates into
-    /// <c>SecurityConfirmationFailed</c> so the run exits non-zero with no flag.
+    /// <c>security</c> block.
+    /// <para>
+    /// <strong>NEITHER RUN PATH READS THIS ANY LONGER</strong> (security-assurance-derivation): it
+    /// was the input to a door-local classification, and no door classifies now — a secured
+    /// document refused before any container started is unconfirmable whatever the fault was, and
+    /// an unsecured one is not, whatever the fault was. Both call sites discard it with
+    /// <c>out _</c>. It is retained because it is directly asserted by
+    /// <c>ScenarioValidatorTests</c> and states a true fact about the document.
+    /// </para>
     /// <para>
     /// It deliberately does NOT mean "the failure reported through <c>error</c> was a security
     /// one". Those two readings come apart whenever a document carries BOTH a step fault and a
-    /// security fault, and the difference was a live defect: the step half used to return on its
-    /// first fault, the security half never ran, the flag stayed <see langword="false"/>, and the
-    /// caller <c>continue</c>d before <c>ProviderPipeline.Compile</c> could set it either — so a
-    /// suite whose security block could not be confirmed exited 0 as soon as a step ALSO had a
-    /// bad reference. Adding a fault made the build greener. Both halves therefore always run;
-    /// only which MESSAGE is reported is first-wins.
-    /// </para>
-    /// <para>
-    /// A STEP fault alone never sets it: that is an ordinary authoring error, and widening the
-    /// carve-out to it would fire an unconditional non-zero exit for a non-security reason (the
-    /// hazard <c>RunSuiteAsync</c>'s protocol-conflict branch records at its own door).
+    /// security fault. Both halves therefore always run; only which MESSAGE is reported is
+    /// first-wins — and that REPORTING property still matters and is still what the unconditional
+    /// security half below delivers.
     /// </para>
     /// </param>
     internal static bool TryValidateSecretReferences(
@@ -3906,111 +3895,6 @@ public static class ScenarioRunner
         error = securityError;
         return securityFault;
     }
-
-    /// <summary>
-    /// The line printed when a schema-rejected document DECLARES <c>security</c> — the reason its
-    /// run exits non-zero (REQ-018, #390).
-    /// </summary>
-    /// <param name="errorIsInsideTheSecurityBlock">
-    /// <see langword="true"/> when the schema error is itself located at or inside the declared
-    /// <c>security</c> block — i.e. what <c>RejectsASecurityDeclaration</c> already answered for
-    /// the flag on the adjacent line. The "even though the error above is not itself inside that
-    /// block" clause is then OMITTED.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// An exit code is not evidence on this surface: several distinct doors all produce 4, so a
-    /// non-zero exit with no accompanying reason leaves an author guessing which rule fired. Both
-    /// schema doors emit this, so the two paths explain themselves identically.
-    /// </para>
-    /// <para>
-    /// <strong>The out-of-block clause is CONDITIONAL, and that is a correctness fix rather than
-    /// polish.</strong> An earlier form stated it unconditionally, so a suite declaring
-    /// <c>profile: bogusprofile</c> — a schema error squarely INSIDE the block — was told the
-    /// error was "not itself inside that block". The notice exists to remove a guess; a notice
-    /// that misdescribes the author's own document replaces one guess with a wrong answer.
-    /// </para>
-    /// <para>
-    /// <strong>The justification is deliberately NARROW: "before its security declaration could be
-    /// validated at all", not "before any container started".</strong> The broader wording was
-    /// measured to describe a rule the engine does not implement. Two LATER doors also reject a
-    /// secured suite before any container starts and exit 0 — the provider-pipeline door (e.g. a
-    /// <c>script.csharp</c> <c>file:</c> that does not resolve) and the step secret-reference
-    /// door. At THIS door nothing about the declaration was examined; at those two something was,
-    /// and that is the whole distinction the narrow wording draws.
-    /// </para>
-    /// <para>
-    /// <strong>That reading is sound on ONE of the two run paths, and DOOR ORDER is why.</strong>
-    /// In <see cref="RunScenarioOwningTopologyAsync"/> — the single-scenario core that
-    /// <c>--parallel</c> drives — <c>ProviderPipeline.Compile</c> runs FIRST and the step secret
-    /// pass second, so <c>EnvironmentSecurityValidator.Validate</c> has already run when either
-    /// door fires and the declaration really was validated. In <see cref="RunSuiteAsync"/> — the
-    /// shared-topology path the CLI takes when <c>--parallel</c> is ABSENT, i.e. the DEFAULT — the
-    /// order is REVERSED: the step secret door <c>continue</c>s before <c>ProviderPipeline.Compile</c>
-    /// is ever reached, so a security-preflight fault in the same document is neither computed nor
-    /// reported.
-    /// </para>
-    /// <para>
-    /// MEASURED, real CLI, one secured single-file suite whose <c>clientCert</c> names a missing
-    /// file: alone it exits 4 on both paths; add a step-level <c>${secret:nosuchsource/…}</c> and it
-    /// still exits 4 under <c>--parallel 1</c> but exits 0 by DEFAULT, with the preflight refusal
-    /// never printed. Adding a fault makes the build greener — the same masking shape already fixed
-    /// at the schema door and at the security-secret door, surviving at this one. That is filed as
-    /// <strong>#399 and is NOT settled here</strong>: the exit-0 decision above holds on the parallel
-    /// path and is OPEN on the suite path. This comment is not where that decision gets recorded, and
-    /// nothing here should be read as an argument against resolving it.
-    /// </para>
-    /// <para>
-    /// What is pinned by test, and by WHICH test, in <c>RunPathRootExecuteTests</c>:
-    /// <c>ExecuteAsync_SecuredSuiteWithNoSecretFault_IsNotCarvedOut</c> pins the PIPELINE door on a
-    /// SECURED suite, both paths. <c>ExecuteAsync_UnknownSecretSourceInAStep_IsNotCarvedOut</c> pins
-    /// the step-secret door on an UNSECURED document — its fixture declares no <c>security</c> block
-    /// at all, so it is a carve-out-narrowness control and says nothing about a secured suite; an
-    /// earlier form of this paragraph cited it as though it did.
-    /// <c>ExecuteAsync_StepFaultMasksASecurityPreflightFault_Issue399</c> records the gap above as
-    /// measured, per path, and is the row to flip when #399 is resolved.
-    /// </para>
-    /// <para>
-    /// <strong>Emitted on the SAME disjunction the flag uses</strong>, never on
-    /// <c>declaresSecurity</c> alone. The two come apart on a shape that is easy to reach by
-    /// accident: <c>security: mtls</c> — a profile name written where the block belongs — is a
-    /// schema error located AT the <c>security</c> node, so the flag fires and the run exits 4,
-    /// while the AST binds no <c>SecuritySpec</c> at all, so <c>declaresSecurity</c> is false.
-    /// Gating emission on that alone produced exit 4 with nothing explaining it — the unexplained
-    /// red this series has now had to fix three times. The notice's opening clause stays true on
-    /// that shape: the document does carry a <c>security</c> key, whatever it failed to bind to.
-    /// </para>
-    /// <para>
-    /// The wording is NUMBER-AGNOSTIC ("nothing reported above lies inside that block", "fix what
-    /// is reported above") because several schema errors are commonly printed together and the
-    /// earlier singular phrasing read wrongly against a plural render.
-    /// </para>
-    /// <para>
-    /// <strong>Reach, measured:</strong> this line goes to stdout only. It is absent from
-    /// <c>--junit</c> and <c>--events</c> on both run paths — consistent with the schema error it
-    /// accompanies, which those artefacts also omit, so there is no asymmetry introduced here. It
-    /// does mean a CI job reading only machine-readable artefacts still sees a bare exit 4, which
-    /// is the condition this notice exists to remove; that gap is filed separately.
-    /// </para>
-    /// </remarks>
-    internal static string BuildSecurityUnconfirmableNotice(bool errorIsInsideTheSecurityBlock) =>
-        "This scenario declares a 'security' block, so it exits non-zero"
-        + (errorIsInsideTheSecurityBlock
-            ? string.Empty
-            : " even though nothing reported above lies inside that block")
-        + ": the document was rejected before its security declaration could be validated at all, "
-        + "so the declared security assertion was never confirmed. Fix what is reported above and "
-        + "the suite will run its security checks normally.";
-
-    /// <summary>
-    /// Writes <see cref="BuildSecurityUnconfirmableNotice"/> to <paramref name="output"/>,
-    /// sanitised on the same terms as every other pre-topology diagnostic.
-    /// </summary>
-    private static Task WriteSecurityUnconfirmableNoticeAsync(
-        TextWriter output, bool errorIsInsideTheSecurityBlock) =>
-        output.WriteLineAsync(
-            DisplaySanitiser.SanitiseForDisplay(
-                BuildSecurityUnconfirmableNotice(errorIsInsideTheSecurityBlock)));
 
     /// <summary>
     /// Scans every declared <c>security</c> block's <c>clientKeyPassword</c> for a secret-reference

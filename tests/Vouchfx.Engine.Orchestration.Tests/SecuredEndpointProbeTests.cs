@@ -953,7 +953,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// <remarks>
     /// The bounded read's own grace window is a normal, quiet outcome; the CALLER's token
     /// cancelling is not, and collapsing the two lost REQ-018's signal entirely —
-    /// <c>ScenarioRunner</c> sets <c>SecurityConfirmationFailed</c> only inside
+    /// <c>ScenarioRunner</c> records <c>SecurityAbortKind.ProbeUnconfirmed</c> only inside
     /// <c>catch (OrchestrationException)</c>, so a raw <see cref="OperationCanceledException"/>
     /// escaped past it. Nothing was confirmed, so nothing is claimed.
     /// </remarks>

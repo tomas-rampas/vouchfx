@@ -297,13 +297,21 @@ public sealed class ProtocolTargetConflictValidationTests
         Assert.DoesNotContain(PreTopologyMarker, single.Rendered, StringComparison.Ordinal);
         Assert.DoesNotContain(PreTopologyMarker, split.Rendered, StringComparison.Ordinal);
 
-        // Same classification. An authoring error is Inconclusive, and it is NOT a
-        // security-confirmation failure — setting that flag would fire REQ-018's unconditional
-        // non-zero exit for a non-security reason.
+        // Same classification. An authoring error is Inconclusive, and — for these fixtures, which
+        // declare NO `security` block — the assurance stays confirmed, so REQ-018's unconditional
+        // non-zero exit does not fire for a non-security reason.
+        //
+        // NARROWED, deliberately (security-assurance-derivation): this used to read "a protocol
+        // conflict is NOT a security-confirmation failure", full stop. That reading is retracted.
+        // A protocol conflict in a suite that DOES declare security now raises, like every other
+        // pre-topology refusal of a secured document — see
+        // Vouchfx.Cli.Tests.SecurityAssuranceMatrixTests' Row08a/Row08b, which pin both directions.
+        // What survives, and is what these assertions actually measure, is that the widening is
+        // conditional on the DECLARATION rather than on the fault.
         Assert.Equal(Verdict.Inconclusive, single.Result.Verdict);
         Assert.Equal(Verdict.Inconclusive, split.Result.Verdict);
-        Assert.False(single.Result.SecurityConfirmationFailed);
-        Assert.False(split.Result.SecurityConfirmationFailed);
+        Assert.False(single.Result.Assurance.Unconfirmed);
+        Assert.False(split.Result.Assurance.Unconfirmed);
 
         Assert.All(single.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
         Assert.All(split.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
@@ -429,9 +437,11 @@ public sealed class ProtocolTargetConflictValidationTests
             Assert.True(File.Exists(mixedJunit));
             AssertInconclusiveJunit(File.ReadAllText(mixedJunit), s_mixedScenarioNames);
 
-            // Classification is the shape's, not the conflicting scenario's alone.
+            // Classification is the shape's, not the conflicting scenario's alone — and this
+            // fixture declares no `security`, so the assurance stays confirmed (see the narrowing
+            // note on the parity test above).
             Assert.Equal(Verdict.Inconclusive, mixed.Result.Verdict);
-            Assert.False(mixed.Result.SecurityConfirmationFailed);
+            Assert.False(mixed.Result.Assurance.Unconfirmed);
             Assert.Equal(s_mixedScenarioNames.Length, mixed.Result.ScenarioVerdicts.Count);
             Assert.All(mixed.Result.ScenarioVerdicts, v => Assert.Equal(Verdict.Inconclusive, v.Verdict));
 

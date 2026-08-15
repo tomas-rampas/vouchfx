@@ -250,7 +250,7 @@ public sealed class KafkaAuthorisationDrillDockerTests
         var drill = await RunDrillAsync("acl-authorised", unauthorised: false);
 
         Assert.False(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "the probe must confirm; diagnostics: " + drill.Diagnostics);
         Assert.Equal(Verdict.Pass, drill.Result.Verdict);
 
@@ -276,7 +276,7 @@ public sealed class KafkaAuthorisationDrillDockerTests
         // If this flags, the row has become a transport control wearing an authorisation label,
         // and everything below it would be measuring the wrong thing.
         Assert.False(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "the probe must CONFIRM for this edge — an unauthorised identity is a fully "
             + "authenticated one. Diagnostics: " + drill.Diagnostics);
         Assert.Contains(
@@ -314,7 +314,7 @@ public sealed class KafkaAuthorisationDrillDockerTests
         // ── 4. …as an ORDINARY environment error, NOT the security carve-out. ────────────────
         Assert.Equal(Verdict.EnvironmentError, drill.Result.Verdict);
         Assert.False(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "an authorisation refusal is an ordinary environment error. Were this flag set, a "
             + "flagless run would exit non-zero and the taxonomy would no longer distinguish an "
             + "unconfirmable security assertion from a broker that refused one request.");
@@ -505,7 +505,7 @@ public sealed class KafkaAuthorisationDrillDockerTests
         }
 
         var evidence = await watcher;
-        _output.WriteLine($"verdict={result.Verdict} securityConfirmationFailed={result.SecurityConfirmationFailed}");
+        _output.WriteLine($"verdict={result.Verdict} securityUnconfirmed={result.Assurance.Unconfirmed} refusal={result.Assurance.Refusal}");
         _output.WriteLine("── diagnostics ──\n" + diagnostics);
         _output.WriteLine("── buffer ──\n" + string.Join("\n", result.Buffer));
         _output.WriteLine("── broker evidence ──\n" + evidence);

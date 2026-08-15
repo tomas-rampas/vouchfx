@@ -37,6 +37,33 @@ public sealed class RunPathRootExecuteTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// The security notice's text, SPELLED OUT here rather than read from
+    /// <see cref="RunCommand.SecurityUnconfirmableNotice"/>. The independent copy is the whole
+    /// assertion.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Asserting <c>Contains(RunCommand.SecurityUnconfirmableNotice, rendered)</c> compares the
+    /// output against the constant that produced it, so it holds for ANY value of that constant —
+    /// setting it to the empty string passes every such assertion. That is the same failure mode,
+    /// one turn further on, as the truncated assertion recorded below: an assertion that stops
+    /// pinning the sentence is where the next falsehood ships. MEASURED: with the constant set to
+    /// <c>""</c> the three tests below go red on this copy and green on the self-referential one.
+    /// </para>
+    /// <para>
+    /// The cost of the copy is that a deliberate rewording touches two files. That is the intended
+    /// cost: this line is user-facing prose whose every clause must be true on every path that
+    /// reaches the print, and changing it should be a decision, not a rename.
+    /// </para>
+    /// </remarks>
+    private const string ExpectedSecurityNotice =
+        "This suite declares a 'security' block that this run could not confirm, so it exits "
+        + "non-zero whatever the fault reported above was: a run that cannot confirm a declared "
+        + "security assertion cannot vouch for it. Each door reports only the faults it reached, so "
+        + "what is reported above need not be the last fix before a run can confirm this suite's "
+        + "security block.";
+
     private const string MinimalValidScenario =
         "metadata:\n" +
         "  name: minimal\n" +
@@ -434,19 +461,22 @@ public sealed class RunPathRootExecuteTests : IDisposable
             "environment.services.api.security.clientKeyPassword:", rendered, StringComparison.Ordinal);
     }
 
-    // ── A STEP fault vs a security PREFLIGHT fault — the row that is BROKEN (#399) ─────────
+    // ── A STEP fault vs a security PREFLIGHT fault — the row #399 was filed for, now FIXED ──
     //
     // The combination the matrix above never reached. Everything above pairs a step fault with a
     // security-block SECRET fault, which both run paths compute in the SAME pass; this pairs it
     // with a security PREFLIGHT fault (a clientCert file that does not exist, REQ-003/REQ-004),
-    // which only ProviderPipeline.Compile computes — and the two paths call that at DIFFERENT
-    // points relative to the step secret pass.
+    // which only ProviderPipeline.Compile computes.
     //
-    //   RunScenarioOwningTopologyAsync (--parallel) . Compile FIRST, secret pass second
-    //   RunSuiteAsync (no --parallel, the DEFAULT) .. secret pass FIRST, Compile second
-    //
-    // So on the default path the step fault `continue`s before the preflight fault is ever
-    // computed, and the refusal is neither reported nor counted.
+    // RETRACTED — this block used to end by stating, in the present tense, that the two run paths
+    // called Compile at different points relative to the step secret pass (--parallel: Compile
+    // first; the default `run` path: secret pass first) and that on the default path "the step
+    // fault `continue`s before the preflight fault is ever computed, and the refusal is neither
+    // reported nor counted". That was the measured DEFECT, and it is fixed: the two passes are now
+    // ONE door on both paths, running both and reporting both, so both faults print and both paths
+    // exit 4. The account of the pre-fix behaviour lives on the test below, in the past tense where
+    // it belongs; it is deleted from here because a present-tense claim of a repaired defect twelve
+    // lines above the paragraph announcing the repair is a contradiction a reader has to arbitrate.
 
     private const string PreflightFaultScenario =
         "environment:\n" +
@@ -472,11 +502,13 @@ public sealed class RunPathRootExecuteTests : IDisposable
         "      Authorization: \"Bearer ${secret:nosuchsource/STEP_TOKEN}\"\n";
 
     /// <summary>
-    /// <strong>This test asserts a DEFECT, not a decision.</strong> It records the CURRENT measured
-    /// behaviour of {step fault} × {security PREFLIGHT fault} on both run paths, because they
-    /// disagree and one of them is wrong. Filed as <strong>#399</strong>.
+    /// <strong>This test used to assert a DEFECT.</strong> It recorded the then-measured behaviour
+    /// of {step fault} × {security PREFLIGHT fault} on both run paths, because they disagreed and
+    /// one of them was wrong. Filed as <strong>#399</strong>, and fixed — what follows is the
+    /// account of what it caught, kept because a reader meeting the row needs to know why it is
+    /// written the way it is.
     /// <para>
-    /// MEASURED, real CLI, this exact document:
+    /// MEASURED BEFORE THE FIX, real CLI, this exact document:
     /// </para>
     /// <list type="table">
     /// <item><description>preflight fault alone, no <c>--parallel</c> ....... exit 4, refusal printed</description></item>
@@ -501,11 +533,19 @@ public sealed class RunPathRootExecuteTests : IDisposable
     /// out below.
     /// </para>
     /// <para>
-    /// <strong>WHEN #399 IS FIXED</strong>, delete the per-path branch: BOTH arms must then expect
-    /// <c>ExitCodes.Inconclusive</c> and must report BOTH faults, exactly as
-    /// <c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c> already does for the secret-fault
-    /// pairing. Do NOT instead delete the <c>null</c> arm — narrowing the row to the parallel path
-    /// is how this gap escaped four review gates in the first place.
+    /// <strong>#399 IS FIXED, AND THE PER-PATH BRANCH IS DELETED</strong> — the end state this
+    /// test's own instructions named: BOTH arms expect <c>ExitCodes.Inconclusive</c> and BOTH
+    /// report BOTH faults, exactly as <c>ExecuteAsync_StepFaultDoesNotMaskASecurityFault</c>
+    /// already does for the secret-fault pairing. The <c>null</c> arm is KEPT, deliberately:
+    /// narrowing the row to the parallel path is how this gap escaped four review gates in the
+    /// first place, and it is the arm that carried the defect.
+    /// </para>
+    /// <para>
+    /// What changed underneath: the two pre-topology authoring passes (provider-pipeline compile
+    /// and the secret-reference walk) were two sequential doors that the two run paths ran in
+    /// OPPOSITE orders, each stopping at its first fault. They are now one door that runs both
+    /// passes and reports both faults, so which fault an author is shown is a property of the
+    /// document rather than of which path they invoked.
     /// </para>
     /// <para>
     /// The MESSAGE is asserted on both arms, in both directions. Several doors on this surface
@@ -529,27 +569,12 @@ public sealed class RunPathRootExecuteTests : IDisposable
         var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
         var rendered = sw.ToString();
 
-        if (parallel is null)
-        {
-            // ── THE DEFECT (#399) ──────────────────────────────────────────────────────────
-            // RunSuiteAsync's step secret door `continue`s before ProviderPipeline.Compile, so
-            // the preflight refusal is never computed: the run is green and the security fault
-            // is invisible. Both assertions below are recording a BUG, and both must be
-            // inverted by the fix.
-            Assert.Equal(ExitCodes.Success, exitCode);
-            Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
-            Assert.DoesNotContain("no-such-cert.pem", rendered, StringComparison.Ordinal);
-        }
-        else
-        {
-            // ── The correct end state, which one path already reaches ───────────────────────
-            // ProviderPipeline.Compile runs first here, so IsSecurityPreflight is set and the
-            // refusal is both printed and counted. (The step fault is not reported on this arm
-            // because the pipeline door returns first — a reporting gap of its own, but not the
-            // one that changes an exit code, so it is left to #399's fix to unify.)
-            Assert.Equal(ExitCodes.Inconclusive, exitCode);
-            Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
-        }
+        // ── The end state, identical on both paths ─────────────────────────────────────────
+        // The document has two faults; both are computed, both are reported, and the exit code no
+        // longer depends on which pass ran first.
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("no-such-cert.pem", rendered, StringComparison.Ordinal);
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -720,12 +745,29 @@ public sealed class RunPathRootExecuteTests : IDisposable
         // The FULL wording, not truncated one clause early. An earlier form of this assertion
         // stopped at "exits non-zero", which is exactly where the sentence stopped being pinned —
         // and the next clause then shipped a falsehood for an in-block schema error.
-        Assert.Contains(
-            "declares a 'security' block, so it exits non-zero even though nothing reported above "
-            + "lies inside that block: the document was rejected before its security declaration "
-            + "could be validated at all",
-            rendered,
-            StringComparison.Ordinal);
+        //
+        // RETRACTED WORDING, recorded rather than silently replaced (security-assurance-derivation).
+        // Until this change the notice read:
+        //
+        //     "…so it exits non-zero even though nothing reported above lies inside that block:
+        //      the document was rejected before its security declaration could be validated at
+        //      all…"
+        //
+        // Both halves are now false where the notice fires. The out-of-block clause distinguished
+        // two SCHEMA-door cases, and this is no longer a schema-door line — one notice is emitted
+        // at the single site that reads the assurance, and it covers doors that are not the schema
+        // one. The "before its security declaration could be validated at all" clause was
+        // deliberately narrow BECAUSE two later doors (the provider pipeline and the step secret
+        // pass) also refused a secured suite before any container started and exited 0; both now
+        // exit non-zero, so the broad statement is the true one. The rule the test pins is
+        // unchanged: a secured suite refused pre-topology exits non-zero and says why.
+        //
+        // A SECOND RETRACTION, of a clause that was measured false rather than merely narrow: the
+        // notice used to open "was refused before any container started". With no flags and exit 3
+        // the engine printed `Current State: Running` with a `Start Time` immediately above it, and
+        // under --parallel a sibling slot's containers can be up and past their health gate. The
+        // line now states the property the assurance record can actually vouch for.
+        Assert.Contains(ExpectedSecurityNotice, rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -733,9 +775,10 @@ public sealed class RunPathRootExecuteTests : IDisposable
     /// "is not itself inside that block" — measured saying exactly that for
     /// <c>profile: bogusprofile</c>, whose error is located in the block by definition.
     /// <para>
-    /// This is the one case neither the emission gate nor the flag distinguished: both are driven
-    /// by "declares security", while the omitted clause is driven by "the error is located inside
-    /// the block", which <c>RejectsASecurityDeclaration</c> already answers on the adjacent line.
+    /// The defect this pins is now structurally impossible rather than conditionally avoided: there
+    /// is ONE notice, and it makes no claim about where the reported fault sits. The
+    /// <c>DoesNotContain</c> below is therefore what carries the test — it would still catch a
+    /// later reintroduction of the clause.
     /// </para>
     /// </summary>
     [Theory]
@@ -772,11 +815,7 @@ public sealed class RunPathRootExecuteTests : IDisposable
         Assert.Contains("bogusprofile", rendered, StringComparison.Ordinal);
 
         // The notice still appears — the exit code still needs explaining…
-        Assert.Contains(
-            "declares a 'security' block, so it exits non-zero: the document was rejected before "
-            + "its security declaration could be validated at all",
-            rendered,
-            StringComparison.Ordinal);
+        Assert.Contains(ExpectedSecurityNotice, rendered, StringComparison.Ordinal);
 
         // …but WITHOUT the clause that would misdescribe the author's own document.
         Assert.DoesNotContain("lies inside that block", rendered, StringComparison.Ordinal);
@@ -822,13 +861,10 @@ public sealed class RunPathRootExecuteTests : IDisposable
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
         Assert.Contains("should be \"object\"", rendered, StringComparison.Ordinal);
 
-        // The exit code is explained — and with the in-block wording, since the error IS at the
-        // security node.
-        Assert.Contains(
-            "declares a 'security' block, so it exits non-zero: the document was rejected before "
-            + "its security declaration could be validated at all",
-            rendered,
-            StringComparison.Ordinal);
+        // The exit code is explained. The wording no longer varies with where the fault sits —
+        // there is one notice, at the one site that reads the assurance — so what this arm still
+        // pins is that the SecurityDeclarationRejected shape reaches it at all.
+        Assert.Contains(ExpectedSecurityNotice, rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("lies inside that block", rendered, StringComparison.Ordinal);
     }
 

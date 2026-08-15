@@ -377,7 +377,7 @@ public sealed class RunSuiteAsyncTests
 
             // REQ-018: Inconclusive + this flag is exit 4, which is what the documentation claims
             // and what `vouchfx validate` already produced for the same suite.
-            Assert.True(result.SecurityConfirmationFailed);
+            Assert.True(result.Assurance.Unconfirmed);
         }
         finally
         {
@@ -477,7 +477,7 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(yamls.Length, result.ScenarioVerdicts.Count);
 
         // No security is declared anywhere here, so REQ-018's carve-out must stay off on both rows.
-        Assert.False(result.SecurityConfirmationFailed);
+        Assert.False(result.Assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -543,7 +543,7 @@ public sealed class RunSuiteAsyncTests
         Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
 
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
-        Assert.True(result.SecurityConfirmationFailed);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -593,7 +593,7 @@ public sealed class RunSuiteAsyncTests
         var rendered = sw.ToString();
         Assert.Contains("resolves its declared security paths against a different directory", rendered, StringComparison.Ordinal);
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
-        Assert.True(result.SecurityConfirmationFailed);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     // Hoisted to fields: CA1861 fires on an array of literal constants in an argument position,
@@ -615,7 +615,7 @@ public sealed class RunSuiteAsyncTests
     /// <remarks>
     /// <para>
     /// <strong>Why this is not cosmetic, and why it is worse here than at the sibling seam.</strong>
-    /// This guard sets <c>SecurityConfirmationFailed</c>, so the run exits NON-ZERO (REQ-018). Before
+    /// This guard records an authoring refusal on a suite that declares security, so the assurance reads UNCONFIRMED and the run exits NON-ZERO (REQ-018). Before
     /// this fix it returned a bare <see cref="SuiteResult"/>: no scenario events, no live pump, no
     /// terminal render and — the one that reaches CI — no
     /// <c>FileReportWriter.WriteFileReports</c>. A pipeline running
@@ -698,7 +698,7 @@ public sealed class RunSuiteAsyncTests
             // Classification unchanged by the reroute: still Inconclusive, still a security
             // -confirmation failure (this guard IS about security material).
             Assert.Equal(Verdict.Inconclusive, result.Verdict);
-            Assert.True(result.SecurityConfirmationFailed);
+            Assert.True(result.Assurance.Unconfirmed);
             Assert.Equal(2, result.ScenarioVerdicts.Count);
 
             // One print, not two — the diagnostic is one suite-level fact.
@@ -882,6 +882,6 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
 
         // REQ-018's mechanism clause: an ordinary authoring error keeps the ordinary mapping.
-        Assert.False(result.SecurityConfirmationFailed);
+        Assert.False(result.Assurance.Unconfirmed);
     }
 }
