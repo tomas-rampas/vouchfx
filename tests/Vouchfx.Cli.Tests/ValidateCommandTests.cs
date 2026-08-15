@@ -640,7 +640,13 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Contains("[Pipeline]", rendered, StringComparison.Ordinal);
         Assert.Contains(
             "environment.services.api.security.clientKey:", rendered, StringComparison.Ordinal);
-        Assert.Contains("is a secret reference", rendered, StringComparison.Ordinal);
+        // The claim `vouchfx validate` prints must be the one the guard established: the check is
+        // `declaredPath.Contains(sigil)`, so the message says the value USES the syntax and names
+        // the sigil, rather than asserting the value IS a reference — which is false of a path
+        // that merely carries one and was the wording this surface used to print.
+        Assert.Contains("uses secret-reference syntax ('${secret:')", rendered, StringComparison.Ordinal);
+        Assert.Contains("whole or embedded in a longer path", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", rendered, StringComparison.Ordinal);
         Assert.Contains("clientKeyPassword", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("not found", rendered, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("resolved to", rendered, StringComparison.OrdinalIgnoreCase);

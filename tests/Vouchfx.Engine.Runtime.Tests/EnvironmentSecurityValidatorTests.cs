@@ -995,7 +995,15 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.True(result!.IsSecurityPreflight);
         Assert.Contains(fieldPath, result.Message, StringComparison.Ordinal);
         Assert.Contains(SecretReferenceValue, result.Message, StringComparison.Ordinal);
-        Assert.Contains("is a secret reference", result.Message, StringComparison.Ordinal);
+        // The opening claim must be one the CONTAINMENT guard actually established, and it must
+        // NAME the sigil it found. "…is a secret reference" is asserted absent rather than merely
+        // replaced: it was true of these four bare-token inputs and false of a path that merely
+        // carries a token (pinned separately, on the mixed input, below), so a regression to it
+        // would pass every assertion in this helper while being wrong about the wider input class
+        // the guard catches.
+        Assert.Contains(
+            "uses secret-reference syntax ('${secret:')", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", result.Message, StringComparison.Ordinal);
         Assert.Contains("must exist inside the suite directory", result.Message, StringComparison.Ordinal);
 
         // The refusal must say WHY, and the reason is SCOPING, not timing. An earlier message said
@@ -1108,9 +1116,20 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
             BuildAst(dependencies: OneDependency("cache", security)), _suiteDir);
 
         Assert.NotNull(result);
-        Assert.Contains("is a secret reference", result!.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "uses secret-reference syntax ('${secret:')", result!.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "must be a path relative to the suite directory", result.Message, StringComparison.Ordinal);
+
+        // THIS input is the one the retracted wording was FALSE about, so the accuracy of the
+        // replacement is pinned here rather than only in the shared helper. '/etc/${secret:…}' is
+        // a PATH that carries a reference; it is not itself one. The refusal must therefore make
+        // a containment claim, must say the embedded shape is refused too (an author who reads
+        // "is a secret reference" of this value will try trimming the path around the token), and
+        // must not assert the identity the guard never tested.
+        Assert.Contains("whole or embedded in a longer path", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", result.Message, StringComparison.Ordinal);
+        Assert.Contains(rootedAndSigilBearing, result.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

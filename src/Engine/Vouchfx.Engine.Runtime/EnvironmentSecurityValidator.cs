@@ -41,8 +41,9 @@ namespace Vouchfx.Engine.Runtime;
 /// </para>
 /// <list type="number">
 ///   <item><description>
-///   <strong>Not a secret reference</strong> — a value containing
-///   <see cref="SecretReference.Sigil"/> is refused outright (REQ-011, #387). These fields name
+///   <strong>No secret-reference syntax</strong> — a value containing
+///   <see cref="SecretReference.Sigil"/> is refused outright (REQ-011, #387), whether the
+///   reference is the whole value or embedded in a longer path. These fields name
 ///   a host FILE for the engine to read and copy, and the secrets subsystem yields a VALUE,
 ///   which is not a file and has no path — and resolving no path for such a value is also
 ///   what stops the refusal echoing a garbled host path back at the author.
@@ -476,10 +477,29 @@ internal static class EnvironmentSecurityValidator
             // REQ-011 both inherited that imprecision; the true reason is that these fields name a
             // host FILE for the engine to read and copy, and the secrets subsystem yields VALUES,
             // not files — there is no file for a resolved secret to be.
+            //
+            // THE OPENING CLAUSE IS A CONTAINMENT CLAIM BECAUSE THE GUARD IS A CONTAINMENT TEST.
+            // It used to open "'{declaredPath}' is a secret reference", which asserts more than
+            // `Contains` established: it is true of a value that IS one whole reference and FALSE
+            // of `/etc/${secret:env/CLIENT_KEY}` or `./certs/${secret:env/NAME}.pem` — paths that
+            // merely CARRY one, are reachable from ordinary YAML, and are caught by this very
+            // line (the first is already an input above, in the rooted-ordering test). "Uses
+            // secret-reference syntax" holds for every value the guard catches, including the
+            // bare token, since a value that is a reference also uses the syntax; and the sigil
+            // is NAMED so the author can see exactly which characters were found, which is what
+            // makes the claim checkable against their own text rather than a verdict about it.
+            // Interpolated from SecretReference.Sigil for the same reason the guard reads it
+            // there — one definition of the grammar, not a second spelling in a message.
+            //
+            // The "whole or embedded" clause is not padding: it is the half the retracted wording
+            // got wrong, and it tells the mixed-value author that trimming the path around the
+            // token will not help.
             return new ValidationFailure(
-                $"{fieldPath}: '{declaredPath}' is a secret reference, but this field takes a "
-                + "PATH — a file that must exist inside the suite directory. A secret reference "
-                + "cannot name one: the engine reads and copies the FILE this field points at, "
+                $"{fieldPath}: '{declaredPath}' uses secret-reference syntax "
+                + $"('{SecretReference.Sigil}'), but this field takes a PATH — a file that must "
+                + "exist inside the suite directory. The syntax is refused wherever it appears in "
+                + "the value, whole or embedded in a longer path, because a secret reference "
+                + "cannot name a file: the engine reads and copies the FILE this field points at, "
                 + "while the secrets subsystem yields a VALUE, which is not a file and has no path."
                 + remedy)
             {

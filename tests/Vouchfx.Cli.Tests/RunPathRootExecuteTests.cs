@@ -295,7 +295,16 @@ public sealed class RunPathRootExecuteTests : IDisposable
         var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
-        Assert.Contains("is a secret reference", sw.ToString(), StringComparison.Ordinal);
+
+        // The refusal reaches the terminal with its containment claim and the sigil it names
+        // intact — the run path renders ValidationFailure.Message verbatim, so a message that
+        // over-claimed here would over-claim to the author. "…is a secret reference" is asserted
+        // absent because the guard behind this text is a `Contains` test, and the identity claim
+        // is false for a path that merely carries a token.
+        var rendered = sw.ToString();
+        Assert.Contains("uses secret-reference syntax ('${secret:')", rendered, StringComparison.Ordinal);
+        Assert.Contains("whole or embedded in a longer path", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("is a secret reference", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
