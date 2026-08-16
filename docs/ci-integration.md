@@ -79,8 +79,11 @@ locate in a document it parsed reddens it when it stops that declaration being c
 that fault was about — where the same fault in an unsecured suite still exits 0.**
 
 The qualification "in a document it parsed" is the one shape outside that sentence, and it is a
-measured hole rather than a nuance of the rule: a file the engine cannot parse binds no declaration
-it can see, so it raises nothing of its own. See the parse bullet under *What does not break CI*.
+measured hole rather than a nuance of the rule: a file whose **YAML** the engine cannot read or parse
+binds no declaration it can see, so it raises nothing of its own. Read "parsed" strictly — a document
+whose YAML parses and which is then refused for its *contents* (an unknown step type, say) has bound
+its `environment` block, so it is inside the sentence and does raise. See the parse bullet under
+*What does not break CI*.
 
 A rejection located **at or inside** the declaration counts even when the declaration is malformed
 enough that no block binds at all: `security: mtls` — the profile name written where the block
@@ -136,15 +139,44 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   them still exits 0 by default.
 - **The same document with no `security:` block.** Measured on pairs differing in nothing else, both
   run paths: the secured document exits 4 where the unsecured one exits 0.
-- **A scenario that fails to parse — whether or not its siblings do.** A document that cannot be
-  parsed cannot be shown to declare anything, so it never reaches this rule and never prints the
-  security line. Where *every* scenario fails to parse the run still exits 4, through the parse rule
-  above rather than this one. Where a secured unparseable file sits **beside a parseable sibling**,
-  it contributes nothing at all and the suite's answer comes from the siblings alone — measured, a
-  directory pairing an unparseable secured file with an unsecured one carrying a step-secret fault
-  exits **0** with no security line, where the secured file alone exits 4. That gap is
-  [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411), and it is pinned by a test
-  asserting today's behaviour so that closing it turns that test red.
+- **A scenario whose *YAML itself* cannot be read or parsed** — a malformed document, a file the
+  runner cannot read, a file over the 1 MiB document cap. Nothing binds for such a file, so it cannot
+  be shown to declare anything: it never reaches this rule and never prints the security line. Where
+  *every* scenario fails that way the run still exits 4, through the parse rule above rather than
+  this one; beside a parseable sibling it contributes nothing and the suite's answer comes from the
+  siblings alone — measured, a directory pairing a **malformed-YAML** secured file with an unsecured
+  one carrying a step-secret fault exits **0** with no security line, on both run paths. That
+  residual is [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411)'s amended acceptance
+  and is pinned by a test asserting today's behaviour, so closing it turns that test red. Closing it
+  would take a raw-YAML scan for a `security:` key — a second way of asking "does this document
+  declare security" that can disagree with the parsed one — and failing closed instead would redden
+  every unsecured suite that merely contains an unreadable file.
+
+  **A document that parses and is then refused for its *contents* now does raise**, and that is the
+  half of #411 that closed: an unknown step type, a duplicate step id, anything `AstBuilder` rejects.
+  Such a document binds its `environment` block before it is refused, so what it declared is known,
+  and a `security:` block in it is accounted for even though the document never runs. Measured on the
+  built CLI with neither gating flag, both run paths: a directory pairing a secured file carrying an
+  unknown step type with an unsecured sibling carrying a step-secret fault exits **4** and prints the
+  security line, where the same pair with no `security:` block exits **0**.
+
+  **Including when the `security:` node is malformed enough to bind nothing** — `security: mtls`, or a
+  bare `security:` whose children are commented out. Those bind no block for the walk above to find,
+  so they are caught the same way they are in a document that *did* become a scenario: by the schema,
+  which reports the error at the `security` node itself. Measured, both run paths: either spelling in
+  the unbuildable file of that same pair exits **4** with the security line, where the control — the
+  identical file with no `security:` node at all, whose schema error sits on the step — exits **0**.
+  Before this, either spelling exited **4** *alone* (through the parse rule) and **0** beside a
+  parsing sibling, so adding an unrelated broken file to the suite made the pipeline greener.
+
+  **`--tag` and `--owner` reach these documents now, and that is a behaviour change for a filtered
+  job.** Selection runs before the split that hands them to the rule above and matched on the *built*
+  AST's `metadata`, which such a document does not have — so every metadata filter excluded it, and it
+  contributed no declaration. Measured: the pair above with a `smoke`-tagged sibling exited **4** under
+  a bare `run` and **0**, silently, under `run --tag smoke`. The `metadata` block binds alongside the
+  `environment` block and is now recovered with it, so a filtered job that used to skip an unbuildable
+  file now reports it as Inconclusive and reddens if it declares a `security:` block the run cannot
+  confirm. A document whose recovered tags genuinely do not match is still excluded.
 - **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
   what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
   declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated

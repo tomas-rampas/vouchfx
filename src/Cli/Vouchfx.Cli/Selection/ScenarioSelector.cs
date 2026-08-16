@@ -12,12 +12,15 @@
 //   • PathGlob null OR the normalised path matches the glob
 //   • ChangedSinceRef null OR changeSet.IsChanged(path)
 //
-// Parse-failure rule (Ast == null): a scenario whose AST failed to build has NO metadata to
-// match against. We INCLUDE it when no metadata filter (tag/owner) is active — so the run
+// Parse-failure rule (Ast == null): a scenario whose AST failed to build usually has NO metadata
+// to match against. We INCLUDE it when no metadata filter (tag/owner) is active — so the run
 // still reports it as Inconclusive (§12.1) and the author sees the broken file — and EXCLUDE
-// it when a tag/owner filter is set (it cannot satisfy a metadata constraint it has no data
-// for). Path and change-set filters apply to parse-failures normally (path/identity, not
-// metadata), so a tag-free `--path`/`--changed-since` selection still narrows them.
+// it when a tag/owner filter is set AND nothing was recovered (it cannot satisfy a metadata
+// constraint it has no data for). A document that PARSED and was refused only by AstBuilder is the
+// exception: it bound its `metadata` block, discovery retains it (DiscoveredScenario.
+// RecoveredMetadata, issue #411), and it is matched on that — see Matches. Path and change-set
+// filters apply to parse-failures normally (path/identity, not metadata), so a tag-free
+// `--path`/`--changed-since` selection still narrows them.
 
 using Vouchfx.Engine.Authoring.Model;
 
@@ -87,8 +90,24 @@ internal static class ScenarioSelector
             return false;
         }
 
-        // Metadata dimensions (tag / owner). A parse-failure has no metadata to match.
-        MetadataSpec? metadata = scenario.Ast?.Metadata;
+        // Metadata dimensions (tag / owner).
+        //
+        // A PARSE-FAILURE THAT NONETHELESS BOUND ITS DOCUMENT IS MATCHED ON WHAT IT BOUND (issue
+        // #411). `Ast` is null for every failure, so this used to read null for all of them and a
+        // tag/owner filter excluded the lot. That is right for a file whose YAML never parsed —
+        // there is genuinely nothing to match — and wrong for one that parsed and was refused only
+        // by `AstBuilder`: its `metadata` block bound, in the same `Parse` call as its
+        // `environment`, and discovery now retains both.
+        //
+        // THE COST OF THE OLD ANSWER WAS A SILENT SECURITY FALSE NEGATIVE, not a missing line of
+        // output. Selection runs in `RunCommand` BEFORE the split that hands unbuilt documents to
+        // the runner, so an excluded file contributes no declaration to the suite's assurance.
+        // Measured on the built CLI: a secured unbuildable file beside a sibling tagged `smoke`
+        // exited 4 under `vouchfx run <dir>` and 0 under the same command plus `--tag smoke`, with
+        // the file's own parse error not even printed. Answering from the recovered metadata makes
+        // the filter mean what the user asked; a document whose recovered tags genuinely do not
+        // match is still excluded, which is also what the user asked.
+        MetadataSpec? metadata = scenario.Ast?.Metadata ?? scenario.RecoveredMetadata;
 
         if (criteria.Tags.Count > 0 && !MatchesAnyTag(metadata, criteria.Tags))
         {

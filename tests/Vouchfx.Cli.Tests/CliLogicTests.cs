@@ -14,6 +14,7 @@
 using System.CommandLine;
 using Vouchfx.Cli;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
 using Xunit;
 
@@ -374,6 +375,100 @@ public sealed class ScenarioDiscoveryTests : IDisposable
         Assert.False(goodResult.Failed);
         Assert.NotNull(goodResult.Ast);
         Assert.Null(goodResult.ParseError);
+    }
+
+    /// <summary>
+    /// A secured document with a step type no provider registers — it PARSES, then
+    /// <c>AstBuilder.Build</c> refuses it. Failure class 4, the one class issue #411 closed.
+    /// </summary>
+    private const string SecuredButUnbuildableScenario =
+        "metadata:\n"
+        + "  owner: platform\n"
+        + "  tags: [smoke]\n"
+        + "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "      security:\n" +
+        "        profile: mtls\n" +
+        "        endpoint: 8443\n" +
+        "        clientCert: ./client.pem\n" +
+        "        clientKey: ./client.key\n" +
+        "steps:\n" +
+        "  - id: x\n" +
+        "    type: not-a-real-provider\n";
+
+    /// <summary>
+    /// The SAME declaration with an unterminated quoted scalar, so <c>YamlDocumentParser.Parse</c>
+    /// itself throws and nothing binds. Failure class 3 — issue #411's residual.
+    /// </summary>
+    private const string SecuredAndMalformedScenario =
+        "environment:\n" +
+        "  services:\n" +
+        "    api:\n" +
+        "      image: myorg/api:1.0\n" +
+        "      security:\n" +
+        "        profile: mtls\n" +
+        "        endpoint: 8443\n" +
+        "        clientCert: ./client.pem\n" +
+        "        clientKey: ./client.key\n" +
+        "steps:\n" +
+        "  - id: x\n" +
+        "    type: \"http.rest\n";
+
+    /// <summary>
+    /// <strong>The recovery boundary, pinned where it is decided rather than only through the
+    /// CLI.</strong> Issue #411's fix rests on ONE distinction — whether a bound document existed
+    /// when the failure happened — and the CLI-tier rows in
+    /// <c>SecurityAssuranceMatrixTests</c> would stay green if that distinction moved, as long as
+    /// the exit codes came out the same for another reason. This asserts the distinction itself.
+    /// </summary>
+    [Fact]
+    public void Discover_RecoversTheBoundDocumentOfAnUnbuildableFileOnly()
+    {
+        var unbuildable = Path.Combine(_root, "a-unbuildable.e2e.yaml");
+        File.WriteAllText(unbuildable, SecuredButUnbuildableScenario);
+
+        var malformed = Path.Combine(_root, "b-malformed.e2e.yaml");
+        File.WriteAllText(malformed, SecuredAndMalformedScenario);
+
+        var good = Path.Combine(_root, "c-good.e2e.yaml");
+        File.WriteAllText(good, MinimalValidScenario);
+
+        var discovered = ScenarioDiscovery.Discover(_root, _registry);
+
+        // Class 4: the document bound, so BOTH what it declared and how it is labelled are known
+        // even though it never runs — and the raw text it bound from is retained as it is for
+        // every outcome, which is what lets the schema door see a `security` node that binds none
+        // of the above.
+        var unbuildableResult = discovered.Single(d => d.AbsolutePath == Path.GetFullPath(unbuildable));
+        Assert.True(unbuildableResult.Failed);
+        Assert.Null(unbuildableResult.Ast);
+        Assert.NotNull(unbuildableResult.RecoveredDocument);
+        Assert.NotNull(unbuildableResult.RecoveredEnvironment);
+        Assert.True(SecuredTargets.Any(unbuildableResult.RecoveredEnvironment));
+        Assert.Equal("platform", unbuildableResult.RecoveredMetadata?.Owner);
+        Assert.Contains("smoke", unbuildableResult.RecoveredMetadata?.Tags ?? Array.Empty<string>());
+        Assert.NotEmpty(unbuildableResult.YamlText);
+
+        // Class 3: nothing bound, so nothing is recovered — and nothing pretends to be. The text is
+        // still there, and is deliberately NOT read as a declaration: this class never reaches the
+        // runner, so no `UnbuiltDocument` is built from it.
+        var malformedResult = discovered.Single(d => d.AbsolutePath == Path.GetFullPath(malformed));
+        Assert.True(malformedResult.Failed);
+        Assert.Null(malformedResult.Ast);
+        Assert.Null(malformedResult.RecoveredDocument);
+        Assert.Null(malformedResult.RecoveredEnvironment);
+        Assert.Null(malformedResult.RecoveredMetadata);
+
+        // A document that parsed carries its environment and metadata on its Ast; these members are
+        // for the failures alone and stay null, so a caller can never read them as a second source
+        // of truth.
+        var goodResult = discovered.Single(d => d.AbsolutePath == Path.GetFullPath(good));
+        Assert.False(goodResult.Failed);
+        Assert.Null(goodResult.RecoveredDocument);
+        Assert.Null(goodResult.RecoveredEnvironment);
+        Assert.Null(goodResult.RecoveredMetadata);
     }
 
     [Fact]

@@ -202,6 +202,21 @@ public static class ParallelSuiteRunner
     /// flag.  Computed by the caller (CLI) from <c>--no-decorations</c> + <c>NO_COLOR</c> + output
     /// redirection so the renderer stays a pure function of its inputs.
     /// </param>
+    /// <param name="unbuiltDocuments">
+    /// The documents the CALLER refused before this method saw them — documents that PARSED but
+    /// whose AST could not be built, so they are absent from <paramref name="scenarios"/> entirely
+    /// (issue #411). <see langword="null"/> or empty (the default) means the caller discovered no
+    /// such document.
+    /// <para>
+    /// Folded as ONE WHOLE ASSURANCE PER DOCUMENT via <see cref="SecurityAssurance.Worse"/> — the
+    /// same discipline every slot here is folded by, and deliberately NOT the suite-wide union
+    /// <see cref="ScenarioRunner.RunSuiteAsync"/> uses. Scenarios under <c>--parallel</c> need not
+    /// share an environment and each owns its own topology, so a declaration this run never gave a
+    /// topology to cannot have been confirmed by a sibling's probe, and pairing it with a sibling's
+    /// evidence would be the very cross-scenario pairing <see cref="SecurityAssurance.Worse"/>
+    /// exists to prevent.
+    /// </para>
+    /// </param>
     /// <param name="cancellationToken">
     /// Honoured throughout: a cancelled scenario is recorded as <see cref="Verdict.Inconclusive"/>
     /// (never <see cref="Verdict.Fail"/>, §12.1), and every launched task is still awaited so every
@@ -228,6 +243,7 @@ public static class ParallelSuiteRunner
         string? eventsReportPath = null,
         string? eventsStreamPath = null,
         bool decorate = false,
+        IReadOnlyList<UnbuiltDocument>? unbuiltDocuments = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
@@ -259,6 +275,7 @@ public static class ParallelSuiteRunner
             eventsStreamPath,
             decorate,
             seedBaseDirectories: seedBaseDirectories,
+            unbuiltDocuments: unbuiltDocuments,
             ct: cancellationToken).ConfigureAwait(false);
     }
 
@@ -305,6 +322,11 @@ public static class ParallelSuiteRunner
     /// <paramref name="seedBaseDirectory"/> for that scenario. When supplied, must have the
     /// same length as <paramref name="scenarios"/>.
     /// </param>
+    /// <param name="unbuiltDocuments">
+    /// The documents that parsed but could not be built into an AST, and are therefore absent from
+    /// <paramref name="scenarios"/> (issue #411). Seeds the assurance fold below; see
+    /// <see cref="RunParallelAsync"/>'s parameter of the same name.
+    /// </param>
     /// <param name="ct">The external cancellation token, honoured throughout.</param>
     /// <returns>The <see cref="SuiteResult"/>.</returns>
     internal static async Task<SuiteResult> RunParallelCoreAsync(
@@ -324,6 +346,7 @@ public static class ParallelSuiteRunner
         string? eventsStreamPath = null,
         bool decorate = false,
         IReadOnlyList<string?>? seedBaseDirectories = null,
+        IReadOnlyList<UnbuiltDocument>? unbuiltDocuments = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -455,8 +478,53 @@ public static class ParallelSuiteRunner
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
             scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotRawWriters, output,
-            diffLookup, htmlReportPath, junitReportPath, eventsReportPath, decorate);
+            diffLookup, UnbuiltAssurance(unbuiltDocuments, registry),
+            htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
+
+    /// <summary>
+    /// The one assurance standing for every document that parsed but could not be built into an
+    /// AST (issue #411): what each DECLARED, paired with the refusal each carries.
+    /// </summary>
+    /// <param name="unbuiltDocuments">
+    /// Those documents; <see langword="null"/> or empty yields <see cref="SecurityAssurance.None"/>,
+    /// which is the identity of the fold below.
+    /// </param>
+    /// <param name="registry">
+    /// The frozen provider registry, passed through to <see cref="UnbuiltDocument.Assure"/> for the
+    /// schema-door half of its answer.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHAT a document contributes is <see cref="UnbuiltDocument.Assure"/>'s single job,
+    /// and this method's only job is the FOLD.</strong> Both halves of a contribution — the
+    /// canonical <c>SecuredTargets.Enumerate</c> walk and the refusal that pairs with it — are
+    /// decided there, so <c>ScenarioRunner.RunSuiteAsync</c>'s sequential path and this one cannot
+    /// answer differently for the same document. Spelling the rule a second time here is exactly
+    /// the drift <see cref="SecurityAssurance"/> exists to remove.
+    /// </para>
+    /// <para>
+    /// ONE assurance PER DOCUMENT, combined by <see cref="SecurityAssurance.Worse"/>, so a
+    /// document's declaration is never paired with a DIFFERENT document's refusal — the same
+    /// reason the slot fold keeps whole assurances, and the reason this path never needed the
+    /// declaration guard the sequential union does.
+    /// </para>
+    /// <para>
+    /// Unreached when <c>scenarios</c> is empty — that arm returns before the gather. The CLI never
+    /// calls either runner with an empty scenario list (issue #278's all-parse-failure rule owns
+    /// that case and exits 4 unconditionally), so the gap is not reachable from the product; it is
+    /// named rather than guarded because guarding it would put a second answer to #278's question
+    /// in a second place.
+    /// </para>
+    /// </remarks>
+    private static SecurityAssurance UnbuiltAssurance(
+        IReadOnlyList<UnbuiltDocument>? unbuiltDocuments, StepKindRegistry registry) =>
+        unbuiltDocuments is not { Count: > 0 }
+            ? SecurityAssurance.None
+            : unbuiltDocuments.Aggregate(
+                SecurityAssurance.None,
+                (accumulated, document) => SecurityAssurance.Worse(
+                    accumulated, document.Assure(registry)));
 
     /// <summary>
     /// Runs a single scenario slot: waits on the concurrency gate (honouring the external token),
@@ -607,6 +675,7 @@ public static class ParallelSuiteRunner
         StringWriter[] slotRawWriters,
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
+        SecurityAssurance unbuiltAssurance,
         string? htmlReportPath = null,
         string? junitReportPath = null,
         string? eventsReportPath = null,
@@ -615,7 +684,14 @@ public static class ParallelSuiteRunner
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
         var aggregate = Verdict.Pass;
-        var assurance = SecurityAssurance.None;
+
+        // The fold SEEDS from the unbuilt documents' assurance rather than from
+        // SecurityAssurance.None (issue #411). `Worse` is what folds each slot in below, and it is
+        // order-independent in exactly the two projections read off the result — `Unconfirmed` and
+        // `Refusal` — so seeding rather than appending changes nothing but where the value enters.
+        // SecurityAssurance.None is the identity when the caller had no unbuilt document, which is
+        // every caller that does no discovery of its own.
+        var assurance = unbuiltAssurance;
 
         for (var i = 0; i < scenarioNames.Count; i++)
         {

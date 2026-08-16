@@ -360,6 +360,84 @@ public sealed class ScenarioSelectorTests
         Assert.Equal(new[] { "/repo/good.e2e.yaml" }, selected);
     }
 
+    // ---- The RECOVERED-metadata rule (issue #411) -------------------------------------
+    //
+    // A parse-failure that nonetheless BOUND its document is matched on what it bound. The four
+    // rows above stay exactly as they were — they use a failure that recovered nothing, which is
+    // still every failure whose YAML did not parse — and these three cover the one class that did.
+    //
+    // Why it matters here rather than only in the CLI's own rows: selection runs BEFORE the split
+    // that hands unbuilt documents to the runner, so a document this method excludes contributes no
+    // `security` declaration to the suite's assurance. Excluding it was therefore a silent security
+    // false negative, not a missing line of output.
+
+    /// <summary>
+    /// A parse-failure of the class that BOUND its document: no <c>Ast</c>, and a recovered
+    /// document carrying the metadata the selector matches on.
+    /// </summary>
+    private static DiscoveredScenario UnbuiltFailure(
+        string absolutePath, string? owner = null, params string[] tags) =>
+        new(absolutePath, YamlText: "steps: []", Ast: null, ParseError: "boom")
+        {
+            RecoveredDocument = new E2eDocument(
+                Metadata: new MetadataSpec(
+                    Name: null,
+                    Owner: owner,
+                    Tags: tags.Length == 0 ? null : tags.ToList(),
+                    Description: null,
+                    SchemaVersion: null),
+                Environment: null,
+                Variables: null,
+                Steps: new List<StepSpec>()),
+        };
+
+    [Fact]
+    public void UnbuiltFailure_SelectedByATagItsRecoveredMetadataCarries()
+    {
+        var all = new[]
+        {
+            Scenario("/repo/good.e2e.yaml", tags: "smoke"),
+            UnbuiltFailure("/repo/broken.e2e.yaml", owner: null, "smoke"),
+        };
+
+        // Before #411 this answered `Ast?.Metadata`, which is null for EVERY failure, so the
+        // broken file was excluded however it was tagged.
+        var selected = Apply(all, Criteria(tags: new[] { "smoke" }));
+        Assert.Equal(new[] { "/repo/good.e2e.yaml", "/repo/broken.e2e.yaml" }, selected);
+    }
+
+    [Fact]
+    public void UnbuiltFailure_SelectedByAnOwnerItsRecoveredMetadataCarries()
+    {
+        var all = new[]
+        {
+            Scenario("/repo/good.e2e.yaml", owner: "alice"),
+            UnbuiltFailure("/repo/broken.e2e.yaml", owner: "alice"),
+        };
+
+        var selected = Apply(all, Criteria(owners: new[] { "alice" }));
+        Assert.Equal(new[] { "/repo/good.e2e.yaml", "/repo/broken.e2e.yaml" }, selected);
+    }
+
+    /// <summary>
+    /// The control, and it is what makes the two rows above a fix rather than an exemption: a
+    /// recovered document whose metadata does NOT satisfy the filter is still excluded. Recovery
+    /// makes the selector able to answer; it does not make it answer yes.
+    /// </summary>
+    [Fact]
+    public void UnbuiltFailure_ExcludedWhenItsRecoveredMetadataDoesNotMatch()
+    {
+        var all = new[]
+        {
+            Scenario("/repo/good.e2e.yaml", tags: "smoke"),
+            UnbuiltFailure("/repo/broken.e2e.yaml", owner: null, "billing"),
+            UnbuiltFailure("/repo/untagged.e2e.yaml"),
+        };
+
+        var selected = Apply(all, Criteria(tags: new[] { "smoke" }));
+        Assert.Equal(new[] { "/repo/good.e2e.yaml" }, selected);
+    }
+
     [Fact]
     public void ParseFailure_StillFilteredByPath_WhenNoMetadataFilter()
     {

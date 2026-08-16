@@ -24,6 +24,7 @@ using System.Reflection;
 using Vouchfx.Cli.Selection;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 
@@ -916,6 +917,13 @@ internal static class RunCommand
         // whose value is the terminal feedback. --events, --events-stream, and the
         // --no-decorations `decorate` flag all follow the SAME scope as --html / --junit:
         // deliberately left out rather than half-wired (the watch loop renders plain).
+        //
+        // ISSUE #411'S CARVE-OUT IS ABSENT HERE TOO, and for the same reason as the report paths:
+        // this returns BEFORE the parsed/failures split below, so no `UnbuiltDocument` is ever
+        // built on this path and a `security` block in an unbuildable file contributes nothing to
+        // a watch session. That is a documented divergence rather than a hole in the guarantee —
+        // watch derives no exit code at all, so it is not a CI surface and REQ-018 has nothing to
+        // say about it. Issue #412 already tracks the watch path's divergence from `run`.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, runCancellationToken)
@@ -1001,6 +1009,34 @@ internal static class RunCommand
             // it explicitly avoids the GetEntryAssembly fallback (CLAUDE.md §"Aspire").
             var appHostAssemblyName = Assembly.GetExecutingAssembly().GetName().Name;
 
+            // Issue #411: the documents that PARSED and were then refused by AstBuilder.Build.
+            // They are not scenarios and never will be — they stay in `failures` and still fold in
+            // as Inconclusive — but they BOUND, so what they declared is known and is handed to the
+            // runner along with the text they were bound from.
+            //
+            // THE CARVE-OUT IS NOT DECIDED HERE, and that is the point of passing documents rather
+            // than a conclusion. This site enumerates nothing, validates nothing, compares nothing
+            // and answers no security question: the runner folds these into the SAME
+            // SecuredTargets.Enumerate walk that fills `Declared` and applies the SAME schema door
+            // its own scenarios pass through, so one predicate on one record still decides. A
+            // second decision site is exactly what issue #401 existed to remove.
+            //
+            // THE FILTER IS "DID THE DOCUMENT BIND", NOT "DOES IT HAVE AN ENVIRONMENT", and the
+            // difference matters because the environment is no longer the only evidence carried: a
+            // `security:` node the schema rejects binds no EnvironmentSpec member at all, and is
+            // visible only in the text. Filtering on the environment would have dropped exactly the
+            // documents the text is there to catch. RecoveredDocument is non-null for this failure
+            // class and null for the other three, by construction, so the predicate is also the
+            // class test.
+            //
+            // The other three discovery failure classes contribute nothing — that residual is
+            // #411's own amended acceptance rather than an oversight; see
+            // DiscoveredScenario.RecoveredDocument.
+            var unbuiltDocuments = failures
+                .Where(failure => failure.RecoveredDocument is not null)
+                .Select(failure => new UnbuiltDocument(failure.YamlText, failure.RecoveredEnvironment))
+                .ToList();
+
             // --parallel N → run scenarios concurrently, each owning its OWN topology
             // (ParallelSuiteRunner, S08). Absent → run sequentially against ONE shared topology
             // (ScenarioRunner.RunSuiteAsync). Parallelism is an explicit opt-in because it
@@ -1021,6 +1057,7 @@ internal static class RunCommand
                     eventsReportPath: runnerEventsPath,
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
+                    unbuiltDocuments: unbuiltDocuments,
                     cancellationToken: runCancellationToken).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
@@ -1036,6 +1073,7 @@ internal static class RunCommand
                     eventsReportPath: runnerEventsPath,
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
+                    unbuiltDocuments: unbuiltDocuments,
                     cancellationToken: runCancellationToken).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
