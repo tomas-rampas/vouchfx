@@ -86,10 +86,7 @@ its `environment` block, so it is inside the sentence.
 
 Inside the sentence is not the same as raising, and for this class the difference is deliberate. Such
 a document raises on **its own** declaration — the `security:` block it bound, or a `security:` node
-the schema rejected — and contributes nothing at all when it declared neither. A document that *did*
-build and is refused for the same fault behaves differently: its refusal is recorded for the suite,
-where it can pair with a **sibling's** declaration. So an *unsecured* file refused for its contents is
-inert, while an *unsecured* file that built and was refused is not. That asymmetry is what stops an
+the schema rejected — and contributes nothing at all when it declared neither. That is what stops an
 unsecured broken file reddening a secured suite it has nothing to do with. See the parse bullet under
 *What does not break CI*.
 
@@ -197,8 +194,11 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   into the suite verdict as Inconclusive**, so a job passing `--fail-on-inconclusive` reddens on it
   like any other Inconclusive scenario. And **it reddens the security rule above when it declares a
   `security:` block the run cannot confirm** — measured, both run paths: a secured unbuildable file
-  **carrying the tag itself**, beside a sibling refused at a compile-time door, exits **4** with the
-  security line under `run <dir> --tag smoke`, matching the bare `run`.
+  **carrying the tag itself**, beside a **likewise-tagged** sibling refused at a compile-time door,
+  exits **4** with the security line under `run <dir> --tag smoke`, matching the bare `run`. Both
+  files must carry the tag: the security line is printed only when at least one document parsed, so
+  tagging the unbuildable file alone still exits 4 — but through the all-parse-failure rule, which is
+  a different rule reaching the same code.
 
   Note where the tag has to be. The change only bites when the **unbuildable file itself** carries
   the filtered tag or owner; a document whose recovered metadata genuinely does not match is still

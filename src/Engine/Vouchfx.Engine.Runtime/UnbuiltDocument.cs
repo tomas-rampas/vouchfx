@@ -125,6 +125,17 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
         var declared = SecuredTargets.Enumerate(Environment).ToArray();
 
         // The schema door's own two calls, applied to a document that door never iterates.
+        //
+        // COST, measured rather than assumed, and stated because the obvious reassurance is
+        // wrong. `DocumentValidator.Validate` recomposes the schema from every provider
+        // fragment: ~23.7 ms per call in Debug, ~13.7 ms of it composition. The bound is
+        // O(unbuilt documents) — NOT "unreachable because the all-parse-failure rule returns
+        // first". That rule short-circuits only when NO document parsed; a single working
+        // sibling removes it and every unbuilt document in the directory then pays. Fifty of
+        // them is ~1.2 s, which is noise beside a topology start, and a suite carrying fifty
+        // broken files has a larger problem than latency. Left uncached deliberately: the
+        // compilation loop already pays the same per scenario, so caching belongs there or
+        // nowhere, not bolted onto this seam.
         if (ScenarioRunner.RejectsASecurityDeclaration(
                 DocumentValidator.Validate(YamlText, registry).Errors))
         {
