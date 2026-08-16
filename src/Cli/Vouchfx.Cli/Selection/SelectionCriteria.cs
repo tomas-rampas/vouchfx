@@ -50,9 +50,12 @@ public sealed record SelectionCriteria(
     /// (<see cref="Tags"/> or <see cref="Owners"/>) imposes a constraint.
     /// </summary>
     /// <remarks>
-    /// Drives the parse-failure rule (see <see cref="ScenarioSelector"/>): a scenario whose
-    /// AST failed to build has no metadata to match, so it is excluded as soon as a
-    /// metadata filter is active and included otherwise.
+    /// Names the parse-failure rule's precondition (see <see cref="ScenarioSelector"/>): a
+    /// scenario with no metadata to match is excluded as soon as a metadata filter is active
+    /// and included otherwise.  It is NOT a claim that every parse failure has no metadata —
+    /// a document that parsed and was refused only by <c>AstBuilder</c> bound its
+    /// <c>metadata</c> block, discovery retains it, and the selector matches on that (issue
+    /// #411).
     /// </remarks>
     public bool HasMetadataFilter => Tags.Count > 0 || Owners.Count > 0;
 

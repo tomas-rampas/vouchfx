@@ -158,10 +158,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     /// which cannot be confirmed exits non-zero <em>regardless of gating flags</em>, so a row that
     /// needed one would not be testing it.
     /// </summary>
-    private static Task<int> RunAsync(string path, int? parallel, TextWriter output) =>
+    /// <param name="path">The discovery root.</param>
+    /// <param name="parallel">The <c>--parallel</c> value; <see langword="null"/> for the
+    /// sequential shared-topology path.</param>
+    /// <param name="output">The run's terminal.</param>
+    /// <param name="criteria">
+    /// The selection filter. Defaults to <see cref="SelectionCriteria.None"/> — every row but
+    /// 09e's pair is about what a suite reports, not about which of its files were chosen.
+    /// </param>
+    private static Task<int> RunAsync(
+        string path, int? parallel, TextWriter output, SelectionCriteria? criteria = null) =>
         RunCommand.ExecuteAsync(
             path: path,
-            criteria: SelectionCriteria.None,
+            criteria: criteria ?? SelectionCriteria.None,
             parallel: parallel,
             watch: false,
             failOnEnvironmentError: false,
@@ -348,10 +357,11 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     // WHY IT NO LONGER HOLDS. The derived rule is WIDE by decision (spec REQ-003, stated as a
     // user-visible consequence in REQ-004): an authoring refusal that leaves a declared target
     // unconfirmed raises, because nothing downstream of the refusal ever validates the
-    // declaration — and which door refused is not consulted. (Not "whatever refused it": Row 09's
-    // unparseable secured document is refused before any container starts and does NOT raise, its
-    // own row asserting the notice is absent. The identity of the door is irrelevant; the
-    // predicate is not.) An unresolvable `script.csharp file:` is one such refusal. The
+    // declaration — and which door refused is not consulted. (Not "whatever refused it": Row 09c's
+    // MALFORMED-YAML secured document is refused before any container starts and does NOT raise,
+    // its own row asserting the notice is absent, because nothing bound and so nothing was
+    // declared. The identity of the door is irrelevant; the predicate is not.) An unresolvable
+    // `script.csharp file:` is one such refusal. The
     // row therefore flips from 0 to 4 — and that flip IS the requirement, so a test asserting the
     // 0 was, from that decision onward, a test asserting the defect.
     //
@@ -576,25 +586,30 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         Assert.Equal(ExitCodes.Success, exitCode);
     }
 
-    // ── Row 9: an unparseable document ────────────────────────────────────────────────────
+    // ── Row 9: a document that fails discovery, ALONE ─────────────────────────────────────
     //   4 → 4, on BOTH the secured and the unsecured spelling — and via issue #278's
-    //   all-parse-failure rule, NOT via this signal. A document that cannot be parsed cannot be
-    //   shown to declare anything, so the assurance's `Declared` is empty and nothing raises.
+    //   all-parse-failure rule, NOT via this signal. With nothing parsed the runner is never
+    //   called at all, so no assurance exists to raise: `RunCommand` short-circuits on
+    //   `parsed.Count == 0` before either run path. That reason is the row's, and it is NOT
+    //   "the document could not be shown to declare anything" — since issue #411 closed, a
+    //   document refused by AstBuilder DOES declare into the runner's walk (Row 09b). Here there
+    //   is simply no runner to declare into.
     //
     // Both spellings are WRITTEN, not merely claimed: the sentence above asserted a pair and only
     // the secured half existed, which is the shape of claim this file's own header rejects
     // everywhere else.
     //
-    // AND THE RESCUE IS WHAT MAKES THIS ROW GREEN — put the same secured unparseable file beside a
-    // parseable sibling and #278's rule no longer applies, so the suite exits 0 with no security
-    // notice. Row 09b below pins that, deliberately asserting today's wrong answer (issue #411).
+    // AND THE RESCUE IS WHAT USED TO MAKE THIS ROW GREEN — put the same secured unparseable file
+    // beside a parseable sibling and #278's rule no longer applies. Row 09b below used to pin the
+    // exit 0 that resulted (issue #411); it now pins the non-zero exit that closing #411 produced
+    // for the ONE recoverable class, and Row 09c pins the classes that remain open.
 
     [Theory]
     [InlineData(null, true)]
     [InlineData(1, true)]
     [InlineData(null, false)]
     [InlineData(1, false)]
-    public async Task Row09_UnparseableDocument_ExitsInconclusiveViaTheParseFailureRule(
+    public async Task Row09_DiscoveryFailureAlone_ExitsInconclusiveViaTheParseFailureRule(
         int? parallel, bool secured)
     {
         var file = WriteSuite(
@@ -611,58 +626,356 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
 
-        // …and NOT through the security signal: the parse never produced an environment, so the
-        // engine cannot know the document declared anything.
+        // …and NOT through the security signal: nothing parsed, so neither run path was entered
+        // and no assurance was ever produced to raise. Put the SAME file beside one parseable
+        // sibling and the secured spelling does raise — Row 09b.
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// <strong>Row 09's mixed spelling, and it asserts the CURRENT WRONG behaviour on purpose.</strong>
-    /// The single-file row above exits 4 through issue #278's all-parse-failure rule, which rescues
-    /// it. Put the same secured unparseable file BESIDE a parseable sibling and that rescue does not
-    /// apply: <c>RunCommand</c> drops unparseable files into its <c>failures</c> list before the
-    /// runner is called, so the declaration never reaches <c>SecuredTargets.Enumerate</c>,
-    /// <c>Declared</c> is empty, nothing raises — and the suite exits 0 with no security notice
-    /// while a file in it plainly asserts <c>mtls</c>.
-    /// <para>
-    /// That is the documented hole [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411),
-    /// and it is pinned rather than described because a measured row is worth more than prose: when
-    /// #411 closes, THIS TEST GOES RED and is inverted to assert the non-zero exit and the notice.
-    /// The fix is a behaviour change in <c>RunCommand</c>'s parse handling and is deliberately not
-    /// part of this branch.
-    /// </para>
+    /// Writes the mixed two-file suite Rows 09b and 09c share: ONE broken file (whose
+    /// <paramref name="brokenSteps"/> decide WHICH failure class it lands in, and whose
+    /// <paramref name="securityBlock"/> decides whether it declares anything) beside ONE UNSECURED
+    /// sibling that parses and is then refused on an ordinary step-level authoring fault.
     /// </summary>
-    [Fact]
-    public async Task Row09b_SecuredUnparseableBesideAParseableSibling_ExitsSuccessWithNoNotice()
+    /// <remarks>
+    /// The sibling is what makes the row interesting AND what keeps it Docker-free: it defeats
+    /// issue #278's all-parse-failure rescue (so the exit code is the suite's own rather than #278's
+    /// unconditional 4), and its own refusal aborts the run before any container starts.
+    /// </remarks>
+    private string WriteMixedBrokenSuite(string caseName, string? securityBlock, string brokenSteps)
     {
-        var dir = Path.Combine(_root, "r09b");
+        var dir = Path.Combine(_root, caseName);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "client.pem"), "placeholder");
         File.WriteAllText(Path.Combine(dir, "client.key"), "placeholder");
 
-        // The SECURED file, unparseable: it declares a full mtls block AND an unknown step type.
         File.WriteAllText(
             Path.Combine(dir, "a.e2e.yaml"),
-            Suite(
-                SecurityBlock(),
-                string.Empty,
-                "steps:\n  - id: x\n    type: not-a-real-provider\n"));
+            Suite(securityBlock, string.Empty, brokenSteps));
 
-        // …beside an UNSECURED sibling that parses and is then refused on an ordinary authoring
-        // fault, so the run never needs a container and the exit code is the suite's own.
         File.WriteAllText(
             Path.Combine(dir, "b.e2e.yaml"),
             Suite(securityBlock: null, string.Empty, StepSecretFaultStep));
 
+        return dir;
+    }
+
+    /// <summary>A <c>--tag</c>-only selection filter.</summary>
+    private static SelectionCriteria TagCriteria(string tag) =>
+        SelectionCriteria.None with { Tags = new[] { tag } };
+
+    /// <summary>
+    /// Row 09e's suite: <see cref="WriteMixedBrokenSuite"/>'s pair with a <c>metadata</c> block
+    /// carrying the tag <c>smoke</c> prepended to BOTH files.
+    /// </summary>
+    /// <remarks>
+    /// The BROKEN file must carry the tag itself, and that is the point of the row rather than a
+    /// fixture convenience: matching it on the sibling's metadata would be the fail-open behaviour
+    /// the fix removes. Its tag is only visible because the <c>metadata</c> block bound before
+    /// <c>AstBuilder</c> refused the document.
+    /// </remarks>
+    private string WriteTaggedMixedBrokenSuite(string caseName, string? securityBlock)
+    {
+        const string Tagged = "metadata:\n  tags: [smoke]\n";
+
+        var dir = Path.Combine(_root, caseName);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "client.pem"), "placeholder");
+        File.WriteAllText(Path.Combine(dir, "client.key"), "placeholder");
+
+        File.WriteAllText(
+            Path.Combine(dir, "a.e2e.yaml"),
+            Tagged + Suite(securityBlock, string.Empty, UnknownStepTypeSteps));
+
+        File.WriteAllText(
+            Path.Combine(dir, "b.e2e.yaml"),
+            Tagged + Suite(securityBlock: null, string.Empty, StepSecretFaultStep));
+
+        return dir;
+    }
+
+    /// <summary>An unknown step type: the document BINDS, then <c>AstBuilder.Build</c> refuses it —
+    /// failure class 4, the one class issue #411 closed.</summary>
+    private const string UnknownStepTypeSteps =
+        "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+    /// <summary>An unterminated quoted scalar: <c>YamlDocumentParser.Parse</c> itself throws, so
+    /// NOTHING binds — failure class 3, which issue #411 leaves open (see Row 09c).</summary>
+    private const string MalformedYamlSteps =
+        "steps:\n  - id: x\n    type: \"http.rest\n";
+
+    /// <summary>
+    /// <strong>Row 09's mixed spelling — the shape issue #411 named, now closed for failure class
+    /// 4.</strong> The single-file row above exits 4 through issue #278's all-parse-failure rule,
+    /// which rescues it. Put the same secured file BESIDE a parseable sibling and that rescue does
+    /// not apply, and the suite used to exit 0 with no security notice while a file in it plainly
+    /// asserted <c>mtls</c>: <c>RunCommand</c> dropped the file into its <c>failures</c> list before
+    /// the runner was called, so the declaration never reached <c>SecuredTargets.Enumerate</c>.
+    /// <para>
+    /// It reaches it now. The document BOUND — <c>YamlDocumentParser.Parse</c> succeeded and only
+    /// <c>AstBuilder.Build</c> threw — so <c>ScenarioDiscovery</c> retains that bound environment,
+    /// the runner folds it into the same canonical walk that fills <c>Declared</c>, and records
+    /// <see cref="Vouchfx.Engine.Runtime.SecurityAbortKind.AuthoringFault"/>. Both halves are
+    /// required: names alone leave <c>Refusal</c> null and every disjunct of
+    /// <c>SecurityAssurance.Unconfirmed</c> needs a non-null one.
+    /// </para>
+    /// <para>
+    /// The exit code is the VERDICT's own opt-in code, not a fixed one: the sibling's refusal and
+    /// the parse failure both fold in as <see cref="Vouchfx.Engine.Abstractions.Verdict.Inconclusive"/>,
+    /// so REQ-018's carve-out returns <see cref="ExitCodes.Inconclusive"/>. What REQ-018 requires is
+    /// only that it is non-zero, which is asserted separately and first.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09b_SecuredUnbuildableBesideAParseableSibling_ExitsNonZeroWithTheNotice(
+        int? parallel)
+    {
+        var dir = WriteMixedBrokenSuite(
+            $"r09b-secured-{Tag(parallel)}", SecurityBlock(), UnknownStepTypeSteps);
+
         var sw = new StringWriter();
-        var exitCode = await RunAsync(dir, parallel: null, sw);
+        var exitCode = await RunAsync(dir, parallel, sw);
         var rendered = sw.ToString();
 
-        // Both faults are reported — the run saw both files.
+        // Both faults are still reported — the run saw both files, exactly as before.
         Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
         Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
 
-        // …and yet: no security notice, and a green build.
+        // …and now the declaration is accounted for: the notice, and a non-zero build.
+        Assert.Contains("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.NotEqual(ExitCodes.Success, exitCode);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>Row 09b's unsecured control, and it is the whole proof that the DECLARATION is what
+    /// reddens.</strong> Byte-identical to the row above but for the <c>security</c> block, and it
+    /// must stay at 0: closing #411 by reddening every suite that contains an unbuildable file would
+    /// satisfy the row above and be wrong.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09b_UnsecuredUnbuildableBesideAParseableSibling_ExitsSuccess(int? parallel)
+    {
+        var dir = WriteMixedBrokenSuite(
+            $"r09b-plain-{Tag(parallel)}", securityBlock: null, UnknownStepTypeSteps);
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// A <c>security</c> node that is NOT a mapping. <c>YamlDocumentParser.ParseSecurity</c> returns
+    /// <see langword="null"/> for any such node, so the document binds with NO
+    /// <c>SecuritySpec</c> — the canonical walk sees nothing, whatever the author wrote.
+    /// </summary>
+    /// <param name="spelling">
+    /// <c>scalar</c> — <c>security: mtls</c>, the profile name written where the block belongs;
+    /// <c>bare</c> — <c>security:</c> with nothing under it (its children commented out, a
+    /// bisecting author's most ordinary edit); <c>empty</c> — <c>security: {}</c>, which IS a
+    /// mapping and therefore the control: it binds, so it is the one spelling the walk can see.
+    /// </param>
+    private static string UnbindableSecurityBlock(string spelling) => spelling switch
+    {
+        "scalar" => "      security: mtls\n",
+        "bare" => "      security:\n",
+        "empty" => "      security: {}\n",
+        _ => throw new ArgumentOutOfRangeException(nameof(spelling), spelling, "Unknown spelling."),
+    };
+
+    /// <summary>
+    /// <strong>Row 09d: the same hole reached through a <c>security</c> node that binds
+    /// NOTHING — the shape Row 09b's fix alone did not close, and the one an author is most
+    /// likely to write.</strong> Row 09b recovers the unbuilt document's bound environment and
+    /// folds it into <c>SecuredTargets.Enumerate</c>. That walk reads bound <c>SecuritySpec</c>
+    /// values, so for <c>security: mtls</c> — or a bare <c>security:</c> whose children are
+    /// commented out — it yields nothing, <c>Declared</c> stays empty, and the conjunction
+    /// <c>declared ∧ refused</c> answers false.
+    /// <para>
+    /// MEASURED before the schema arm was added, on the built CLI with no gating flags: the scalar
+    /// spelling beside one parsing sibling exited 0 with no notice on BOTH run paths, while the
+    /// same typo <em>alone</em> exited 4 through issue #278's all-parse-failure rule. The exit code
+    /// was therefore NON-MONOTONE in the number of faults — adding an unrelated broken file to the
+    /// suite turned the pipeline green.
+    /// </para>
+    /// <para>
+    /// <c>UnbuiltDocument.Assure</c> closes it with the engine's own spelling rather than a new
+    /// one: <c>DocumentValidator.Validate</c> plus <c>ScenarioRunner.RejectsASecurityDeclaration</c>
+    /// — the two calls the schema door already makes for every document that DID become a scenario,
+    /// applied to a document that door never iterates — recording
+    /// <see cref="Vouchfx.Engine.Runtime.SecurityAbortKind.SecurityDeclarationRejected"/>, which
+    /// raises unconditionally because there is by construction no declaration for it to be
+    /// conjoined with.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null, "scalar")]
+    [InlineData(1, "scalar")]
+    [InlineData(null, "bare")]
+    [InlineData(1, "bare")]
+    [InlineData(null, "empty")]
+    [InlineData(1, "empty")]
+    public async Task Row09d_UnbindableSecurityInAnUnbuildableDocument_ExitsNonZeroWithTheNotice(
+        int? parallel, string spelling)
+    {
+        var dir = WriteMixedBrokenSuite(
+            $"r09d-{spelling}-{Tag(parallel)}",
+            UnbindableSecurityBlock(spelling),
+            UnknownStepTypeSteps);
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw);
+        var rendered = sw.ToString();
+
+        // Both files were still seen and both faults still reported.
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+
+        // …and the declaration is accounted for, on BOTH run paths.
+        Assert.Contains("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.NotEqual(ExitCodes.Success, exitCode);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>Row 09d's control, and it is what stops the schema arm from degenerating into "any
+    /// unbuildable document reddens".</strong> The same unbuildable file with NO <c>security</c>
+    /// node at all still carries a schema error — it names a step type no provider registers — and
+    /// that error is located at <c>/steps/0/type</c>, not in a declaration. It must stay at 0.
+    /// </summary>
+    /// <remarks>
+    /// Row 09b's unsecured control asserts the same exit for the same suite; this one asserts it
+    /// against the SCHEMA arm specifically, which is a different mechanism and would not be
+    /// exercised by a fix that only widened the walk.
+    /// </remarks>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09d_SchemaErrorOutsideAnyDeclaration_ExitsSuccess(int? parallel)
+    {
+        var dir = WriteMixedBrokenSuite(
+            $"r09d-control-{Tag(parallel)}", securityBlock: null, UnknownStepTypeSteps);
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw);
+        var rendered = sw.ToString();
+
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>Row 09e: a <c>--tag</c> filter no longer discards the recovered document.</strong>
+    /// Selection runs in <c>RunCommand</c> BEFORE the split that hands unbuilt documents to the
+    /// runner and matched on <c>Ast?.Metadata</c>, which every parse failure lacks — so every
+    /// metadata filter excluded an unbuildable file, it contributed no declaration, and its parse
+    /// error was not even printed. Measured on the built CLI: this suite exited 4 with the notice
+    /// under a bare <c>run</c> and 0, silently, with <c>--tag smoke</c>.
+    /// <para>
+    /// The cause is the same catch as #411's: it recovered <c>doc.Environment</c> and discarded
+    /// <c>doc.Metadata</c>, bound by the same <c>Parse</c> call. Both are recovered now and the
+    /// selector answers from what the document actually says.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09e_TagFilterMatchingTheUnbuildableDocument_StillExitsNonZero(int? parallel)
+    {
+        var dir = WriteTaggedMixedBrokenSuite($"r09e-{Tag(parallel)}", SecurityBlock());
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw, TagCriteria("smoke"));
+        var rendered = sw.ToString();
+
+        // The file is reported at all — the half of the defect that was pure silence.
+        Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
+
+        Assert.Contains("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.NotEqual(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>Row 09e's control: a filter the recovered metadata genuinely does not satisfy still
+    /// excludes the document, and that is correct rather than residual.</strong> Recovering the
+    /// metadata makes the selector able to answer; it does not make every filter select. A user who
+    /// asks for <c>--tag nosuchtag</c> has said which files to run, and a file carrying neither the
+    /// tag nor any tag at all is not one of them.
+    /// </summary>
+    /// <remarks>
+    /// This row is why the fix is "recover the metadata" rather than "exempt unbuildable documents
+    /// from selection": the latter would also have made Row 09e pass, and would have made
+    /// <c>--tag</c> mean something different for broken files than for working ones.
+    /// </remarks>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09e_TagFilterMatchingNeitherFile_ExitsSuccess(int? parallel)
+    {
+        var dir = WriteTaggedMixedBrokenSuite($"r09e-miss-{Tag(parallel)}", SecurityBlock());
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw, TagCriteria("nosuchtag"));
+        var rendered = sw.ToString();
+
+        Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Success, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>Row 09c asserts a KNOWN-OPEN gap, deliberately, exactly as Row 09b used to.</strong>
+    /// Issue #411's amended acceptance closes ONE of the four discovery failure classes: the class
+    /// where <c>YamlDocumentParser.Parse</c> SUCCEEDED and only <c>AstBuilder.Build</c> threw, so a
+    /// bound environment exists to recover. Here the YAML itself is malformed, so nothing binds at
+    /// all — no declaration exists to fold — and the suite still exits 0 with no security notice
+    /// while the file plainly asserts <c>mtls</c>. The oversized-file and unreadable-file classes
+    /// are the same shape and are left open for the same reason.
+    /// <para>
+    /// The residual is PINNED rather than described because a measured row is worth more than
+    /// prose. The schema door Row 09d leans on is NOT available here, and that is the whole reason
+    /// this class stays open while that one closed: the door needs a document tree to locate an
+    /// error in, and these three classes have none — malformed YAML produces no tree, and an
+    /// unreadable or oversized file produces no text at all (<c>YamlText</c> is empty by
+    /// construction). What is left is a raw-YAML scan for a <c>security:</c> key — a SECOND
+    /// spelling of "does this document declare security" that can disagree with both the canonical
+    /// AST walk and that door, which <c>SecuredTargets</c>' own header and
+    /// <see cref="Vouchfx.Engine.Runtime.SecurityAbortKind.SecurityDeclarationRejected"/>'s remarks
+    /// both forbid. Failing CLOSED instead is not available either: it would redden every unsecured
+    /// suite that merely contains an unreadable file. If those classes are ever closed, THIS TEST
+    /// GOES RED and is inverted the way Row 09b just was.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task Row09c_SecuredMalformedYamlBesideAParseableSibling_ExitsSuccessWithNoNotice(
+        int? parallel)
+    {
+        var dir = WriteMixedBrokenSuite(
+            $"r09c-{Tag(parallel)}", SecurityBlock(), MalformedYamlSteps);
+
+        var sw = new StringWriter();
+        var exitCode = await RunAsync(dir, parallel, sw);
+        var rendered = sw.ToString();
+
+        // The YAML scanner's own refusal — NOT AstBuilder's, which never ran.
+        Assert.Contains("Parse / AST error", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("no registered provider", rendered, StringComparison.Ordinal);
+        Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
+
+        // …and the gap: no notice, green build.
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Success, exitCode);
     }

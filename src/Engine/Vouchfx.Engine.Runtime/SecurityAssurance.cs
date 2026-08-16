@@ -67,11 +67,51 @@ public enum SecurityAbortKind
     /// <strong>"Whatever refused it" is the door's identity, not the predicate.</strong> An earlier
     /// wording said a document aborting before any container starts is unconfirmable whatever
     /// aborted it. That is wider than <see cref="SecurityAssurance.Unconfirmed"/>: this member
-    /// raises only in conjunction with a declared target left unconfirmed, so an unparseable secured
-    /// document binds no declaration and does not raise here (its rows assert the notice is absent —
-    /// and beside a parseable sibling that costs an exit 0, which is issue #411), and a refusal
-    /// beside siblings whose probe confirmed every declared target does not either.
-    /// The door is irrelevant; the predicate is not.
+    /// raises only in conjunction with a declared target left unconfirmed, so a secured document
+    /// whose YAML cannot be read or parsed at all binds no declaration and does not raise here (its
+    /// rows assert the notice is absent — and beside a parseable sibling that still costs an exit 0,
+    /// which is the residual of issue #411), and a refusal beside siblings whose probe confirmed
+    /// every declared target does not either. The door is irrelevant; the predicate is not.
+    /// </para>
+    /// <para>
+    /// <strong>The refused-for-its-contents half of that hole is CLOSED for a document that
+    /// declares a block the canonical walk can SEE, and this member is where that half
+    /// lands.</strong> A document whose YAML parses and which is then refused by
+    /// <c>AstBuilder.Build</c> — an unknown step type, a duplicate step id — HAS a bound
+    /// <c>environment</c> block, so the CLI hands it to the runner (<c>RunSuiteAsync</c> /
+    /// <c>RunParallelAsync</c>'s <c>unbuiltDocuments</c>), whose one canonical walk folds its
+    /// declaration into <c>Declared</c> and records THIS kind for it — "a parse failure" being one
+    /// of the refusals this member's own summary already names. The OTHER half — a document whose
+    /// <c>security</c> node the schema rejects, which binds nothing for that walk to find — lands
+    /// on <see cref="SecurityDeclarationRejected"/> instead, by the same schema door and for the
+    /// same reason it does for a document that became a scenario. Both are decided in
+    /// <c>UnbuiltDocument.Assure</c>, once, for both run paths.
+    /// </para>
+    /// <para>
+    /// <strong>What <c>Assure</c> returns is one value; what the two run paths DO with it differs,
+    /// and the difference is visible in an exit code.</strong> <c>Assure</c> is not a door and
+    /// decides no outcome — it returns a declaration and a refusal.
+    /// <c>ParallelSuiteRunner.UnbuiltAssurance</c> keeps that value as its own assurance, one per
+    /// document, with <see cref="SecurityAssurance.Confirmed"/> empty by construction; the
+    /// declaration and the refusal are therefore paired, and a secured unbuilt document raises
+    /// there unconditionally. The sequential path holds ONE suite-wide assurance whose
+    /// <see cref="SecurityAssurance.Declared"/> is a union across documents and whose
+    /// <see cref="SecurityAssurance.Confirmed"/> is compared by target NAME, so it takes only the
+    /// refusal from that value and an unbuilt document's declaration counts as confirmed as soon as
+    /// a SIBLING's probe confirms the same name — bypassing the shared-<c>environment</c>
+    /// divergence guard, which walks <c>scenarios</c> alone. <strong>So on an identical suite with
+    /// the topology up and the probe confirming that name, <c>run</c> exits 0 where
+    /// <c>run --parallel 1</c> exits non-zero.</strong> That is issue #415 and it is open.
+    /// What keeps the sequential stamp sound at all is that <c>Assure</c> contributes NO refusal for
+    /// a document that declared nothing: unguarded, it paired an unsecured document's refusal with
+    /// a sibling's declaration and overrode <see cref="TopologyUnavailable"/>'s fence.
+    /// </para>
+    /// <para>
+    /// Only the three failure classes that bind nothing at all remain, deliberately: those
+    /// documents never parsed, so neither the walk nor the schema door has anything to read, and
+    /// recovering a declaration there would need a raw-YAML scan for a <c>security:</c> key — a
+    /// second spelling of "does this document declare security" that can disagree with the
+    /// canonical walk.
     /// </para>
     /// </remarks>
     AuthoringFault,
@@ -96,9 +136,22 @@ public enum SecurityAbortKind
     /// </para>
     /// <para>
     /// It is NOT a tenth door. A door still records only WHAT IT REFUSED (here: something located
-    /// in the declaration itself), and no door decides the OUTCOME. The alternative — a second
-    /// spelling of "does this document declare security" that reads the raw YAML rather than the
-    /// AST — is exactly what <c>SecuredTargets</c>' own header exists to prevent.
+    /// in the declaration itself), and no door decides the OUTCOME. The alternative — a BESPOKE
+    /// second spelling of "does this document declare security", scanning the raw YAML for a
+    /// <c>security:</c> key and free to disagree with the AST walk — is exactly what
+    /// <c>SecuredTargets</c>' own header exists to prevent.
+    /// </para>
+    /// <para>
+    /// <strong>Which is why this kind, and not a scan, is what closes the same shape for a document
+    /// that never became a scenario.</strong> An unbuilt document (issue #411) is absent from
+    /// <c>scenarios</c>, so the schema door's own loop never iterates it — and before that gap was
+    /// closed, <c>security: mtls</c> in such a file exited 4 ALONE (through issue #278's
+    /// all-parse-failure rule) and 0 beside one sibling that parses, so ADDING an unrelated fault
+    /// to a suite made the pipeline greener. <c>UnbuiltDocument.Assure</c> closes it by running
+    /// <c>DocumentValidator.Validate</c> and <c>ScenarioRunner.RejectsASecurityDeclaration</c> —
+    /// the door's OWN two calls, shared rather than re-derived — over the text discovery already
+    /// retained. Reading raw YAML is not the thing forbidden above; inventing a second answer to
+    /// the question is, and this invents none.
     /// </para>
     /// <para>
     /// <strong>What is NOT claimed: that the predicate derives every outcome.</strong> This kind and

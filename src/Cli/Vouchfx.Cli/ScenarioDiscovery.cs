@@ -11,9 +11,16 @@
 // rather than thrown: a malformed file must not crash discovery of the rest of the
 // suite. The run command surfaces such a file as an Inconclusive scenario (§12.1 — an
 // authoring error, the scenario never ran), never as a Fail.
+//
+// A file refused by AstBuilder.Build ALSO hands back the document it bound
+// (DiscoveredScenario.RecoveredDocument, issue #411): its `environment`, so a `security` block
+// declared by a document that never runs still reaches the runner's canonical SecuredTargets walk
+// (and its raw text with it, for the shapes that walk cannot see), and its `metadata`, so a
+// `--tag`/`--owner` filter no longer silently drops the file before that walk happens.
 
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Cli;
@@ -45,7 +52,80 @@ internal sealed record DiscoveredScenario(
     /// <see langword="true"/> when the file failed to parse (carries a
     /// <see cref="ParseError"/> and a <see langword="null"/> <see cref="Ast"/>).
     /// </summary>
+    /// <remarks>
+    /// <strong>Unchanged by <see cref="RecoveredDocument"/>, deliberately.</strong> A document
+    /// whose binding was recovered still failed: it has no <see cref="Ast"/>, it is never run,
+    /// and it still folds into the suite verdict as Inconclusive. The recovery adds evidence about
+    /// what it DECLARED and how it is LABELLED, never a claim that it is usable.
+    /// </remarks>
     public bool Failed => Ast is null;
+
+    /// <summary>
+    /// The bound document of a file that <em>parsed</em> but whose AST could not be built —
+    /// <see langword="null"/> for every other outcome, including success (issue #411).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>ONE failure class fills this, and the other three cannot.</strong>
+    /// <see cref="ScenarioDiscovery.ParseFile"/> has four ways to fail: an oversized file, an
+    /// unreadable file, <c>YamlDocumentParser.Parse</c> itself throwing, and
+    /// <c>AstBuilder.Build</c> throwing. Only the last of those has a BOUND DOCUMENT in hand when
+    /// it fails, and that document is exactly what <c>SecuredTargets.Enumerate</c> consumes. The
+    /// other three have no bound anything, so recovering a declaration there would need a raw-YAML
+    /// scan for a <c>security:</c> key — a SECOND spelling of "does this document declare
+    /// security" that can disagree with the canonical AST walk, which <c>SecuredTargets</c>' own
+    /// header forbids. Those three classes therefore remain the residual of #411, measured rather
+    /// than described by <c>SecurityAssuranceMatrixTests.Row09c_*</c>.
+    /// </para>
+    /// <para>
+    /// <strong>The recovered TEXT is not a fourth class, and the distinction is why this member is
+    /// the whole document rather than only its environment.</strong> A <c>security</c> node that is
+    /// not a mapping (<c>security: mtls</c>; a bare <c>security:</c>) binds no <c>SecuritySpec</c>,
+    /// so the canonical walk over this document reports nothing — and the engine's answer to THAT
+    /// shape has always been the schema door, not a bespoke scan. <c>UnbuiltDocument.Assure</c>
+    /// runs that same door over <see cref="YamlText"/>, which this record already carried for every
+    /// outcome. It applies only to a document in THIS class: a file whose text never even parsed is
+    /// not handed to the runner at all.
+    /// </para>
+    /// <para>
+    /// <strong>Failing CLOSED on the residual is not the missing half.</strong> Treating "cannot
+    /// tell whether it declared security" as "it did" would redden every unsecured suite that
+    /// merely contains an unreadable file — a far larger blast radius than the hole it closes.
+    /// </para>
+    /// <para>
+    /// This carries no disclosure that <see cref="Ast"/> does not already carry: a parsed
+    /// scenario's <see cref="ScenarioAst"/> holds the same <see cref="EnvironmentSpec"/> and the
+    /// same steps, so the record's generated <c>ToString()</c> could already expand a declared
+    /// <c>clientKeyPassword</c>. Nothing interpolates this record; the guard that matters is
+    /// downstream, where <c>SecurityAssurance</c> keeps declared target NAMES rather than the
+    /// specs they came from (issue #408).
+    /// </para>
+    /// </remarks>
+    public E2eDocument? RecoveredDocument { get; init; }
+
+    /// <summary>
+    /// The <c>environment</c> block <see cref="RecoveredDocument"/> bound, or
+    /// <see langword="null"/> when nothing was recovered or the document declared none.
+    /// </summary>
+    public EnvironmentSpec? RecoveredEnvironment => RecoveredDocument?.Environment;
+
+    /// <summary>
+    /// The <c>metadata</c> block <see cref="RecoveredDocument"/> bound, or <see langword="null"/>
+    /// when nothing was recovered or the document declared none.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Recovered for the SELECTOR, and the omission was its own false negative.</strong>
+    /// <c>ScenarioSelector</c> matches <c>--tag</c>/<c>--owner</c> against
+    /// <c>Ast?.Metadata</c>, and an unbuilt document has no <see cref="Ast"/> — so before this
+    /// every metadata filter excluded it, selection running (in <c>RunCommand</c>) BEFORE the split
+    /// that feeds the runner's unbuilt documents. Measured: a secured unbuildable file beside a
+    /// sibling tagged <c>smoke</c> exited 4 under <c>vouchfx run &lt;dir&gt;</c> and 0 under
+    /// <c>--tag smoke</c>, with its parse error not even printed. The metadata was bound by the
+    /// same <c>Parse</c> call that bound the environment and was thrown away beside it; recovering
+    /// both lets the selector answer for itself instead of failing open. A document whose recovered
+    /// tags genuinely do not match stays excluded — that is the user's own instruction.
+    /// </remarks>
+    public MetadataSpec? RecoveredMetadata => RecoveredDocument?.Metadata;
 }
 
 /// <summary>
@@ -198,16 +278,51 @@ internal static class ScenarioDiscovery
                 ParseError: $"Could not read file: {ex.Message}");
         }
 
+        // THE TWO STAGES ARE SPLIT, and the split is the whole of issue #411's fix on this side.
+        //
+        // They used to share one `try`. On an AstBuilder failure the BOUND DOCUMENT already existed
+        // — `Parse` had returned it, `Environment.Services[].Security` and all — and the catch threw
+        // it away. That document is exactly what `SecuredTargets.Enumerate` consumes, so a secured
+        // document with (say) an unknown step type declared mtls into a void: dropped into
+        // RunCommand's `failures` list, never reaching the runner's canonical walk, `Declared` empty,
+        // nothing raised. ALONE it exited 4 through issue #278's all-parse-failure rule; beside one
+        // parsing sibling that rescue does not apply and it exited 0 — mTLS declared, never
+        // exercised, pipeline green.
+        //
+        // The two catches are otherwise IDENTICAL — same message shape, same null Ast, same
+        // `Failed` — so nothing about how a failure is reported or aggregated changes. Only the
+        // second one has an environment to hand back.
+        E2eDocument doc;
         try
         {
-            var doc = YamlDocumentParser.Parse(yamlText);
+            doc = YamlDocumentParser.Parse(yamlText);
+        }
+        catch (Exception ex)
+        {
+            // Failure class 3: the YAML itself is malformed, so NOTHING bound. There is no
+            // declaration to recover here and deliberately no attempt to find one — the text is
+            // retained (it always is) but no RecoveredDocument is set, so nothing hands this file
+            // to the runner and neither the canonical walk nor the schema door is asked about it.
+            // See DiscoveredScenario.RecoveredDocument for why a raw-YAML scan is refused.
+            return new DiscoveredScenario(absolutePath, yamlText, Ast: null,
+                ParseError: $"Parse / AST error: {ex.Message}");
+        }
+
+        try
+        {
             var ast = AstBuilder.Build(doc, registry);
             return new DiscoveredScenario(absolutePath, yamlText, ast, ParseError: null);
         }
         catch (Exception ex)
         {
+            // Failure class 4: the document bound and only the AST build refused it, so what it
+            // declared (the environment, for the runner's security walk) and how it is labelled
+            // (the metadata, for the selector) are both known and are both retained.
             return new DiscoveredScenario(absolutePath, yamlText, Ast: null,
-                ParseError: $"Parse / AST error: {ex.Message}");
+                ParseError: $"Parse / AST error: {ex.Message}")
+            {
+                RecoveredDocument = doc,
+            };
         }
     }
 }

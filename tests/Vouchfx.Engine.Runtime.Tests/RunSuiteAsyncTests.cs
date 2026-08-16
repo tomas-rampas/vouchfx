@@ -10,8 +10,11 @@
 // Vouchfx.Engine.Orchestration.Tests/RespawnResetProofTests.cs.
 
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.HttpRest;
@@ -126,6 +129,126 @@ public sealed class RunSuiteAsyncTests
 
         Assert.Equal(Verdict.Pass, result.Verdict);
         Assert.Empty(result.ScenarioVerdicts);
+
+        // No documents were supplied, so this arm learns nothing and must SAY nothing: the
+        // registry is never built and the assurance is the identity. This half is what keeps the
+        // arm's answer to a document-carrying caller (below) from costing the ordinary caller
+        // anything.
+        Assert.Empty(result.Assurance.Declared);
+        Assert.Null(result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The empty-scenario arm answers from the documents it was handed rather than
+    /// discarding them</strong> (Copilot, PR #416). A secured unbuilt document beside NO scenario
+    /// is exactly what it is beside one: a declaration that nothing ever confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Measured before the fix, on this same input: <c>Declared=[] Refusal=&lt;null&gt;
+    /// Unconfirmed=False</c>, while <c>UnbuiltDocument.Assure</c> on the very same document
+    /// reported <c>Declared=[legacy] Refusal=AuthoringFault Unconfirmed=True</c> — a public method
+    /// silently dropping a parameter, which <c>ExitCodes.FromVerdict</c> would have mapped to 0.
+    /// The verdict is deliberately unchanged: an unbuilt document contributes to the assurance and
+    /// to nothing else on the populated path either.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_NoScenariosBesideASecuredUnbuiltDocument_AnswersFromTheDocument()
+    {
+        var sw = new StringWriter();
+        var unbuilt = new[] { UnbuiltDocumentDeclaring(secured: true) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: Array.Empty<Vouchfx.Engine.Authoring.Ast.ScenarioAst>(),
+            scenarioNames: Array.Empty<string>(),
+            yamlTexts: Array.Empty<string>(),
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+        Assert.Empty(result.ScenarioVerdicts);
+
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// The control for the row above, and the one that stops the fix from becoming a second defect:
+    /// an unbuilt document declaring NO <c>security</c> block still contributes nothing, so this
+    /// arm cannot manufacture a refusal for a caller whose suite asserts nothing about security.
+    /// </summary>
+    [Fact]
+    public async Task RunSuiteAsync_NoScenariosBesideAnUnsecuredUnbuiltDocument_ContributesNothing()
+    {
+        var sw = new StringWriter();
+        var unbuilt = new[] { UnbuiltDocumentDeclaring(secured: false) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: Array.Empty<Vouchfx.Engine.Authoring.Ast.ScenarioAst>(),
+            scenarioNames: Array.Empty<string>(),
+            yamlTexts: Array.Empty<string>(),
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+        Assert.Empty(result.Assurance.Declared);
+        Assert.Null(result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The anchoring property behind a proposed optimisation, measured and FALSE</strong>
+    /// (Copilot, PR #416): <c>UnbuiltDocument.Assure</c>'s <c>DocumentValidator.Validate</c> call
+    /// may NOT be skipped for a document whose bound <c>Environment</c> is <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two halves of <c>Assure</c> read the document through DIFFERENT parsers — the walk
+    /// through YamlDotNet's RepresentationModel, the schema door through YamlDotNet's deserialiser
+    /// — and a RepresentationModel key lookup compares a scalar's TAG as well as its value. An
+    /// explicitly tagged root key (<c>!!str environment:</c>) therefore binds no environment for
+    /// the walk while the schema still reports an error AT the declared block. Skipping the
+    /// validation on a null environment would answer <c>SecurityAssurance.None</c> for this
+    /// document: exit 0 on a rejected security declaration, the hole issue #411 closed.
+    /// </para>
+    /// <para>
+    /// Reachability is asserted, not assumed: the document PARSES (so it is not one of the three
+    /// classes that bind nothing) and <c>AstBuilder.Build</c> then refuses it, which is precisely
+    /// the class the CLI hands to the runner as an <c>UnbuiltDocument</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Assure_TaggedEnvironmentKeyBindingNoEnvironment_StillRecordsTheSchemaRefusal()
+    {
+        const string yaml =
+            "!!str environment:\n"
+            + "  services:\n"
+            + "    api:\n"
+            + "      image: myorg/api:1.0\n"
+            + "      security:\n"
+            + "        profile: mtls\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var document = YamlDocumentParser.Parse(yaml);
+
+        // The walk sees nothing: this is exactly the input the proposed skip would have keyed on.
+        Assert.Null(document.Environment);
+
+        // …and it is genuinely an unbuilt document — parsed, then refused by AstBuilder.
+        Assert.ThrowsAny<Exception>(() => AstBuilder.Build(document, registry));
+
+        var assurance = new UnbuiltDocument(yaml, document).Assure(registry);
+
+        Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, assurance.Refusal);
+        Assert.True(assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -995,5 +1118,193 @@ public sealed class RunSuiteAsyncTests
 
         // REQ-018's mechanism clause: an ordinary authoring error keeps the ordinary mapping.
         Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    // ── The unbuilt-document contribution (issue #411), against a FAILED TOPOLOGY ─────────
+    //
+    // WHAT THESE TWO ROWS ARE FOR, AND WHY THEY LIVE HERE RATHER THAN AT THE CLI TIER.
+    // `RunSuiteAsync` holds ONE suite-wide assurance whose `Declared` is a union over every
+    // scenario AND every unbuilt document, so the refusal an unbuilt document contributes is
+    // paired with a declaration that may belong to a DIFFERENT file. The only shape that can
+    // measure whether that pairing is guarded is one where the sibling reaches a topology and
+    // records no authoring fault of its own — every pre-topology door records `AuthoringFault`,
+    // which would supply the refusal whatever these rows did. That is why
+    // `SecurityAssuranceMatrixTests`' Row 09b cannot see it: its sibling's own step-secret fault
+    // supplies the refusal, so its SEQUENTIAL arm passes with the contribution removed entirely.
+    //
+    // HOW THEY REACH A FAILED TOPOLOGY WITHOUT DOCKER. The suite pins a host port the test process
+    // is holding, so EDGE-012's bind pre-flight (`SuiteTopology.EnsurePinnedHostPortsAreFree`)
+    // throws an `OrchestrationException` of kind `Provision` — inside `StartAsync`, after Map, and
+    // before Aspire or DCP is reached. `RunSuiteAsync` catches it, prints the topology marker below
+    // and records `TopologyUnavailable`, which is the #390 shape exactly: on its own it raises
+    // nothing and exits 0.
+    //
+    // The pair is a conjunction test, and both halves are needed: the unsecured row fails if the
+    // contribution is unguarded (it was — measured 3 on this path against 0 under `--parallel 1`,
+    // a divergence AND a silent override of #390), and the secured row fails if the contribution is
+    // dropped (it would then leave `TopologyUnavailable`, which never raises).
+
+    private const string TopologyFailureMarker = "RunSuiteAsync: topology failed to start";
+
+    /// <summary>A suite whose one service is SECURED and pins <paramref name="hostPort"/>.</summary>
+    private static string SecuredSuitePinning(int hostPort) => $$"""
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+              ports: ["{{hostPort}}:8443"]
+              security:
+                profile: mtls
+                endpoint: 8443
+                clientCert: ./client.pem
+                clientKey: ./client.key
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    /// <summary>
+    /// A document that parsed and was then refused by <c>AstBuilder</c> — what
+    /// <c>ScenarioDiscovery.RecoveredDocument</c> hands the runner, text and bound document
+    /// together. The document is PARSED from that same text rather than constructed, so the pair is
+    /// exactly what production supplies; and since <c>UnbuiltDocument</c> now projects its
+    /// environment off that document rather than taking it as a second parameter, they cannot drift
+    /// apart in ANY caller, not merely in this fixture.
+    /// </summary>
+    private static UnbuiltDocument UnbuiltDocumentDeclaring(bool secured)
+    {
+        var yaml =
+            "environment:\n"
+            + "  services:\n"
+            + "    legacy:\n"
+            + "      image: myorg/legacy:1.0\n"
+            + (secured
+                ? "      security:\n"
+                    + "        profile: mtls\n"
+                    + "        endpoint: 8443\n"
+                    + "        clientCert: ./client.pem\n"
+                    + "        clientKey: ./client.key\n"
+                : string.Empty)
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        return new UnbuiltDocument(yaml, YamlDocumentParser.Parse(yaml));
+    }
+
+    /// <summary>
+    /// Runs the secured, port-pinning suite with one unbuilt document beside it, holding that host
+    /// port for the duration so the topology cannot start.
+    /// </summary>
+    private static async Task<(SuiteResult Result, string Rendered)> RunAgainstAHeldPortAsync(
+        bool unbuiltDocumentIsSecured)
+    {
+        var squatter = new TcpListener(IPAddress.Loopback, 0);
+        squatter.Start();
+        var heldPort = ((IPEndPoint)squatter.LocalEndpoint).Port;
+
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-unbuilt-assurance").FullName;
+        try
+        {
+            // The declared client material must EXIST for the security preflight to pass — this
+            // row is about what happens at the topology, not at the preflight — but nothing reads
+            // its contents on this path, because the run never gets past the bind check.
+            File.WriteAllText(Path.Combine(suiteDirectory, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(suiteDirectory, "client.key"), "placeholder");
+
+            var yaml = SecuredSuitePinning(heldPort);
+            var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+            var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+            var sw = new StringWriter();
+
+            var unbuilt = new[] { UnbuiltDocumentDeclaring(unbuiltDocumentIsSecured) };
+
+            // Locals rather than inline arrays: CA1861 on a repeated constant-element argument.
+            var scenarios = new[] { ast };
+            var names = new[] { "secured-suite" };
+            var yamls = new[] { yaml };
+
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: scenarios,
+                scenarioNames: names,
+                yamlTexts: yamls,
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                seedBaseDirectory: suiteDirectory,
+                unbuiltDocuments: unbuilt);
+
+            return (result, sw.ToString());
+        }
+        finally
+        {
+            squatter.Stop();
+            Directory.Delete(suiteDirectory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// <strong>The unsecured control, ACROSS documents — the row whose absence let a #390 override
+    /// through.</strong> An unbuilt document that declares no <c>security</c> block contributes no
+    /// refusal, so a secured sibling whose only fault is a topology that would not start still
+    /// exits 0: <see cref="SecurityAbortKind.TopologyUnavailable"/> survives, and it never raises.
+    /// </summary>
+    /// <remarks>
+    /// Unguarded, the contribution stamped <see cref="SecurityAbortKind.AuthoringFault"/> whatever
+    /// the unbuilt document declared; that outranks <see cref="SecurityAbortKind.TopologyUnavailable"/>
+    /// and pairs with the SIBLING's declaration, so this suite reported a security failure caused by
+    /// a file that asserted nothing. Measured on the built CLI at the time: exit 3 under <c>run</c>
+    /// against exit 0 under <c>run --parallel 1</c>, whose per-document fold cannot make that
+    /// pairing.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero()
+    {
+        var (result, rendered) = await RunAgainstAHeldPortAsync(unbuiltDocumentIsSecured: false);
+
+        // The run reached the topology and failed there — not at a pre-topology door, which would
+        // record an authoring fault of its own and make this row prove nothing.
+        Assert.Contains(TopologyFailureMarker, rendered, StringComparison.Ordinal);
+        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+
+        // The sibling's declaration is in `Declared`; the unbuilt document's is not…
+        Assert.Contains("api", result.Assurance.Declared, StringComparer.Ordinal);
+        Assert.DoesNotContain("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+
+        // …and #390's fence holds: the only refusal recorded is the topology's, which never raises.
+        Assert.Equal(SecurityAbortKind.TopologyUnavailable, result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The other half: the contribution itself, pinned where nothing else supplies it.</strong>
+    /// The same suite with a SECURED unbuilt document beside it records
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> — outranking the topology's own refusal — and
+    /// raises, because that document's declaration was never confirmed by anything.
+    /// </summary>
+    /// <remarks>
+    /// This is the row that fails if the unbuilt refusal is removed: with only
+    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> left, <c>Unconfirmed</c> goes false and
+    /// the suite exits 0 with an unexercised <c>mtls</c> declaration in it. Row 09b of
+    /// <c>SecurityAssuranceMatrixTests</c> looks like it covers this and does not: its sequential
+    /// arm survives that removal on its sibling's own authoring fault.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SecuredUnbuiltDocument_RaisesEvenWhenOnlyTheTopologyFailed()
+    {
+        var (result, rendered) = await RunAgainstAHeldPortAsync(unbuiltDocumentIsSecured: true);
+
+        Assert.Contains(TopologyFailureMarker, rendered, StringComparison.Ordinal);
+        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+
+        // The unbuilt document's own declaration folded into the one canonical walk…
+        Assert.Contains("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+
+        // …and the refusal it carries outranks the topology's, so the pair raises.
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 }
