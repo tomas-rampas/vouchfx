@@ -1093,15 +1093,35 @@ public static class ScenarioRunner
         ArgumentNullException.ThrowIfNull(providerAssemblies);
         ArgumentNullException.ThrowIfNull(output);
 
-        // This arm returns BEFORE the assurance walk below, so any `unbuiltDocuments` the caller
-        // supplied is discarded here — the same gap `ParallelSuiteRunner.UnbuiltAssurance` names on
-        // its own path, and unreachable from the product for the same reason: the CLI never calls
-        // either runner with an empty scenario list, because issue #278's all-parse-failure rule
-        // owns that case and exits 4 unconditionally ahead of both. It is named rather than guarded
-        // because guarding it would put a second answer to #278's question in a second place.
+        // THIS ARM RETURNS BEFORE THE ASSURANCE WALK BELOW, SO IT ANSWERS THE SAME QUESTION HERE
+        // (Copilot, PR #416). It used to DISCARD `unbuiltDocuments` and return a bare
+        // `SuiteResult(Pass, …)` whose `Assurance` therefore defaulted to
+        // `SecurityAssurance.None` — measured: a secured unbuilt document on which
+        // `UnbuiltDocument.Assure` reports `Declared=[legacy] Refusal=AuthoringFault
+        // Unconfirmed=True` came back from this method reading `Unconfirmed=False`, which
+        // `ExitCodes.FromVerdict` maps to 0. A silently dropped parameter on a PUBLIC method is a
+        // false negative for any caller that is not the CLI.
+        //
+        // ANSWERING IS PREFERRED OVER THROWING, and the shape it answers with is not invented here:
+        // the pair below is the SAME union-then-refusal pair the main path applies further down,
+        // with the scenarios' own (empty) contribution removed. `Verdict.Pass` is unchanged and is
+        // the consistent answer rather than a concession — an unbuilt document contributes to
+        // `Assurance` and to nothing else on the non-empty path either (it is absent from
+        // `ScenarioVerdicts` by construction), so with no scenario verdicts to aggregate the
+        // identity stands. Rejecting the input instead would refuse a perfectly meaningful call.
+        //
+        // UNREACHABLE FROM THE CLI, AND STILL WORTH ANSWERING: `RunCommand` builds
+        // `unbuiltDocuments` INSIDE its own `if (parsed.Count > 0)` block and calls both runners
+        // from there, so it cannot reach this arm with a non-empty list; issue #278's
+        // all-parse-failure rule owns the no-scenario case and exits 4 ahead of both runners. That
+        // rule is untouched — nothing here decides an exit code, and no second answer to #278's
+        // question is added: this fills evidence, exactly as every door below does.
         if (scenarios.Count == 0)
         {
-            return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>());
+            return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>())
+            {
+                Assurance = AssureUnbuiltDocumentsAlone(unbuiltDocuments, providerAssemblies),
+            };
         }
 
         if (scenarioNames.Count != scenarios.Count
@@ -2003,6 +2023,62 @@ public static class ScenarioRunner
                 Assurance = assurance.Confirming(suite.SecurityConfirmations),
             };
         }
+    }
+
+    /// <summary>
+    /// The assurance a suite of NO scenarios and some unbuilt documents establishes: what those
+    /// documents declared, paired with the refusals they carry (issue #411; Copilot, PR #416).
+    /// </summary>
+    /// <param name="unbuiltDocuments">
+    /// <see cref="RunSuiteAsync"/>'s parameter of the same name. <see langword="null"/> or empty
+    /// yields <see cref="SecurityAssurance.None"/> WITHOUT building a registry, so the ordinary
+    /// empty call — every caller that does no discovery of its own — pays nothing and behaves
+    /// byte-identically to before.
+    /// </param>
+    /// <param name="providerAssemblies">
+    /// <see cref="RunSuiteAsync"/>'s parameter of the same name. The registry is built here rather
+    /// than passed because the caller's own <c>BuildAndFreeze</c> runs BELOW the empty arm; this
+    /// method's guard is what keeps that build off the empty path.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The union, then the refusals — the SAME pair the main path applies, in the same
+    /// order.</strong> Only the scenarios' contribution is missing, because there are none. WHAT a
+    /// document contributes stays <see cref="UnbuiltDocument.Assure"/>'s single job, and only the
+    /// <see cref="SecurityAssurance.Refusal"/> is taken from that per-document value: re-attaching
+    /// one document's names would REPLACE the union rather than extend it, since
+    /// <see cref="SecurityAssurance.Declaring"/> replaces by contract.
+    /// </para>
+    /// <para>
+    /// Cross-document pairing is not a hazard here for the reason it is not one below:
+    /// <c>Assure</c> contributes NO refusal for a document that declared nothing, so an unsecured
+    /// unbuildable file cannot supply a refusal for a secured sibling's declaration to pair with.
+    /// </para>
+    /// </remarks>
+    private static SecurityAssurance AssureUnbuiltDocumentsAlone(
+        IReadOnlyList<UnbuiltDocument>? unbuiltDocuments,
+        IEnumerable<Assembly> providerAssemblies)
+    {
+        if (unbuiltDocuments is not { Count: > 0 })
+        {
+            return SecurityAssurance.None;
+        }
+
+        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+        var assurance = SecurityAssurance.None.Declaring(
+            unbuiltDocuments
+                .SelectMany(document => SecuredTargets.Enumerate(document.Environment))
+                .ToArray());
+
+        foreach (var document in unbuiltDocuments)
+        {
+            if (document.Assure(registry).Refusal is { } kind)
+            {
+                assurance = assurance.Refusing(kind);
+            }
+        }
+
+        return assurance;
     }
 
     /// <summary>

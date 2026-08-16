@@ -136,6 +136,24 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
         // broken files has a larger problem than latency. Left uncached deliberately: the
         // compilation loop already pays the same per scenario, so caching belongs there or
         // nowhere, not bolted onto this seam.
+        //
+        // AND IT IS UNCONDITIONAL RATHER THAN GATED ON `Environment is not null`, WHICH WAS
+        // MEASURED, NOT ASSUMED (Copilot, PR #416). The proposed skip rests on an anchoring
+        // property — that `RejectsASecurityDeclaration` can only match under an `environment`
+        // mapping, which `ParseEnvironment` would then have bound — and the property is FALSE.
+        // The two front-ends are different parsers: the walk reads YamlDotNet's
+        // RepresentationModel (`YamlDocumentParser`), the schema door converts through
+        // YamlDotNet's DESERIALISER (`SchemaResources.ConvertYamlToJsonDocument`), and a
+        // RepresentationModel key lookup compares a scalar's TAG as well as its value. So a
+        // document whose root key carries an explicit tag — `!!str environment:` above an
+        // otherwise ordinary block — binds NO environment for the walk (`Environment is null`)
+        // while the schema still reports `/environment/services/api/security`, and this call
+        // returns `SecurityDeclarationRejected`. Skipping it there would answer
+        // `SecurityAssurance.None` — nothing declared, nothing refused — so beside one sibling
+        // that parses the suite exits 0 on a rejected security declaration: the exact shape issue
+        // #411 closed, where adding an unrelated fault to a suite made the pipeline greener.
+        // Pinned by
+        // `RunSuiteAsyncTests.Assure_TaggedEnvironmentKeyBindingNoEnvironment_StillRecordsTheSchemaRefusal`.
         if (ScenarioRunner.RejectsASecurityDeclaration(
                 DocumentValidator.Validate(YamlText, registry).Errors))
         {

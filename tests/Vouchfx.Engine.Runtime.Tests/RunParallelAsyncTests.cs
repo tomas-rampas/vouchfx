@@ -745,6 +745,56 @@ public sealed class RunParallelAsyncTests
 
         Assert.Equal(Verdict.Pass, result.Verdict);
         Assert.Empty(result.ScenarioVerdicts);
+        Assert.Null(result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// The empty-<c>scenarios</c> arm answers from the unbuilt documents it was handed, exactly as
+    /// <c>ScenarioRunner.RunSuiteAsync</c>'s does (Copilot, PR #416) — it used to discard them and
+    /// return a default <see cref="SecurityAssurance.None"/>. The fake core is deliberately one
+    /// that throws: this arm must return before any slot runs.
+    /// </summary>
+    [Fact]
+    public async Task RunParallelCoreAsync_NoScenariosBesideASecuredUnbuiltDocument_AnswersFromTheDocument()
+    {
+        const string yaml =
+            "environment:\n"
+            + "  services:\n"
+            + "    legacy:\n"
+            + "      image: myorg/legacy:1.0\n"
+            + "      security:\n"
+            + "        profile: mtls\n"
+            + "        endpoint: 8443\n"
+            + "        clientCert: ./client.pem\n"
+            + "        clientKey: ./client.key\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        var sw = new StringWriter();
+        var unbuilt = new[] { new UnbuiltDocument(yaml, YamlDocumentParser.Parse(yaml)) };
+
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry,
+            Array.Empty<ScenarioAst>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 1,
+            runScenario: (_, _, _, _, _, _, _, _) =>
+                throw new InvalidOperationException("no slot may run on the empty arm"),
+            seedBaseDirectory: null,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+        Assert.Empty(result.ScenarioVerdicts);
+
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     /// <summary>Mismatched parallel-list lengths throw <see cref="ArgumentException"/>.</summary>

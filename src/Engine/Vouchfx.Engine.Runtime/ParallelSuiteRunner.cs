@@ -358,9 +358,19 @@ public static class ParallelSuiteRunner
         ArgumentNullException.ThrowIfNull(runScenario);
 
         // Mirror RunSuiteAsync's arg-validation: empty → Pass; mismatched lengths → ArgumentException.
+        //
+        // …and mirror its empty arm's ANSWER too (Copilot, PR #416). This arm returns before the
+        // gather, so it used to discard `unbuiltDocuments` and hand back a default
+        // `SecurityAssurance.None`; the fold below is the same one the gather calls, so a caller
+        // that supplies documents with no scenarios gets the same evidence on both run paths
+        // instead of silence on both. The verdict is unchanged — an unbuilt document contributes
+        // to `Assurance` and to nothing else here either.
         if (scenarios.Count == 0)
         {
-            return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>());
+            return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>())
+            {
+                Assurance = UnbuiltAssurance(unbuiltDocuments, registry),
+            };
         }
 
         if (scenarioNames.Count != scenarios.Count
@@ -510,11 +520,13 @@ public static class ParallelSuiteRunner
     /// declaration guard the sequential union does.
     /// </para>
     /// <para>
-    /// Unreached when <c>scenarios</c> is empty — that arm returns before the gather. The CLI never
-    /// calls either runner with an empty scenario list (issue #278's all-parse-failure rule owns
-    /// that case and exits 4 unconditionally), so the gap is not reachable from the product; it is
-    /// named rather than guarded because guarding it would put a second answer to #278's question
-    /// in a second place.
+    /// Called from TWO sites: the gather below, and the empty-<c>scenarios</c> arm above, which
+    /// returns before the gather and used to discard its documents (Copilot, PR #416). The CLI can
+    /// reach neither with an empty scenario list — it builds <c>unbuiltDocuments</c> inside its own
+    /// <c>parsed.Count &gt; 0</c> block, and issue #278's all-parse-failure rule owns the
+    /// no-scenario case and exits 4 ahead of both runners — so this is about what the method
+    /// ANSWERS a non-CLI caller, not about an exit code. Nothing here decides one, so #278's
+    /// question still has exactly one answer in one place.
     /// </para>
     /// </remarks>
     private static SecurityAssurance UnbuiltAssurance(

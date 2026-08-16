@@ -129,6 +129,126 @@ public sealed class RunSuiteAsyncTests
 
         Assert.Equal(Verdict.Pass, result.Verdict);
         Assert.Empty(result.ScenarioVerdicts);
+
+        // No documents were supplied, so this arm learns nothing and must SAY nothing: the
+        // registry is never built and the assurance is the identity. This half is what keeps the
+        // arm's answer to a document-carrying caller (below) from costing the ordinary caller
+        // anything.
+        Assert.Empty(result.Assurance.Declared);
+        Assert.Null(result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The empty-scenario arm answers from the documents it was handed rather than
+    /// discarding them</strong> (Copilot, PR #416). A secured unbuilt document beside NO scenario
+    /// is exactly what it is beside one: a declaration that nothing ever confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Measured before the fix, on this same input: <c>Declared=[] Refusal=&lt;null&gt;
+    /// Unconfirmed=False</c>, while <c>UnbuiltDocument.Assure</c> on the very same document
+    /// reported <c>Declared=[legacy] Refusal=AuthoringFault Unconfirmed=True</c> — a public method
+    /// silently dropping a parameter, which <c>ExitCodes.FromVerdict</c> would have mapped to 0.
+    /// The verdict is deliberately unchanged: an unbuilt document contributes to the assurance and
+    /// to nothing else on the populated path either.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_NoScenariosBesideASecuredUnbuiltDocument_AnswersFromTheDocument()
+    {
+        var sw = new StringWriter();
+        var unbuilt = new[] { UnbuiltDocumentDeclaring(secured: true) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: Array.Empty<Vouchfx.Engine.Authoring.Ast.ScenarioAst>(),
+            scenarioNames: Array.Empty<string>(),
+            yamlTexts: Array.Empty<string>(),
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+        Assert.Empty(result.ScenarioVerdicts);
+
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// The control for the row above, and the one that stops the fix from becoming a second defect:
+    /// an unbuilt document declaring NO <c>security</c> block still contributes nothing, so this
+    /// arm cannot manufacture a refusal for a caller whose suite asserts nothing about security.
+    /// </summary>
+    [Fact]
+    public async Task RunSuiteAsync_NoScenariosBesideAnUnsecuredUnbuiltDocument_ContributesNothing()
+    {
+        var sw = new StringWriter();
+        var unbuilt = new[] { UnbuiltDocumentDeclaring(secured: false) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: Array.Empty<Vouchfx.Engine.Authoring.Ast.ScenarioAst>(),
+            scenarioNames: Array.Empty<string>(),
+            yamlTexts: Array.Empty<string>(),
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+        Assert.Empty(result.Assurance.Declared);
+        Assert.Null(result.Assurance.Refusal);
+        Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The anchoring property behind a proposed optimisation, measured and FALSE</strong>
+    /// (Copilot, PR #416): <c>UnbuiltDocument.Assure</c>'s <c>DocumentValidator.Validate</c> call
+    /// may NOT be skipped for a document whose bound <c>Environment</c> is <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two halves of <c>Assure</c> read the document through DIFFERENT parsers — the walk
+    /// through YamlDotNet's RepresentationModel, the schema door through YamlDotNet's deserialiser
+    /// — and a RepresentationModel key lookup compares a scalar's TAG as well as its value. An
+    /// explicitly tagged root key (<c>!!str environment:</c>) therefore binds no environment for
+    /// the walk while the schema still reports an error AT the declared block. Skipping the
+    /// validation on a null environment would answer <c>SecurityAssurance.None</c> for this
+    /// document: exit 0 on a rejected security declaration, the hole issue #411 closed.
+    /// </para>
+    /// <para>
+    /// Reachability is asserted, not assumed: the document PARSES (so it is not one of the three
+    /// classes that bind nothing) and <c>AstBuilder.Build</c> then refuses it, which is precisely
+    /// the class the CLI hands to the runner as an <c>UnbuiltDocument</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Assure_TaggedEnvironmentKeyBindingNoEnvironment_StillRecordsTheSchemaRefusal()
+    {
+        const string yaml =
+            "!!str environment:\n"
+            + "  services:\n"
+            + "    api:\n"
+            + "      image: myorg/api:1.0\n"
+            + "      security:\n"
+            + "        profile: mtls\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var document = YamlDocumentParser.Parse(yaml);
+
+        // The walk sees nothing: this is exactly the input the proposed skip would have keyed on.
+        Assert.Null(document.Environment);
+
+        // …and it is genuinely an unbuilt document — parsed, then refused by AstBuilder.
+        Assert.ThrowsAny<Exception>(() => AstBuilder.Build(document, registry));
+
+        var assurance = new UnbuiltDocument(yaml, document).Assure(registry);
+
+        Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, assurance.Refusal);
+        Assert.True(assurance.Unconfirmed);
     }
 
     /// <summary>
