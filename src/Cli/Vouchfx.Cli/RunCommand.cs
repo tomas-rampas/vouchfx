@@ -880,10 +880,21 @@ internal static class RunCommand
         // Apply the test-selection language BEFORE the runner: narrow the discovered
         // scenarios by tag/owner/path/change-set (BP §16). A bad --changed-since (no repo,
         // git missing, bad ref) is a usage error (exit 2), not a crash.
+        //
+        // ISSUE #411'S RECOVERED METADATA IS SCOPED OUT OF THE WATCH PATH, and the argument is
+        // `!watch` rather than a second selection call so there is still exactly one. Selection
+        // runs here, BEFORE the watch branch below, and `WatchRunner.RunAsync` refuses any
+        // selection whose count is not 1 — so a broken sibling carrying the filter's own tag,
+        // which the recovery newly matches, took a filtered watch from 1 to 2 and turned a run
+        // into exit 2. Watch builds no `UnbuiltDocument` at all (it returns before the split), so
+        // the recovery has nothing to serve on this path and a regression is all it could
+        // contribute. The UNFILTERED watch case is not touched by either the flag or the recovery:
+        // a parse-failure is included there because no metadata filter is active, so a two-file
+        // directory still resolves to 2 and still exits 2, exactly as it did before #411.
         IReadOnlyList<DiscoveredScenario> selected;
         try
         {
-            selected = SelectScenarios(discovered, criteria, path);
+            selected = SelectScenarios(discovered, criteria, path, matchRecoveredMetadata: !watch);
         }
         catch (ChangeSetException ex)
         {
@@ -922,8 +933,13 @@ internal static class RunCommand
         // this returns BEFORE the parsed/failures split below, so no `UnbuiltDocument` is ever
         // built on this path and a `security` block in an unbuildable file contributes nothing to
         // a watch session. That is a documented divergence rather than a hole in the guarantee —
-        // watch derives no exit code at all, so it is not a CI surface and REQ-018 has nothing to
-        // say about it. Issue #412 already tracks the watch path's divergence from `run`.
+        // watch never calls `ExitCodes.FromVerdict`, so no verdict of any kind becomes an exit code
+        // here and REQ-018 has nothing to say about it. (`WatchRunner.RunAsync` DOES return a
+        // process exit code — `ExitCodes.UsageError` or `ExitCodes.Success` — and it is this
+        // method's return value; what it never does is derive one from a verdict. Saying watch
+        // "derives no exit code at all" would be false, and the false form is what let the
+        // selection change above regress a filtered watch to exit 2 unnoticed.) Issue #412 already
+        // tracks the watch path's divergence from `run`.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, runCancellationToken)
@@ -1021,20 +1037,22 @@ internal static class RunCommand
             // its own scenarios pass through, so one predicate on one record still decides. A
             // second decision site is exactly what issue #401 existed to remove.
             //
-            // THE FILTER IS "DID THE DOCUMENT BIND", NOT "DOES IT HAVE AN ENVIRONMENT", and the
-            // difference matters because the environment is no longer the only evidence carried: a
-            // `security:` node the schema rejects binds no EnvironmentSpec member at all, and is
-            // visible only in the text. Filtering on the environment would have dropped exactly the
-            // documents the text is there to catch. RecoveredDocument is non-null for this failure
-            // class and null for the other three, by construction, so the predicate is also the
-            // class test.
+            // The filter is the CLASS TEST: RecoveredDocument is non-null for this failure class
+            // and null for the other three, by construction. (It is NOT chosen over a
+            // "does it have an environment" filter for any behavioural reason — measured, the two
+            // predicates agree on every reachable input, because YamlDocumentParser.ParseEnvironment
+            // returns a non-null EnvironmentSpec for any `environment:` mapping whatever its
+            // `security` node is. What the TEXT carried alongside is load-bearing — the schema door
+            // in Assure reads it, and a `security:` node the schema rejects binds no
+            // EnvironmentSpec member at all — but that is about what is passed, not about which
+            // predicate selects it.)
             //
             // The other three discovery failure classes contribute nothing — that residual is
             // #411's own amended acceptance rather than an oversight; see
             // DiscoveredScenario.RecoveredDocument.
             var unbuiltDocuments = failures
                 .Where(failure => failure.RecoveredDocument is not null)
-                .Select(failure => new UnbuiltDocument(failure.YamlText, failure.RecoveredEnvironment))
+                .Select(failure => new UnbuiltDocument(failure.YamlText, failure.RecoveredDocument!))
                 .ToList();
 
             // --parallel N → run scenarios concurrently, each owning its OWN topology
@@ -1269,6 +1287,10 @@ internal static class RunCommand
     /// The discovery root, used as git's working directory so <c>--changed-since</c> resolves
     /// against the repository the scenarios live in.
     /// </param>
+    /// <param name="matchRecoveredMetadata">
+    /// Forwarded verbatim to <see cref="ScenarioSelector.Apply"/>: <see langword="false"/> keeps
+    /// issue #411's recovered metadata out of the match, which is what <c>--watch</c> passes.
+    /// </param>
     /// <returns>The selected subset, in discovery order.</returns>
     /// <exception cref="ChangeSetException">
     /// Thrown when <c>--changed-since</c> is set but the change-set cannot be computed.
@@ -1280,7 +1302,8 @@ internal static class RunCommand
     internal static IReadOnlyList<DiscoveredScenario> SelectScenarios(
         IReadOnlyList<DiscoveredScenario> discovered,
         SelectionCriteria criteria,
-        string discoveryRoot)
+        string discoveryRoot,
+        bool matchRecoveredMetadata = true)
     {
         IChangeSet changeSet = NullChangeSet.Instance;
         if (criteria.ChangedSinceRef is { } changedSinceRef)
@@ -1289,7 +1312,7 @@ internal static class RunCommand
             changeSet = new GitChangeSet(changedSinceRef, workingDirectory, SystemProcessRunner.Instance);
         }
 
-        return ScenarioSelector.Apply(discovered, criteria, changeSet);
+        return ScenarioSelector.Apply(discovered, criteria, changeSet, matchRecoveredMetadata);
     }
 
     /// <summary>

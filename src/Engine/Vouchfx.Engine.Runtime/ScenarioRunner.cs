@@ -1176,6 +1176,14 @@ public static class ScenarioRunner
         // carrying an ordinary authoring fault now exits 4 on both run paths. The same file beside
         // siblings that actually come up and whose probe confirms the same target NAME still exits
         // 0 on this path. The door is not fully shut.
+        //
+        // AND ON THAT SHAPE THE TWO RUN PATHS DISAGREE — stated because each half is documented
+        // separately and their disagreement was not. `ParallelSuiteRunner.UnbuiltAssurance` builds
+        // one assurance PER DOCUMENT with `Confirmed` empty by construction, so a secured unbuilt
+        // document raises there unconditionally; this path's union lets a sibling's confirmation of
+        // the same NAME satisfy it. On an identical suite with the topology up and the probe
+        // confirming that name, `run` exits 0 where `run --parallel 1` exits non-zero. That
+        // divergence is #415's, not a second defect, and it closes when #415 does.
         var unbuilt = unbuiltDocuments ?? Array.Empty<UnbuiltDocument>();
         var assurance = SecurityAssurance.None.Declaring(
             scenarios.SelectMany(s => SecuredTargets.Enumerate(s.Environment))

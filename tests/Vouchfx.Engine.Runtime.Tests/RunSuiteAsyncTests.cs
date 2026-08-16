@@ -1050,9 +1050,11 @@ public sealed class RunSuiteAsyncTests
 
     /// <summary>
     /// A document that parsed and was then refused by <c>AstBuilder</c> — what
-    /// <c>ScenarioDiscovery.RecoveredDocument</c> hands the runner, text and bound environment
-    /// together. The environment is PARSED from that same text rather than constructed, so the
-    /// pair is exactly what production supplies and cannot drift apart in the fixture.
+    /// <c>ScenarioDiscovery.RecoveredDocument</c> hands the runner, text and bound document
+    /// together. The document is PARSED from that same text rather than constructed, so the pair is
+    /// exactly what production supplies; and since <c>UnbuiltDocument</c> now projects its
+    /// environment off that document rather than taking it as a second parameter, they cannot drift
+    /// apart in ANY caller, not merely in this fixture.
     /// </summary>
     private static UnbuiltDocument UnbuiltDocumentDeclaring(bool secured)
     {
@@ -1070,7 +1072,7 @@ public sealed class RunSuiteAsyncTests
                 : string.Empty)
             + "steps:\n  - id: x\n    type: not-a-real-provider\n";
 
-        return new UnbuiltDocument(yaml, YamlDocumentParser.Parse(yaml).Environment);
+        return new UnbuiltDocument(yaml, YamlDocumentParser.Parse(yaml));
     }
 
     /// <summary>

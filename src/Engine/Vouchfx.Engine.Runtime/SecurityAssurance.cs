@@ -86,17 +86,27 @@ public enum SecurityAbortKind
     /// on <see cref="SecurityDeclarationRejected"/> instead, by the same schema door and for the
     /// same reason it does for a document that became a scenario. Both are decided in
     /// <c>UnbuiltDocument.Assure</c>, once, for both run paths.
-    /// It is not a new door and decides no
-    /// outcome — but "the PAIR it contributes" is true of the parallel construction only, and the
-    /// unqualified form over-claimed. <c>ParallelSuiteRunner.UnbuiltAssurance</c> does build one
-    /// assurance per document, so there is a pair and the predicate reads it. The sequential path
-    /// holds ONE suite-wide assurance whose <see cref="SecurityAssurance.Declared"/> is a union over
-    /// other documents, so there is no pair to contribute: it stamps this kind onto that shared
-    /// value, and the guard that keeps that sound is that <c>Assure</c> contributes NO refusal for
-    /// a document that declared nothing — unguarded it paired an unsecured document's refusal with
-    /// a sibling's declaration and overrode <see cref="TopologyUnavailable"/>'s fence. The union
-    /// also means such a document's declaration is matched to a confirmation by target NAME alone
-    /// and bypasses the shared-<c>environment</c> divergence guard, which is issue #415 and is open.
+    /// </para>
+    /// <para>
+    /// <strong>What <c>Assure</c> returns is one value; what the two run paths DO with it differs,
+    /// and the difference is visible in an exit code.</strong> <c>Assure</c> is not a door and
+    /// decides no outcome — it returns a declaration and a refusal.
+    /// <c>ParallelSuiteRunner.UnbuiltAssurance</c> keeps that value as its own assurance, one per
+    /// document, with <see cref="SecurityAssurance.Confirmed"/> empty by construction; the
+    /// declaration and the refusal are therefore paired, and a secured unbuilt document raises
+    /// there unconditionally. The sequential path holds ONE suite-wide assurance whose
+    /// <see cref="SecurityAssurance.Declared"/> is a union across documents and whose
+    /// <see cref="SecurityAssurance.Confirmed"/> is compared by target NAME, so it takes only the
+    /// refusal from that value and an unbuilt document's declaration counts as confirmed as soon as
+    /// a SIBLING's probe confirms the same name — bypassing the shared-<c>environment</c>
+    /// divergence guard, which walks <c>scenarios</c> alone. <strong>So on an identical suite with
+    /// the topology up and the probe confirming that name, <c>run</c> exits 0 where
+    /// <c>run --parallel 1</c> exits non-zero.</strong> That is issue #415 and it is open.
+    /// What keeps the sequential stamp sound at all is that <c>Assure</c> contributes NO refusal for
+    /// a document that declared nothing: unguarded, it paired an unsecured document's refusal with
+    /// a sibling's declaration and overrode <see cref="TopologyUnavailable"/>'s fence.
+    /// </para>
+    /// <para>
     /// Only the three failure classes that bind nothing at all remain, deliberately: those
     /// documents never parsed, so neither the walk nor the schema door has anything to read, and
     /// recovering a declaration there would need a raw-YAML scan for a <c>security:</c> key — a

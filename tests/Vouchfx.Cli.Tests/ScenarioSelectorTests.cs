@@ -56,9 +56,10 @@ public sealed class ScenarioSelectorTests
     private static IReadOnlyList<string> Apply(
         IReadOnlyList<DiscoveredScenario> all,
         SelectionCriteria criteria,
-        IChangeSet? changeSet = null) =>
+        IChangeSet? changeSet = null,
+        bool matchRecoveredMetadata = true) =>
         ScenarioSelector
-            .Apply(all, criteria, changeSet ?? NullChangeSet.Instance)
+            .Apply(all, criteria, changeSet ?? NullChangeSet.Instance, matchRecoveredMetadata)
             .Select(s => s.AbsolutePath)
             .ToList();
 
@@ -436,6 +437,44 @@ public sealed class ScenarioSelectorTests
 
         var selected = Apply(all, Criteria(tags: new[] { "smoke" }));
         Assert.Equal(new[] { "/repo/good.e2e.yaml" }, selected);
+    }
+
+    /// <summary>
+    /// <c>matchRecoveredMetadata: false</c> — the opt-out <c>--watch</c> passes. The recovered
+    /// metadata is not read, so the SAME inputs that select the broken file above exclude it here,
+    /// which is the pre-#411 answer and the one the watch path's single-file rule was written
+    /// against.
+    /// </summary>
+    [Fact]
+    public void UnbuiltFailure_ExcludedByAMetadataFilter_WhenRecoveredMetadataIsNotMatched()
+    {
+        var all = new[]
+        {
+            Scenario("/repo/good.e2e.yaml", tags: "smoke"),
+            UnbuiltFailure("/repo/broken.e2e.yaml", owner: null, "smoke"),
+        };
+
+        var selected = Apply(
+            all, Criteria(tags: new[] { "smoke" }), matchRecoveredMetadata: false);
+        Assert.Equal(new[] { "/repo/good.e2e.yaml" }, selected);
+    }
+
+    /// <summary>
+    /// The opt-out scopes out the RECOVERY, not the parse-failure rule: with no metadata filter
+    /// active every failure is still included, exactly as it is with the recovery on. This is why
+    /// an UNFILTERED <c>--watch</c> over two files still resolves to 2.
+    /// </summary>
+    [Fact]
+    public void UnbuiltFailure_StillIncluded_WhenNoMetadataFilterAndRecoveryIsNotMatched()
+    {
+        var all = new[]
+        {
+            Scenario("/repo/good.e2e.yaml", tags: "smoke"),
+            UnbuiltFailure("/repo/broken.e2e.yaml", owner: null, "smoke"),
+        };
+
+        var selected = Apply(all, Criteria(), matchRecoveredMetadata: false);
+        Assert.Equal(new[] { "/repo/good.e2e.yaml", "/repo/broken.e2e.yaml" }, selected);
     }
 
     [Fact]

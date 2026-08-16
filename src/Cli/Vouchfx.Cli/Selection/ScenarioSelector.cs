@@ -21,6 +21,9 @@
 // RecoveredMetadata, issue #411), and it is matched on that — see Matches. Path and change-set
 // filters apply to parse-failures normally (path/identity, not metadata), so a tag-free
 // `--path`/`--changed-since` selection still narrows them.
+//
+// The recovered-metadata half is OPT-OUTABLE for one caller — `--watch` — and the switch is
+// `matchRecoveredMetadata`. See Apply's remarks for why.
 
 using Vouchfx.Engine.Authoring.Model;
 
@@ -40,18 +43,43 @@ internal static class ScenarioSelector
     /// The change-set consulted when <see cref="SelectionCriteria.ChangedSinceRef"/> is set;
     /// pass <see cref="NullChangeSet.Instance"/> when no change-set filter is active.
     /// </param>
+    /// <param name="matchRecoveredMetadata">
+    /// <see langword="true"/> (the default) to match a metadata filter against
+    /// <see cref="DiscoveredScenario.RecoveredMetadata"/> for a document that parsed and was then
+    /// refused by <c>AstBuilder</c>; <see langword="false"/> to read the built
+    /// <see cref="DiscoveredScenario.Ast"/>'s metadata only, which is what every caller did before
+    /// issue #411.
+    /// </param>
     /// <returns>
     /// The matching scenarios, in their original order.  An empty result is valid (the CLI
     /// treats "nothing selected" as success — nothing to run is not a failure).
     /// </returns>
     /// <remarks>
+    /// <para>
     /// Matching is AND-across-dimensions, OR-within-a-dimension.  See the file header for the
     /// parse-failure rule.
+    /// </para>
+    /// <para>
+    /// <strong><c>matchRecoveredMetadata: false</c> exists for <c>--watch</c>, and it keeps a
+    /// behaviour rather than adding one.</strong> Selection runs in <c>RunCommand</c> BEFORE the
+    /// watch branch, and <c>WatchRunner.RunAsync</c> refuses any selection whose count is not 1.
+    /// Recovering metadata therefore made a broken sibling that carries the filter's own tag
+    /// JOIN a filtered watch selection, taking it from 1 to 2 — measured on the built CLI, a
+    /// directory pairing one good <c>smoke</c>-tagged file with one <c>smoke</c>-tagged file that
+    /// parses and fails <c>AstBuilder</c> exited <strong>2</strong> under
+    /// <c>run &lt;dir&gt; --tag smoke --watch</c>, where it previously watched the good file.
+    /// Issue #411's carve-out never reached watch in the first place (that path returns before the
+    /// split that builds any <c>UnbuiltDocument</c>), so there is nothing on this path for the
+    /// recovery to serve and a regression is all it could contribute. The UNFILTERED case is
+    /// untouched and still resolves to 2 and exits 2 — the recovery was never what included a
+    /// parse-failure there. Issue #412 tracks watch's divergence from <c>run</c>.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<DiscoveredScenario> Apply(
         IReadOnlyList<DiscoveredScenario> all,
         SelectionCriteria criteria,
-        IChangeSet changeSet)
+        IChangeSet changeSet,
+        bool matchRecoveredMetadata = true)
     {
         ArgumentNullException.ThrowIfNull(all);
         ArgumentNullException.ThrowIfNull(criteria);
@@ -60,7 +88,7 @@ internal static class ScenarioSelector
         var selected = new List<DiscoveredScenario>(all.Count);
         foreach (var scenario in all)
         {
-            if (Matches(scenario, criteria, changeSet))
+            if (Matches(scenario, criteria, changeSet, matchRecoveredMetadata))
             {
                 selected.Add(scenario);
             }
@@ -75,7 +103,8 @@ internal static class ScenarioSelector
     private static bool Matches(
         DiscoveredScenario scenario,
         SelectionCriteria criteria,
-        IChangeSet changeSet)
+        IChangeSet changeSet,
+        bool matchRecoveredMetadata)
     {
         // Path / change-set are identity-based and apply to parse-failures too.
         var normalisedPath = NormalisePath(scenario.AbsolutePath);
@@ -107,7 +136,12 @@ internal static class ScenarioSelector
         // the file's own parse error not even printed. Answering from the recovered metadata makes
         // the filter mean what the user asked; a document whose recovered tags genuinely do not
         // match is still excluded, which is also what the user asked.
-        MetadataSpec? metadata = scenario.Ast?.Metadata ?? scenario.RecoveredMetadata;
+        //
+        // `matchRecoveredMetadata: false` opts one caller out — see Apply's remarks. It is the
+        // recovery alone that is scoped out, not the parse-failure rule: `Ast?.Metadata` is null
+        // for every failure either way, so a no-filter selection still includes them all.
+        MetadataSpec? metadata = scenario.Ast?.Metadata
+            ?? (matchRecoveredMetadata ? scenario.RecoveredMetadata : null);
 
         if (criteria.Tags.Count > 0 && !MatchesAnyTag(metadata, criteria.Tags))
         {

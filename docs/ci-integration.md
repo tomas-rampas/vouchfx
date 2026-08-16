@@ -82,7 +82,15 @@ The qualification "in a document it parsed" is the one shape outside that senten
 measured hole rather than a nuance of the rule: a file whose **YAML** the engine cannot read or parse
 binds no declaration it can see, so it raises nothing of its own. Read "parsed" strictly — a document
 whose YAML parses and which is then refused for its *contents* (an unknown step type, say) has bound
-its `environment` block, so it is inside the sentence and does raise. See the parse bullet under
+its `environment` block, so it is inside the sentence.
+
+Inside the sentence is not the same as raising, and for this class the difference is deliberate. Such
+a document raises on **its own** declaration — the `security:` block it bound, or a `security:` node
+the schema rejected — and contributes nothing at all when it declared neither. A document that *did*
+build and is refused for the same fault behaves differently: its refusal is recorded for the suite,
+where it can pair with a **sibling's** declaration. So an *unsecured* file refused for its contents is
+inert, while an *unsecured* file that built and was refused is not. That asymmetry is what stops an
+unsecured broken file reddening a secured suite it has nothing to do with. See the parse bullet under
 *What does not break CI*.
 
 A rejection located **at or inside** the declaration counts even when the declaration is malformed
@@ -152,13 +160,16 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   declare security" that can disagree with the parsed one — and failing closed instead would redden
   every unsecured suite that merely contains an unreadable file.
 
-  **A document that parses and is then refused for its *contents* now does raise**, and that is the
-  half of #411 that closed: an unknown step type, a duplicate step id, anything `AstBuilder` rejects.
-  Such a document binds its `environment` block before it is refused, so what it declared is known,
-  and a `security:` block in it is accounted for even though the document never runs. Measured on the
-  built CLI with neither gating flag, both run paths: a directory pairing a secured file carrying an
-  unknown step type with an unsecured sibling carrying a step-secret fault exits **4** and prints the
-  security line, where the same pair with no `security:` block exits **0**.
+  **A document that parses and is then refused for its *contents* now raises on its own
+  declaration**, and that is the half of #411 that closed: an unknown step type, a duplicate step id,
+  anything `AstBuilder` rejects. Such a document binds its `environment` block before it is refused,
+  so what it declared is known, and a `security:` block in it is accounted for even though the
+  document never runs. The qualification is load-bearing: **it raises only for what it itself
+  declared**, so an unsecured file refused this way contributes nothing and never reddens a secured
+  sibling. Measured on the built CLI with neither gating flag, both run paths: a directory pairing a
+  secured file carrying an unknown step type with an unsecured sibling carrying a step-secret fault
+  exits **4** and prints the security line, where the same pair with no `security:` block exits
+  **0**.
 
   **Including when the `security:` node is malformed enough to bind nothing** — `security: mtls`, or a
   bare `security:` whose children are commented out. Those bind no block for the walk above to find,
@@ -169,14 +180,49 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   Before this, either spelling exited **4** *alone* (through the parse rule) and **0** beside a
   parsing sibling, so adding an unrelated broken file to the suite made the pipeline greener.
 
-  **`--tag` and `--owner` reach these documents now, and that is a behaviour change for a filtered
-  job.** Selection runs before the split that hands them to the rule above and matched on the *built*
-  AST's `metadata`, which such a document does not have — so every metadata filter excluded it, and it
-  contributed no declaration. Measured: the pair above with a `smoke`-tagged sibling exited **4** under
-  a bare `run` and **0**, silently, under `run --tag smoke`. The `metadata` block binds alongside the
-  `environment` block and is now recovered with it, so a filtered job that used to skip an unbuildable
-  file now reports it as Inconclusive and reddens if it declares a `security:` block the run cannot
-  confirm. A document whose recovered tags genuinely do not match is still excluded.
+  **A metadata-filtered selection now SEES these documents, and that is a behaviour change wider
+  than the security rule this page is about.** `--tag`/`--owner` matched on the *built* AST's
+  `metadata`, which such a document does not have, so every metadata filter excluded it — silently,
+  without even printing its parse error. The `metadata` block binds alongside the `environment` block
+  and is now recovered with it, so the filter is answered from what the document actually says. State
+  the change as that property, not as its security instance: **a `--tag`/`--owner` job that used to
+  skip an unbuildable file now reports it**, and everything that follows from reporting it follows
+  here too.
+
+  Three consequences, in the order a pipeline will meet them. **A filter matching only unbuildable
+  files now exits 4** through the all-parse-failure rule above, with no `security:` block anywhere in
+  the picture — measured on the built CLI: a directory of one `nightly`-tagged unbuildable file with
+  no `security:` block and one untagged sibling exits **4** under `run <dir> --tag nightly`, where the
+  same command previously selected nothing and returned **0**. **In a mixed selection the file folds
+  into the suite verdict as Inconclusive**, so a job passing `--fail-on-inconclusive` reddens on it
+  like any other Inconclusive scenario. And **it reddens the security rule above when it declares a
+  `security:` block the run cannot confirm** — measured, both run paths: a secured unbuildable file
+  **carrying the tag itself**, beside a sibling refused at a compile-time door, exits **4** with the
+  security line under `run <dir> --tag smoke`, matching the bare `run`.
+
+  Note where the tag has to be. The change only bites when the **unbuildable file itself** carries
+  the filtered tag or owner; a document whose recovered metadata genuinely does not match is still
+  excluded, which is the instruction the user gave. Measured on the same directory with the tag moved
+  to the *sibling* only: `run <dir> --tag smoke` exits **0** with no security line, exactly as it did
+  before — that arrangement never selected the unbuildable file and still does not.
+- **An unbuildable document whose declared target name a *sibling's* probe confirmed** — the residual
+  of the paragraph above, and the one a customer is most likely to meet, because it is the shape a
+  working pipeline has. The sequential (`run`) path holds one suite-wide declaration set and matches
+  it against what the probe confirmed **by target name alone**, so an unbuildable document declaring
+  a name some sibling's topology went on to confirm is treated as confirmed — whatever `profile`,
+  `endpoint` or client certificate it actually declared, and without passing the shared-`environment`
+  divergence guard, which walks the *scenarios* only. So #411's stated reproduction closes and this
+  variant does not: the broken secured file beside a sibling carrying an ordinary authoring fault
+  exits 4, while the same file beside siblings that come up and confirm the same name still exits 0.
+  That is [issue #415](https://github.com/tomas-rampas/vouchfx/issues/415) and it is open; closing it
+  means comparing more than the name, which would put declared security *values* back into a record
+  that deliberately keeps only names.
+
+  **The two run paths disagree on exactly this shape.** `--parallel` builds one assurance per
+  unbuildable document with nothing confirmed against it, so a secured unbuildable document raises
+  there unconditionally: on an identical suite with the topology up and the probe confirming that
+  name, `run` exits 0 where `run --parallel 1` exits non-zero. That divergence is #415's, and it
+  closes when #415 does.
 - **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
   what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
   declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated

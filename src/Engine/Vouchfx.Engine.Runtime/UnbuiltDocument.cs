@@ -21,10 +21,13 @@ namespace Vouchfx.Engine.Runtime;
 /// <param name="YamlText">
 /// The document's verbatim text, as the caller read it.
 /// </param>
-/// <param name="Environment">
-/// The <c>environment</c> block the document BOUND, or <see langword="null"/> when it declared
-/// none. Never a reconstruction: this is <c>YamlDocumentParser.Parse</c>'s own output, which is
-/// exactly what <c>SecuredTargets.Enumerate</c> consumes for a scenario that did build.
+/// <param name="Document">
+/// The document the caller BOUND from that text — <c>YamlDocumentParser.Parse</c>'s own output,
+/// never a reconstruction. <see cref="Environment"/> is projected from it, so the two cannot name
+/// different documents: the alternative shape took the environment as a second constructor
+/// parameter, which let a caller pair one document's text with another's environment and left the
+/// fixture's own doc comment conceding it could only promise they agreed "in the fixture".
+/// Construction-level is where that belongs.
 /// </param>
 /// <remarks>
 /// <para>
@@ -58,8 +61,23 @@ namespace Vouchfx.Engine.Runtime;
 /// specs they came from (issue #408).
 /// </para>
 /// </remarks>
-public sealed record UnbuiltDocument(string YamlText, EnvironmentSpec? Environment)
+public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
 {
+    /// <summary>
+    /// The bound document, guarded at construction: <see cref="Environment"/> dereferences it, so a
+    /// <see langword="null"/> here would surface as a <see cref="NullReferenceException"/> from a
+    /// property rather than as a named argument fault at the call site.
+    /// </summary>
+    public E2eDocument Document { get; init; } =
+        Document ?? throw new ArgumentNullException(nameof(Document));
+
+    /// <summary>
+    /// The <c>environment</c> block <see cref="Document"/> bound, or <see langword="null"/> when it
+    /// declared none — exactly what <c>SecuredTargets.Enumerate</c> consumes for a scenario that
+    /// did build.
+    /// </summary>
+    public EnvironmentSpec? Environment => Document.Environment;
+
     /// <summary>
     /// What this document contributes to a suite's security assurance: what it DECLARED, paired
     /// with the refusal that means nothing ever confirmed it — or
