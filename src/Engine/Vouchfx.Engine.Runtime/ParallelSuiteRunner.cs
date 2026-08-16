@@ -41,6 +41,7 @@ using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Reporting;
 using Vouchfx.Sdk;
 
@@ -362,8 +363,20 @@ public static class ParallelSuiteRunner
         // report and the per-scenario verdict list are byte-stable regardless of completion order.
         var slotVerdicts = new Verdict[count];
         var slotBuffers = new List<string>[count];
-        // REQ-018's per-scenario security signal, one slot each for the same determinism reason.
-        var slotSecurityFailures = new bool[count];
+
+        // REQ-018's per-scenario security evidence, one slot each for the same determinism reason.
+        //
+        // THIS IS THE SITE THAT WALKS `SecuredTargets.Enumerate` (security-assurance-derivation,
+        // REQ-002). The core cannot: it validates before it parses, so two of its doors return
+        // with no AST to ask — and asking there is exactly what forced the speculative re-parse
+        // this change removed. `scenarios` is a PARAMETER here, so the walk happens once per
+        // scenario on EVERY path, including the ones the core aborts before parsing anything.
+        //
+        // Per scenario rather than per suite, unlike the shared-topology runner: scenarios under
+        // `--parallel` need NOT declare a common environment block, so each one's declaration is
+        // its own. That is also why the fold below keeps whole assurances rather than unioning
+        // their fields — see SecurityAssurance.Worse.
+        var slotAssurances = new SecurityAssurance[count];
         // Each scenario writes its raw early-exit diagnostics to its OWN StringWriter; we flush
         // them to the real output in declaration order AFTER the gather (determinism point 2/3).
         var slotRawWriters = new StringWriter[count];
@@ -421,7 +434,8 @@ public static class ParallelSuiteRunner
                     index,
                     slotVerdicts,
                     slotBuffers,
-                    slotSecurityFailures,
+                    slotAssurances,
+                    SecuredTargets.Enumerate(scenarios[index].Environment).ToArray(),
                     livePump,
                     ct);
             }
@@ -440,7 +454,7 @@ public static class ParallelSuiteRunner
         // Determinism tail: flush each slot's raw early-exit text to the real output in declaration
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
-            scenarioNames, slotVerdicts, slotBuffers, slotSecurityFailures, slotRawWriters, output,
+            scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotRawWriters, output,
             diffLookup, htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
 
@@ -474,7 +488,8 @@ public static class ParallelSuiteRunner
         int index,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
-        bool[] slotSecurityFailures,
+        SecurityAssurance[] slotAssurances,
+        IReadOnlyList<SecuredTarget> declared,
         LiveEventPump? livePump,
         CancellationToken ct)
     {
@@ -492,6 +507,9 @@ public static class ParallelSuiteRunner
         {
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            // Cancellation is not a REFUSAL: the engine did not reject the declaration, it never
+            // got to it. No refusal recorded ⇒ nothing raised, which is the behaviour that shipped.
+            slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
             // This buffer is synthesised HERE (the core never ran), so it must be posted
             // explicitly — nothing else will ever stream it.
             livePump?.PostRange(slotBuffers[index]);
@@ -513,11 +531,14 @@ public static class ParallelSuiteRunner
             slotVerdicts[index] = result.Verdict;
             slotBuffers[index] = result.Buffer;
 
-            // REQ-018: written into a fixed slot rather than folded into a shared bool, for the
+            // REQ-018: written into a fixed slot rather than folded into shared state, for the
             // same reason every other per-scenario value here is — slots complete in arbitrary
             // order and a shared read-modify-write across them would be a data race. The
             // aggregation tail folds the array once the gather has joined.
-            slotSecurityFailures[index] = result.SecurityConfirmationFailed;
+            //
+            // The core supplied WHICH door refused; `declared` supplies WHAT the document
+            // asserted. Neither half is a decision.
+            slotAssurances[index] = result.Assurance.Declaring(declared);
             // Issue #262: NO livePump?.PostRange(buffer) here. The real core
             // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
             // slot's lines live — as they happened — via the per-scenario LiveStepEventSink plus
@@ -534,6 +555,7 @@ public static class ParallelSuiteRunner
             // Inconclusive, NEVER Fail (§12.1) — the engine could not determine correctness.
             slotVerdicts[index] = Verdict.Inconclusive;
             slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
             livePump?.PostRange(slotBuffers[index]);
         }
         catch (Exception ex)
@@ -555,6 +577,11 @@ public static class ParallelSuiteRunner
                     $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}"));
             slotVerdicts[index] = Verdict.EnvironmentError;
             slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
+            // An engine fault escaping the core is not a refusal of the declaration either — it is
+            // the same class as a topology that would not come up, and raises nothing.
+            slotAssurances[index] = SecurityAssurance.None
+                .Declaring(declared)
+                .Refusing(SecurityAbortKind.TopologyUnavailable);
             livePump?.PostRange(slotBuffers[index]);
         }
         finally
@@ -576,7 +603,7 @@ public static class ParallelSuiteRunner
         IReadOnlyList<string> scenarioNames,
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
-        bool[] slotSecurityFailures,
+        SecurityAssurance[] slotAssurances,
         StringWriter[] slotRawWriters,
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
@@ -588,7 +615,7 @@ public static class ParallelSuiteRunner
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
         var aggregate = Verdict.Pass;
-        var securityConfirmationFailed = false;
+        var assurance = SecurityAssurance.None;
 
         for (var i = 0; i < scenarioNames.Count; i++)
         {
@@ -611,10 +638,15 @@ public static class ParallelSuiteRunner
             perScenario.Add((scenarioNames[i], slotVerdicts[i]));
             aggregate = ScenarioRunner.Elevate(aggregate, slotVerdicts[i]);
 
-            // (4) REQ-018: fold the security signal AFTER the gather has joined, so this read of
+            // (4) REQ-018: fold the security evidence AFTER the gather has joined, so this read of
             //     the slot array is single-threaded. One scenario that could not have its declared
             //     security confirmed is enough to break CI without --fail-on-env-error.
-            securityConfirmationFailed |= slotSecurityFailures[i];
+            //
+            //     WHOLE assurances are folded, never field-by-field: a scenario's declaration must
+            //     never be paired with a DIFFERENT scenario's refusal, which under `--parallel`
+            //     (where scenarios need not share an environment) would redden a suite that no
+            //     single scenario reddens. See SecurityAssurance.Worse.
+            assurance = SecurityAssurance.Worse(assurance, slotAssurances[i]);
         }
 
         // ONE render over the declaration-order concatenation — never per-scenario.  When
@@ -634,7 +666,7 @@ public static class ParallelSuiteRunner
 
         return new SuiteResult(aggregate, perScenario)
         {
-            SecurityConfirmationFailed = securityConfirmationFailed,
+            Assurance = assurance,
         };
     }
 

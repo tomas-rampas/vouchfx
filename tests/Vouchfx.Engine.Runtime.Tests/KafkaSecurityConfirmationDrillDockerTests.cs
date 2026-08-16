@@ -293,7 +293,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // ── The verdict, and that it is REQ-018's carve-out rather than an ordinary env error ──
         Assert.Equal(Verdict.EnvironmentError, drill.Result.Verdict);
         Assert.True(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "a plaintext endpoint is a security-confirmation failure (REQ-018), not an ordinary "
             + "environment error — without this flag `vouchfx run` would exit 0.");
 
@@ -341,10 +341,11 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     private static void AssertNoStepRan(DrillOutcome drill, NetworkArm expectedArm)
     {
         // The abort came from REQ-005's PROBE, not from the pre-topology security preflight. Worth
-        // pinning separately, because `SecurityConfirmationFailed` is set by BOTH — a preflight
-        // rejection (a path that escapes the suite directory, a file that is not there) sets the
-        // same flag — and the two edges are specifically about failures no pre-topology check can
-        // see. `SecurityConfirmation` is OrchestrationErrorKind's own name for the probe's arm.
+        // pinning separately, because the assurance reads UNCONFIRMED for BOTH — a preflight
+        // rejection (a path that escapes the suite directory, a file that is not there) records a
+        // refusal of its own — and the two edges are specifically about failures no pre-topology
+        // check can see. `SecurityConfirmation` is OrchestrationErrorKind's own name for the
+        // probe's arm.
         Assert.Equal("SecurityConfirmation", drill.AbortKind);
 
         // …and from the network arm THIS row's edge belongs to, so TLS was actually attempted and
@@ -375,7 +376,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // health gate that timed out, produces an OrchestrationException of a different Kind and
         // never sets the security flag asserted below.
         Assert.True(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "the run must have reached and failed REQ-005's probe — a health-gate failure would "
             + "leave this flag false, and would mean this drill measured a broken container "
             + "rather than a healthy unsecured one.");
@@ -436,7 +437,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             healthCheckPort: 9093);
 
         Assert.Equal(Verdict.EnvironmentError, drill.Result.Verdict);
-        Assert.True(drill.Result.SecurityConfirmationFailed);
+        Assert.True(drill.Result.Assurance.Unconfirmed);
         Assert.Contains(BrokerName, drill.AbortDetail, StringComparison.Ordinal);
         Assert.Contains("on endpoint '9093'", drill.AbortDetail, StringComparison.Ordinal);
 
@@ -554,7 +555,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         // The probe confirmed, as on every correctly-configured row.
         Assert.False(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "the probe did not confirm; diagnostics: " + drill.Diagnostics);
 
         // THE PAYOFF: both steps passed. Not "were reached" — passed.
@@ -617,7 +618,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         // ── The probe confirmed ───────────────────────────────────────────────────────────────
         Assert.False(
-            drill.Result.SecurityConfirmationFailed,
+            drill.Result.Assurance.Unconfirmed,
             "the control must clear REQ-005's probe — if it does not, the negatives above are "
             + "measuring a broken fixture rather than the edges they name. Diagnostics: "
             + drill.Diagnostics);
@@ -793,7 +794,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         var containersAfter = await ListBrokerContainersAsync(cts.Token);
         var output = diagnostics.ToString();
-        _output.WriteLine($"verdict={result.Verdict} securityConfirmationFailed={result.SecurityConfirmationFailed}");
+        _output.WriteLine($"verdict={result.Verdict} securityUnconfirmed={result.Assurance.Unconfirmed} refusal={result.Assurance.Refusal}");
         _output.WriteLine("── diagnostics ──\n" + output);
 
         // ── The classification: a pre-topology security rejection ─────────────────────────────
@@ -801,7 +802,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // an infrastructure fault. The flag is what lifts it off exit 0 all the same.
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
         Assert.True(
-            result.SecurityConfirmationFailed,
+            result.Assurance.Unconfirmed,
             "a declared-but-missing client certificate is a security rejection, so the flagless "
             + "run must not exit 0 — see this test's exit-code derivation below.");
 
@@ -850,7 +851,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <c>Vouchfx.Cli.Tests.SecurityConfirmationExitCodeTests.
     /// FromVerdict_SecurityPreflightRejection_ExitsInconclusiveWithoutTheFlag</c> pins
     /// <c>ExitCodes.FromVerdict(Verdict.Inconclusive, failOnEnvironmentError: false,
-    /// failOnInconclusive: false, securityConfirmationFailed: true) == ExitCodes.Inconclusive</c>.
+    /// failOnInconclusive: false, an UNCONFIRMED SecurityAssurance) == ExitCodes.Inconclusive</c>.
     /// So the code is <b>4</b>, and it is NOT the 3 the two probe-failure drills in this file
     /// expect: those abort with <c>EnvironmentError</c> from a running topology, this one never
     /// builds a topology at all. Two security rejections, two different codes, each keeping the
@@ -1496,7 +1497,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         var evidence = await watcher;
 
-        _output.WriteLine($"verdict={result.Verdict} securityConfirmationFailed={result.SecurityConfirmationFailed}");
+        _output.WriteLine($"verdict={result.Verdict} securityUnconfirmed={result.Assurance.Unconfirmed} refusal={result.Assurance.Refusal}");
         _output.WriteLine("── diagnostics ──\n" + diagnostics);
         _output.WriteLine("── event buffer ──\n" + string.Join("\n", result.Buffer));
         _output.WriteLine("── container evidence ──\n" + evidence);

@@ -182,7 +182,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
             _output.WriteLine("── api evidence ──\n" + api);
 
             // ── The whole suite passed ────────────────────────────────────────────────────────────
-            Assert.False(result.SecurityConfirmationFailed, "diagnostics: " + diagnostics);
+            Assert.False(result.Assurance.Unconfirmed, "diagnostics: " + diagnostics);
             Assert.Equal(Verdict.Pass, result.Verdict);
 
             // Three steps, three completions — none skipped, none merely started.

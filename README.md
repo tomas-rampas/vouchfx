@@ -174,8 +174,8 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 
 Two exceptions are unconditional. A run in which *every* discovered scenario fails to parse exits 4.
 And a suite declaring a `security:` block the engine cannot confirm exits non-zero with neither gating
-flag set — 3 when the pre-run confirmation probe fails, 4 when the declaration is rejected before any
-container starts. Every other environment error still exits 0 by default; see
+flag set, at whichever code the run's own verdict names — 3 for an EnvironmentError, 4 for an
+Inconclusive. Every other environment error still exits 0 by default; see
 [CI integration](https://vouchfx.io/ci-integration/) for the full breakdown.
 
 Full CLI coverage — every flag, the report formats, graceful shutdown for programmatic hosts — is in

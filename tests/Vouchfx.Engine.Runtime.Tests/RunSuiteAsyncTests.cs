@@ -377,7 +377,7 @@ public sealed class RunSuiteAsyncTests
 
             // REQ-018: Inconclusive + this flag is exit 4, which is what the documentation claims
             // and what `vouchfx validate` already produced for the same suite.
-            Assert.True(result.SecurityConfirmationFailed);
+            Assert.True(result.Assurance.Unconfirmed);
         }
         finally
         {
@@ -477,7 +477,7 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(yamls.Length, result.ScenarioVerdicts.Count);
 
         // No security is declared anywhere here, so REQ-018's carve-out must stay off on both rows.
-        Assert.False(result.SecurityConfirmationFailed);
+        Assert.False(result.Assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -543,7 +543,7 @@ public sealed class RunSuiteAsyncTests
         Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
 
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
-        Assert.True(result.SecurityConfirmationFailed);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -593,7 +593,7 @@ public sealed class RunSuiteAsyncTests
         var rendered = sw.ToString();
         Assert.Contains("resolves its declared security paths against a different directory", rendered, StringComparison.Ordinal);
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
-        Assert.True(result.SecurityConfirmationFailed);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     // Hoisted to fields: CA1861 fires on an array of literal constants in an argument position,
@@ -615,7 +615,7 @@ public sealed class RunSuiteAsyncTests
     /// <remarks>
     /// <para>
     /// <strong>Why this is not cosmetic, and why it is worse here than at the sibling seam.</strong>
-    /// This guard sets <c>SecurityConfirmationFailed</c>, so the run exits NON-ZERO (REQ-018). Before
+    /// This guard records an authoring refusal on a suite that declares security, so the assurance reads UNCONFIRMED and the run exits NON-ZERO (REQ-018). Before
     /// this fix it returned a bare <see cref="SuiteResult"/>: no scenario events, no live pump, no
     /// terminal render and — the one that reaches CI — no
     /// <c>FileReportWriter.WriteFileReports</c>. A pipeline running
@@ -698,7 +698,7 @@ public sealed class RunSuiteAsyncTests
             // Classification unchanged by the reroute: still Inconclusive, still a security
             // -confirmation failure (this guard IS about security material).
             Assert.Equal(Verdict.Inconclusive, result.Verdict);
-            Assert.True(result.SecurityConfirmationFailed);
+            Assert.True(result.Assurance.Unconfirmed);
             Assert.Equal(2, result.ScenarioVerdicts.Count);
 
             // One print, not two — the diagnostic is one suite-level fact.
@@ -707,6 +707,118 @@ public sealed class RunSuiteAsyncTests
                 .Split('\n')
                 .Select(line => line.TrimEnd('\r'))
                 .FirstOrDefault(line => line.StartsWith("RunSuiteAsync: this suite declares", StringComparison.Ordinal))
+                ?? string.Empty;
+            Assert.NotEmpty(diagnostic);
+            Assert.Equal(1, CountOccurrences(rendered, diagnostic));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static readonly string[] s_sharedEnvironmentScenarioNames = { "env-a", "env-b" };
+
+    /// <summary>
+    /// The THIRD instance of the same artefact gap, at the shared-<c>environment</c> divergence
+    /// guard (peer-review MAJOR-1, fix round ten) — the seam the two fixes above left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED RED FIRST on the branch as it stood: this shape exited 3 with
+    /// <c>junit exists = False, html exists = False, events exists = False</c>. It is the worst
+    /// spelling of the defect the sibling test above describes — a NON-ZERO exit beside an empty
+    /// results directory — and it is the one seam of the three that produces
+    /// <see cref="Verdict.EnvironmentError"/> rather than Inconclusive, so its scenarios map to
+    /// JUnit's <c>&lt;error&gt;</c> primitive and its counts to <c>envError</c>.
+    /// </para>
+    /// <para>
+    /// The guard runs ABOVE the per-scenario compilation loop, so the completion path is handed a
+    /// scenario list synthesised from the parameters rather than one stamped onto compilations.
+    /// Moving the guard below that loop would have shared the stamp — and changed which diagnostic
+    /// an author sees first, which is a behaviour change this fix deliberately did not make.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SecuredSuiteWithDivergingEnvironments_WritesEveryRequestedReport()
+    {
+        const string first = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  security:
+                    profile: tls
+                    endpoint: 8443
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        // Byte-identical but for the image tag — so the divergence is never the security block.
+        var second = first.Replace("myorg/api:1.0", "myorg/api:2.0", StringComparison.Ordinal);
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var firstAst = AstBuilder.Build(YamlDocumentParser.Parse(first), registry);
+        var secondAst = AstBuilder.Build(YamlDocumentParser.Parse(second), registry);
+
+        var directory = Directory.CreateTempSubdirectory("vouchfx-env-divergence-reports-");
+        try
+        {
+            var junitPath = Path.Combine(directory.FullName, "results.xml");
+            var htmlPath = Path.Combine(directory.FullName, "report.html");
+            var eventsPath = Path.Combine(directory.FullName, "events.jsonl");
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: new[] { firstAst, secondAst },
+                scenarioNames: s_sharedEnvironmentScenarioNames,
+                yamlTexts: new[] { first, second },
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                htmlReportPath: htmlPath,
+                junitReportPath: junitPath,
+                eventsReportPath: eventsPath);
+
+            Assert.True(
+                File.Exists(junitPath),
+                "The shared-environment divergence guard must write the requested JUnit report — "
+                + "this seam exits non-zero for a secured suite.");
+            Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
+            Assert.True(File.Exists(eventsPath), "…and the requested events stream.");
+
+            // Both scenarios present, both EnvironmentError — JUnit's <error> primitive, not
+            // <skipped>, which is what makes CountsFor's non-Inconclusive arm a live path.
+            var xml = File.ReadAllText(junitPath);
+            Assert.Contains("tests=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("errors=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"env-a\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"env-b\"", xml, StringComparison.Ordinal);
+            Assert.Equal(
+                2,
+                CountOccurrences(xml, "<property name=\"vouchfx.verdict\" value=\"ENV_ERROR\"/>"));
+
+            Assert.Equal(4, File.ReadAllLines(eventsPath).Length);
+
+            // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
+            Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+            Assert.True(result.Assurance.Unconfirmed);
+            Assert.Equal(2, result.ScenarioVerdicts.Count);
+            Assert.All(result.ScenarioVerdicts, entry => Assert.Equal(Verdict.EnvironmentError, entry.Verdict));
+
+            // One print, not two: the divergence is one suite-level fact, and it is also stamped as
+            // each scenario's own cause.
+            var rendered = sw.ToString();
+            var diagnostic = rendered
+                .Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .FirstOrDefault(line => line.StartsWith("RunSuiteAsync: scenario ", StringComparison.Ordinal))
                 ?? string.Empty;
             Assert.NotEmpty(diagnostic);
             Assert.Equal(1, CountOccurrences(rendered, diagnostic));
@@ -882,6 +994,6 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
 
         // REQ-018's mechanism clause: an ordinary authoring error keeps the ordinary mapping.
-        Assert.False(result.SecurityConfirmationFailed);
+        Assert.False(result.Assurance.Unconfirmed);
     }
 }

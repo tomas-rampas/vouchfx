@@ -4,6 +4,7 @@
 // (with no Docker / topology dependency) so the mapping is directly unit-testable.
 
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Runtime;
 
 namespace Vouchfx.Cli;
 
@@ -116,35 +117,31 @@ internal static class ExitCodes
     /// When <see langword="true"/>, an <see cref="Verdict.Inconclusive"/> verdict exits with
     /// <see cref="Inconclusive"/> (4) instead of <see cref="Success"/> (0).
     /// </param>
-    /// <param name="securityConfirmationFailed">
-    /// REQ-018's narrow carve-out. <see langword="true"/> when the run aborted because a declared
-    /// <c>security</c> block could not be confirmed.
+    /// <param name="securityAssurance">
+    /// REQ-018's narrow carve-out, supplied as EVIDENCE rather than as a conclusion: what the suite
+    /// declared, what REQ-005's probe confirmed, and which door refused. <see langword="null"/>
+    /// (the default) means the caller never asked about security at all.
     /// <para>
-    /// <strong>The PROPERTY, stated here; the LIST, maintained elsewhere.</strong> What every
-    /// producer shares — and the whole of what this parameter needs to know — is that the document
-    /// DECLARED a <c>security</c> block and the engine could not establish that it holds: either
-    /// REQ-005's probe failed against a started topology, or the declaration was rejected before
-    /// any container started at all. This file keeps no enumeration of its own. Grep
-    /// <c>SecurityConfirmationFailed</c> in
-    /// <c>src/Engine/Vouchfx.Engine.Runtime/ScenarioRunner.cs</c>: its remarks on
-    /// <c>SuiteResult.SecurityConfirmationFailed</c> are the maintained account of what each
-    /// producer MEANS, and they state in their own words that the list is OPEN.
+    /// <strong>The POLICY is here; the PREDICATE is on the record.</strong> This file decides which
+    /// exit code an unconfirmed assurance produces for a given verdict.
+    /// <c>SecurityAssurance.Unconfirmed</c> decides whether the assurance is unconfirmed, and it is
+    /// the only place that decision is written — the parallel runner's per-scenario fold reads the
+    /// same member, and a second spelling here is precisely how the two would drift.
     /// </para>
     /// <para>
-    /// This paragraph used to carry a four-item summary of that list, and by the time it was read
-    /// the list was five: the secret-reference door (EDGE-003, #387) had been added and this copy
-    /// had not. The habit, not the count, is the defect — <c>ScenarioCoreResult</c>'s own summary
-    /// of the same list went stale twice before it was rewritten as a derivation, for exactly this
-    /// reason. A pointer cannot fall out of step with what it points at.
+    /// This parameter used to be a <c>bool</c> whose meaning was an OPEN, hand-maintained list of
+    /// the doors that set it, kept in <c>ScenarioRunner</c> and pointed at from here. There is no
+    /// list any more, so there is nothing here to fall out of step: a door records only which door
+    /// it was, and the suite's one walk of <c>SecuredTargets.Enumerate</c> supplies the rest.
     /// </para>
-    /// Defaulted to <see langword="false"/> so every
+    /// Defaulted to <see langword="null"/> so every
     /// existing call site and every existing parameterised test case keeps compiling and keeps
     /// its current result — that default is what makes the carve-out provably narrow.
     /// </param>
     /// <returns>
     /// <see cref="TestFailure"/> (1) for <see cref="Verdict.Fail"/> — always; the opt-in code
     /// (<see cref="EnvironmentError"/> / <see cref="Inconclusive"/>) for the matching verdict
-    /// when its flag is set OR when <paramref name="securityConfirmationFailed"/> is set;
+    /// when its flag is set OR when <paramref name="securityAssurance"/> is unconfirmed;
     /// otherwise <see cref="Success"/> (0).  Per the verdict taxonomy (§12.1),
     /// <strong>only <see cref="Verdict.Fail"/> breaks CI by default</strong> — so
     /// <see cref="Verdict.Pass"/>, <see cref="Verdict.EnvironmentError"/> and
@@ -153,34 +150,37 @@ internal static class ExitCodes
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <paramref name="securityConfirmationFailed"/> can arrive with THREE verdicts, and forces
-    /// the verdict's OWN opt-in code rather than substituting a single fixed one on the two that
-    /// have one, so the code a pipeline reads still identifies the outcome: a failed probe aborts
-    /// the topology and aggregates to <see cref="Verdict.EnvironmentError"/> → 3, while a
-    /// pre-topology security preflight rejection is an authoring error that aggregates to
-    /// <see cref="Verdict.Inconclusive"/> → 4. Both are non-zero, which is the whole of what
+    /// An unconfirmed <paramref name="securityAssurance"/> can arrive with THREE verdicts, and
+    /// forces the verdict's OWN opt-in code rather than substituting a single fixed one on the two
+    /// that have one, so the code a pipeline reads still identifies the outcome:
+    /// <see cref="Verdict.EnvironmentError"/> → 3, <see cref="Verdict.Inconclusive"/> → 4. WHICH of
+    /// the two a given refusal produces is decided by the verdict that refusal carries, never by
+    /// whether a container had started — measured, the suite-level shared-<c>environment</c>
+    /// divergence guard refuses before any container starts and still aggregates to
+    /// <see cref="Verdict.EnvironmentError"/> → 3. Both are non-zero, which is the whole of what
     /// REQ-018 requires.
     /// </para>
     /// <para>
-    /// <see cref="Verdict.Fail"/> is the third, and the flag is IGNORED there because Fail is
+    /// <see cref="Verdict.Fail"/> is the third, and the assurance is IGNORED there because Fail is
     /// already unconditionally non-zero. It is reachable rather than theoretical: a mixed suite
-    /// whose one scenario carries a schema error inside its <c>security</c> block sets the flag
+    /// whose one scenario carries a schema error inside its <c>security</c> block records a refusal
     /// (<c>ScenarioRunner.RunSuiteAsync</c>'s <c>RejectsASecurityDeclaration</c>) and folds in as
     /// <see cref="Verdict.Inconclusive"/>, while a runnable sibling whose step fails folds in as
     /// <see cref="Verdict.Fail"/> — and <c>Elevate</c> ranks Fail (precedence rank 2) above
-    /// Inconclusive (precedence rank 1), so the suite returns Fail carrying a true flag. Those
+    /// Inconclusive (precedence rank 1), so the suite returns Fail carrying an unconfirmed
+    /// assurance. Those
     /// ranks are <c>VerdictPrecedence</c>'s ordering only: they are neither the enum's values nor
     /// the exit codes named elsewhere in this file. REQ-018 is satisfied by the Fail arm's own
-    /// code; nothing is lost by not consulting the flag.
+    /// code; nothing is lost by not consulting the assurance.
     /// </para>
     /// <para>
-    /// The DISCARD arm (<c>_ =&gt;</c>) is the one place the flag DOES substitute a fixed code —
+    /// The DISCARD arm (<c>_ =&gt;</c>) is the one place it DOES substitute a fixed code —
     /// <see cref="EnvironmentError"/> (3) — and it is the exception that proves the own-code rule
-    /// rather than a contradiction of it, because nothing it covers is reachable with the flag set.
-    /// It covers <see cref="Verdict.Pass"/> and, deliberately, anything else that is not a declared
-    /// enum member (an out-of-range cast, or a member a later release adds) — and that breadth is
-    /// the point rather than an accident, since a fail-closed default is worth exactly as much as
-    /// the set of unforeseen inputs it catches. For Pass the unreachability is structural: the
+    /// rather than a contradiction of it, because nothing it covers is reachable with an
+    /// unconfirmed assurance. It covers <see cref="Verdict.Pass"/> and, deliberately, anything
+    /// else that is not a declared enum member (an out-of-range cast, or a member a later release
+    /// adds) — and that breadth is the point rather than an accident, since a fail-closed default
+    /// is worth exactly as much as the set of unforeseen inputs it catches. For Pass the unreachability is structural: the
     /// precedence <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c> means any scenario
     /// carrying a security failure elevates the aggregate above Pass, and Pass has no opt-in code
     /// to prefer in any case. It is nonetheless written to fail CLOSED rather than to fall through
@@ -193,13 +193,22 @@ internal static class ExitCodes
         Verdict verdict,
         bool failOnEnvironmentError,
         bool failOnInconclusive,
-        bool securityConfirmationFailed = false) => verdict switch
+        SecurityAssurance? securityAssurance = null)
+    {
+        // REQ-018's carve-out, read ONCE from the assurance's own evidence rather than decided at
+        // any of the nine doors that used to decide it for themselves. `Unconfirmed` is
+        // `(an authoring refusal ∧ some declared target went unconfirmed) ∨ a failed probe
+        // ∨ a refusal located in the declaration itself` — see SecurityAssurance.
+        var securityUnconfirmed = securityAssurance?.Unconfirmed == true;
+
+        return verdict switch
         {
             Verdict.Fail => TestFailure,
             Verdict.EnvironmentError =>
-                failOnEnvironmentError || securityConfirmationFailed ? EnvironmentError : Success,
+                failOnEnvironmentError || securityUnconfirmed ? EnvironmentError : Success,
             Verdict.Inconclusive =>
-                failOnInconclusive || securityConfirmationFailed ? Inconclusive : Success,
-            _ => securityConfirmationFailed ? EnvironmentError : Success,
+                failOnInconclusive || securityUnconfirmed ? Inconclusive : Success,
+            _ => securityUnconfirmed ? EnvironmentError : Success,
         };
+    }
 }

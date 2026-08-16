@@ -965,7 +965,7 @@ internal static class RunCommand
             : (eventsReportPath, false);
 
         Verdict suiteVerdict = Verdict.Pass;
-        var securityConfirmationFailed = false;
+        SecurityAssurance? securityAssurance = null;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1044,7 +1044,7 @@ internal static class RunCommand
             // Read straight off the runner's own result rather than re-derived from the verdict or
             // sniffed out of the event stream — the whole point of the carve-out is that the
             // verdict is UNCHANGED and cannot distinguish this case.
-            securityConfirmationFailed = result.SecurityConfirmationFailed;
+            securityAssurance = result.Assurance;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1058,13 +1058,101 @@ internal static class RunCommand
                 .ConfigureAwait(false);
         }
 
+        // THE EXIT CODE MUST NEVER BE THE ONLY EVIDENCE, and this is the ONE site that says so.
+        //
+        // It used to be two, one per schema door, each computing for itself whether the document
+        // declared security. Both are gone: this reads the same assurance the exit code reads, so
+        // a non-zero exit and its explanation cannot come apart — and it now covers every door
+        // that raises, not only the schema one.
+        //
+        // WHICH SHAPES REACH IT IS A PROPERTY, NOT A LIST. An authoring refusal that left some
+        // declared target unconfirmed, or a refusal located in the declaration itself, reaches
+        // this line; which door it came from is not consulted, because `Unconfirmed` is derived
+        // once from the assurance rather than decided per door — so the set grows with the doors
+        // and needs no maintenance here. A list was written here first and was short the day it was written:
+        // it named the step-level secret fault, the unresolvable `script.csharp file:`, the
+        // `${conn:typo}` and the protocol conflict, and omitted the shared-`environment`
+        // divergence guard, which prints this notice and exits 3 (measured, real CLI). Read the
+        // property; the secured rows of SecurityAssuranceMatrixTests pin the shapes measured so far.
+        //
+        // Suppressed for a failed PROBE: that path already reports a measured security failure in
+        // its own words, and a generic line after it would add nothing.
+        if (securityAssurance is { Unconfirmed: true, Refusal: not SecurityAbortKind.ProbeUnconfirmed })
+        {
+            await output.WriteLineAsync(SecurityUnconfirmableNotice).ConfigureAwait(false);
+        }
+
         // Fold the parse-failures into the suite verdict and map the result to a process exit
         // code — see ComputeExitCode for the issue #278 special case (an entirely-unparseable
         // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
         return ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
-            securityConfirmationFailed);
+            securityAssurance);
     }
+
+    /// <summary>
+    /// The line printed when a suite that declares <c>security</c> reaches the end of its run with
+    /// that declaration unconfirmed — the reason it exits non-zero (REQ-018).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An exit code is not evidence on this surface: several distinct doors all produce 4, and an
+    /// entirely-unparseable set produces 4 through issue #278's rule, so a non-zero exit with no
+    /// accompanying reason leaves an author guessing which rule fired.
+    /// </para>
+    /// <para>
+    /// <strong>EVERY CLAUSE MUST BE TRUE ON EVERY PATH THAT REACHES THE PRINT, and the mechanism
+    /// clause this line used to open with was not.</strong> It said the suite "was refused before
+    /// any container started". Measured, with no flags and exit 3, the engine's own diagnostic
+    /// printed immediately above it read <c>Current State: Running</c> with a <c>Start Time</c> —
+    /// <c>EnvironmentMapper.Map</c>'s refusal arrives inside <c>StartAsync</c>, and under
+    /// <c>--parallel</c> a sibling slot's containers can be up and past their health gate. The
+    /// clause is gone rather than qualified: this site holds an assurance record, and that record
+    /// knows what was DECLARED and what was CONFIRMED — it does not know what any container did.
+    /// Stating the property the record can actually vouch for is both true everywhere and the
+    /// thing an author needs to read.
+    /// </para>
+    /// <para>
+    /// <strong>ONE line, at the one site that reads the assurance — and its wording RETRACTS a
+    /// narrower one.</strong> Two schema-door copies used to say "the document was rejected before
+    /// its security declaration could be validated at all", and that narrowness was deliberate: the
+    /// broad statement described a rule the engine did not implement, because two LATER doors (the
+    /// provider pipeline and the step secret pass) also refused a secured suite before any container
+    /// started and exited 0. Both of those now exit non-zero, so the narrow statement would be false
+    /// wherever this line now fires. The retracted clauses are recorded here rather than deleted,
+    /// because a reader who remembers the old wording needs to know it was overturned rather than
+    /// reworded.
+    /// </para>
+    /// <para>
+    /// The out-of-block clause the old wording carried conditionally ("even though nothing reported
+    /// above lies inside that block") is gone with them: it distinguished two schema-door cases, and
+    /// this line is no longer a schema-door line.
+    /// </para>
+    /// <para>
+    /// <strong>THE CLOSING PROMISE IS RETRACTED TOO, and it was a promise rather than a
+    /// property.</strong> It read "Fix what is reported above and the suite will run its security
+    /// checks normally" — a claim that ONE fix suffices. Measured false: a secured suite carrying
+    /// both a schema error at <c>/steps/0</c> and a missing <c>clientCert</c> reaches the schema
+    /// door first, which <c>continue</c>s before the merged authoring door runs at all, so only the
+    /// schema error prints. The author fixes exactly what was reported and the next run exits 4
+    /// again, this time on the cert. This site sits behind a CHAIN of doors, not the last one, and
+    /// each door reports only the faults it reached. The replacement states that property and
+    /// promises no outcome — "need not be the last fix" is true whether or not another door is
+    /// waiting, which is the only shape that survives the rule above.
+    /// </para>
+    /// <para>
+    /// <strong>Reach, measured:</strong> this line goes to stdout only. It is absent from
+    /// <c>--junit</c> and <c>--events</c> on both run paths — consistent with the diagnostics it
+    /// accompanies, which those artefacts also omit. A CI job reading only machine-readable
+    /// artefacts still sees a bare non-zero exit; that gap is filed separately.
+    /// </para>
+    /// </remarks>
+    internal const string SecurityUnconfirmableNotice =
+        "This suite declares a 'security' block that this run could not confirm, so it exits "
+        + "non-zero whatever the fault reported above was: a run that cannot confirm a declared "
+        + "security assertion cannot vouch for it. Each door reports only the faults it reached, so "
+        + "what is reported above need not be the last fix before a run can confirm this suite's "
+        + "security block.";
 
     /// <summary>
     /// Maps the suite's outcome to a process exit code (§12.1), applying the issue #278
@@ -1120,7 +1208,7 @@ internal static class RunCommand
         Verdict suiteVerdict,
         bool failOnEnvironmentError,
         bool failOnInconclusive,
-        bool securityConfirmationFailed = false)
+        SecurityAssurance? securityAssurance = null)
     {
         if (parsedCount == 0 && parseFailureCount > 0)
         {
@@ -1129,7 +1217,7 @@ internal static class RunCommand
 
         var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
         return ExitCodes.FromVerdict(
-            aggregate, failOnEnvironmentError, failOnInconclusive, securityConfirmationFailed);
+            aggregate, failOnEnvironmentError, failOnInconclusive, securityAssurance);
     }
 
     /// <summary>

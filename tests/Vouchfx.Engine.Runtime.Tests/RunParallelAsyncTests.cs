@@ -294,9 +294,9 @@ public sealed class RunParallelAsyncTests
     // ── (c2) REQ-018's security signal folds across slots ─────────────────────
     //
     // WHY THIS EXISTS. `ScenarioCoreResult` was introduced for exactly ONE reason: the tuple the
-    // fake cores here return cannot carry `SecurityConfirmationFailed`, and `ParallelSuiteRunner`'s
+    // fake cores here return cannot carry the security assurance, and `ParallelSuiteRunner`'s
     // fold is the only site that reads the per-slot array. Every fake below the fold still returns
-    // the tuple shape (via the implicit conversion, which defaults the flag to false), so before
+    // the tuple shape (via the implicit conversion, which defaults the assurance to None), so before
     // these two cases the ONE property the record exists for had no test on its ONE consumer — a
     // seam the implicit conversion makes silently plausible either way.
 
@@ -326,7 +326,10 @@ public sealed class RunParallelAsyncTests
                     ? new ScenarioCoreResult(
                         Verdict.EnvironmentError, MakeBuffer(scenarioName, Verdict.EnvironmentError))
                     {
-                        SecurityConfirmationFailed = true,
+                        // A failed PROBE — the refusal kind that raises on its own evidence, so
+                        // this case does not depend on what the fake scenarios declare.
+                        Assurance = SecurityAssurance.None.Refusing(
+                            SecurityAbortKind.ProbeUnconfirmed),
                     }
                     : (Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass));
             };
@@ -342,7 +345,7 @@ public sealed class RunParallelAsyncTests
             seedBaseDirectory: null,
             ct: default);
 
-        Assert.True(result.SecurityConfirmationFailed);
+        Assert.True(result.Assurance.Unconfirmed);
 
         // The verdict itself is unchanged by the carve-out (§12.1): a security-confirmation
         // failure is still an ordinary EnvironmentError, and only the EXIT CODE differs.
@@ -380,12 +383,12 @@ public sealed class RunParallelAsyncTests
             seedBaseDirectory: null,
             ct: default);
 
-        Assert.False(result.SecurityConfirmationFailed);
+        Assert.False(result.Assurance.Unconfirmed);
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
     }
 
     /// <summary>
-    /// The REAL core — the one the fakes above stand in for — must set the flag the fold reads.
+    /// The REAL core — the one the fakes above stand in for — must record the refusal the fold reads.
     /// Two doors reach it before any container starts, and both are exercised here: a preflight
     /// rejection of a declared artefact path (REQ-003/REQ-004) and a root-schema rejection of the
     /// declaration itself (REQ-021's per-kind narrowing).
@@ -476,13 +479,13 @@ public sealed class RunParallelAsyncTests
                 livePump: null,
                 cancellationToken: default);
 
-            // Pin WHICH door opened, not merely that the flag is set. Without this the theory
+            // Pin WHICH door opened, not merely that the assurance reads unconfirmed. Without this the theory
             // passes for any rejection whatsoever — which is exactly how the mis-indented fixture
             // above went unnoticed while reaching neither door it names.
             Assert.Contains(expectedInDiagnostic, sw.ToString(), StringComparison.Ordinal);
 
             Assert.Equal(Verdict.Inconclusive, result.Verdict);
-            Assert.True(result.SecurityConfirmationFailed);
+            Assert.True(result.Assurance.Unconfirmed);
         }
         finally
         {
