@@ -91,7 +91,7 @@ public enum SecurityAbortKind
     /// <strong>What <c>Assure</c> returns is one value; what the two run paths DO with it differs,
     /// and the difference is visible in an exit code.</strong> <c>Assure</c> is not a door and
     /// decides no outcome — it returns a declaration and a refusal.
-    /// <c>ParallelSuiteRunner.UnbuiltAssurance</c> keeps that value as its own assurance, one per
+    /// <c>UnbuiltDocument.AssureAll</c> keeps that value as its own assurance, one per
     /// document, with <see cref="SecurityAssurance.Confirmed"/> empty by construction; the
     /// declaration and the refusal are therefore paired, and a secured unbuilt document raises
     /// there unconditionally. The sequential path holds ONE suite-wide assurance whose

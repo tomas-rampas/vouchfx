@@ -800,6 +800,75 @@ public sealed class RunParallelAsyncTests
         Assert.True(result.Assurance.Unconfirmed);
     }
 
+    /// <summary>
+    /// <strong>EDGE-003 on the PARALLEL arm: several unbuilt documents, mixed.</strong> The suite
+    /// raises, the refusal recorded is the highest-precedence one, and the assurance reported is the
+    /// winning document's own — never one document's declaration beside another's refusal.
+    /// </summary>
+    /// <remarks>
+    /// This path always folded whole per-document values, so this row is not a fix's regression test
+    /// but the OTHER side of the agreement: the sequential path's
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_SeveralUnbuiltDocuments_*</c> rows now assert the same
+    /// two properties against the same document shapes, so a future change that reopens the union on
+    /// either path turns one of the pair red. It lives here rather than in the sequential file
+    /// because the harness for a Docker-free parallel run — the throwing fake core on the
+    /// empty-<c>scenarios</c> arm — is already here.
+    /// </remarks>
+    [Fact]
+    public async Task RunParallelCoreAsync_SeveralUnbuiltDocuments_RecordTheHighestPrecedenceRefusal()
+    {
+        const string securedYaml =
+            "environment:\n"
+            + "  services:\n"
+            + "    legacy:\n"
+            + "      image: myorg/legacy:1.0\n"
+            + "      security:\n"
+            + "        profile: mtls\n"
+            + "        endpoint: 8443\n"
+            + "        clientCert: ./client.pem\n"
+            + "        clientKey: ./client.key\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        // A `security` node the SCHEMA rejects: it binds no SecuritySpec, so it declares nothing the
+        // walk can see and SecurityDeclarationRejected — which outranks AuthoringFault — carries it.
+        const string rejectedYaml =
+            "environment:\n"
+            + "  services:\n"
+            + "    broken:\n"
+            + "      image: myorg/broken:1.0\n"
+            + "      security: mtls\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        var sw = new StringWriter();
+        var unbuilt = new[]
+        {
+            new UnbuiltDocument(securedYaml, YamlDocumentParser.Parse(securedYaml)),
+            new UnbuiltDocument(rejectedYaml, YamlDocumentParser.Parse(rejectedYaml)),
+        };
+
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry,
+            Array.Empty<ScenarioAst>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 1,
+            runScenario: (_, _, _, _, _, _, _, _) =>
+                throw new InvalidOperationException("no slot may run on the empty arm"),
+            seedBaseDirectory: null,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(
+            SecurityAbortKind.SecurityDeclarationRejected, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+
+        // The winning document declared nothing the walk could see, so its whole assurance carries
+        // an empty declaration — the mechanical form of "no union with the secured sibling's".
+        Assert.Empty(result.Assurance.Declared);
+    }
+
     /// <summary>Mismatched parallel-list lengths throw <see cref="ArgumentException"/>.</summary>
     [Fact]
     public async Task RunParallelAsync_MismatchedListLengths_ThrowsArgumentException()

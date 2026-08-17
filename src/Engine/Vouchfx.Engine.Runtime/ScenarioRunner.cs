@@ -1103,8 +1103,12 @@ public static class ScenarioRunner
         // false negative for any caller that is not the CLI.
         //
         // ANSWERING IS PREFERRED OVER THROWING, and the shape it answers with is not invented here:
-        // the pair below is the SAME union-then-refusal pair the main path applies further down,
-        // with the scenarios' own (empty) contribution removed. `Verdict.Pass` is unchanged and is
+        // the call below reaches the SAME per-document fold — `UnbuiltDocument.AssureAll`, one whole
+        // assurance per document folded by `SecurityAssurance.Worse` — that the main path applies
+        // further down, with the scenarios' own (empty) contribution removed. It is NOT a
+        // union-then-refusal pair: that is the shape declaration-confirmation-matching REQ-001
+        // removed from both, because it let one document's declaration meet another's refusal.
+        // `Verdict.Pass` is unchanged and is
         // the consistent answer rather than a concession — an unbuilt document contributes to
         // `Assurance` and to nothing else on the non-empty path either (it is absent from
         // `ScenarioVerdicts` by construction), so with no scenario verdicts to aggregate the
@@ -1162,99 +1166,82 @@ public static class ScenarioRunner
         // at any of them: that is SecurityAssurance.Unconfirmed's single job, and it is why this
         // replaced a bool that nine door-local sites each set for themselves — and, because those
         // doors are mutually exclusive early returns, never all set.
-        // THE WALK ALSO COVERS DOCUMENTS THAT NEVER BECAME SCENARIOS (issue #411). A document that
-        // parsed and was then refused by `AstBuilder.Build` is absent from `scenarios` — the CLI
-        // dropped it into its parse-failure list — yet its `environment` block BOUND, so it declares
-        // exactly as loudly as any sibling that made it here. Folding it into this one walk is what
-        // stops a suite exiting 0 with a file in it asserting mtls. Nothing else about such a
-        // document changes: it still runs nothing and still folds in as Inconclusive.
-        //
-        // THE UNION ACROSS SCENARIOS AND UNBUILT DOCUMENTS IS THIS PATH'S SHAPE, AND WHAT IT COSTS
-        // IS RECORDED HERE RATHER THAN ARGUED AWAY (issue #415). The argument for a union is that
-        // this path builds ONE shared topology from ONE environment block, so a declaration
-        // REQ-005's probe confirmed on that topology is confirmed for every scenario in the suite —
-        // and a per-document pairing (what `ParallelSuiteRunner` does, where each scenario owns its
-        // own topology and no such sharing exists) would raise even when the probe had measured
-        // that very declaration. That argument covers SCENARIOS. It does not cover an unbuilt
-        // document, and two facts say so:
-        //
-        //   • an unbuilt document is by construction absent from `scenarios`, so the shared-
-        //     `environment` divergence guard below — the thing that makes "one environment block"
-        //     true of the scenarios — never compares its environment with anything: that loop
-        //     walks `scenarios` and only `scenarios`. It bypasses the guard entirely;
-        //   • `Confirmed` is compared BY NAME ONLY (`SecurityAssurance.SomeDeclaredTargetWent-
-        //     Unconfirmed`), so an unbuilt document's `security` block — possibly a different
-        //     `profile`, `endpoint` or `clientCert` — counts as confirmed on the strength of a
-        //     sibling's probe against a different environment that merely shares the target name.
-        //
-        // Both routes are issue #415 and neither is closed here: comparing more than the name would
-        // push `SecuritySpec` values back into the assurance record and revert issue #408's
-        // narrowing to names.
-        //
-        // SO #411'S STATED REPRODUCTION CLOSES AND THE REALISTIC CI VARIANT DOES NOT, and the
-        // difference is the part a later reader will act on. A broken secured file beside a sibling
-        // carrying an ordinary authoring fault now exits 4 on both run paths. The same file beside
-        // siblings that actually come up and whose probe confirms the same target NAME still exits
-        // 0 on this path. The door is not fully shut.
-        //
-        // AND ON THAT SHAPE THE TWO RUN PATHS DISAGREE — stated because each half is documented
-        // separately and their disagreement was not. `ParallelSuiteRunner.UnbuiltAssurance` builds
-        // one assurance PER DOCUMENT with `Confirmed` empty by construction, so a secured unbuilt
-        // document raises there unconditionally; this path's union lets a sibling's confirmation of
-        // the same NAME satisfy it. On an identical suite with the topology up and the probe
-        // confirming that name, `run` exits 0 where `run --parallel 1` exits non-zero. That
-        // divergence is #415's, not a second defect, and it closes when #415 does.
-        var unbuilt = unbuiltDocuments ?? Array.Empty<UnbuiltDocument>();
+        // THE WALK COVERS SCENARIOS AND ONLY SCENARIOS. Documents that never became scenarios
+        // (issue #411) declare exactly as loudly, but they do NOT belong in this union — they are
+        // folded in WHOLE, below, as their own assurances.
         var assurance = SecurityAssurance.None.Declaring(
-            scenarios.SelectMany(s => SecuredTargets.Enumerate(s.Environment))
-                .Concat(unbuilt.SelectMany(document => SecuredTargets.Enumerate(document.Environment)))
-                .ToArray());
+            scenarios.SelectMany(s => SecuredTargets.Enumerate(s.Environment)).ToArray());
 
-        // …AND THE REFUSAL, because names alone close nothing. Every disjunct of
-        // `SecurityAssurance.Unconfirmed` requires a non-null `Refusal`, so a contribution of
-        // `Declared` on its own leaves the predicate false and the hole open with a green build. A
-        // document refused before it could be built is an AUTHORING fault that started no container
-        // — precisely what `SecurityAbortKind.AuthoringFault`'s own summary already names ("a parse
-        // failure") — so it is recorded as one. WHAT it declared is the other half, above; whether
-        // the pair raises is `Unconfirmed`'s single job, exactly as it is for every door below.
+        // ── What documents that never became scenarios contribute (issue #415) ────────────────
         //
-        // WHICH KIND, AND WHETHER ANY, IS `UnbuiltDocument.Assure`'s SINGLE JOB — not this site's,
-        // and not `ParallelSuiteRunner`'s either, which asks the same method the same question.
-        // Two spellings of "what does an unbuilt document contribute" is exactly the drift this
-        // whole type exists to remove, and the two paths reaching the same answer is the property
-        // the matrix rows measure on both arms.
+        // ONE WHOLE ASSURANCE PER DOCUMENT, FOLDED BY `SecurityAssurance.Worse` — the shape
+        // `ParallelSuiteRunner` always used, and the shape this path did NOT. This path used to
+        // concatenate each unbuilt document's declaration into the union above and take only its
+        // `Refusal`, which put an unbuilt document's declaration into a `Declared` that a SIBLING's
+        // probe confirmation could satisfy. Measured on the built CLI: a broken secured file among
+        // siblings that come up and confirm the same target exited 0 under `run` and non-zero under
+        // `run --parallel N` — a flag flipping the answer.
         //
-        // THAT METHOD CONTRIBUTES NOTHING FOR A DOCUMENT THAT DECLARED NOTHING, and the
-        // unconditional form was a measured defect rather than an untidiness. `Declared` here is a
-        // UNION over OTHER documents, so stamping a refusal for an UNSECURED unbuildable file
-        // paired that file's refusal with a sibling's declaration — precisely the cross-document
-        // pairing `SecurityAssurance.Worse` exists to prevent, and which `ParallelSuiteRunner`'s
-        // `UnbuiltAssurance` cannot commit because it builds one assurance per document. Measured
-        // on the built CLI: a directory pairing an unsecured file carrying an unknown step type
-        // with a secured sibling whose topology fails exited 3 under `run` and 0 under
-        // `run --parallel 1` — a divergence between the two paths, and a silent override of issue
-        // #390, whose whole content is that a health-gate failure must not raise. Guarded on the
-        // declaration it is 0 on both. Pinned end to end, without a container, by
-        // `RunSuiteAsyncTests.RunSuiteAsync_UnsecuredUnbuiltDocument_*` (this direction) and
-        // `…_SecuredUnbuiltDocument_*` (the other), which use a pinned host port the test itself
-        // holds to fail the topology.
+        // WHY A UNION WAS DEFENSIBLE FOR SCENARIOS AND IS NOT FOR THESE. This path builds ONE
+        // shared topology from ONE environment block, so a declaration REQ-005's probe confirmed on
+        // that topology is confirmed for every scenario in the suite — and the shared-`environment`
+        // divergence guard below is what makes "one environment block" true of the scenarios. An
+        // unbuilt document is by construction absent from `scenarios`, so that loop never compares
+        // its environment with anything: it bypasses the guard entirely. Nothing downstream of such
+        // a document ran, and no guard ever proved its environment is the one that started, so its
+        // declaration is never confirmed. That is the fail-closed direction, taken deliberately:
+        // its worst case is a suite containing a broken secured file exiting non-zero, against the
+        // alternative's green CI on an `mtls` assertion nothing exercised.
         //
-        // It consults the DECLARATION, never the door: which fault refused the document remains
-        // irrelevant, and a SECURED unbuildable document still records a refusal whatever refused
-        // it. Only the *shape* of the declaration chooses between the two kinds — a `security` node
-        // the schema rejects binds nothing, so it can only be seen the way the schema door sees it.
+        // THE FOLD IS AT THE END, NOT HERE, and that is forced rather than stylistic. `Worse`
+        // selects a WHOLE assurance, so folding at this line would discard either the scenarios'
+        // assurance in its final state (this `Declared`, plus the `Refusal` each door below stamps
+        // on with `Refusing` — which sets `Refusal` and leaves `Declared` alone — plus, on the
+        // success path, the probe's `Confirming`) or the documents' evidence. The value is therefore
+        // computed once, now, and applied at each site that hands back a `SuiteResult` — the same
+        // arrangement `ParallelSuiteRunner` reaches by folding into `RenderAndAggregate`.
         //
-        // ONLY THE REFUSAL IS TAKEN FROM THAT PER-DOCUMENT VALUE, never its `Declared`: the union
-        // above is this path's shape (see #415 immediately above), and re-attaching a single
-        // document's names here would REPLACE that union rather than extend it — `Declaring`
-        // replaces by contract.
-        foreach (var document in unbuilt)
-        {
-            if (document.Assure(registry).Refusal is { } kind)
-            {
-                assurance = assurance.Refusing(kind);
-            }
-        }
+        // WHAT a document contributes stays `UnbuiltDocument.Assure`'s single job and the FOLD stays
+        // `UnbuiltDocument.AssureAll`'s, so this path and `ParallelSuiteRunner` cannot answer
+        // differently for the same document. Two spellings of one security rule is exactly the
+        // drift `SecurityAssurance` exists to remove.
+        //
+        // NOTHING IS CONTRIBUTED BY A DOCUMENT THAT DECLARED NOTHING — and what that guard buys is
+        // NOT issue #390's fence, which is what this note used to claim (T2 review, m3).
+        //
+        // THE RETIRED CLAIM, and why it is retired. Under the UNION this fold replaced, `Assure`
+        // returning `Declaring([]).Refusing(AuthoringFault)` unconditionally would have stamped an
+        // unsecured document's refusal onto a `Declared` holding a SIBLING's declaration, and that
+        // pair raises — overriding the fence. Under a whole-value fold the pairing is structurally
+        // impossible: the value stays whole, `Unconfirmed` is `AuthoringFault ∧
+        // SomeDeclaredTargetWentUnconfirmed`, and an empty `Declared` has no unconfirmed member, so
+        // that value does not raise. `Worse` can select it only when the other side does not raise
+        // either, so the suite's `Unconfirmed` stays false and the run still exits 0. `--parallel`
+        // has always used this fold and has always neutralised the effect.
+        //
+        // WHAT THE GUARD DOES STILL DO, measured by removing it and rebuilding: it keeps
+        // `SecurityAssurance.None` the fold's IDENTITY ELEMENT rather than a refusal looking for a
+        // declaration, and it therefore governs which refusal and which declaration the suite
+        // REPORTS. Unguarded, `AuthoringFault` outranks `TopologyUnavailable` in `Worse`, so the
+        // unsecured document's empty-declaration value wins the fold outright and the suite's own
+        // evidence is displaced: `RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero`
+        // fails with `Assert.Contains() … Collection: [] Not found: "api"` (the SCENARIO's
+        // declaration gone), and `RunSuiteAsync_NoScenariosBesideAnUnsecuredUnbuiltDocument_ContributesNothing`
+        // fails with `Expected: null Actual: AuthoringFault`. NO `Unconfirmed` assertion moved in
+        // either run — which is the whole of the correction above, stated as a measurement.
+        //
+        // Both directions of the contribution itself are pinned end to end, without a container, by
+        // `RunSuiteAsyncTests.RunSuiteAsync_UnsecuredUnbuiltDocument_*` and
+        // `…_SecuredUnbuiltDocument_*`, which use a pinned host port the test itself holds to fail
+        // the topology.
+        var unbuiltAssurance = UnbuiltDocument.AssureAll(unbuiltDocuments, registry);
+
+        // The suite's answer: the scenarios' own assurance folded against the unbuilt documents'.
+        // Applied at EVERY site below that hands back a `SuiteResult`, because `Worse` must see the
+        // scenarios' assurance in its final state — with its door recorded and, on the success path,
+        // with the probe's confirmations attached.
+        SecurityAssurance WithUnbuiltDocuments(SecurityAssurance scenarioAssurance) =>
+            SecurityAssurance.Worse(scenarioAssurance, unbuiltAssurance);
 
         // ── Validate shared-environment assumption ─────────────────────────────
         // All scenarios must share the environment declared in scenario[0].
@@ -1303,6 +1290,17 @@ public static class ScenarioRunner
                 // behaviour change. The list is therefore synthesised here, in declaration order,
                 // with the suite-level verdict and cause on every scenario, which is exactly what
                 // the stamp produces for its own callers.
+                // THE WRAP IS PINNED, AND THE PIN NEEDS UNSECURED SCENARIOS TO MEAN ANYTHING
+                // (T2 review, MAJOR). Dropping `WithUnbuiltDocuments` at any of these doors is
+                // silently exit 0 on a suite that contains a broken SECURED file — and a suite
+                // whose own scenarios declare security cannot detect it, because their assurance
+                // raises here regardless. The row that turns red is
+                // `SharedEnvironmentDivergence` of `RunSuiteAsyncTests
+                // .RunSuiteAsync_UnsecuredScenariosBesideASecuredUnbuiltDocument_RaisesAtEveryPreTopologyDoor`,
+                // which reaches this door with unsecured scenarios beside a secured unbuilt
+                // document; that theory's own remarks map every row to its door and name the one
+                // door still unpinned (the success return at the bottom of this method, which
+                // needs a container).
                 return await CompleteWithoutTopologyAsync(
                         EveryScenarioRefusedBeforeCompilation(
                             scenarios,
@@ -1311,7 +1309,7 @@ public static class ScenarioRunner
                             seedBaseDirectory,
                             Verdict.EnvironmentError,
                             divergentEnvironment),
-                        assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                        WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                         output,
                         decorate,
                         diffLookup,
@@ -1432,7 +1430,7 @@ public static class ScenarioRunner
         {
             return await CompleteWithoutTopologyAsync(
                     compilations,
-                    assurance,
+                    WithUnbuiltDocuments(assurance),
                     output,
                     decorate,
                     diffLookup,
@@ -1502,7 +1500,7 @@ public static class ScenarioRunner
 
             return await CompleteWithoutTopologyAsync(
                     StampInconclusiveWhereUnjudged(compilations, divergence),
-                    assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
                     diffLookup,
@@ -1609,9 +1607,12 @@ public static class ScenarioRunner
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(protocolConflict))
                 .ConfigureAwait(false);
 
+            // The wrap here is pinned by the `ProtocolConflict` row of the theory named at the
+            // shared-`environment` divergence door above — same defect, same reason it takes
+            // unsecured scenarios to see it.
             return await CompleteWithoutTopologyAsync(
                     StampInconclusiveWhereUnjudged(compilations, protocolConflict),
-                    assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
                     diffLookup,
@@ -1702,9 +1703,13 @@ public static class ScenarioRunner
             // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
             // fault like every pre-topology one. It used to carry the accumulated flag through
             // UNCHANGED — a return that could observe the fault and had no way to record it.
+            //
+            // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
+            // named at the shared-`environment` divergence door above.
             return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts)
             {
-                Assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault),
+                Assurance = WithUnbuiltDocuments(
+                    assurance.Refusing(SecurityAbortKind.AuthoringFault)),
             };
         }
         catch (OrchestrationException oex)
@@ -1748,10 +1753,10 @@ public static class ScenarioRunner
                 .ToList();
             return new SuiteResult(Verdict.EnvironmentError, errVerdicts)
             {
-                Assurance = assurance.Refusing(
+                Assurance = WithUnbuiltDocuments(assurance.Refusing(
                     oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
                         ? SecurityAbortKind.ProbeUnconfirmed
-                        : SecurityAbortKind.TopologyUnavailable),
+                        : SecurityAbortKind.TopologyUnavailable)),
             };
         }
         finally
@@ -2020,14 +2025,16 @@ public static class ScenarioRunner
                 // `Confirming` records what the probe established for the suite that DID run, so a
                 // TransportConfirmed run is distinguishable from an AuthenticatedRoundTrip one by
                 // something other than the terminal text.
-                Assurance = assurance.Confirming(suite.SecurityConfirmations),
+                Assurance = WithUnbuiltDocuments(
+                    assurance.Confirming(suite.SecurityConfirmations)),
             };
         }
     }
 
     /// <summary>
-    /// The assurance a suite of NO scenarios and some unbuilt documents establishes: what those
-    /// documents declared, paired with the refusals they carry (issue #411; Copilot, PR #416).
+    /// The assurance a suite of NO scenarios and some unbuilt documents establishes: ONE document's
+    /// whole assurance — its own declaration beside its own refusal — selected from the documents by
+    /// <see cref="SecurityAssurance.Worse"/> (issue #411; Copilot, PR #416).
     /// </summary>
     /// <param name="unbuiltDocuments">
     /// <see cref="RunSuiteAsync"/>'s parameter of the same name. <see langword="null"/> or empty
@@ -2042,44 +2049,39 @@ public static class ScenarioRunner
     /// </param>
     /// <remarks>
     /// <para>
-    /// <strong>The union, then the refusals — the SAME pair the main path applies, in the same
-    /// order.</strong> Only the scenarios' contribution is missing, because there are none. WHAT a
-    /// document contributes stays <see cref="UnbuiltDocument.Assure"/>'s single job, and only the
-    /// <see cref="SecurityAssurance.Refusal"/> is taken from that per-document value: re-attaching
-    /// one document's names would REPLACE the union rather than extend it, since
-    /// <see cref="SecurityAssurance.Declaring"/> replaces by contract.
+    /// <strong>The SAME per-document fold the main path applies, through the SAME function.</strong>
+    /// Only the scenarios' contribution is missing, because there are none. WHAT a document
+    /// contributes stays <see cref="UnbuiltDocument.Assure"/>'s single job and the fold stays
+    /// <see cref="UnbuiltDocument.AssureAll"/>'s, so this arm cannot answer differently from the
+    /// main path, from <c>ParallelSuiteRunner</c>, or from <c>ParallelSuiteRunner</c>'s own empty
+    /// arm — the four call sites <see cref="UnbuiltDocument.AssureAll"/>'s own remarks enumerate,
+    /// of which this method is one. (An earlier wording said "its own empty arm", which is this
+    /// method: an arm cannot differ from itself.)
     /// </para>
     /// <para>
-    /// Cross-document pairing is not a hazard here for the reason it is not one below:
-    /// <c>Assure</c> contributes NO refusal for a document that declared nothing, so an unsecured
-    /// unbuildable file cannot supply a refusal for a secured sibling's declaration to pair with.
+    /// <strong>What comes back is ONE document's whole assurance, not an aggregate.</strong>
+    /// <see cref="UnbuiltDocument.AssureAll"/> folds whole values by
+    /// <see cref="SecurityAssurance.Worse"/> and returns the worst of them, so the declaration and
+    /// the refusal in the returned value belong to the SAME document — which is the point, since
+    /// all-declarations-beside-all-refusals is exactly the union the paragraph below records as
+    /// removed.
+    /// </para>
+    /// <para>
+    /// This used to union every document's declaration into one <see cref="SecurityAssurance"/> and
+    /// keep only each document's <see cref="SecurityAssurance.Refusal"/>, which paired one
+    /// document's declaration with another document's refusal — the cross-document pairing
+    /// <see cref="SecurityAssurance.Worse"/> exists to prevent (declaration-confirmation-matching,
+    /// REQ-001; EDGE-002). It was harmless only while <c>Assure</c> contributed no refusal for a
+    /// document that declared nothing, i.e. it rested on a property of a DIFFERENT method.
     /// </para>
     /// </remarks>
     private static SecurityAssurance AssureUnbuiltDocumentsAlone(
         IReadOnlyList<UnbuiltDocument>? unbuiltDocuments,
-        IEnumerable<Assembly> providerAssemblies)
-    {
-        if (unbuiltDocuments is not { Count: > 0 })
-        {
-            return SecurityAssurance.None;
-        }
-
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
-        var assurance = SecurityAssurance.None.Declaring(
-            unbuiltDocuments
-                .SelectMany(document => SecuredTargets.Enumerate(document.Environment))
-                .ToArray());
-
-        foreach (var document in unbuiltDocuments)
-        {
-            if (document.Assure(registry).Refusal is { } kind)
-            {
-                assurance = assurance.Refusing(kind);
-            }
-        }
-
-        return assurance;
-    }
+        IEnumerable<Assembly> providerAssemblies) =>
+        unbuiltDocuments is not { Count: > 0 }
+            ? SecurityAssurance.None
+            : UnbuiltDocument.AssureAll(
+                unbuiltDocuments, StepKindRegistry.BuildAndFreeze(providerAssemblies));
 
     /// <summary>
     /// True when any schema-validation error is located inside a declared <c>security</c> block —

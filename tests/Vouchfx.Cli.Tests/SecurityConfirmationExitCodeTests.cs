@@ -962,6 +962,76 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.Equal(sequential, SecurityAssurance.Worse(right, left).Refusal);
     }
 
+    /// <summary>
+    /// <strong>Issue #415's own shape, at the tier that decides it.</strong> A suite whose probe
+    /// CONFIRMED <c>api</c>, folded against an unbuilt document declaring <c>api</c> and confirming
+    /// nothing, still raises. The sequential runner used to union that document's declaration into
+    /// the suite's <c>Declared</c> and keep only its <see cref="SecurityAssurance.Refusal"/>, so the
+    /// suite's own confirmation satisfied the document's declaration and a broken secured file among
+    /// siblings that come up exited 0 under <c>run</c> — while <c>run --parallel N</c>, which always
+    /// folded whole values, exited non-zero. A flag flipped the answer.
+    /// <para>
+    /// The fold is what refuses it: an unbuilt document's <see cref="SecurityAssurance.Confirmed"/>
+    /// is empty BY CONSTRUCTION, nothing downstream of it ran, and no guard ever proved its
+    /// environment is the one the topology started from — so its declaration is never confirmed,
+    /// whatever a sibling's probe measured.
+    /// </para>
+    /// <para>
+    /// Both argument orders, because order-independence in <see cref="SecurityAssurance.Unconfirmed"/>
+    /// and <see cref="SecurityAssurance.Refusal"/> is the invariant <c>Worse</c>'s own remarks state,
+    /// and a runner folds in whichever order it walks its documents.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Worse_SecuredUnbuiltDocumentBesideASuiteThatConfirmedTheSameTarget_StillRaises(
+        bool suiteIsFirst)
+    {
+        // The suite's own probe confirmed the very declaration it made: nothing here raises alone.
+        var suite = new SecurityAssurance(
+            Declared: s_oneDeclaredIdentity,
+            Confirmed: s_oneDeclaredIdentity,
+            Refusal: null);
+        var unbuilt = Secured(SecurityAbortKind.AuthoringFault);
+
+        Assert.False(suite.Unconfirmed);
+        Assert.True(unbuilt.Unconfirmed);
+
+        var folded = suiteIsFirst
+            ? SecurityAssurance.Worse(suite, unbuilt)
+            : SecurityAssurance.Worse(unbuilt, suite);
+
+        Assert.True(folded.Unconfirmed);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, folded.Refusal);
+        Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, folded));
+    }
+
+    /// <summary>
+    /// …and the fence in the same fold (EDGE-001): an unbuilt document that declared NOTHING
+    /// contributes <see cref="SecurityAssurance.None"/>, which is the identity of the fold, so the
+    /// confirmed suite beside it still exits 0. This is the half of issue #390 that must not move —
+    /// an unsecured broken file cannot redden a suite by proxy.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Worse_UnsecuredUnbuiltDocumentBesideAConfirmedSuite_DoesNotRaise(bool suiteIsFirst)
+    {
+        var suite = new SecurityAssurance(
+            Declared: s_oneDeclaredIdentity,
+            Confirmed: s_oneDeclaredIdentity,
+            Refusal: null);
+
+        var folded = suiteIsFirst
+            ? SecurityAssurance.Worse(suite, SecurityAssurance.None)
+            : SecurityAssurance.Worse(SecurityAssurance.None, suite);
+
+        Assert.False(folded.Unconfirmed);
+        Assert.Null(folded.Refusal);
+        Assert.Equal(ExitCodes.Success, ExitFor(Verdict.Pass, folded));
+    }
+
     // ── Threaded through the run command's own decision ───────────────────────────────────
 
     /// <summary>

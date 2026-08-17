@@ -369,7 +369,7 @@ public static class ParallelSuiteRunner
         {
             return new SuiteResult(Verdict.Pass, Array.Empty<(string, Verdict)>())
             {
-                Assurance = UnbuiltAssurance(unbuiltDocuments, registry),
+                Assurance = UnbuiltDocument.AssureAll(unbuiltDocuments, registry),
             };
         }
 
@@ -488,55 +488,9 @@ public static class ParallelSuiteRunner
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
             scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotRawWriters, output,
-            diffLookup, UnbuiltAssurance(unbuiltDocuments, registry),
+            diffLookup, UnbuiltDocument.AssureAll(unbuiltDocuments, registry),
             htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
-
-    /// <summary>
-    /// The one assurance standing for every document that parsed but could not be built into an
-    /// AST (issue #411): what each DECLARED, paired with the refusal each carries.
-    /// </summary>
-    /// <param name="unbuiltDocuments">
-    /// Those documents; <see langword="null"/> or empty yields <see cref="SecurityAssurance.None"/>,
-    /// which is the identity of the fold below.
-    /// </param>
-    /// <param name="registry">
-    /// The frozen provider registry, passed through to <see cref="UnbuiltDocument.Assure"/> for the
-    /// schema-door half of its answer.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// <strong>WHAT a document contributes is <see cref="UnbuiltDocument.Assure"/>'s single job,
-    /// and this method's only job is the FOLD.</strong> Both halves of a contribution — the
-    /// canonical <c>SecuredTargets.Enumerate</c> walk and the refusal that pairs with it — are
-    /// decided there, so <c>ScenarioRunner.RunSuiteAsync</c>'s sequential path and this one cannot
-    /// answer differently for the same document. Spelling the rule a second time here is exactly
-    /// the drift <see cref="SecurityAssurance"/> exists to remove.
-    /// </para>
-    /// <para>
-    /// ONE assurance PER DOCUMENT, combined by <see cref="SecurityAssurance.Worse"/>, so a
-    /// document's declaration is never paired with a DIFFERENT document's refusal — the same
-    /// reason the slot fold keeps whole assurances, and the reason this path never needed the
-    /// declaration guard the sequential union does.
-    /// </para>
-    /// <para>
-    /// Called from TWO sites: the gather below, and the empty-<c>scenarios</c> arm above, which
-    /// returns before the gather and used to discard its documents (Copilot, PR #416). The CLI can
-    /// reach neither with an empty scenario list — it builds <c>unbuiltDocuments</c> inside its own
-    /// <c>parsed.Count &gt; 0</c> block, and issue #278's all-parse-failure rule owns the
-    /// no-scenario case and exits 4 ahead of both runners — so this is about what the method
-    /// ANSWERS a non-CLI caller, not about an exit code. Nothing here decides one, so #278's
-    /// question still has exactly one answer in one place.
-    /// </para>
-    /// </remarks>
-    private static SecurityAssurance UnbuiltAssurance(
-        IReadOnlyList<UnbuiltDocument>? unbuiltDocuments, StepKindRegistry registry) =>
-        unbuiltDocuments is not { Count: > 0 }
-            ? SecurityAssurance.None
-            : unbuiltDocuments.Aggregate(
-                SecurityAssurance.None,
-                (accumulated, document) => SecurityAssurance.Worse(
-                    accumulated, document.Assure(registry)));
 
     /// <summary>
     /// Runs a single scenario slot: waits on the concurrency gate (honouring the external token),
