@@ -17,6 +17,7 @@
 // assurance directly and asking for the exit-code decision. That is the coverage hole #401 names,
 // and it is the reason the spec chose a record over a boolean: a boolean carries no evidence to
 // construct.
+using System.Reflection;
 using Vouchfx.Cli;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
@@ -53,8 +54,14 @@ public sealed class SecurityConfirmationExitCodeTests
         }),
     };
 
-    /// <summary>The NAME the assurance actually carries for that target.</summary>
-    private static readonly string[] s_oneDeclaredName = { "api" };
+    /// <summary>
+    /// The IDENTITY the assurance actually carries for that target (issue #415) — derived, never
+    /// spelled out, so this fixture cannot drift from what <c>Declaring</c> stores.
+    /// </summary>
+    private static readonly SecuredTargetIdentity[] s_oneDeclaredIdentity =
+    {
+        SecuredTargets.IdentityOf(s_oneDeclaredTarget[0]),
+    };
 
     private static readonly SecurityConfirmation[] s_oneConfirmation =
     {
@@ -67,16 +74,33 @@ public sealed class SecurityConfirmationExitCodeTests
             ObservedProtocol: "Tls13",
             ClientIdentityResolved: true,
             Level: SecurityConfirmationLevel.AuthenticatedRoundTrip,
-            Detail: "confirmed"),
+            Detail: "confirmed",
+
+            // #415: the confirmation carries the identity of the declaration it tested, and this
+            // fixture stands for a probe that tested THE declared target above — so the identity is
+            // taken from that target rather than restated, exactly as the probe takes it from the
+            // SecuredTarget its own walk yielded.
+            Identity: SecuredTargets.IdentityOf(s_oneDeclaredTarget[0])),
     };
 
     /// <summary>A suite that DECLARES security, with the supplied refusal (or none).</summary>
     private static SecurityAssurance Secured(SecurityAbortKind? refusal) =>
-        new(s_oneDeclaredName, Array.Empty<string>(), refusal);
+        new(s_oneDeclaredIdentity, Array.Empty<SecuredTargetIdentity>(), refusal);
 
     /// <summary>A suite that declares NO security — the control for every row that has one.</summary>
     private static SecurityAssurance Unsecured(SecurityAbortKind? refusal) =>
-        new(Array.Empty<string>(), Array.Empty<string>(), refusal);
+        new(Array.Empty<SecuredTargetIdentity>(), Array.Empty<SecuredTargetIdentity>(), refusal);
+
+    /// <summary>
+    /// The identity of an ordinary <c>profile: tls</c> declaration of <paramref name="name"/> —
+    /// the fixture for every row whose subject is WHICH targets a run declared or confirmed rather
+    /// than what any of them asserted.
+    /// </summary>
+    private static SecuredTargetIdentity IdentityFor(string name) =>
+        SecuredTargets.IdentityOf(new SecuredTarget(
+            name,
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("tls", "8443", null, null, null, null)));
 
     private static int ExitFor(Verdict verdict, SecurityAssurance? assurance) =>
         ExitCodes.FromVerdict(
@@ -265,9 +289,12 @@ public sealed class SecurityConfirmationExitCodeTests
     [Fact]
     public void Unconfirmed_DeclaredShortfallWithNoRefusal_DoesNotRaise()
     {
+        // #415 retyped these two lists from names to identities. The shortfall this row is about is
+        // a WHOLE DECLARATION missing from Confirmed, so both entries are built through the same
+        // IdentityFor helper and the row measures exactly what it measured before.
         var shortfall = new SecurityAssurance(
-            Declared: new[] { "api", "broker" },
-            Confirmed: new[] { "api" },
+            Declared: new[] { IdentityFor("api"), IdentityFor("broker") },
+            Confirmed: new[] { IdentityFor("api") },
             Refusal: null);
 
         Assert.False(shortfall.Unconfirmed);
@@ -339,9 +366,12 @@ public sealed class SecurityConfirmationExitCodeTests
     [Fact]
     public void Unconfirmed_OneOfTwoDeclaredTargetsConfirmed_StillRaises()
     {
+        // #415 retyped these two lists from names to identities; "one of two confirmed" is the same
+        // claim about whole declarations, so both entries come from the same IdentityFor helper and
+        // the assertion keeps its original strength.
         var partial = new SecurityAssurance(
-            Declared: new[] { "api", "broker" },
-            Confirmed: new[] { "api" },
+            Declared: new[] { IdentityFor("api"), IdentityFor("broker") },
+            Confirmed: new[] { IdentityFor("api") },
             Refusal: SecurityAbortKind.AuthoringFault);
 
         Assert.True(partial.Unconfirmed);
@@ -369,7 +399,7 @@ public sealed class SecurityConfirmationExitCodeTests
     }
 
     /// <summary>
-    /// <strong>The record carries NAMES, so no diagnostic built from it can disclose a
+    /// <strong>The record carries a NAME and a DIGEST, so no diagnostic built from it can disclose a
     /// passphrase.</strong> <c>SecuredTarget</c> is a record struct holding the whole
     /// <c>SecuritySpec</c>, whose compiler-generated <c>ToString()</c> prints
     /// <c>ClientKeyPassword</c> — measured, verbatim. <c>SecuritySpec</c>'s own header states the
@@ -377,21 +407,60 @@ public sealed class SecurityConfirmationExitCodeTests
     /// and an assurance holding an ARRAY of them was exactly that with no guard: no site leaks it
     /// today, and the next site to render this record would not know it was crossing a line.
     /// <para>
+    /// <strong>Renamed for issue #415</strong> from
+    /// <c>Declaring_KeepsTargetNamesOnly_SoNoDeclaredSecretCanBeRendered</c>: the record stopped
+    /// carrying bare names when <c>Declared</c> was retyped to <see cref="SecuredTargetIdentity"/>,
+    /// and the old name asserted the thing that stopped being true rather than the property this row
+    /// still pins.
+    /// </para>
+    /// <para>
     /// Joining the collection is the shape any such diagnostic would take, so that is what is
     /// asserted — not the record's own <c>ToString()</c>, which prints an array's type name and
-    /// would have passed unchanged while the payload was still there to be found.
+    /// would have passed unchanged while the payload was still there to be found. That reasoning
+    /// governs the assertions below too: the <c>assurance.ToString()</c> line an earlier draft added
+    /// has been DROPPED rather than kept, because this paragraph rejects exactly that surface and a
+    /// doc block cannot hold both positions.
+    /// </para>
+    /// <para>
+    /// <strong>REQ-003, extended for issue #415:</strong> the record now carries identities rather
+    /// than bare names, and an identity carries a DIGEST of the declaration. The digest is not a
+    /// second route to the same disclosure, but NOT because the passphrase text is excluded from it:
+    /// <c>SecuredTargets.IdentityOf</c> HASHES that text whenever
+    /// <c>SecretReference.TryParse</c> proves one whole <c>${secret:}</c> token spans the value — a
+    /// reference, whose hashing §17.1.1 sanctions outright. What is excluded is anything that could
+    /// ONLY be the passphrase itself: a value <c>TryParse</c> refuses contributes only its presence bit,
+    /// because a SHA-256 of a low-entropy passphrase is brute-forceable by anyone who obtains it.
+    /// The canary fixture is such a value, so the identity it produces cannot contain a derivative
+    /// of it at all — which is what
+    /// <see cref="IdentityOf_ThePassphraseText_IsAnInputOnlyWhenItIsAWholeSecretReference"/> arm two
+    /// pins as a falsifiable property.
     /// </para>
     /// </summary>
     [Fact]
-    public void Declaring_KeepsTargetNamesOnly_SoNoDeclaredSecretCanBeRendered()
+    public void Declaring_KeepsOnlyANameAndADigest_SoNoDeclaredSecretCanBeRendered()
     {
         var assurance = SecurityAssurance.None.Declaring(s_oneDeclaredTarget);
 
-        Assert.Equal(new[] { "api" }, assurance.Declared);
+        // The name survives the retyping to identities — asserted through the projection, since
+        // Declared is now a list of SecuredTargetIdentity and the claim is about its Name member.
+        Assert.Equal(new[] { "api" }, assurance.Declared.Select(identity => identity.Name));
+
+        // The original assertion, unchanged: the shape any diagnostic joining the collection takes.
         Assert.DoesNotContain(
             PassphraseCanary,
             string.Join(", ", assurance.Declared),
             StringComparison.Ordinal);
+
+        // The two surfaces #415's identity added, DECLARED TRIPWIRES rather than live checks: as
+        // SecuredTargetIdentity renders today (an uppercase-hex digest, and "name@digest") neither
+        // can contain the canary for ANY implementation of the digest, so neither can fail now.
+        // They are here to go red if that RENDERING is ever widened. Neither is independent of the
+        // joined assertion above — string.Join calls each element's ToString() — so they add
+        // localisation rather than reach: a widened rendering fails here naming the one identity
+        // that carries it, and the Digest line says which of the two members did.
+        var identity = Assert.Single(assurance.Declared);
+        Assert.DoesNotContain(PassphraseCanary, identity.Digest, StringComparison.Ordinal);
+        Assert.DoesNotContain(PassphraseCanary, identity.ToString(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -413,6 +482,404 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.True(nothingBound.Unconfirmed);
         Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, nothingBound));
     }
+
+    // ── Issue #415: a declaration is matched by its IDENTITY, never by its name ───────────
+    //
+    // The defect these rows close: `SomeDeclaredTargetWentUnconfirmed` compared two lists of target
+    // NAMES, so a declared target counted as confirmed when SOMETHING confirmed a target of the
+    // same name — not when the probe confirmed THAT declaration. Two declarations sharing a name
+    // and asserting different things cross-satisfied each other, and one suite can hold both.
+
+    /// <summary>
+    /// <strong>REQ-002: a confirmation of a DIFFERENT declaration of the same name confirms
+    /// nothing.</strong> A document declares <c>api</c> asserting <c>profile: mtls</c> on endpoint
+    /// 9093; the run holds a confirmation of <c>api</c> asserting <c>profile: tls</c> on 8443. Those
+    /// are two different assertions about one target, and confirming the weaker one says nothing
+    /// whatever about the stronger — yet under the name-only comparison it satisfied it, and a suite
+    /// asserting mutual TLS exited 0 on the strength of a plain-TLS confirmation.
+    /// <para>
+    /// The second half is the control that stops this row passing for the trivial reason
+    /// "nothing ever matches": the SAME declaration confirmed against ITSELF does not raise.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Unconfirmed_ConfirmationOfADifferentDeclarationOfTheSameName_StillRaises()
+    {
+        var declaredMtls = new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("mtls", "9093", null, "./client.pem", "./client.key", null));
+
+        var confirmedTls = new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("tls", "8443", null, null, null, null));
+
+        var declaring = new[] { declaredMtls };
+
+        var crossSatisfied = SecurityAssurance.None
+            .Declaring(declaring)
+            .Confirming(new[] { ConfirmationOf(confirmedTls) })
+            .Refusing(SecurityAbortKind.AuthoringFault);
+
+        Assert.True(crossSatisfied.Unconfirmed);
+        Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, crossSatisfied));
+
+        // The control: confirmed against ITSELF, the same declaration, and the row goes quiet.
+        var genuinelyConfirmed = SecurityAssurance.None
+            .Declaring(declaring)
+            .Confirming(new[] { ConfirmationOf(declaredMtls) })
+            .Refusing(SecurityAbortKind.AuthoringFault);
+
+        Assert.False(genuinelyConfirmed.Unconfirmed);
+        Assert.Equal(ExitCodes.Success, ExitFor(Verdict.Inconclusive, genuinelyConfirmed));
+    }
+
+    /// <summary>
+    /// <strong>REQ-002, one field at a time.</strong> Every member of the declaration is an input to
+    /// the identity, so two declarations differing in exactly one of them are two declarations. A
+    /// digest that dropped any of them would let a suite declaring one trust anchor, one profile or
+    /// one endpoint be satisfied by a probe that confirmed another.
+    /// <para>
+    /// One field per row rather than one row varying several: a digest that omitted
+    /// <c>clientKey</c> alone would still pass a combined row on the strength of the other fields —
+    /// which is exactly what
+    /// <see cref="Unconfirmed_ConfirmationOfADifferentDeclarationOfTheSameName_StillRaises"/> does,
+    /// varying four members at once, so it survives the loss of any one of them.
+    /// </para>
+    /// <para>
+    /// <strong>Every hashed input reachable from a <c>SecuredTarget</c> has a row.</strong> The
+    /// earlier three-row set left <c>Profile</c>, <c>Endpoint</c>, <c>Kind</c> and
+    /// <c>ServerArtifacts</c> unvaried, and that was MEASURED to be a hole rather than argued:
+    /// deleting <c>AppendText(hash, spec.Profile)</c> from <c>SecuredTargets.DigestOf</c> left the
+    /// whole suite green. With the rows below the same deletion reddens the <c>profile</c> row, and
+    /// deleting <c>AppendText(hash, target.Kind)</c> reddens the <c>kind</c> row.
+    /// </para>
+    /// <para>
+    /// The left/right values live in the row rather than in the test body so each field varies by
+    /// something it could plausibly hold — a profile by a profile name, an endpoint by a port — and
+    /// the digest is indifferent to which, since it hashes the declared text either way.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("caCert", "./left.pem", "./right.pem")]
+    [InlineData("clientCert", "./left.pem", "./right.pem")]
+    [InlineData("clientKey", "./left.key", "./right.key")]
+    [InlineData("profile", "mtls", "tls")]
+    [InlineData("endpoint", "9093", "8443")]
+    [InlineData("kind", SecuredTargets.ServiceKind, "kafka")]
+    [InlineData("serverArtifacts", "./left-keystore.jks", "./right-keystore.jks")]
+    public void IdentityOf_TwoDeclarationsDifferingInOneFieldOnly_DifferByIdentity(
+        string field,
+        string leftValue,
+        string rightValue)
+    {
+        var left = SecuredTargets.IdentityOf(TargetVarying(field, leftValue));
+        var right = SecuredTargets.IdentityOf(TargetVarying(field, rightValue));
+
+        Assert.NotEqual(left, right);
+        Assert.NotEqual(left.Digest, right.Digest);
+
+        // The name is deliberately equal on EVERY row, which is the whole point: this is the pair
+        // the name-only comparison could not tell apart. Without this guard a row could pass for
+        // the wrong reason — because the helper had varied the name instead of the field.
+        Assert.Equal(left.Name, right.Name);
+    }
+
+    /// <summary>
+    /// <strong>REQ-003: the passphrase text is hashed IFF one whole <c>${secret:}</c> token spans
+    /// the value.</strong> All three arms of that rule in one row, because they are one rule and a
+    /// test pinning any two of them would leave the third free to move.
+    /// <para>
+    /// A whole <c>${secret:source/path}</c> token ORDINARILY names a passphrase rather than being
+    /// one — but the parse does not PROVE that, and this test does not assert it: a path terminates
+    /// at the first closing brace, so <c>${secret:env/PASS${secret:hunter2}</c> parses whole and its
+    /// literal tail IS hashed. The rule stands anyway because we are HASHING, not quoting, §17.1.1
+    /// sanctions hashing a reference — the reproducibility envelope already hashes reference text —
+    /// and the digest is COMPARED, never rendered.
+    /// So two DIFFERENT references are two declarations: the presence-bit-only framing this
+    /// replaces collapsed <c>${secret:vault/prod-key}</c> onto <c>${secret:env/DEV_KEY}</c>, which
+    /// is the #415 cross-satisfaction surviving in the one field the fix had excluded.
+    /// </para>
+    /// <para>
+    /// Anything that is NOT a whole token still collapses to the presence bit. On a
+    /// non-schema-validated path the property can hold a literal passphrase — the parser is
+    /// deliberately lenient and
+    /// <c>SecuritySpecBindingTests.Parse_ClientKeyPasswordLiteral_IsStillBound_ParserStaysLenient</c>
+    /// pins it — and a digest of a low-entropy secret is brute-forceable by anyone who obtains it.
+    /// Hashing it would put a crackable derivative of a passphrase on a value the record was
+    /// narrowed (issue #408) precisely so it could be rendered.
+    /// </para>
+    /// <para>
+    /// The third arm — declared versus undeclared — is asserted here for completeness and in both
+    /// directions by <see cref="IdentityOf_DeclaringAPassphraseAtAll_ChangesTheIdentity"/>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void IdentityOf_ThePassphraseText_IsAnInputOnlyWhenItIsAWholeSecretReference()
+    {
+        // Arm one: two whole-token references naming two different passphrases — two declarations.
+        var vaultKey = SecuredTargets.IdentityOf(
+            TargetWithPassword("${secret:vault/prod-key}"));
+        var envKey = SecuredTargets.IdentityOf(
+            TargetWithPassword("${secret:env/DEV_KEY}"));
+
+        Assert.NotEqual(vaultKey, envKey);
+        Assert.NotEqual(vaultKey.Digest, envKey.Digest);
+
+        // Arm two: two values that are NOT whole-token references — either could BE the secret, so
+        // both collapse to the presence bit and share one identity. §17's protection, preserved.
+        var literal = SecuredTargets.IdentityOf(TargetWithPassword("one-passphrase"));
+        var otherLiteral = SecuredTargets.IdentityOf(
+            TargetWithPassword("a-completely-different-one"));
+
+        Assert.Equal(literal, otherLiteral);
+        Assert.Equal(literal.Digest, otherLiteral.Digest);
+
+        // A reference with literal text around it is not a whole token either — TryParse requires
+        // the match to span the value — so it lands in arm two beside the bare literals.
+        var embedded = SecuredTargets.IdentityOf(
+            TargetWithPassword("prefix-${secret:vault/prod-key}"));
+
+        Assert.Equal(literal, embedded);
+
+        // Arm three: declaring a passphrase at all is a different assertion from declaring none,
+        // whichever arm the declared value falls in.
+        var undeclared = SecuredTargets.IdentityOf(TargetWithPassword(null));
+
+        Assert.NotEqual(vaultKey, undeclared);
+        Assert.NotEqual(literal, undeclared);
+    }
+
+    /// <summary>
+    /// <strong>A lone surrogate is a distinct declaration.</strong> The framing hashes UTF-16 code
+    /// units rather than <c>Encoding.UTF8.GetBytes</c>, whose replacement fallback maps an unpaired
+    /// surrogate to U+FFFD — under which <c>ca\uD800.pem</c> and <c>ca\uFFFD.pem</c> produced the
+    /// same bytes of the same length and therefore ONE identity, while NTFS stores UTF-16 filenames
+    /// and .NET's path APIs pass both through, so both can name distinct files on disk. The remarks
+    /// on <c>IdentityOf</c> claim injectivity whatever the field values contain; this row is the
+    /// value that made that claim false.
+    /// </summary>
+    [Fact]
+    public void IdentityOf_ACaCertDifferingOnlyByALoneSurrogate_DiffersByIdentity()
+    {
+        var loneSurrogate = SecuredTargets.IdentityOf(TargetVarying("caCert", "./ca\uD800.pem"));
+        var replacementChar = SecuredTargets.IdentityOf(TargetVarying("caCert", "./ca\uFFFD.pem"));
+
+        Assert.NotEqual(loneSurrogate, replacementChar);
+        Assert.NotEqual(loneSurrogate.Digest, replacementChar.Digest);
+    }
+
+    /// <summary>
+    /// <strong>The drift guard over the digest's inputs.</strong> <c>SecuredTargets.DigestOf</c>
+    /// enumerates the members of <see cref="SecuredTarget"/>, <see cref="SecuritySpec"/> and
+    /// <see cref="SecurityServerArtifactSpec"/> BY HAND, so a new property added to any of them is
+    /// silently excluded from the identity and #415 returns for that field with no test red. This
+    /// row makes the addition red instead.
+    /// <para>
+    /// <c>SchemaSecuritySurfaceClosureTests</c> already censuses <see cref="SecuritySpec"/>, but its
+    /// failure message talks about the schema and the parser: an author reconciles it and never
+    /// learns <c>DigestOf</c> exists. That test is left alone; this message does the job it cannot,
+    /// and it names <see cref="SecurityServerArtifactSpec"/>, which had no tripwire at all.
+    /// </para>
+    /// <para>
+    /// <see cref="SecuredTarget"/> is here for the same reason and had even less: nothing in
+    /// <c>src/</c> or <c>tests/</c> named the type in a census. It is a packable record whose
+    /// permitted additive shape is an init-only property — the precedent
+    /// <see cref="SecuritySpec.ClientKeyPassword"/> itself set — so its member list is exposed to
+    /// exactly the drift this row exists to catch, on the OUTERMOST of the three types.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void DigestOf_TheMembersItEnumeratesByHand_AreStillTheOnlyMembersDeclared()
+    {
+        AssertMembersAre(typeof(SecuredTarget), "Kind", "Name", "Security");
+
+        AssertMembersAre(
+            typeof(SecuritySpec),
+            "CaCert",
+            "ClientCert",
+            "ClientKey",
+            "ClientKeyPassword",
+            "Endpoint",
+            "Profile",
+            "ServerArtifacts");
+
+        AssertMembersAre(typeof(SecurityServerArtifactSpec), "Source", "Target");
+    }
+
+    /// <summary>
+    /// Asserts that <paramref name="record"/>'s public instance properties — less the
+    /// compiler-generated <c>EqualityContract</c> — are exactly <paramref name="expected"/>, with a
+    /// message that sends the reader to the hand-written enumeration rather than to the schema.
+    /// </summary>
+    /// <remarks>
+    /// Written as an <c>Assert.True</c> over a sequence comparison rather than an
+    /// <c>Assert.Equal</c> over two arrays for one reason: only the former takes a message, and the
+    /// message IS the fix here. A bare collection mismatch tells an author their new property is
+    /// missing from a list in a test file and nothing about why that list exists.
+    /// </remarks>
+    private static void AssertMembersAre(Type record, params string[] expected)
+    {
+        var declared = record
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .Where(name => name != "EqualityContract")
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            declared.SequenceEqual(expected, StringComparer.Ordinal),
+            record.Name + " gained or lost a member: it now declares "
+            + string.Join(", ", declared) + ", this census expects "
+            + string.Join(", ", expected) + ". SecuredTargets.DigestOf enumerates its inputs BY "
+            + "HAND — add the field there (and a row to the identity tests in this file), or two "
+            + "declarations differing only in it share one identity (#415).");
+    }
+
+    /// <summary>
+    /// <strong>REQ-003, the other half: the passphrase's PRESENCE is an input.</strong> "This key is
+    /// encrypted" and "this key is not" are different assertions about the declared client identity
+    /// and must not cross-satisfy, so declaring a <c>clientKeyPassword</c> at all changes the
+    /// identity — and does so INDEPENDENTLY of whether the declared text is one the digest may
+    /// hash. The value here is a literal canary, i.e. the arm the digest deliberately reduces to
+    /// the presence bit (pinned above), so this row cannot pass on the strength of the text. Both
+    /// directions are asserted: the theory data supplies the declared value on either side of the
+    /// comparison.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void IdentityOf_DeclaringAPassphraseAtAll_ChangesTheIdentity(bool declaredIsFirst)
+    {
+        var withPassword = SecuredTargets.IdentityOf(TargetWithPassword(PassphraseCanary));
+        var withoutPassword = SecuredTargets.IdentityOf(TargetWithPassword(null));
+
+        var (left, right) = declaredIsFirst
+            ? (withPassword, withoutPassword)
+            : (withoutPassword, withPassword);
+
+        Assert.NotEqual(left, right);
+        Assert.NotEqual(left.Digest, right.Digest);
+    }
+
+    /// <summary>
+    /// <strong>An undeclared field is not an empty field.</strong> REQ-004(b) requires an undeclared
+    /// <c>caCert</c> to be treated as ABSENT rather than as a missing-but-implied value, so
+    /// <c>caCert: null</c> and <c>caCert: ""</c> are two declarations and get two identities. A
+    /// framing that wrote nothing for a null would conflate them — which is the same class of
+    /// collision the length prefix exists to prevent, reached through the shortest possible value.
+    /// </summary>
+    [Fact]
+    public void IdentityOf_AnUndeclaredFieldAndAnEmptyOne_DifferByIdentity()
+    {
+        var undeclared = SecuredTargets.IdentityOf(new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("tls", "8443", null, null, null, null)));
+
+        var empty = SecuredTargets.IdentityOf(new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("tls", "8443", string.Empty, null, null, null)));
+
+        Assert.NotEqual(undeclared, empty);
+        Assert.NotEqual(undeclared.Digest, empty.Digest);
+    }
+
+    /// <summary>
+    /// <strong>REQ-007: the property survives a gap in the shared-<c>environment</c> divergence
+    /// guard's coverage.</strong> That guard walks <c>scenarios</c> alone, so a document it never
+    /// iterates — an unbuilt one (issue #411), a document reaching the assurance by some later
+    /// route — can contribute a declaration diverging from a sibling's without the guard ever
+    /// seeing the pair. This row asserts the record refuses the cross-satisfaction ITSELF, with no
+    /// runner and no guard anywhere in the construction: the two entries are handed to the record
+    /// directly.
+    /// <para>
+    /// Which is why it is worth a row of its own rather than being folded into the runner tests. A
+    /// guard is a check that can be bypassed by a path nobody enumerated; the identity is a
+    /// property of the comparison, and a comparison cannot be routed around.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Unconfirmed_DivergentDeclarationsSharingAName_RaiseWithNoRunnerAndNoGuardInvolved()
+    {
+        var declared = SecuredTargets.IdentityOf(new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("mtls", "9093", "./ca.pem", "./client.pem", "./client.key", null)));
+
+        var confirmed = SecuredTargets.IdentityOf(new SecuredTarget(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("mtls", "9093", "./other-ca.pem", "./client.pem", "./client.key", null)));
+
+        var divergent = new SecurityAssurance(
+            Declared: new[] { declared },
+            Confirmed: new[] { confirmed },
+            Refusal: SecurityAbortKind.AuthoringFault);
+
+        // Same target, same profile, same endpoint, same client identity — a DIFFERENT trust anchor.
+        Assert.Equal(declared.Name, confirmed.Name);
+        Assert.True(divergent.Unconfirmed);
+        Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, divergent));
+    }
+
+    /// <summary>
+    /// A declaration of <c>api</c> whose <paramref name="field"/> holds <paramref name="value"/>
+    /// and which is otherwise fixed — so a pair built from it differs in exactly one member.
+    /// </summary>
+    /// <remarks>
+    /// The <c>Name</c> is fixed and is NOT a selectable field: every consumer of this helper asserts
+    /// that the two identities share a name, which is the property that makes them the pair the
+    /// name-only comparison could not tell apart. The <c>serverArtifacts</c> case varies one
+    /// artifact's <c>Source</c> against a fixed <c>Target</c>, so a digest that hashed the list's
+    /// presence but not its contents fails that row.
+    /// </remarks>
+    private static SecuredTarget TargetVarying(string field, string value) =>
+        new(
+            "api",
+            field == "kind" ? value : SecuredTargets.ServiceKind,
+            new SecuritySpec(
+                Profile: field == "profile" ? value : "mtls",
+                Endpoint: field == "endpoint" ? value : "9093",
+                CaCert: field == "caCert" ? value : "./ca.pem",
+                ClientCert: field == "clientCert" ? value : "./client.pem",
+                ClientKey: field == "clientKey" ? value : "./client.key",
+                ServerArtifacts: field == "serverArtifacts"
+                    ? new[] { new SecurityServerArtifactSpec(value, "/etc/kafka/secrets/keystore.jks") }
+                    : null));
+
+    /// <summary>
+    /// A declaration of <c>api</c> carrying <paramref name="password"/> as its
+    /// <c>clientKeyPassword</c>, or declaring none when it is <see langword="null"/>.
+    /// </summary>
+    private static SecuredTarget TargetWithPassword(string? password) =>
+        new(
+            "api",
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("mtls", "9093", null, "./client.pem", "./client.key", null)
+            {
+                ClientKeyPassword = password,
+            });
+
+    /// <summary>
+    /// A confirmation standing for "the probe tested THIS declaration and it held" — the identity
+    /// taken from <paramref name="target"/> through the one derivation, exactly as the probe takes
+    /// it from the <c>SecuredTarget</c> its own walk yielded.
+    /// </summary>
+    private static SecurityConfirmation ConfirmationOf(SecuredTarget target) =>
+        new(
+            TargetName: target.Name,
+            TargetKind: target.Kind,
+            DeclaredProfile: target.Security.Profile ?? string.Empty,
+            DeclaredEndpoint: target.Security.Endpoint ?? string.Empty,
+            ObservedAddress: "localhost:9093",
+            ObservedProtocol: "Tls13",
+            ClientIdentityResolved: target.Security.ClientCert is not null,
+            Level: SecurityConfirmationLevel.AuthenticatedRoundTrip,
+            Detail: "confirmed",
+            Identity: SecuredTargets.IdentityOf(target));
 
     // ── The fold, which is the other reader of the same predicate ─────────────────────────
 

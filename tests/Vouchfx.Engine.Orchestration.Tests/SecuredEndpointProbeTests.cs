@@ -582,6 +582,73 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// <strong>EDGE-004 (issue #415) — THE BLAST-RADIUS CHECK, and the one test in this file that
+    /// must not be skipped.</strong> The identity derived from a <c>SecuredTarget</c> that
+    /// <c>SecuredTargets.Enumerate</c> yielded EQUALS the identity carried on the
+    /// <see cref="SecurityConfirmation"/> the probe emits for that same target.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>SecurityAssurance.Unconfirmed</c> now matches a declaration against a confirmation on the
+    /// WHOLE identity rather than on the target name, and both sides derive theirs from this walk
+    /// through <c>SecuredTargets.IdentityOf</c>. If those two derivations ever disagree — a probe
+    /// that rebuilt a <c>SecuredTarget</c> from its own scalars, a digest input added on one side
+    /// only — then EVERY secured suite in the product raises, on a declaration the run confirmed.
+    /// The old name-only comparison failed OPEN (a suite went green when it should have raised);
+    /// this one fails CLOSED, so the failure mode is loud, universal and immediate rather than
+    /// silent. That is the better direction and it is exactly why the equality needs a measurement
+    /// rather than an argument that the two call sites obviously agree.
+    /// </para>
+    /// <para>
+    /// <strong>No Docker.</strong> A real <see cref="SecurityConfirmation"/> is reachable here from
+    /// an in-process loopback TLS listener — the pattern this whole file is built on, per its
+    /// header — so this pins the property at the production seam (<c>ConfirmAsync</c> itself) with
+    /// no equivalent-seam substitution and no residual gap to declare. It is a <c>tls</c> service
+    /// arm, which is the arm a plain TLS listener can serve; the identity is derived before any
+    /// arm is chosen, so the arm is not a variable in what this row measures.
+    /// </para>
+    /// <para>
+    /// Both members are asserted, and the whole struct as well: a <c>Digest</c> equality alone
+    /// would pass a derivation that dropped the name, and a struct equality alone would not say
+    /// which member drifted when it fails.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_IdentityOnTheConfirmation_MatchesTheDeclarationsOwnIdentity()
+    {
+        var (port, serving, listener) = ListenTls(StayQuiet);
+        var environment = ServiceEnv(Profile("tls"));
+
+        try
+        {
+            var confirmations = await ProbeAsync(
+                environment,
+                Staged("sut", "localhost", port),
+                new FakeAccessor().With(
+                    "sut", "tls", new FakeMaterial(_bed, withClientIdentity: false, declareCa: true)));
+
+            // The declared side, derived exactly as SecurityAssurance.Declaring derives it.
+            var declared = SecuredTargets.Enumerate(environment)
+                .Select(SecuredTargets.IdentityOf)
+                .ToArray();
+
+            // The confirmed side, read off the record the probe actually emitted.
+            var confirmed = confirmations.Select(confirmation => confirmation.Identity).ToArray();
+
+            Assert.Equal(declared, confirmed);
+
+            var one = Assert.Single(confirmed);
+            Assert.Equal("sut", one.Name);
+            Assert.Equal(Assert.Single(declared).Digest, one.Digest);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
     // ── EDGE-004: the declared endpoint is a plaintext listener ───────────────────────────
 
     /// <summary>
@@ -1249,7 +1316,13 @@ public sealed class SecuredEndpointProbeTests : IDisposable
                 ObservedProtocol: "Tls13",
                 ClientIdentityResolved: true,
                 Level: level,
-                Detail: "identical detail on both arms, so only the level can distinguish them.")
+                Detail: "identical detail on both arms, so only the level can distinguish them.",
+
+                // Issue #415 added Identity as a POSITIONAL parameter, so this hand-built record
+                // must supply one. It is not what this row measures — the rendering contract is —
+                // and the identity is deliberately NOT rendered, so any value serves and this one
+                // is written by hand rather than derived, to keep the row about ToString().
+                Identity: new SecuredTargetIdentity("events", "not-rendered"))
                 .ToString();
 
             // The token itself…
@@ -1281,13 +1354,22 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             ObservedProtocol: "Tls13",
             ClientIdentityResolved: false,
             Level: SecurityConfirmationLevel.AuthenticatedRoundTrip,
-            Detail: "the broker answered a Kafka ApiVersions request over this connection.")
+            Detail: "the broker answered a Kafka ApiVersions request over this connection.",
+
+            // Issue #415's positional Identity, supplied for the same reason as above: this row is
+            // about the rendering, and the identity does not reach the rendered line.
+            Identity: new SecuredTargetIdentity("events", "not-rendered"))
             .ToString();
 
         Assert.Contains(
             "client identity none declared, level AuthenticatedRoundTrip —",
             noIdentity,
             StringComparison.Ordinal);
+
+        // …and the digest stays OFF the line — issue #415's rendering decision, asserted rather
+        // than left to the eye. A digest in an operator-facing line is sixty-four characters of
+        // machine-facing noise, and asserting its absence is what stops it drifting in.
+        Assert.DoesNotContain("not-rendered", noIdentity, StringComparison.Ordinal);
     }
 
     // ── MAJOR-1 (fix round three): the differential's asymmetry stops at the connect ───────

@@ -199,6 +199,26 @@ public enum SecurityConfirmationLevel
 /// </param>
 /// <param name="Level">How far confirmation got.</param>
 /// <param name="Detail">A one-line human-readable summary of what was confirmed.</param>
+/// <param name="Identity">
+/// The identity of the DECLARATION this confirmation tested — <c>SecuredTargets.IdentityOf</c>
+/// applied to the very <c>SecuredTarget</c> <see cref="SecuredEndpointProbe.ConfirmAsync"/> was
+/// iterating when it produced this record.
+/// <para>
+/// <strong>This is what makes a confirmation comparable with a declaration (issue #415).</strong>
+/// <see cref="TargetName"/> alone identifies the TARGET, not the ASSERTION about it, so a run that
+/// confirmed <c>api</c> asserting <c>tls</c> on 8443 used to satisfy a sibling document declaring
+/// <c>api</c> asserting <c>mtls</c> on 9093. <c>SecurityAssurance</c> compares whole identities;
+/// this member is the half of that comparison the probe owns.
+/// </para>
+/// <para>
+/// <strong>It is a POSITIONAL parameter, deliberately, and not an <c>init</c> property.</strong>
+/// Every construction site is a compile error until it supplies one — which is the point: a site
+/// that emitted a confirmation without an identity would emit one that matches no declaration at
+/// all, turning every secured suite red, and the compiler is a cheaper place to learn that than a
+/// pipeline. It is derived by <c>SecuredTargets.IdentityOf</c> and NEVER recomputed by hand, for
+/// the same reason.
+/// </para>
+/// </param>
 public sealed record SecurityConfirmation(
     string TargetName,
     string TargetKind,
@@ -208,7 +228,8 @@ public sealed record SecurityConfirmation(
     string ObservedProtocol,
     bool ClientIdentityResolved,
     SecurityConfirmationLevel Level,
-    string Detail)
+    string Detail,
+    SecuredTargetIdentity Identity)
 {
     /// <summary>
     /// Renders this confirmation as one declared-versus-observed line for the run's own output.
@@ -239,6 +260,15 @@ public sealed record SecurityConfirmation(
     /// own trust store where none is declared — so the name is
     /// accurate about the peer and merely silent about whose identity; adjacency supplies what it
     /// omits, and a rename would move a public API member to fix a rendering problem.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="Identity"/> is deliberately NOT rendered</strong> (issue #415). Its
+    /// digest is machine-facing — it exists to be compared against a declaration's, never read —
+    /// and the two facts an operator could act on, the target name and the declared profile and
+    /// endpoint, are already on this line in words. Adding sixty-four hex characters to every
+    /// confirmation line would cost legibility and buy nothing, so the ten members render as nine
+    /// and the omission is the one stated here rather than the silent one the level's own paragraph
+    /// above records.
     /// </para>
     /// </remarks>
     public override string ToString() =>
@@ -366,12 +396,21 @@ internal static class SecuredEndpointProbe
         // shared with EnvironmentSecurityValidator's cheap "does this suite claim anything" check
         // and SuiteTopology's no-accessor guard, so the three cannot drift about which targets are
         // secured or in what order they are reported.
-        foreach (var (name, kind, spec) in SecuredTargets.Enumerate(environment))
+        //
+        // #415: the loop keeps the SecuredTarget rather than only its three members, because
+        // SecuredTargets.IdentityOf takes the whole target. Deriving the identity here — from the
+        // same value this walk yielded, through the same one method SecurityAssurance.Declaring
+        // calls — is what makes the two sides of the comparison equal by construction rather than
+        // by two implementations agreeing.
+        foreach (var target in SecuredTargets.Enumerate(environment))
         {
+            var (name, kind, spec) = target;
+
             confirmations.Add(await ConfirmOneAsync(
                     name,
                     kind,
                     spec,
+                    SecuredTargets.IdentityOf(target),
                     discoveredServices,
                     security,
                     kafkaSpeakingTargets,
@@ -387,6 +426,7 @@ internal static class SecuredEndpointProbe
         string name,
         string kind,
         SecuritySpec spec,
+        SecuredTargetIdentity identity,
         IReadOnlyDictionary<string, object> discoveredServices,
         ISecurityConfigurationAccessor security,
         IReadOnlySet<string> kafkaSpeakingTargets,
@@ -753,7 +793,8 @@ internal static class SecuredEndpointProbe
                           + "not confirmed here."
                         : "the broker answered a Kafka ApiVersions request over this connection. No "
                           + "client identity is declared for this profile, so none was accepted and "
-                          + "none is claimed.");
+                          + "none is claimed.",
+                    identity);
             }
 
             // ── Transport confirmation, with the limit stated (option 2) ──────────────────────
@@ -796,7 +837,8 @@ internal static class SecuredEndpointProbe
                       + "declaration or from any step, so no application-layer exchange is available, "
                       + "and a completed TLS 1.3 handshake carries no acceptance signal."
                     : "TLS and the server's trust chain are confirmed. No client identity is declared "
-                      + "for this profile.");
+                      + "for this profile.",
+                identity);
         }
         catch (CryptographicException ex)
         {

@@ -212,16 +212,17 @@ public enum SecurityAbortKind
 /// what was CONFIRMED, and which door (if any) REFUSED.
 /// </summary>
 /// <param name="Declared">
-/// The NAMES of the declared targets carrying a <c>security</c> block, from
+/// The IDENTITIES of the declared targets carrying a <c>security</c> block, from
 /// <c>SecuredTargets.Enumerate</c> — the one canonical walk, in its fixed
 /// services-then-dependencies order, deduplicated.
 /// </param>
 /// <param name="Confirmed">
-/// The names of the targets REQ-005's probe confirmed, from
+/// The identities of the declarations REQ-005's probe confirmed, from
 /// <c>SuiteTopology.SecurityConfirmations</c>; empty when no topology was reached. A confirmation's
-/// <c>TargetName</c> comes from the SAME <c>SecuredTargets.Enumerate</c> walk
-/// (<c>SecuredEndpointProbe.ConfirmAsync</c>), so these names are comparable with
-/// <paramref name="Declared"/> by construction rather than by convention.
+/// <c>Identity</c> comes from the SAME <c>SecuredTargets.Enumerate</c> walk through the SAME
+/// <c>SecuredTargets.IdentityOf</c> derivation (<c>SecuredEndpointProbe.ConfirmAsync</c>), so these
+/// identities are comparable with <paramref name="Declared"/> by construction rather than by
+/// convention.
 /// </param>
 /// <param name="Refusal">Which door aborted the run, or <see langword="null"/> when none did.</param>
 /// <remarks>
@@ -235,7 +236,7 @@ public enum SecurityAbortKind
 /// to need in order to answer "does this document declare security" at the door.
 /// </para>
 /// <para>
-/// <strong>NAMES, not the <c>SecuritySpec</c> values they carry — and the narrowing is a
+/// <strong>IDENTITIES, not the <c>SecuritySpec</c> values they carry — and the narrowing is a
 /// disclosure boundary, not a taste.</strong> <c>SecuredTarget</c> is a record struct holding the
 /// whole <c>SecuritySpec</c>, so its compiler-generated <c>ToString()</c> expands a declared
 /// <c>clientKeyPassword</c> literal verbatim — measured:
@@ -243,9 +244,31 @@ public enum SecurityAbortKind
 /// states the rule in as many words ("never interpolate a <c>SecuritySpec</c> whole into a
 /// diagnostic, event or report"), and a record that holds an array of them is exactly that with no
 /// guard: nothing today interpolates this record, and the next diagnostic to interpolate it would
-/// not know it was crossing a line. Nothing here ever needed more than the names — the predicate
-/// below compares what was declared against what was confirmed on its authoring arm — so the specs
-/// are not carried at all rather than carried carefully.
+/// not know it was crossing a line. The specs are therefore not carried at all rather than carried
+/// carefully.
+/// </para>
+/// <para>
+/// <strong>An identity is not a widening of that boundary, and issue #415 is why it is not a
+/// name.</strong> A name identifies the TARGET; the predicate below needs to know whether the probe
+/// confirmed THIS DECLARATION, and two documents in one suite can declare the same name asserting
+/// different profiles, endpoints and certificates. <c>SecuredTargetIdentity</c> carries the name
+/// plus a one-way digest of the assertion — enough to tell two declarations apart.
+/// </para>
+/// <para>
+/// <strong>That digest is NOT a confidentiality boundary.</strong> Its input space is small and
+/// conventional — a handful of short relative paths and a port selector — so anyone holding a digest
+/// can brute-force the preimage. It is safe because it reaches no report, event or log, NOT because
+/// it cannot be inverted, and a future diagnostic that renders it is not made safe by the hash.
+/// <c>clientKeyPassword</c>'s text enters the digest ONLY when <c>SecretReference.TryParse</c> says
+/// one whole <c>${secret:}</c> token spans the value, and contributes a presence bit alone otherwise
+/// (see <c>SecuredTargets.IdentityOf</c>), precisely because that brute-forceability reasoning does
+/// not extend to a secret. That test is NOT proof the value is a pointer: a reference path terminates
+/// at the first closing brace, so a second <c>${secret:</c> lead-in is swallowed into it and its
+/// arbitrary tail is hashed with the rest. The residual is accepted because we are HASHING, not
+/// quoting, and this digest is a value the engine COMPARES and never renders — a <c>TryParse</c>
+/// success is therefore not a licence to print anything, which is the <c>if (TryParse(v))</c>
+/// inference <c>SecuritySpec</c>'s own header records as a reproduced disclosure defect. The
+/// disclosure boundary this paragraph draws is therefore where it always was.
 /// </para>
 /// <para>
 /// Neither this record nor <c>ScenarioCoreResult</c>/<c>SuiteResult</c> is golden-gated, and
@@ -255,8 +278,8 @@ public enum SecurityAbortKind
 /// </para>
 /// </remarks>
 public sealed record SecurityAssurance(
-    IReadOnlyList<string> Declared,
-    IReadOnlyList<string> Confirmed,
+    IReadOnlyList<SecuredTargetIdentity> Declared,
+    IReadOnlyList<SecuredTargetIdentity> Confirmed,
     SecurityAbortKind? Refusal)
 {
     /// <summary>
@@ -264,7 +287,7 @@ public sealed record SecurityAssurance(
     /// learned anything starts from, and the value a caller that never asked about security gets.
     /// </summary>
     public static SecurityAssurance None { get; } = new(
-        Array.Empty<string>(), Array.Empty<string>(), null);
+        Array.Empty<SecuredTargetIdentity>(), Array.Empty<SecuredTargetIdentity>(), null);
 
     /// <summary>
     /// <strong>REQ-003's predicate, written once.</strong> The document declared a <c>security</c>
@@ -335,16 +358,47 @@ public sealed record SecurityAssurance(
         || Refusal == SecurityAbortKind.SecurityDeclarationRejected;
 
     /// <summary>
-    /// At least one declared target is missing from what the probe confirmed — including the
+    /// At least one declared DECLARATION is missing from what the probe confirmed — including the
     /// ordinary pre-topology case, where nothing was confirmed because no topology was reached.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// False for a document that declared nothing, which is why the first disjunct above no longer
     /// needs its own <c>Declared.Count &gt; 0</c> clause: an empty declaration has no unconfirmed
     /// member. That is the same fact stated once instead of twice.
+    /// </para>
+    /// <para>
+    /// <strong>The match is on the WHOLE identity, and matching on the NAME was issue #415.</strong>
+    /// A declared target used to count as confirmed when SOMETHING confirmed a target of the same
+    /// name, rather than when the probe confirmed THAT declaration — so two declarations sharing a
+    /// name and asserting different things (a different <c>profile</c>, <c>endpoint</c>,
+    /// <c>caCert</c>, <c>clientCert</c> or <c>clientKey</c>) cross-satisfied each other, and one
+    /// suite can hold both. Measured at this tier: a document declaring <c>api</c> as <c>mtls</c> on
+    /// 9093 went quiet on a confirmation of <c>api</c> as <c>tls</c> on 8443 — a suite asserting
+    /// mutual TLS reporting itself confirmed by a plain-TLS handshake.
+    /// </para>
+    /// <para>
+    /// <strong>Both sides derive their identity from ONE place</strong> —
+    /// <c>SecuredTargets.IdentityOf</c>, applied to the <c>SecuredTarget</c>
+    /// <c>SecuredTargets.Enumerate</c> yielded — so the equality is a property of the derivation
+    /// rather than of two call sites agreeing. It is pinned where the two meet, by
+    /// <c>SecuredEndpointProbeTests.Confirm_IdentityOnTheConfirmation_MatchesTheDeclarationsOwnIdentity</c>,
+    /// because a disagreement there fails CLOSED and universally: every secured suite in the
+    /// product would raise on a declaration its own run confirmed.
+    /// </para>
+    /// <para>
+    /// <c>Contains</c> with no comparer is deliberate:
+    /// <see cref="SecuredTargetIdentity"/> is a record struct, so the default equality compares
+    /// BOTH members, with no comparer argument to get wrong. The string form this replaced spelled
+    /// <c>StringComparer.Ordinal</c> at every call site — for CA1307/CA1309 and for explicitness,
+    /// NOT to correct a behaviour: <c>Enumerable.Contains</c> without a comparer resolves to
+    /// <c>EqualityComparer&lt;string&gt;.Default</c>, which is already ordinal, so a site that
+    /// omitted it compared identically. The record struct's default equality is likewise ordinal
+    /// per member.
+    /// </para>
     /// </remarks>
     private bool SomeDeclaredTargetWentUnconfirmed =>
-        Declared.Any(name => !Confirmed.Contains(name, StringComparer.Ordinal));
+        Declared.Any(declared => !Confirmed.Contains(declared));
 
     /// <summary>
     /// Records a refusal, keeping the more consequential one when a run has already recorded a
@@ -366,12 +420,20 @@ public sealed record SecurityAssurance(
             ? this with { Refusal = kind }
             : this;
 
-    /// <summary>Attaches the declared targets a verdict-assembly site walked, by NAME.</summary>
+    /// <summary>Attaches the declared targets a verdict-assembly site walked, by IDENTITY.</summary>
     /// <param name="declared">
     /// The result of <c>SecuredTargets.Enumerate</c> for this scenario — or, for a shared-topology
-    /// suite, for every scenario in it concatenated. Only the names are kept, and duplicates
+    /// suite, for every scenario in it concatenated. Only the identities are kept, and duplicates
     /// collapse, so a caller may pass the same declaration once per scenario without inflating
     /// anything the predicate reads.
+    /// <para>
+    /// The parameter type is unchanged (issue #415 moved what is STORED, not what is accepted), so
+    /// every caller keeps passing the walk's own output and the derivation stays in one place.
+    /// Deduplication is now over the whole identity, which is strictly weaker: two documents
+    /// declaring the same name with different assertions used to collapse into one entry and now
+    /// survive as two — which is the point, since the probe can confirm one of them and not the
+    /// other.
+    /// </para>
     /// </param>
     /// <remarks>
     /// <strong>REPLACES what an earlier call attached; it does not accumulate</strong> — and
@@ -385,17 +447,24 @@ public sealed record SecurityAssurance(
     {
         ArgumentNullException.ThrowIfNull(declared);
 
-        return this with { Declared = Distinct(declared.Select(target => target.Name)) };
+        return this with { Declared = Distinct(declared.Select(SecuredTargets.IdentityOf)) };
     }
 
-    /// <summary>Attaches what REQ-005's probe confirmed once the topology was up, by NAME.</summary>
+    /// <summary>
+    /// Attaches what REQ-005's probe confirmed once the topology was up, by IDENTITY.
+    /// </summary>
     /// <param name="confirmed">The topology's own <c>SecurityConfirmations</c>.</param>
-    /// <remarks>Replaces rather than accumulates, exactly as <see cref="Declaring"/> does.</remarks>
+    /// <remarks>
+    /// Replaces rather than accumulates, exactly as <see cref="Declaring"/> does. It reads the
+    /// identity the probe ALREADY derived rather than re-deriving one from the confirmation's
+    /// scalar members: the probe holds the <c>SecuredTarget</c> and this does not, and a second
+    /// derivation from a partial view is exactly how the two sides would come to disagree.
+    /// </remarks>
     public SecurityAssurance Confirming(IReadOnlyList<SecurityConfirmation> confirmed)
     {
         ArgumentNullException.ThrowIfNull(confirmed);
 
-        return this with { Confirmed = Distinct(confirmed.Select(c => c.TargetName)) };
+        return this with { Confirmed = Distinct(confirmed.Select(c => c.Identity)) };
     }
 
     /// <summary>
@@ -476,11 +545,21 @@ public sealed record SecurityAssurance(
     }
 
     /// <summary>
-    /// The distinct names, in first-occurrence order, as a materialised array — never a deferred
-    /// query, since this value is stored on an immutable record and read repeatedly.
+    /// The distinct identities, in first-occurrence order, as a materialised array — never a
+    /// deferred query, since this value is stored on an immutable record and read repeatedly.
     /// </summary>
-    private static string[] Distinct(IEnumerable<string> names) =>
-        names.Distinct(StringComparer.Ordinal).ToArray();
+    /// <remarks>
+    /// No comparer argument, and that is the safety rather than brevity:
+    /// <see cref="SecuredTargetIdentity"/> is a record struct, so the default equality comparer
+    /// compares BOTH members — a call site cannot compare one of them by accident, which is the
+    /// shape the defect took. The string form this replaced spelled <c>StringComparer.Ordinal</c> at
+    /// every call site to satisfy CA1307/CA1309 and for explicitness, not to fix a comparison:
+    /// <c>Distinct</c> with no comparer resolves to <c>EqualityComparer&lt;string&gt;.Default</c>,
+    /// which is ordinal, so a site that omitted it behaved identically. The record struct's default
+    /// equality is ordinal per member and needs no argument.
+    /// </remarks>
+    private static SecuredTargetIdentity[] Distinct(IEnumerable<SecuredTargetIdentity> identities) =>
+        identities.Distinct().ToArray();
 
     private static int Precedence(SecurityAbortKind kind) => kind switch
     {

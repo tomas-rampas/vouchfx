@@ -171,8 +171,11 @@ public sealed class RunSuiteAsyncTests
         Assert.Empty(result.ScenarioVerdicts);
 
         // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        // Issue #415 retyped `Declared` from names to identities, so the same claim — this run
+        // declared exactly `legacy` and nothing else — is now asserted through the Name projection.
+        // Unchanged in strength: still an ordered equality against a one-element expectation.
         var expectedDeclared = new[] { "legacy" };
-        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
         Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
         Assert.True(result.Assurance.Unconfirmed);
     }
@@ -1271,8 +1274,12 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
 
         // The sibling's declaration is in `Declared`; the unbuilt document's is not…
-        Assert.Contains("api", result.Assurance.Declared, StringComparer.Ordinal);
-        Assert.DoesNotContain("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+        // Issue #415 retyped `Declared` from names to identities, so both membership claims are now
+        // made over the Name projection. The claim is unchanged — which NAMES this run declared —
+        // and the ordinal comparer is retained on the projected sequence.
+        var declaredNames = result.Assurance.Declared.Select(identity => identity.Name).ToArray();
+        Assert.Contains("api", declaredNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("legacy", declaredNames, StringComparer.Ordinal);
 
         // …and #390's fence holds: the only refusal recorded is the topology's, which never raises.
         Assert.Equal(SecurityAbortKind.TopologyUnavailable, result.Assurance.Refusal);
@@ -1301,7 +1308,13 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
 
         // The unbuilt document's own declaration folded into the one canonical walk…
-        Assert.Contains("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+        // Issue #415 retyped `Declared` from names to identities; the claim here is about WHICH
+        // target the unbuilt document contributed, so it is asserted over the Name projection with
+        // the ordinal comparer retained.
+        Assert.Contains(
+            "legacy",
+            result.Assurance.Declared.Select(identity => identity.Name),
+            StringComparer.Ordinal);
 
         // …and the refusal it carries outranks the topology's, so the pair raises.
         Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);

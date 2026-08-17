@@ -791,8 +791,11 @@ public sealed class RunParallelAsyncTests
         Assert.Empty(result.ScenarioVerdicts);
 
         // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        // Issue #415 retyped `Declared` from names to identities, so the same claim — this arm
+        // declared exactly `legacy` and nothing else — is now asserted through the Name projection.
+        // Unchanged in strength: still an ordered equality against a one-element expectation.
         var expectedDeclared = new[] { "legacy" };
-        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
         Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
         Assert.True(result.Assurance.Unconfirmed);
     }
