@@ -446,8 +446,10 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.Equal(new[] { "api" }, assurance.Declared.Select(identity => identity.Name));
 
         // THREE DECLARED TRIPWIRES, not live checks — and the joined assertion is one of them, which
-        // its old label ("the original assertion, unchanged") stopped describing. It WAS a live
-        // check while Declared held raw target names; #415's retype moved it. string.Join calls
+        // its old label ("the original assertion, unchanged") stopped describing. It READ AS a live
+        // check while Declared held raw target names — it was already only a tripwire against a
+        // retype-back even then, since a name would have had to BE the canary for it to fail; what
+        // #415's retype changed is what it walks, not its class. string.Join calls
         // SecuredTargetIdentity.ToString(), which renders `name@<uppercase hex>`, so for ANY
         // implementation of the digest neither that string nor either member can contain the canary,
         // and none of the three can fail today. REQ-003's rule is that such an assertion says so or
@@ -1190,10 +1192,28 @@ public sealed class SecurityConfirmationExitCodeTests
     /// arguments: every return path is a bare <c>left</c> or <c>right</c>, never a <c>with</c>, so
     /// the returned <see cref="SecurityAssurance.Unconfirmed"/> is one of the two inputs' own. That
     /// is an argument from reading the method, made independently by three reviewers and pinned by
-    /// nothing. Change <c>Worse</c> to construct a MERGED record — the raising side's
-    /// <c>Declared</c> beside the other's <c>Confirmed</c>, say — and the disjunction stops holding
-    /// while every example row in this file stays green, because each of them fixes both sides.
-    /// This row varies both.
+    /// nothing.
+    /// </para>
+    /// <para>
+    /// <strong>What this row buys, stated from a MEASUREMENT rather than from the guess that was
+    /// written here first.</strong> The original justification claimed that merging the raising
+    /// side's <c>Declared</c> beside the other's <c>Confirmed</c> would break the disjunction "while
+    /// every example row in this file stays green". That was measured and is FALSE: that mutation
+    /// reddens three example rows as well as six of this theory's —
+    /// <c>Worse_SecuredUnbuiltDocumentBesideASuiteThatConfirmedTheSameTarget_StillRaises</c> and
+    /// <c>Worse_TheRetiredUnionShape_ExitsZeroWhereTheFoldedShapeRaises</c> among them. The claim was
+    /// left standing after being disproved, which is the failure this file keeps having to correct.
+    /// </para>
+    /// <para>
+    /// The shape no example row covers is a merge in the branch where NEITHER side raises and both
+    /// carry a refusal: <c>declaration-confirmed/AuthoringFault</c> against
+    /// <c>nothing-declared/TopologyUnavailable</c>, under the same merge, yields
+    /// <c>{[declared], [], AuthoringFault}</c> — <see cref="SecurityAssurance.Unconfirmed"/> TRUE
+    /// where both inputs are false. The fold INVENTING a raise, from two assurances that each
+    /// exit 0. Every example row in this file fixes both sides of a pair where at least one raises;
+    /// this theory sweeps the neither-raises pairs with differing <c>Confirmed</c>, and that is the
+    /// coverage it uniquely holds. A fold that can invent a raise is as much a defect as one that
+    /// can drop one — it reddens a suite whose declaration was confirmed.
     /// </para>
     /// <para>
     /// <strong>Rows are the LEFT shape and the sweep over right shapes is in the body</strong>,

@@ -36,14 +36,24 @@ public readonly record struct SecuredTarget(string Name, string Kind, SecuritySp
 
 /// <summary>
 /// The identity of ONE declaration: its target name, plus a digest of everything the
-/// <c>security</c> block itself declares. Two declarations of the same name whose <c>security</c>
-/// blocks differ have different identities.
+/// <c>security</c> block itself declares.
 /// <para>
 /// The narrower wording is deliberate and replaces "everything that declaration ASSERTS", which was
 /// a categorical claim this digest does not support: the block's own text is hashed, the declared
-/// shape it is RESOLVED AGAINST is not. <see cref="SecuredTargets.IdentityOf"/>'s remarks state both
-/// scope limits — that one and the suite-directory one — and what a widening caller must do about
-/// them.
+/// shape it is RESOLVED AGAINST is not. <see cref="SecuredTargets.IdentityOf"/>'s remarks state all
+/// three scope limits — that one, the suite-directory one, and the passphrase one — and what a
+/// widening caller must do about them.
+/// </para>
+/// <para>
+/// <strong>A second sentence used to follow, and it was false in the same way the first one was —
+/// so it is deleted rather than narrowed again.</strong> It read: "two declarations of the same name
+/// whose <c>security</c> blocks differ have different identities." Two blocks differing ONLY in a
+/// <c>clientKeyPassword</c> that is not a whole <c>${secret:}</c> token — <c>hunter2</c> against
+/// <c>swordfish</c> — share one identity, deliberately, because a literal passphrase must not be
+/// hashed. This branch's own
+/// <c>IdentityOf_ThePassphraseText_IsAnInputOnlyWhenItIsAWholeSecretReference</c> asserts exactly
+/// that equality, so the sentence was falsified by a test shipping beside it. A universal about this
+/// digest wants a proof, not a summary line; the limits are enumerated where the digest is derived.
 /// </para>
 /// </summary>
 /// <param name="Name">
@@ -223,7 +233,9 @@ public static class SecuredTargets
 
     /// <summary>
     /// The <see cref="SecuredTargetIdentity"/> of one declared target: its name, plus a digest over
-    /// everything that declaration asserts.
+    /// everything the <c>security</c> block itself declares. The three scope limits that phrasing
+    /// exists to respect — the block-versus-resolved-shape one, the suite-directory one, and the
+    /// passphrase one — are stated in the remarks below.
     /// </summary>
     /// <param name="target">A target yielded by <see cref="Enumerate"/>.</param>
     /// <remarks>
@@ -273,9 +285,19 @@ public static class SecuredTargets
     /// <c>endpoint</c> selector (<c>http</c>, <c>tcp-&lt;port&gt;</c>) and resolves it against the
     /// service's own <c>ports:</c>/<c>httpPort:</c>/<c>project:</c> declaration — none of which is an
     /// input here, since <see cref="DigestOf"/> hashes the selector's TEXT and never its resolution.
-    /// So two documents declaring a byte-identical <c>security: { profile: mtls, endpoint: tcp-9093,
-    /// … }</c> on services whose <c>ports:</c> differ assert mutual TLS on DIFFERENT ports and share
-    /// one identity. It is nonetheless strictly stronger than the target-NAME matching it replaced,
+    /// So two documents declaring a byte-identical <c>security: { profile: mtls, endpoint: http,
+    /// … }</c> on services declaring DIFFERENT <c>httpPort:</c> values assert mutual TLS on different
+    /// ports and share one identity.
+    /// <strong>The selector has to be a name-stable one for that to be constructible, and the first
+    /// example written here was not.</strong> It used <c>endpoint: tcp-9093</c>, but
+    /// <c>ServiceEndpointNaming.TcpEndpointName(port)</c> is <c>$"tcp-{port}"</c> — a
+    /// <c>tcp-&lt;port&gt;</c> selector ENCODES the port it resolves to, so either both services
+    /// declare 9093 and both resolve identically, or one does not and <c>ResolveSecuredPort</c>
+    /// returns null on that side, which is refused rather than confirmed. The example could not
+    /// exhibit the divergence it was written to illustrate. <c>http</c> can:
+    /// <c>HttpEndpointName</c> is the fixed string <c>"http"</c> and <c>PlaintextEndpoints</c> maps
+    /// it to whatever <c>ServiceSpec.HttpPort</c> happens to be.
+    /// It is nonetheless strictly stronger than the target-NAME matching it replaced,
     /// and it is not reachable today: both sides of every comparison the engine makes are derived
     /// from ONE <c>environment</c> block — the shared-<c>environment</c> divergence guard forces a
     /// sequential suite's scenarios byte-identical, a parallel slot compares one scenario's
@@ -503,7 +525,7 @@ public static class SecuredTargets
     /// which is a universal this call does not satisfy: <c>MemoryMarshal.AsBytes</c>
     /// computes <c>checked(span.Length * sizeof(char))</c> and throws an
     /// <see cref="OverflowException"/> above <c>int.MaxValue / 2</c> chars. No document-borne value
-    /// reaches that — the CLI refuses a file above <c>ScenarioDiscovery.MaxDocumentSizeBytes</c>
+    /// reaches that — the CLI refuses a file above its own 1 MiB document cap
     /// (1 MiB) before parsing it — so the shortfall is in the sentence, not in the guarantee.
     /// <para>
     /// Endianness is irrelevant here and must not be "fixed" for portability: these digests are

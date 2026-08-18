@@ -230,7 +230,7 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
 
   The mechanism, since it is the reason the rule can be stated that plainly: the engine matches a
   declaration to a confirmation on the declaration's whole **identity** — the target's name and kind
-  together with a one-way digest of **everything that declaration asserts** — derived by one function
+  together with a one-way digest of **everything the `security` block itself declares** — derived by one function
   that both the declaration walk and the probe go through. This page deliberately does not enumerate
   the fields that go into that digest: the enumeration is the function, and a copy of it here is a
   second spelling of it, free to go stale the next time a field joins it. Two documents declaring
