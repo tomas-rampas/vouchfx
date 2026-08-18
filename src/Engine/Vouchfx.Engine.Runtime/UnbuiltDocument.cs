@@ -57,8 +57,12 @@ namespace Vouchfx.Engine.Runtime;
 /// This carries no disclosure that a <c>ScenarioAst</c> does not: the record's generated
 /// <c>ToString()</c> could expand a declared <c>clientKeyPassword</c> exactly as a parsed
 /// scenario's environment already could. Nothing interpolates it; the guard that matters is
-/// downstream, where <see cref="SecurityAssurance"/> keeps declared target NAMES rather than the
-/// specs they came from (issue #408).
+/// downstream, where <see cref="SecurityAssurance"/> keeps a declared target's NAME and a one-way
+/// digest of what it asserted — a <c>SecuredTargetIdentity</c> — rather than the
+/// <c>SecuritySpec</c> values they came from (issue #408, narrowed by issue #415 from the name
+/// alone to the name plus that digest; the digest never carries a declared
+/// <c>clientKeyPassword</c>'s text unless one whole <c>${secret:}</c> token spans it, and reaches
+/// no report, event or log either way).
 /// </para>
 /// </remarks>
 public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)

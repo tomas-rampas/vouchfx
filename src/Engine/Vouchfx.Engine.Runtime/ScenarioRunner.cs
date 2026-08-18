@@ -1159,8 +1159,11 @@ public static class ScenarioRunner
         // exited 0, while the same two files with the block in the other one exited 3: a rename
         // flipped a CI build's colour. Everywhere else this value is read the environments are
         // already byte-identical, so the union equals scenarios[0]'s walk and costs nothing —
-        // measured as the blast radius of the change. Names are deduplicated by `Declaring`, so the
-        // N identical copies a conforming suite contributes collapse to one set.
+        // measured as the blast radius of the change. IDENTITIES are deduplicated by `Declaring`
+        // (issue #415 retyped the list from names), so the N byte-identical copies a conforming
+        // suite contributes collapse to one set — and two same-named declarations asserting
+        // DIFFERENT things now survive as two entries rather than collapsing into one, which is
+        // the point: the probe can confirm one of them and not the other.
         //
         // The doors below record only WHICH door refused. Nothing about the exit code is decided
         // at any of them: that is SecurityAssurance.Unconfirmed's single job, and it is why this

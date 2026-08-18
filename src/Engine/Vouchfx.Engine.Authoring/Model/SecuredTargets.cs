@@ -251,7 +251,15 @@ public static class SecuredTargets
     /// <c>JsonSerializerOptions</c> defaults and on reflected property order — properties of the
     /// serialiser rather than of this file, free to move under a runtime upgrade and taking every
     /// stored digest with them. And this is a <c>IsPackable</c> assembly, so a reflection-based
-    /// serialiser would put trim/AOT analysis warnings on a shipped surface to hash six strings.
+    /// serialiser would put trim/AOT analysis warnings on a shipped surface in order to hash a
+    /// tuple this file already writes by hand. <strong>"Six strings" is what this sentence used to
+    /// say and it was never right, so the count is not restated here — the inputs are whatever
+    /// <see cref="DigestOf"/> appends, in that order</strong>: the target's name and kind, the
+    /// spec's own presence, then (when present) <c>profile</c>, <c>endpoint</c>, <c>caCert</c>,
+    /// <c>clientCert</c>, <c>clientKey</c>, the <c>clientKeyPassword</c> declaration — whose text is
+    /// CONDITIONAL, so the arity is not even fixed — and the <c>serverArtifacts</c> list, itself a
+    /// presence bit, a count and two strings per entry. A number written here is a second spelling
+    /// of that method, free to go stale the next time a field joins it, and it did.
     /// </para>
     /// <para>
     /// <strong>A <see langword="null"/> field and an empty-string field differ</strong> — the
@@ -265,8 +273,9 @@ public static class SecuredTargets
     /// <strong><see cref="SecuritySpec.ClientKeyPassword"/> enters the digest as its PRESENCE
     /// always, and as its TEXT only when <c>SecretReference.TryParse</c> says one whole
     /// <c>${secret:}</c> token spans it.</strong> On any schema-validated path that property holds a
-    /// <c>${secret:}</c> reference, but the parser is deliberately lenient and a direct engine
-    /// embedder that bypasses the schema CAN bind a literal passphrase there —
+    /// <c>${secret:}</c> reference, but the parser is deliberately lenient and a literal passphrase
+    /// binds regardless — from AUTHORED YAML as well as from a direct engine embedder, because this
+    /// walk runs BEFORE the schema refuses the document (the paragraph below measures where) —
     /// <c>SecuritySpec</c>'s own header states this and
     /// <c>SecuritySpecBindingTests.Parse_ClientKeyPasswordLiteral_IsStillBound_ParserStaysLenient</c>
     /// pins it. §17 governs a literal: a digest is one-way but not confidential, a passphrase is
