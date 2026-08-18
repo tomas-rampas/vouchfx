@@ -445,19 +445,22 @@ public sealed class SecurityConfirmationExitCodeTests
         // Declared is now a list of SecuredTargetIdentity and the claim is about its Name member.
         Assert.Equal(new[] { "api" }, assurance.Declared.Select(identity => identity.Name));
 
-        // The original assertion, unchanged: the shape any diagnostic joining the collection takes.
+        // THREE DECLARED TRIPWIRES, not live checks — and the joined assertion is one of them, which
+        // its old label ("the original assertion, unchanged") stopped describing. It WAS a live
+        // check while Declared held raw target names; #415's retype moved it. string.Join calls
+        // SecuredTargetIdentity.ToString(), which renders `name@<uppercase hex>`, so for ANY
+        // implementation of the digest neither that string nor either member can contain the canary,
+        // and none of the three can fail today. REQ-003's rule is that such an assertion says so or
+        // is dropped; all three are KEPT, because they still go red if the RENDERING is ever widened
+        // or if Declared is retyped back to something carrying a SecuritySpec. They are not
+        // independent — the two below read the members string.Join already walked — so they add
+        // localisation rather than reach: the joined line is the shape any diagnostic would take,
+        // and the two below say WHICH member carried the leak.
         Assert.DoesNotContain(
             PassphraseCanary,
             string.Join(", ", assurance.Declared),
             StringComparison.Ordinal);
 
-        // The two surfaces #415's identity added, DECLARED TRIPWIRES rather than live checks: as
-        // SecuredTargetIdentity renders today (an uppercase-hex digest, and "name@digest") neither
-        // can contain the canary for ANY implementation of the digest, so neither can fail now.
-        // They are here to go red if that RENDERING is ever widened. Neither is independent of the
-        // joined assertion above — string.Join calls each element's ToString() — so they add
-        // localisation rather than reach: a widened rendering fails here naming the one identity
-        // that carries it, and the Digest line says which of the two members did.
         var identity = Assert.Single(assurance.Declared);
         Assert.DoesNotContain(PassphraseCanary, identity.Digest, StringComparison.Ordinal);
         Assert.DoesNotContain(PassphraseCanary, identity.ToString(), StringComparison.Ordinal);
@@ -1100,6 +1103,135 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.True(folded.Unconfirmed);
         Assert.Equal(SecurityAbortKind.AuthoringFault, folded.Refusal);
         Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, folded));
+
+        // THE SELECTION SEMANTICS the paragraph above argues from, asserted instead of asserted in
+        // prose: `Worse` returns one of its ARGUMENTS — reference-identical — never a construction.
+        // A merged return (the raising side's `Declared` beside the other's `Confirmed`, say) would
+        // leave every example row in this file green while
+        // `Worse_UnconfirmedIsTheDisjunctionOfItsArguments` goes red.
+        Assert.Same(unbuilt, folded);
+    }
+
+    // ── The fold's monotonicity, pinned as a PROPERTY rather than by example ──────────────
+
+    /// <summary>
+    /// The (<c>Declared</c>, <c>Confirmed</c>) pairings a <see cref="SecurityAssurance"/> can take
+    /// that the predicate can tell apart: nothing declared, a declaration the probe confirmed, a
+    /// declaration whose confirmation tested a DIFFERENT assertion of the same name (issue #415's
+    /// own shape), and two declared targets with one confirmed (the shortfall REQ-003's
+    /// "every declared target" clause exists for).
+    /// </summary>
+    private static readonly string[] s_foldShapes =
+    {
+        "nothing-declared",
+        "declaration-confirmed",
+        "declaration-mismatched",
+        "declared-shortfall",
+    };
+
+    /// <summary>Every door, plus the run that reached none.</summary>
+    private static readonly SecurityAbortKind?[] s_foldRefusals =
+    {
+        null,
+        SecurityAbortKind.AuthoringFault,
+        SecurityAbortKind.SecurityDeclarationRejected,
+        SecurityAbortKind.TopologyUnavailable,
+        SecurityAbortKind.ProbeUnconfirmed,
+    };
+
+    /// <summary>The whole product space, one row per assurance shape.</summary>
+    public static TheoryData<string, SecurityAbortKind?> FoldShapeRows
+    {
+        get
+        {
+            var rows = new TheoryData<string, SecurityAbortKind?>();
+
+            foreach (var shape in s_foldShapes)
+            {
+                foreach (var refusal in s_foldRefusals)
+                {
+                    rows.Add(shape, refusal);
+                }
+            }
+
+            return rows;
+        }
+    }
+
+    /// <summary>One assurance of the named shape, carrying the supplied refusal.</summary>
+    private static SecurityAssurance ShapeOf(string shape, SecurityAbortKind? refusal)
+    {
+        var declaration = SecuredTargets.IdentityOf(TargetVarying("caCert", "./ca.pem"));
+        var otherAssertion = SecuredTargets.IdentityOf(TargetVarying("caCert", "./other-ca.pem"));
+
+        return shape switch
+        {
+            "nothing-declared" => new SecurityAssurance(
+                Array.Empty<SecuredTargetIdentity>(),
+                Array.Empty<SecuredTargetIdentity>(),
+                refusal),
+            "declaration-confirmed" => new SecurityAssurance(
+                new[] { declaration }, new[] { declaration }, refusal),
+            "declaration-mismatched" => new SecurityAssurance(
+                new[] { declaration }, new[] { otherAssertion }, refusal),
+            "declared-shortfall" => new SecurityAssurance(
+                new[] { declaration, IdentityFor("worker") }, new[] { declaration }, refusal),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown fold shape."),
+        };
+    }
+
+    /// <summary>
+    /// <strong>The property the whole security gate rests on, and which nothing asserted:
+    /// <c>Worse(a, b).Unconfirmed == a.Unconfirmed || b.Unconfirmed</c>.</strong> A suite raises
+    /// exactly when one of the values folded into it raises — no fold can invent a raise, and no
+    /// fold can lose one.
+    /// <para>
+    /// It holds today only because <see cref="SecurityAssurance.Worse"/> SELECTS one of its
+    /// arguments: every return path is a bare <c>left</c> or <c>right</c>, never a <c>with</c>, so
+    /// the returned <see cref="SecurityAssurance.Unconfirmed"/> is one of the two inputs' own. That
+    /// is an argument from reading the method, made independently by three reviewers and pinned by
+    /// nothing. Change <c>Worse</c> to construct a MERGED record — the raising side's
+    /// <c>Declared</c> beside the other's <c>Confirmed</c>, say — and the disjunction stops holding
+    /// while every example row in this file stays green, because each of them fixes both sides.
+    /// This row varies both.
+    /// </para>
+    /// <para>
+    /// <strong>Rows are the LEFT shape and the sweep over right shapes is in the body</strong>,
+    /// which is a deliberate trade. The exhaustive form — one row per ORDERED PAIR — is 400 rows for
+    /// one property, a 75% inflation of this assembly's visible test count; the failure message
+    /// below carries the same localisation (both shapes, both refusals, both orders, expected and
+    /// actual), so the only thing given up is per-pair re-runnability.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(FoldShapeRows))]
+    public void Worse_UnconfirmedIsTheDisjunctionOfItsArguments(
+        string shape,
+        SecurityAbortKind? refusal)
+    {
+        var left = ShapeOf(shape, refusal);
+
+        foreach (var otherShape in s_foldShapes)
+        {
+            foreach (var otherRefusal in s_foldRefusals)
+            {
+                var right = ShapeOf(otherShape, otherRefusal);
+                var expected = left.Unconfirmed || right.Unconfirmed;
+
+                var forward = SecurityAssurance.Worse(left, right).Unconfirmed;
+                var reversed = SecurityAssurance.Worse(right, left).Unconfirmed;
+
+                var pair =
+                    $"{Describe(shape, refusal)} against {Describe(otherShape, otherRefusal)}: "
+                    + $"expected {expected}";
+
+                Assert.True(forward == expected, $"Worse(left, right) — {pair}, got {forward}.");
+                Assert.True(reversed == expected, $"Worse(right, left) — {pair}, got {reversed}.");
+            }
+        }
+
+        static string Describe(string described, SecurityAbortKind? door) =>
+            $"{described}/{door?.ToString() ?? "no-refusal"}";
     }
 
     /// <summary>

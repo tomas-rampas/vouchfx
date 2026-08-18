@@ -95,8 +95,8 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
     /// <para>
     /// <strong>BOTH halves, because either alone closes nothing.</strong> Every disjunct of
     /// <see cref="SecurityAssurance.Unconfirmed"/> requires a non-null
-    /// <see cref="SecurityAssurance.Refusal"/>, so names on their own leave the predicate false and
-    /// the hole open with a green build. A document refused before it could be built is an
+    /// <see cref="SecurityAssurance.Refusal"/>, so a declaration on its own leaves the predicate
+    /// false and the hole open with a green build. A document refused before it could be built is an
     /// authoring fault that started no container — precisely what
     /// <see cref="SecurityAbortKind.AuthoringFault"/>'s own summary already names ("a parse
     /// failure").
@@ -112,14 +112,36 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
     /// </para>
     /// <para>
     /// <strong>NOTHING is contributed by a document that neither declares nor is refused AT a
-    /// declaration</strong>, and that is load-bearing rather than tidy. Both callers fold this
-    /// value into an assurance whose <c>Declared</c> may belong to OTHER documents, so an
-    /// unconditional refusal here would pair an unsecured file's fault with a sibling's
-    /// declaration. Measured, when the sequential stamp was unconditional: a directory pairing an
+    /// declaration</strong>, and that is load-bearing rather than tidy — but NOT for the reason
+    /// this paragraph used to give, which is RETIRED and is written out rather than quietly
+    /// deleted. It used to argue that both callers fold this value into an assurance whose
+    /// <c>Declared</c> may belong to OTHER documents, so an unconditional refusal here would pair an
+    /// unsecured file's fault with a sibling's declaration. That was true of the UNION the
+    /// sequential path built, and it measured a real divergence at the time (a directory pairing an
     /// unsecured unbuildable file with a secured sibling whose topology fails exited 3 under
-    /// <c>run</c> and 0 under <c>run --parallel 1</c> — a divergence between the two paths, and a
-    /// silent override of issue #390, whose whole content is that a health-gate failure must not
-    /// raise.
+    /// <c>run</c> and 0 under <c>run --parallel 1</c>). It is now STRUCTURALLY IMPOSSIBLE: both
+    /// callers reach this through <see cref="AssureAll"/>, and <see cref="SecurityAssurance.Worse"/>
+    /// SELECTS a whole assurance — every return path is a bare argument, never a <c>with</c> — so a
+    /// declaration and a refusal from two different documents can no longer occupy one record. That
+    /// is the same fact the fold's own remarks below state, and <c>ScenarioRunner</c>'s fold note
+    /// labels this claim retired in as many words. A maintainer checking the old reason would find
+    /// it false and conclude the guard is removable; it is not, for the reason below.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT THE GUARD DOES STILL DO, measured by removing it and rebuilding.</strong> It
+    /// keeps <see cref="SecurityAssurance.None"/> the FOLD'S IDENTITY ELEMENT rather than a refusal
+    /// looking for a declaration, and it therefore governs which refusal and which declaration the
+    /// suite REPORTS. Unguarded, <see cref="SecurityAbortKind.AuthoringFault"/> outranks
+    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> in <see cref="SecurityAssurance.Worse"/>,
+    /// so an unsecured document's empty-declaration value wins the fold outright and displaces the
+    /// suite's own evidence:
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero</c>
+    /// fails with the SCENARIO's declaration gone
+    /// (<c>Assert.Contains() … Collection: [] Not found: "api"</c>), and
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_NoScenariosBesideAnUnsecuredUnbuiltDocument_ContributesNothing</c>
+    /// fails with <c>Expected: null Actual: AuthoringFault</c>. NO <see cref="SecurityAssurance.Unconfirmed"/>
+    /// assertion moved in either run — which is the whole of the retraction above, stated as a
+    /// measurement, and it is also why issue #390's fence is not what this guard buys.
     /// </para>
     /// </remarks>
     internal SecurityAssurance Assure(StepKindRegistry registry)

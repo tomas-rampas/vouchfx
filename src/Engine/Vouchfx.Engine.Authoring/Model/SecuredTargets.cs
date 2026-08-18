@@ -35,8 +35,16 @@ namespace Vouchfx.Engine.Authoring.Model;
 public readonly record struct SecuredTarget(string Name, string Kind, SecuritySpec Security);
 
 /// <summary>
-/// The identity of ONE declaration: its target name, plus a digest of everything that declaration
-/// ASSERTS. Two declarations of the same name asserting different things have different identities.
+/// The identity of ONE declaration: its target name, plus a digest of everything the
+/// <c>security</c> block itself declares. Two declarations of the same name whose <c>security</c>
+/// blocks differ have different identities.
+/// <para>
+/// The narrower wording is deliberate and replaces "everything that declaration ASSERTS", which was
+/// a categorical claim this digest does not support: the block's own text is hashed, the declared
+/// shape it is RESOLVED AGAINST is not. <see cref="SecuredTargets.IdentityOf"/>'s remarks state both
+/// scope limits — that one and the suite-directory one — and what a widening caller must do about
+/// them.
+/// </para>
 /// </summary>
 /// <param name="Name">
 /// The declared service or dependency name — the same value <see cref="SecuredTarget.Name"/>
@@ -57,6 +65,17 @@ public readonly record struct SecuredTarget(string Name, string Kind, SecuritySp
 /// <param name="Digest">
 /// An uppercase hex SHA-256 over the declaration's canonical framing (see
 /// <see cref="SecuredTargets.IdentityOf"/>). Machine-facing: it is compared, never read.
+/// <para>
+/// <strong>PROCESS-LOCAL. Never persist this value, transmit it, or compare it against a digest
+/// computed elsewhere.</strong> The framing hashes each string's UTF-16 code units in the PLATFORM'S
+/// OWN byte order, so the same declaration digests differently on a big-endian runtime; and the
+/// framing itself covers whatever fields <see cref="SecuredTargets.IdentityOf"/> appends today, so
+/// it moves when a field joins the <c>security</c> block. This is a value to compare against another
+/// digest produced by the same call in the same process — it is not a stable identifier and carries
+/// no compatibility promise. Stated on this SHIPPED member rather than only beside the private
+/// framing helper that forces it, because an external consumer of this packable assembly reads only
+/// the public surface, and "compared, never read" alone does not tell them not to store one.
+/// </para>
 /// </param>
 /// <remarks>
 /// <para>
@@ -245,6 +264,26 @@ public static class SecuredTargets
     /// accessor roots every scenario at <c>compilations[0].ScenarioBaseDirectory</c>, so every
     /// scenario in a run resolves against one directory regardless of where its document lives —
     /// but any future caller that widens the comparison across directories must revisit this.
+    /// </para>
+    /// <para>
+    /// <strong>And an identity covers the <c>security</c> BLOCK, not the declared shape that block
+    /// is resolved against.</strong> The second scope limit, and the reason the summary on
+    /// <see cref="SecuredTargetIdentity"/> no longer claims the digest covers everything a
+    /// declaration asserts. <c>ServiceEndpointNaming.ResolveSecuredPort</c> accepts a NAMED
+    /// <c>endpoint</c> selector (<c>http</c>, <c>tcp-&lt;port&gt;</c>) and resolves it against the
+    /// service's own <c>ports:</c>/<c>httpPort:</c>/<c>project:</c> declaration — none of which is an
+    /// input here, since <see cref="DigestOf"/> hashes the selector's TEXT and never its resolution.
+    /// So two documents declaring a byte-identical <c>security: { profile: mtls, endpoint: tcp-9093,
+    /// … }</c> on services whose <c>ports:</c> differ assert mutual TLS on DIFFERENT ports and share
+    /// one identity. It is nonetheless strictly stronger than the target-NAME matching it replaced,
+    /// and it is not reachable today: both sides of every comparison the engine makes are derived
+    /// from ONE <c>environment</c> block — the shared-<c>environment</c> divergence guard forces a
+    /// sequential suite's scenarios byte-identical, a parallel slot compares one scenario's
+    /// declaration against its own topology's confirmations, and an unbuilt document, which bypasses
+    /// that guard, carries an EMPTY <c>Confirmed</c>, so nothing of its is ever matched. Any future
+    /// caller that compares identities derived from two environments the guard did not hold together
+    /// must revisit this: the fix is to hash the RESOLVED port beside the selector, which needs the
+    /// whole <c>ServiceSpec</c> rather than the <c>SecuritySpec</c> this walk yields.
     /// </para>
     /// <para>
     /// JSON was the alternative and is rejected for two reasons. Its determinism would rest on
@@ -459,12 +498,19 @@ public static class SecuredTargets
     /// maps an unpaired surrogate to U+FFFD, so <c>"ca\uD800.pem"</c> and <c>"ca\uFFFD.pem"</c>
     /// hashed to the same bytes of the same length — two declarations, one identity, and NTFS
     /// stores UTF-16 filenames so both can name distinct files on disk. Reinterpreting the chars is
-    /// total over every <see langword="string"/> and adds NO throw path, so the digest keeps its
-    /// fail-closed property.
+    /// total over every <see langword="string"/> and adds no throw path for any string a document
+    /// can carry, so the digest keeps its fail-closed property. NOT "no throw path" unqualified,
+    /// which is a universal this call does not satisfy: <c>MemoryMarshal.AsBytes</c>
+    /// computes <c>checked(span.Length * sizeof(char))</c> and throws an
+    /// <see cref="OverflowException"/> above <c>int.MaxValue / 2</c> chars. No document-borne value
+    /// reaches that — the CLI refuses a file above <c>ScenarioDiscovery.MaxDocumentSizeBytes</c>
+    /// (1 MiB) before parsing it — so the shortfall is in the sentence, not in the guarantee.
     /// <para>
     /// Endianness is irrelevant here and must not be "fixed" for portability: these digests are
     /// compared within ONE process and are never persisted, transmitted, or compared against a
-    /// digest computed elsewhere.
+    /// digest computed elsewhere. That constraint binds callers, not just this method, so it is
+    /// stated on the shipped <see cref="SecuredTargetIdentity.Digest"/> member as well — this one is
+    /// private and an external consumer cannot read it.
     /// </para>
     /// </remarks>
     private static void AppendChars(IncrementalHash hash, string value)
