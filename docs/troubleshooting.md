@@ -430,6 +430,8 @@ In microservices, infrastructure is often brittle. A test might fail not because
 
 By default, **only Fail breaks CI**. This reduces false positives and keeps developers focused on real defects, not infrastructure flakiness.
 
+**One deliberate exception, and it is the likeliest reason a previously-green pipeline has just gone red.** A suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** gating flag set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
+
 **Opt into stricter gating with flags:**
 ```bash
 # Fail breaks CI; environment errors do not (default)

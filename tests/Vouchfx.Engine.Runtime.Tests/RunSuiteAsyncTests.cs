@@ -171,8 +171,11 @@ public sealed class RunSuiteAsyncTests
         Assert.Empty(result.ScenarioVerdicts);
 
         // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        // Issue #415 retyped `Declared` from names to identities, so the same claim — this run
+        // declared exactly `legacy` and nothing else — is now asserted through the Name projection.
+        // Unchanged in strength: still an ordered equality against a one-element expectation.
         var expectedDeclared = new[] { "legacy" };
-        Assert.Equal(expectedDeclared, result.Assurance.Declared);
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
         Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
         Assert.True(result.Assurance.Unconfirmed);
     }
@@ -201,6 +204,57 @@ public sealed class RunSuiteAsyncTests
         Assert.Empty(result.Assurance.Declared);
         Assert.Null(result.Assurance.Refusal);
         Assert.False(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>EDGE-002: the no-scenarios arm pairs PER DOCUMENT rather than unioning.</strong> One
+    /// unsecured unbuildable document beside one secured one: the arm raises, and the assurance it
+    /// reports is the secured document's own — its declaration beside its own refusal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This arm used to build one <see cref="SecurityAssurance"/> whose <c>Declared</c> was a union
+    /// over every document and then stamp each document's refusal onto it, so a refusal from one
+    /// document sat beside a declaration from another. It answered correctly only because
+    /// <c>UnbuiltDocument.Assure</c> contributes NO refusal for a document that declared nothing —
+    /// a property of a different method, which the fold no longer has to rely on
+    /// (declaration-confirmation-matching, REQ-001).
+    /// </para>
+    /// <para>
+    /// Asserted in both document orders, because order-independence in <c>Unconfirmed</c> and
+    /// <c>Refusal</c> is the invariant <c>SecurityAssurance.Worse</c>'s own remarks state.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunSuiteAsync_NoScenariosBesideTwoUnbuiltDocuments_PairsPerDocument(
+        bool securedIsFirst)
+    {
+        var sw = new StringWriter();
+        var unbuilt = securedIsFirst
+            ? new[] { UnbuiltDocumentDeclaring(secured: true), UnbuiltDocumentDeclaring(secured: false) }
+            : new[] { UnbuiltDocumentDeclaring(secured: false), UnbuiltDocumentDeclaring(secured: true) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: Array.Empty<Vouchfx.Engine.Authoring.Ast.ScenarioAst>(),
+            scenarioNames: Array.Empty<string>(),
+            yamlTexts: Array.Empty<string>(),
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        Assert.Equal(Verdict.Pass, result.Verdict);
+
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        // Exactly one name, whichever order the documents arrived in: the unsecured document
+        // declared nothing and contributed nothing, and the secured one's declaration is not merged
+        // with anybody else's.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
     }
 
     /// <summary>
@@ -1196,11 +1250,45 @@ public sealed class RunSuiteAsyncTests
     }
 
     /// <summary>
-    /// Runs the secured, port-pinning suite with one unbuilt document beside it, holding that host
-    /// port for the duration so the topology cannot start.
+    /// A document whose <c>security</c> node the SCHEMA rejects — the profile name written where the
+    /// block belongs — so it binds no <c>SecuritySpec</c> and
+    /// <see cref="SecurityAbortKind.SecurityDeclarationRejected"/> is what carries it. Its
+    /// precedence outranks <see cref="SecurityAbortKind.AuthoringFault"/>, which is what makes it
+    /// usable as the highest-precedence member of a mixed set of unbuilt documents.
     /// </summary>
+    private static UnbuiltDocument UnbuiltDocumentWhoseSecurityNodeIsRejected()
+    {
+        const string yaml =
+            "environment:\n"
+            + "  services:\n"
+            + "    broken:\n"
+            + "      image: myorg/broken:1.0\n"
+            + "      security: mtls\n"
+            + "steps:\n  - id: x\n    type: not-a-real-provider\n";
+
+        return new UnbuiltDocument(yaml, YamlDocumentParser.Parse(yaml));
+    }
+
+    /// <summary>
+    /// Runs the secured, port-pinning suite with the supplied unbuilt documents beside it, holding
+    /// that host port for the duration so the topology cannot start.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Takes the documents themselves rather than a <c>bool</c> (declaration-confirmation-matching,
+    /// EDGE-003): the mixed-document rows need two and three of them, and the per-document pairing
+    /// is only observable with more than one in the list.
+    /// </para>
+    /// <para>
+    /// <strong>THE TRAP <c>params</c> OPENS, named rather than fixed:</strong> a zero-argument call
+    /// now compiles and means "no unbuilt documents", where the <c>bool</c> this replaced forced
+    /// every call to state the case. Every caller today passes at least one — a call site that
+    /// passes none is asserting something about the suite ALONE and almost certainly wants a
+    /// different fixture.
+    /// </para>
+    /// </remarks>
     private static async Task<(SuiteResult Result, string Rendered)> RunAgainstAHeldPortAsync(
-        bool unbuiltDocumentIsSecured)
+        params UnbuiltDocument[] unbuiltDocuments)
     {
         var squatter = new TcpListener(IPAddress.Loopback, 0);
         squatter.Start();
@@ -1220,8 +1308,6 @@ public sealed class RunSuiteAsyncTests
             var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
             var sw = new StringWriter();
 
-            var unbuilt = new[] { UnbuiltDocumentDeclaring(unbuiltDocumentIsSecured) };
-
             // Locals rather than inline arrays: CA1861 on a repeated constant-element argument.
             var scenarios = new[] { ast };
             var names = new[] { "secured-suite" };
@@ -1235,7 +1321,7 @@ public sealed class RunSuiteAsyncTests
                 appHostAssemblyName: AppHostAssemblyName,
                 output: sw,
                 seedBaseDirectory: suiteDirectory,
-                unbuiltDocuments: unbuilt);
+                unbuiltDocuments: unbuiltDocuments);
 
             return (result, sw.ToString());
         }
@@ -1263,7 +1349,8 @@ public sealed class RunSuiteAsyncTests
     [Fact]
     public async Task RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero()
     {
-        var (result, rendered) = await RunAgainstAHeldPortAsync(unbuiltDocumentIsSecured: false);
+        var (result, rendered) = await RunAgainstAHeldPortAsync(
+            UnbuiltDocumentDeclaring(secured: false));
 
         // The run reached the topology and failed there — not at a pre-topology door, which would
         // record an authoring fault of its own and make this row prove nothing.
@@ -1271,8 +1358,12 @@ public sealed class RunSuiteAsyncTests
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
 
         // The sibling's declaration is in `Declared`; the unbuilt document's is not…
-        Assert.Contains("api", result.Assurance.Declared, StringComparer.Ordinal);
-        Assert.DoesNotContain("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+        // Issue #415 retyped `Declared` from names to identities, so both membership claims are now
+        // made over the Name projection. The claim is unchanged — which NAMES this run declared —
+        // and the ordinal comparer is retained on the projected sequence.
+        var declaredNames = result.Assurance.Declared.Select(identity => identity.Name).ToArray();
+        Assert.Contains("api", declaredNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("legacy", declaredNames, StringComparer.Ordinal);
 
         // …and #390's fence holds: the only refusal recorded is the topology's, which never raises.
         Assert.Equal(SecurityAbortKind.TopologyUnavailable, result.Assurance.Refusal);
@@ -1295,15 +1386,316 @@ public sealed class RunSuiteAsyncTests
     [Fact]
     public async Task RunSuiteAsync_SecuredUnbuiltDocument_RaisesEvenWhenOnlyTheTopologyFailed()
     {
-        var (result, rendered) = await RunAgainstAHeldPortAsync(unbuiltDocumentIsSecured: true);
+        var (result, rendered) = await RunAgainstAHeldPortAsync(
+            UnbuiltDocumentDeclaring(secured: true));
 
         Assert.Contains(TopologyFailureMarker, rendered, StringComparison.Ordinal);
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
 
-        // The unbuilt document's own declaration folded into the one canonical walk…
-        Assert.Contains("legacy", result.Assurance.Declared, StringComparer.Ordinal);
+        // The unbuilt document's own declaration — and the ATTRIBUTION is corrected here rather than
+        // left to read the same and mean something else (declaration-confirmation-matching, REQ-006).
+        // This used to say "folded into the one canonical walk", i.e. that `Declared` was a UNION
+        // across the scenarios and the unbuilt documents and `legacy` was one member of it. REQ-001
+        // removed that union: each unbuilt document now contributes one WHOLE assurance folded by
+        // `SecurityAssurance.Worse`, which selects the raising one entire, so the assurance this
+        // suite reports IS the unbuilt document's own and `legacy` is its whole declaration. The
+        // assertion is unchanged and still passes; only the reason it passes has moved.
+        //
+        // Issue #415 retyped `Declared` from names to identities; the claim here is about WHICH
+        // target the unbuilt document contributed, so it is asserted over the Name projection with
+        // the ordinal comparer retained.
+        Assert.Contains(
+            "legacy",
+            result.Assurance.Declared.Select(identity => identity.Name),
+            StringComparer.Ordinal);
 
         // …and the refusal it carries outranks the topology's, so the pair raises.
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>EDGE-003: several unbuilt documents, mixed, on the sequential path — each declaration
+    /// paired with its OWN refusal.</strong> An unsecured unbuildable file beside a secured one,
+    /// beside a suite whose topology failed: the suite raises on the SECURED document's pairing, and
+    /// the assurance it reports is that document's own value rather than a union.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The exact-equality assertion on <c>Declared</c> is what makes this a per-document test rather
+    /// than a "does it raise" test. Under the union this replaced, <c>Declared</c> held the
+    /// SCENARIO's <c>api</c> as well, and the unsecured document's declaration (there is none) and
+    /// the secured document's refusal were free to meet in one record. One name, exactly, is the
+    /// mechanical form of "the pairing is per document".
+    /// </para>
+    /// <para>
+    /// The unsecured document contributes <see cref="SecurityAssurance.None"/> — no declaration AND
+    /// no refusal — so the non-pairing it is here to demonstrate is structural rather than a check
+    /// that happens to pass: it has no refusal for a sibling's declaration to be paired with.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SeveralUnbuiltDocuments_PairEachDeclarationWithItsOwnRefusal()
+    {
+        var (result, rendered) = await RunAgainstAHeldPortAsync(
+            UnbuiltDocumentDeclaring(secured: false),
+            UnbuiltDocumentDeclaring(secured: true));
+
+        Assert.Contains(TopologyFailureMarker, rendered, StringComparison.Ordinal);
+
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>EDGE-003, the precedence half:</strong> with three unbuilt documents refused at three
+    /// different doors, the one the suite records is the HIGHEST-precedence refusal —
+    /// <see cref="SecurityAbortKind.SecurityDeclarationRejected"/> over
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> over the topology's own — and it is recorded
+    /// whichever order the documents arrive in.
+    /// </summary>
+    /// <remarks>
+    /// The rejected document binds no <c>SecuritySpec</c>, so its own <c>Declared</c> is empty and it
+    /// raises unconditionally. That is why <c>Declared</c> is asserted EMPTY here: the winning
+    /// document's whole assurance is what survives the fold, and a union would have left the secured
+    /// sibling's <c>legacy</c> (and the scenario's <c>api</c>) sitting beside a refusal neither of
+    /// them earned.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SeveralUnbuiltDocuments_RecordTheHighestPrecedenceRefusal()
+    {
+        var (forward, _) = await RunAgainstAHeldPortAsync(
+            UnbuiltDocumentDeclaring(secured: false),
+            UnbuiltDocumentDeclaring(secured: true),
+            UnbuiltDocumentWhoseSecurityNodeIsRejected());
+
+        var (reversed, _) = await RunAgainstAHeldPortAsync(
+            UnbuiltDocumentWhoseSecurityNodeIsRejected(),
+            UnbuiltDocumentDeclaring(secured: true),
+            UnbuiltDocumentDeclaring(secured: false));
+
+        Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, forward.Assurance.Refusal);
+        Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, reversed.Assurance.Refusal);
+        Assert.True(forward.Assurance.Unconfirmed);
+        Assert.True(reversed.Assurance.Unconfirmed);
+
+        Assert.Empty(forward.Assurance.Declared);
+        Assert.Empty(reversed.Assurance.Declared);
+    }
+
+    // ── The pre-topology doors that had no pin at all (T2 review, MAJOR) ─────────────────────
+    //
+    // `RunSuiteAsync` applies the unbuilt-document fold at EIGHT `SuiteResult` return sites. Five
+    // were already pinned or need no pin:
+    //
+    //   • empty `scenarios`            — `RunSuiteAsync_NoScenariosBeside*` above.
+    //   • every scenario early-verdict — `SecurityAssuranceMatrixTests.Row09b_*`, at the CLI tier.
+    //   • `catch (OrchestrationException)` — the `RunAgainstAHeldPortAsync` rows above.
+    //   • security base-directory divergence — NO pin needed, and deliberately none added: that
+    //     guard fires only for a suite that ALREADY declares security, so the scenarios' own
+    //     assurance raises there whatever the documents contribute, and the fold cannot change
+    //     `Unconfirmed`.
+    //   • normal completion — the ONE remaining gap. It needs a running topology, so it is Docker
+    //     -gated work rather than something these rows can reach; stated here so a reader can tell
+    //     the pins from the hole.
+    //
+    // The three below had NOTHING. Each is reached with UNSECURED scenarios, which is what makes
+    // the row measure the wrap rather than the scenarios: with an empty `Declared`, the scenarios'
+    // own assurance cannot raise at any of these doors, so if the `WithUnbuiltDocuments(...)` wrap
+    // were dropped the suite would return `Unconfirmed = false` — exit 0 — while carrying a broken
+    // secured file. That is precisely the false negative this series exists to close, and a suite
+    // that declares security of its own cannot detect it.
+
+    /// <summary>Which pre-topology door a row of the theory below drives.</summary>
+    public enum PreTopologyDoor
+    {
+        /// <summary>Two scenarios whose <c>environment</c> blocks differ — the cheapest door.</summary>
+        SharedEnvironmentDivergence,
+
+        /// <summary>Two runnable scenarios splitting the HTTP and Kafka families over one target.</summary>
+        ProtocolConflict,
+
+        /// <summary><c>EnvironmentMapper.Map</c>'s eager <c>ArgumentException</c> (<c>${conn:typo}</c>).</summary>
+        EnvironmentMapperArgumentFault,
+    }
+
+    /// <summary>
+    /// The `mq-publish.kafka` provider is needed for the protocol-conflict row and harms no other:
+    /// a registry is a set of step kinds, and no row below declares a Kafka step it does not mean.
+    /// </summary>
+    private static readonly System.Reflection.Assembly[] PreTopologyDoorProviderAssemblies =
+        new[]
+        {
+            typeof(HttpRestProvider).Assembly,
+            typeof(Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider).Assembly,
+        };
+
+    /// <summary>The first of two scenarios whose <c>environment</c> blocks differ by one character.</summary>
+    private const string DivergentEnvironmentFirst = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    /// <summary>The second — same steps, a different image tag, so the divergence guard fires.</summary>
+    private const string DivergentEnvironmentSecond = """
+        environment:
+          services:
+            api:
+              image: myorg/api:2.0
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    // The environment the two protocol-conflict halves share BYTE-IDENTICALLY, as a suite requires
+    // — otherwise the divergence door above fires first and this row would silently measure that
+    // one instead. The `${conn:typo}` is belt and braces: if the conflict guard ever stopped
+    // firing, the run would fail fast at `Map` rather than reaching Docker, and the
+    // conflict-diagnostic assertion below would still fail the row.
+    private const string ProtocolConflictEnvironment = """
+        environment:
+          services:
+            broker:
+              image: acme/broker:1
+              ports: [9093]
+              env:
+                FOO: "${conn:typo}"
+        """;
+
+    private const string ProtocolConflictHttpHalf = ProtocolConflictEnvironment + """
+
+        steps:
+          - id: get
+            type: http.rest
+            target: broker
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    private const string ProtocolConflictKafkaHalf = ProtocolConflictEnvironment + """
+
+        steps:
+          - id: publish
+            type: mq-publish.kafka
+            target: broker
+            topic: orders
+            payload: "{}"
+        """;
+
+    private const string DivergentEnvironmentMarker = "declares a different environment block";
+    private const string ProtocolConflictMarker = "one endpoint value per target";
+
+    /// <summary>
+    /// <strong>Each of the three previously-unpinned pre-topology doors, driven with UNSECURED
+    /// scenarios beside a SECURED unbuilt document, must raise.</strong> The suite's own scenarios
+    /// declare nothing, so the only thing that can make <c>Unconfirmed</c> true is the unbuilt
+    /// document's whole assurance arriving through <c>WithUnbuiltDocuments</c> at that door's
+    /// return site.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Row-to-site map, so a later reader can tell a pin from the gap:
+    /// <see cref="PreTopologyDoor.SharedEnvironmentDivergence"/> pins the shared-<c>environment</c>
+    /// divergence return; <see cref="PreTopologyDoor.ProtocolConflict"/> pins the
+    /// protocol-conflict return; <see cref="PreTopologyDoor.EnvironmentMapperArgumentFault"/> pins
+    /// the <c>catch (ArgumentException)</c> return. The success return remains unpinned and needs a
+    /// container — see the block comment above.
+    /// </para>
+    /// <para>
+    /// <strong>MEASURED RED, ONE SITE AT A TIME.</strong> Each site's
+    /// <c>WithUnbuiltDocuments(...)</c> was removed in turn (the assurance passed bare), rebuilt,
+    /// and the theory re-run. Every time, EXACTLY ONE row failed — the row named above for that
+    /// site — with <c>Assert.Equal() Failure: Collections differ … Expected: ["legacy"] Actual:
+    /// []</c>: the document's declaration gone, and with it the raise. The other two rows stayed
+    /// green in each of the three runs, which is what makes each row a pin on ITS site rather than
+    /// on the fold they share.
+    /// </para>
+    /// <para>
+    /// Each row also asserts its OWN door's diagnostic, because three doors that all record
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> are indistinguishable from the assurance
+    /// alone: without that, a row could drift onto a neighbouring door and still pass, pinning the
+    /// same site three times.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(PreTopologyDoor.SharedEnvironmentDivergence, Verdict.EnvironmentError)]
+    [InlineData(PreTopologyDoor.ProtocolConflict, Verdict.Inconclusive)]
+    [InlineData(PreTopologyDoor.EnvironmentMapperArgumentFault, Verdict.Inconclusive)]
+    public async Task RunSuiteAsync_UnsecuredScenariosBesideASecuredUnbuiltDocument_RaisesAtEveryPreTopologyDoor(
+        PreTopologyDoor door, Verdict expectedVerdict)
+    {
+        var (yamls, names, doorMarker) = door switch
+        {
+            PreTopologyDoor.SharedEnvironmentDivergence => (
+                new[] { DivergentEnvironmentFirst, DivergentEnvironmentSecond },
+                new[] { "first", "second" },
+                DivergentEnvironmentMarker),
+            PreTopologyDoor.ProtocolConflict => (
+                new[] { ProtocolConflictHttpHalf, ProtocolConflictKafkaHalf },
+                new[] { "http-half", "kafka-half" },
+                ProtocolConflictMarker),
+            _ => (
+                new[] { ValidScenario },
+                new[] { "valid" },
+                PreTopologyMarker),
+        };
+
+        var registry = StepKindRegistry.BuildAndFreeze(PreTopologyDoorProviderAssemblies);
+        var scenarios = yamls
+            .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
+            .ToArray();
+        var sw = new StringWriter();
+        var unbuilt = new[] { UnbuiltDocumentDeclaring(secured: true) };
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: scenarios,
+            scenarioNames: names,
+            yamlTexts: yamls,
+            providerAssemblies: PreTopologyDoorProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            unbuiltDocuments: unbuilt);
+
+        var rendered = sw.ToString();
+
+        // This row reached ITS door: the diagnostic only that door prints is present…
+        Assert.Contains(doorMarker, rendered, StringComparison.Ordinal);
+        Assert.Equal(expectedVerdict, result.Verdict);
+
+        // …and the two doors that return BEFORE the topology build did not reach it, which is the
+        // other half of "not a neighbour's door" (the Map row's own marker IS the topology marker,
+        // so for that row the assertion above already made the claim).
+        if (door != PreTopologyDoor.EnvironmentMapperArgumentFault)
+        {
+            Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
+        }
+
+        // The whole point of the fixture: `legacy` is the UNBUILT document's declaration, and the
+        // scenarios contributed none of their own — so an exact equality here says the value that
+        // survived the fold is the document's own, arriving through this door's wrap.
+        // A local rather than an inline array literal: CA1861 on a repeated constant argument.
+        var expectedDeclared = new[] { "legacy" };
+        Assert.Equal(expectedDeclared, result.Assurance.Declared.Select(identity => identity.Name));
         Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
         Assert.True(result.Assurance.Unconfirmed);
     }

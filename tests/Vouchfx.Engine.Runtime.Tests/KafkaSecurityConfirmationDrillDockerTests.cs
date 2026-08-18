@@ -157,6 +157,19 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <summary>The consume step id, present only on REQ-025's produce-and-consume row.</summary>
     private const string ConsumeStepId = "consume";
 
+    /// <summary>
+    /// The step id the unbuildable sibling declares TWICE, which is what <c>AstBuilder.Build</c>
+    /// refuses it for (issue #415, REQ-004).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT <see cref="StepId"/>. The refusal is reported as
+    /// <c>step '&lt;id&gt;': duplicate step id '&lt;id&gt;'</c>, and reusing the drill's own step id
+    /// would make that line indistinguishable from the terminal renderer's line for the step the
+    /// working scenario actually ran — so the assertion that the SIBLING was seen would also pass if
+    /// only the scenario had been.
+    /// </remarks>
+    private const string UnbuiltSiblingStepId = "sibling-publish";
+
     /// <summary>The in-container path the fixture's conditional entrypoint checks for the keystore.</summary>
     private const string CheckedKeystorePath = "/etc/kafka/secrets/kafka.keystore.pem";
 
@@ -1000,6 +1013,185 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         Assert.Contains($"step '{StepId}'", output, StringComparison.Ordinal);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // Issue #415 / declaration-confirmation-matching REQ-004 — the two run paths agree
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <strong>#415's filed symptom, end to end, on both run paths.</strong> The positive control's
+    /// suite — a topology that comes up and a probe that CONFIRMS <c>mtls-broker</c> — with ONE
+    /// extra file beside it: a document that parses, is then refused by <c>AstBuilder.Build</c>, and
+    /// declares a byte-identical <c>security</c> block for the SAME target. Plain
+    /// <c>vouchfx run &lt;dir&gt;</c> and <c>vouchfx run &lt;dir&gt; --parallel 1</c> must exit with
+    /// the SAME non-zero code and report the same fault.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this needs a container when the record-tier folds do not.</strong> The wrap under
+    /// test is <c>ScenarioRunner.RunSuiteAsync</c>'s SUCCESS return site — the one that composes the
+    /// scenarios' assurance (carrying the probe's confirmations) with the unbuilt documents'. Every
+    /// Docker-free row that exercises an unbuilt document reaches a DIFFERENT return, by one of two
+    /// mechanisms: <c>RunSuiteAsyncTests.RunSuiteAsync_NoScenariosBeside*</c> pass NO scenarios at
+    /// all and return from the empty-<c>scenarios</c> arm without a topology existing to reach,
+    /// while the <c>RunAgainstAHeldPortAsync</c> rows fail the topology on purpose (a pinned host
+    /// port the test itself holds) and land in the <c>catch (OrchestrationException)</c> site. So
+    /// before this row the success site's wrap was backed by code reading and by record-tier folds,
+    /// and by nothing that ran.
+    /// </para>
+    /// <para>
+    /// <strong>The differential is the positive control, one method above — one file PLUS one gate
+    /// port.</strong> That row runs the SAME fixture with no sibling, gating the health check on
+    /// 9092 (<see cref="MaterialiseSuiteDirectory"/>'s default), and asserts exit <b>0</b>. This row
+    /// adds one file AND moves the gate to 9093, for the reason recorded on <see cref="SuiteYaml"/>'s
+    /// <c>healthCheckPort</c> parameter (a 3-in-22 conformance-run flake when the gate clears before
+    /// the SECURED listener is behind its host-published proxy) — so two variables move, not one, and
+    /// saying otherwise would overstate the differential. The gate port cannot be what moves the exit
+    /// code: it decides only whether the TOPOLOGY is admitted as healthy, and a gate that failed
+    /// would abort before the probe and trip this row's <see cref="AssertProbeConfirmed"/> premise
+    /// rather than produce a 4. The code moves because the sibling elevates the aggregate verdict and
+    /// the security carve-out then returns it. What is asserted here, rather than argued, is that the
+    /// move is the security
+    /// carve-out's doing: the notice below prints at exactly one site in <c>RunCommand</c>, guarded
+    /// on <c>SecurityAssurance.Unconfirmed</c>, so its presence is the assurance raising and nothing
+    /// else. An ordinary broken sibling — one declaring no <c>security</c> — would leave the suite
+    /// Inconclusive and exit 0 flaglessly, which is issue #390's fence; that direction is NOT
+    /// measured here (it would cost a third topology) and is pinned Docker-free by
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero</c>
+    /// and by the record-tier fold
+    /// <c>SecurityConfirmationExitCodeTests.Worse_UnsecuredUnbuiltDocumentBesideAConfirmedSuite_DoesNotRaise</c>.
+    /// </para>
+    /// <para>
+    /// <strong>Both arms are RUN before either is asserted</strong>, so a failure in the sequential
+    /// arm still leaves the parallel arm's exit code and output in the test's own record. The
+    /// requirement is that the two AGREE, and an unmeasured second arm cannot show agreement or
+    /// disagreement.
+    /// </para>
+    /// <para>
+    /// <strong>The exit code is 4, and it is not the 3 the probe-failure rows in this file
+    /// expect.</strong> Those abort at the probe with <c>EnvironmentError</c>; this run reaches its
+    /// step, whose budget expires as <c>Inconclusive</c> (see the publish step's budget note in
+    /// <see cref="SuiteYaml"/>), and the unbuildable sibling folds in as Inconclusive too. 4 is the
+    /// taxonomy's own code for that verdict — the carve-out changes WHETHER it is returned without a
+    /// gating flag, never WHICH code it is. Spelled as a literal because <c>ExitCodes</c> is
+    /// internal to the CLI assembly, which this one does not reference.
+    /// </para>
+    /// <para>
+    /// <strong>And the 4 does not depend on the step's budget expiring.</strong>
+    /// <c>RunCommand.AggregateVerdict</c> elevates the suite verdict to at least
+    /// <c>Inconclusive</c> whenever discovery recorded a parse failure — which this row's sibling
+    /// always is — so even if the publish step ever passed, the aggregate stays Inconclusive and
+    /// <c>ExitCodes.FromVerdict</c> stays on its Inconclusive arm. Without that elevation a passing
+    /// step would take the run to <c>Pass</c>, whose arm returns 3 rather than 4 when the assurance
+    /// raises; the assertion below would then read as a carve-out regression when nothing about the
+    /// carve-out had moved. The row's exit code is therefore pinned by two independent mechanisms,
+    /// not one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task SecuredUnbuiltSiblingBesideAConfirmedProbe_ExitsNonZeroOnBothRunPaths()
+    {
+        var cli = ResolveCliAssembly();
+        var suiteDirectory = MaterialiseSuiteDirectoryWithUnbuiltSecuredSibling(
+            "unbuilt-secured-sibling-cli");
+
+        // The whole directory, not one file: the sibling only reaches the runner as an unbuilt
+        // document when discovery finds it, and discovery walks a root.
+        _output.WriteLine($"{cli} run {suiteDirectory} [and again with --parallel 1]");
+
+        using var sequentialCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var (sequentialExit, sequentialOutput) =
+            await RunCliAsync(cli, "run", suiteDirectory, sequentialCts.Token);
+        _output.WriteLine($"`run` exit code: {sequentialExit}");
+        _output.WriteLine("── run output ──\n" + sequentialOutput);
+
+        using var parallelCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var (parallelExit, parallelOutput) = await RunCliAsync(
+            cli, "run", suiteDirectory, parallelCts.Token, "--parallel", "1");
+        _output.WriteLine($"`run --parallel 1` exit code: {parallelExit}");
+        _output.WriteLine("── run --parallel 1 output ──\n" + parallelOutput);
+
+        // ── THE PREMISE, ASSERTED BEFORE THE EXIT CODE, so a broken bed cannot read as a
+        //    regressed carve-out ────────────────────────────────────────────────────────────────
+        // This row is ABOUT the success return site, which is reachable only when the topology came
+        // up and the probe confirmed. A host that cannot start the topology at all produces exit 3
+        // on both arms — the security signal still fires, because the unbuildable sibling raises on
+        // its own — and a bare `Assert.Equal(4, …)` would then report "expected 4, actual 3" with no
+        // hint that the bed, not the engine, is what moved. MEASURED, on the host this row was
+        // written on: Aspire/DCP failed every container-publishing topology with "Unable to allocate
+        // a network port … should have valid address at this point", including this file's own
+        // unmodified positive control and the unrelated
+        // `KafkaServiceTargetDockerTests` row. The assertions below name that shape.
+        AssertProbeConfirmed("run", sequentialOutput);
+        AssertProbeConfirmed("run --parallel 1", parallelOutput);
+
+        // ── REQ-004's own sentence: the two paths agree ───────────────────────────────────────
+        // Asserted on the PAIR, because "a flag flips the answer" is the defect, and a per-arm
+        // assertion pair states it only by implication.
+        Assert.Equal(sequentialExit, parallelExit);
+        Assert.Equal(4, sequentialExit);
+
+        AssertConfirmedProbeThenRefusedForTheSibling("run", sequentialOutput);
+        AssertConfirmedProbeThenRefusedForTheSibling("run --parallel 1", parallelOutput);
+    }
+
+    /// <summary>
+    /// Asserts that one arm's topology came up and REQ-005's probe confirmed the broker — this
+    /// row's premise, separated from its subject so a failure says which of the two moved.
+    /// </summary>
+    private static void AssertProbeConfirmed(string arm, string output)
+        => Assert.True(
+            output.Contains($"security: service '{BrokerName}'", StringComparison.Ordinal),
+            $"the '{arm}' arm never reached a confirmed probe, so this row's premise — a topology "
+            + "that came up and a probe that CONFIRMED — was not met and nothing below it is "
+            + "evidence about the carve-out. Look for a topology failure ('failed to start', "
+            + "'should have valid address at this point') in the output before reading this as a "
+            + $"regression. Output:\n{output}");
+
+    /// <summary>
+    /// Asserts one arm of the row above: the probe confirmed at the strongest LEVEL the feature
+    /// defines, the run reached its step, the unbuildable sibling was reported, and the suite still
+    /// refused on the security assurance.
+    /// </summary>
+    /// <remarks>
+    /// The three assertions are one claim in three parts and none of them is redundant. Without the
+    /// step line the run might have aborted before executing anything; without the parse error the
+    /// sibling might have been silently dropped by discovery; and without the notice the exit code
+    /// alone would be evidence, which it is not — several doors in this engine produce a 4. The
+    /// confirmation LINE is not among them: <see cref="AssertProbeConfirmed"/> already asserted it
+    /// for the same arm before the exit code was read, which is where this row's premise belongs.
+    /// What is added here is the LEVEL, which that premise check does not cover.
+    /// </remarks>
+    private static void AssertConfirmedProbeThenRefusedForTheSibling(string arm, string output)
+    {
+        // ── The probe confirmed at the strongest level the feature defines ────────────────────
+        // The confirmation line itself is AssertProbeConfirmed's job, asserted above as this row's
+        // premise; the level is new here.
+        AssertArmOutputContains(arm, output, "level AuthenticatedRoundTrip");
+
+        // ── …and the run went on to execute, so the suite genuinely completed ─────────────────
+        AssertArmOutputContains(arm, output, $"step '{StepId}'");
+
+        // ── The sibling was seen, and refused for the reason this fixture built it to be ──────
+        AssertArmOutputContains(arm, output, $"duplicate step id '{UnbuiltSiblingStepId}'");
+
+        // ── AND THE FAULT REPORTED, which is what makes the exit code mean something ──────────
+        // This fragment of RunCommand.SecurityUnconfirmableNotice prints at exactly one site,
+        // guarded on SecurityAssurance.Unconfirmed — so it is the assurance raising and nothing
+        // else. Spelled literally because the const is internal to the CLI assembly.
+        AssertArmOutputContains(
+            arm, output, "declares a 'security' block that this run could not confirm");
+    }
+
+    /// <summary>
+    /// <see cref="Assert.Contains(string, string?, StringComparison)"/> with the arm named in the
+    /// failure — both arms run the same assertions, so the default message cannot say which failed.
+    /// </summary>
+    private static void AssertArmOutputContains(string arm, string output, string expected)
+        => Assert.True(
+            output.Contains(expected, StringComparison.Ordinal),
+            $"the '{arm}' arm's output did not contain \"{expected}\". Output:\n{output}");
+
     /// <summary>
     /// Runs the built CLI as a subprocess against one drill row's suite, with NO
     /// <c>--fail-on-env-error</c> and no <c>--fail-on-inconclusive</c>, and asserts the integer
@@ -1132,8 +1324,17 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// DCP runs as its child.
     /// </para>
     /// </remarks>
+    /// <param name="extraArguments">
+    /// Appended after the positional path — <c>--parallel 1</c> for issue #415's run-path-agreement
+    /// row, and nothing at all for every other caller, which is what keeps their invocation
+    /// FLAGLESS.
+    /// </param>
     private static async Task<(int ExitCode, string Output)> RunCliAsync(
-        string cliAssembly, string verb, string suitePath, CancellationToken cancellationToken)
+        string cliAssembly,
+        string verb,
+        string suitePath,
+        CancellationToken cancellationToken,
+        params string[] extraArguments)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -1151,6 +1352,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         startInfo.ArgumentList.Add(cliAssembly);
         startInfo.ArgumentList.Add(verb);
         startInfo.ArgumentList.Add(suitePath);
+        // Null-coalesced rather than trusted: a `params` array is null when a caller passes `null`
+        // explicitly, and the loop below would NRE on it. Every caller today is safe; this keeps the
+        // next one from having to be.
+        foreach (var argument in extraArguments ?? Array.Empty<string>())
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
 
         using var process = Process.Start(startInfo)!;
         try
@@ -1547,6 +1755,95 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         return suiteDirectory;
     }
+
+    /// <summary>
+    /// The positive control's suite directory PLUS one file: a document that parses, is then
+    /// refused by <c>AstBuilder.Build</c>, and declares the same <c>security</c> block (issue #415,
+    /// REQ-004).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The sibling's <c>environment</c> block is COPIED out of the drill's own text rather
+    /// than restated</strong>, so the two declarations are byte-identical by construction and cannot
+    /// drift when <see cref="SuiteYaml"/> changes. Byte-identical is the strongest fixture this row
+    /// can have: it is the case the rejected lenient reading (exit 0 when the content matches) would
+    /// have let through, and the case a name-only comparison — issue #415's actual defect — read as
+    /// confirmed. A sibling declaring something DIFFERENT would raise under the identity comparison
+    /// alone and would not test the pairing at all.
+    /// </para>
+    /// <para>
+    /// <strong>Refused for a DUPLICATE STEP ID, not for a schema error</strong>, and the distinction
+    /// decides which refusal the record carries. A schema error located at or inside a
+    /// <c>security</c> node yields <c>SecurityAbortKind.SecurityDeclarationRejected</c>, which
+    /// raises UNCONDITIONALLY — so the row would go green without the declaration ever being paired
+    /// with anything, and would measure a different rule. A duplicate step id leaves the document
+    /// schema-valid and refuses it at <c>AstBuilder.Build</c>, which is
+    /// <c>SecurityAbortKind.AuthoringFault</c>: the one refusal that raises ONLY in conjunction with
+    /// a declared target left unconfirmed, which is exactly this spec's subject.
+    /// </para>
+    /// <para>
+    /// It is also the failure class that carries a <c>RecoveredDocument</c>: of
+    /// <c>ScenarioDiscovery.ParseFile</c>'s four ways to fail, only an <c>AstBuilder.Build</c>
+    /// refusal has a bound document in hand, and only such a document reaches the runner as an
+    /// <c>UnbuiltDocument</c> at all. A file that never parsed would contribute nothing and this row
+    /// would exit 0.
+    /// </para>
+    /// </remarks>
+    private static string MaterialiseSuiteDirectoryWithUnbuiltSecuredSibling(string row)
+    {
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            row,
+            securedEndpoint: "9093",
+            keystoreTarget: CheckedKeystorePath,
+
+            // Gate on the SECURED port. This is the one thing this fixture changes besides adding
+            // the sibling — the positive control itself gates on 9092, the parameter's default — and
+            // the reason is the one recorded on SuiteYaml's `healthCheckPort` parameter: a gate on
+            // 9092 can clear before 9093 is behind its host-published proxy, measured as 3 failures
+            // in 22 row-executions. Flake resistance is worth more here than a one-variable
+            // differential, and the row's own remarks state the differential as one file plus this
+            // gate port.
+            healthCheckPort: 9093);
+
+        var drillYaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
+
+        var environmentStart = drillYaml.IndexOf("environment:", StringComparison.Ordinal);
+        var stepsStart = drillYaml.IndexOf("\nsteps:", StringComparison.Ordinal);
+        Assert.True(
+            environmentStart >= 0 && stepsStart > environmentStart,
+            "the drill suite no longer has an 'environment:' block followed by a 'steps:' block, so "
+            + "the unbuildable sibling can no longer be given a byte-identical declaration. Fix this "
+            + "fixture rather than weakening the row.");
+
+        var environmentBlock = drillYaml[environmentStart..stepsStart];
+
+        File.WriteAllText(
+            Path.Combine(suiteDirectory, "unbuilt-sibling.e2e.yaml"),
+            "metadata:\n"
+            + "  name: unbuildable-secured-sibling\n"
+            + environmentBlock
+            + "\n"
+            + UnbuiltSiblingSteps);
+
+        return suiteDirectory;
+    }
+
+    /// <summary>
+    /// The unbuildable sibling's steps: the same id twice, which <c>AstBuilder.Build</c> refuses
+    /// while the composed schema accepts the document.
+    /// </summary>
+    private const string UnbuiltSiblingSteps =
+        "steps:\n"
+        + "  - id: " + UnbuiltSiblingStepId + "\n"
+        + "    type: mq-publish.kafka\n"
+        + "    target: " + BrokerName + "\n"
+        + "    topic: orders\n"
+        + "    payload: '{\"id\":\"unbuilt-sibling\"}'\n"
+        + "  - id: " + UnbuiltSiblingStepId + "\n"
+        + "    type: mq-publish.kafka\n"
+        + "    target: " + BrokerName + "\n"
+        + "    topic: orders\n"
+        + "    payload: '{\"id\":\"unbuilt-sibling\"}'\n";
 
     /// <summary>
     /// The replacement for the image's own <c>/etc/confluent/docker/bash-config</c>: the

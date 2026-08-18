@@ -97,8 +97,12 @@ internal sealed record DiscoveredScenario(
     /// scenario's <see cref="ScenarioAst"/> holds the same <see cref="EnvironmentSpec"/> and the
     /// same steps, so the record's generated <c>ToString()</c> could already expand a declared
     /// <c>clientKeyPassword</c>. Nothing interpolates this record; the guard that matters is
-    /// downstream, where <c>SecurityAssurance</c> keeps declared target NAMES rather than the
-    /// specs they came from (issue #408).
+    /// downstream, where <c>SecurityAssurance</c> keeps a declared target's NAME and a one-way
+    /// digest of what it asserted — a <c>SecuredTargetIdentity</c> — rather than the
+    /// <c>SecuritySpec</c> values they came from (issue #408, narrowed by issue #415 from the name
+    /// alone to the name plus that digest; the digest never carries a declared
+    /// <c>clientKeyPassword</c>'s text unless one whole <c>${secret:}</c> token spans it, and
+    /// reaches no report, event or log either way).
     /// </para>
     /// </remarks>
     public E2eDocument? RecoveredDocument { get; init; }

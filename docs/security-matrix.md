@@ -247,6 +247,13 @@ material a step will use, and reports one of two named confirmation levels. A de
 confirm fails the suite as an environment error with no gating flags set — the one deliberate
 exception to "only `Fail` breaks CI by default".
 
+**A green secured suite proves nothing about a secured file the run never executed, and it no longer
+pretends to.** A `.e2e.yaml` that parsed and was then refused for its contents never becomes a
+scenario, so its declaration is confirmed by nothing — not even by a sibling whose probe confirmed
+the same target, since nothing established that the refused file's `environment` block is the one the
+topology started from. Such a file reddens the run with no gating flag, on `run` and
+`run --parallel N` alike. See [CI integration](ci-integration.md) for the full rule.
+
 - **`TransportConfirmed`** — the endpoint speaks TLS and, under `mtls`, the engine presented the
   declared client certificate. It does **not** prove the peer *demanded* an identity: in TLS 1.3 a
   server cannot reject a missing client certificate during the handshake, so a listener that merely

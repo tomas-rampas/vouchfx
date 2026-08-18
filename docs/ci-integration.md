@@ -57,9 +57,19 @@ the declaration names. Two shapes raise:
   aborts before any step executes.
 - **something refused the document** before it could be confirmed **and left some declared target
   unconfirmed**. Nothing downstream of a refusal runs, so the declaration is never validated, never
-  probed and therefore never confirmed. Both halves carry weight: a refusal beside siblings whose
-  probe went on to confirm every declared target leaves nothing unconfirmed and does not raise (see
-  *What does not break CI* below).
+  probed and therefore never confirmed. Both halves carry weight, and the word carrying the second
+  half is **scenario**: a *scenario* refused beside siblings whose probe went on to confirm every
+  declared target leaves nothing unconfirmed and does not raise, because a suite's scenarios must
+  declare a byte-identical `environment` block, so the declaration that probe confirmed is the
+  refused scenario's own.
+
+  **A document that never *became* a scenario is the exception, and it is the one that most often
+  reddens a real pipeline.** A file that parsed and was then refused for its *contents* — an unknown
+  step type, a duplicate step id — is confirmed by nothing: nothing downstream of it ran, and nothing
+  ever established that its `environment` block is the one the topology started from. Such a document
+  raises whatever its siblings went on to confirm. Read "document" and "scenario" as different words
+  wherever this page uses them (see *What does not break CI* below, and in particular the bullet on
+  an unbuildable document beside a confirming sibling).
 
 Ending without that confirmation is not by itself the rule, and one shape sits outside both bullets: a
 topology that came **up** and then failed its health gate leaves the declaration unprobed, and a run
@@ -205,24 +215,35 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   excluded, which is the instruction the user gave. Measured on the same directory with the tag moved
   to the *sibling* only: `run <dir> --tag smoke` exits **0** with no security line, exactly as it did
   before — that arrangement never selected the unbuildable file and still does not.
-- **An unbuildable document whose declared target name a *sibling's* probe confirmed** — the residual
-  of the paragraph above, and the one a customer is most likely to meet, because it is the shape a
-  working pipeline has. The sequential (`run`) path holds one suite-wide declaration set and matches
-  it against what the probe confirmed **by target name alone**, so an unbuildable document declaring
-  a name some sibling's topology went on to confirm is treated as confirmed — whatever `profile`,
-  `endpoint` or client certificate it actually declared, and without passing the shared-`environment`
-  divergence guard, which walks the *scenarios* only. So #411's stated reproduction closes and this
-  variant does not: the broken secured file beside a sibling carrying an ordinary authoring fault
-  exits 4, while the same file beside siblings that come up and confirm the same name still exits 0.
-  That is [issue #415](https://github.com/tomas-rampas/vouchfx/issues/415) and it is open; closing it
-  means comparing more than the name, which would put declared security *values* back into a record
-  that deliberately keeps only names.
+- **An unbuildable document whose declared target name a *sibling's* probe confirmed** — the shape a
+  working pipeline actually has, and the one a customer is most likely to meet. **A run vouches for a
+  declaration only when the probe confirmed *that* declaration**, not merely when something confirmed
+  a target of the same name. So an unbuildable secured document is never confirmed by a sibling's
+  probe: nothing downstream of it ran, and nothing ever established that its `environment` block is
+  the one the topology started from — the shared-`environment` divergence guard walks the *scenarios*
+  only, and such a document is by construction not one of them. The broken secured file reddens the
+  run whether its sibling carried an ordinary authoring fault or came up and confirmed the same
+  target name; **`run` and `run --parallel N` give the same answer**, so no flag decides it. That was
+  [issue #415](https://github.com/tomas-rampas/vouchfx/issues/415), and it is **closed** — see the
+  behaviour-change note in `CHANGELOG.md`, because the second half of it is a default CI colour that
+  moves.
 
-  **The two run paths disagree on exactly this shape.** `--parallel` builds one assurance per
-  unbuildable document with nothing confirmed against it, so a secured unbuildable document raises
-  there unconditionally: on an identical suite with the topology up and the probe confirming that
-  name, `run` exits 0 where `run --parallel 1` exits non-zero. That divergence is #415's, and it
-  closes when #415 does.
+  The mechanism, since it is the reason the rule can be stated that plainly: the engine matches a
+  declaration to a confirmation on the declaration's whole **identity** — the target's name and kind
+  together with a one-way digest of **everything the `security` block itself declares** — derived by one function
+  that both the declaration walk and the probe go through. This page deliberately does not enumerate
+  the fields that go into that digest: the enumeration is the function, and a copy of it here is a
+  second spelling of it, free to go stale the next time a field joins it. Two documents declaring
+  `api`, one asserting `mtls` on 9093 and one asserting `tls` on 8443, therefore no longer satisfy
+  each other. No declared security **value** enters that record: the digest is compared, never
+  rendered, and never reaches a report, an event or a log.
+
+  One field is worth stating on its own, because its handling is the one a reader would guess wrong.
+  A declared `clientKeyPassword` contributes its **reference text** whenever the whole value is one
+  `${secret:…}` token — so `${secret:vault/prod-key}` and `${secret:env/DEV_KEY}` are *different*
+  identities and do not cross-satisfy each other, which is exactly the collapse this design closes.
+  A literal passphrase contributes its presence and nothing more: the one thing that must not be
+  hashed is not hashed.
 - **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
   what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
   declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated

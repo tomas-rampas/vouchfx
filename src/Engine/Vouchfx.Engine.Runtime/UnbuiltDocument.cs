@@ -57,8 +57,12 @@ namespace Vouchfx.Engine.Runtime;
 /// This carries no disclosure that a <c>ScenarioAst</c> does not: the record's generated
 /// <c>ToString()</c> could expand a declared <c>clientKeyPassword</c> exactly as a parsed
 /// scenario's environment already could. Nothing interpolates it; the guard that matters is
-/// downstream, where <see cref="SecurityAssurance"/> keeps declared target NAMES rather than the
-/// specs they came from (issue #408).
+/// downstream, where <see cref="SecurityAssurance"/> keeps a declared target's NAME and a one-way
+/// digest of what it asserted — a <c>SecuredTargetIdentity</c> — rather than the
+/// <c>SecuritySpec</c> values they came from (issue #408, narrowed by issue #415 from the name
+/// alone to the name plus that digest; the digest never carries a declared
+/// <c>clientKeyPassword</c>'s text unless one whole <c>${secret:}</c> token spans it, and reaches
+/// no report, event or log either way).
 /// </para>
 /// </remarks>
 public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
@@ -91,8 +95,8 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
     /// <para>
     /// <strong>BOTH halves, because either alone closes nothing.</strong> Every disjunct of
     /// <see cref="SecurityAssurance.Unconfirmed"/> requires a non-null
-    /// <see cref="SecurityAssurance.Refusal"/>, so names on their own leave the predicate false and
-    /// the hole open with a green build. A document refused before it could be built is an
+    /// <see cref="SecurityAssurance.Refusal"/>, so a declaration on its own leaves the predicate
+    /// false and the hole open with a green build. A document refused before it could be built is an
     /// authoring fault that started no container — precisely what
     /// <see cref="SecurityAbortKind.AuthoringFault"/>'s own summary already names ("a parse
     /// failure").
@@ -108,14 +112,36 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
     /// </para>
     /// <para>
     /// <strong>NOTHING is contributed by a document that neither declares nor is refused AT a
-    /// declaration</strong>, and that is load-bearing rather than tidy. Both callers fold this
-    /// value into an assurance whose <c>Declared</c> may belong to OTHER documents, so an
-    /// unconditional refusal here would pair an unsecured file's fault with a sibling's
-    /// declaration. Measured, when the sequential stamp was unconditional: a directory pairing an
+    /// declaration</strong>, and that is load-bearing rather than tidy — but NOT for the reason
+    /// this paragraph used to give, which is RETIRED and is written out rather than quietly
+    /// deleted. It used to argue that both callers fold this value into an assurance whose
+    /// <c>Declared</c> may belong to OTHER documents, so an unconditional refusal here would pair an
+    /// unsecured file's fault with a sibling's declaration. That was true of the UNION the
+    /// sequential path built, and it measured a real divergence at the time (a directory pairing an
     /// unsecured unbuildable file with a secured sibling whose topology fails exited 3 under
-    /// <c>run</c> and 0 under <c>run --parallel 1</c> — a divergence between the two paths, and a
-    /// silent override of issue #390, whose whole content is that a health-gate failure must not
-    /// raise.
+    /// <c>run</c> and 0 under <c>run --parallel 1</c>). It is now STRUCTURALLY IMPOSSIBLE: both
+    /// callers reach this through <see cref="AssureAll"/>, and <see cref="SecurityAssurance.Worse"/>
+    /// SELECTS a whole assurance — every return path is a bare argument, never a <c>with</c> — so a
+    /// declaration and a refusal from two different documents can no longer occupy one record. That
+    /// is the same fact the fold's own remarks below state, and <c>ScenarioRunner</c>'s fold note
+    /// labels this claim retired in as many words. A maintainer checking the old reason would find
+    /// it false and conclude the guard is removable; it is not, for the reason below.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT THE GUARD DOES STILL DO, measured by removing it and rebuilding.</strong> It
+    /// keeps <see cref="SecurityAssurance.None"/> the FOLD'S IDENTITY ELEMENT rather than a refusal
+    /// looking for a declaration, and it therefore governs which refusal and which declaration the
+    /// suite REPORTS. Unguarded, <see cref="SecurityAbortKind.AuthoringFault"/> outranks
+    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> in <see cref="SecurityAssurance.Worse"/>,
+    /// so an unsecured document's empty-declaration value wins the fold outright and displaces the
+    /// suite's own evidence:
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_UnsecuredUnbuiltDocument_LeavesAFailedTopologyExitingZero</c>
+    /// fails with the SCENARIO's declaration gone
+    /// (<c>Assert.Contains() … Collection: [] Not found: "api"</c>), and
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_NoScenariosBesideAnUnsecuredUnbuiltDocument_ContributesNothing</c>
+    /// fails with <c>Expected: null Actual: AuthoringFault</c>. NO <see cref="SecurityAssurance.Unconfirmed"/>
+    /// assertion moved in either run — which is the whole of the retraction above, stated as a
+    /// measurement, and it is also why issue #390's fence is not what this guard buys.
     /// </para>
     /// </remarks>
     internal SecurityAssurance Assure(StepKindRegistry registry)
@@ -168,4 +194,72 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
                 .Declaring(declared)
                 .Refusing(SecurityAbortKind.AuthoringFault);
     }
+
+    /// <summary>
+    /// The one assurance standing for a whole list of unbuilt documents: each document's
+    /// <see cref="Assure"/> value folded in WHOLE by <see cref="SecurityAssurance.Worse"/>
+    /// (declaration-confirmation-matching, REQ-001).
+    /// </summary>
+    /// <param name="documents">
+    /// The documents; <see langword="null"/> or empty yields <see cref="SecurityAssurance.None"/>,
+    /// which is the identity of the fold and the value that costs a caller nothing.
+    /// </param>
+    /// <param name="registry">
+    /// The frozen provider registry, passed through to <see cref="Assure"/> for the schema-door half
+    /// of each answer.
+    /// <para>
+    /// NOT null-guarded here, deliberately and asymmetrically: an empty
+    /// <paramref name="documents"/> returns before the registry is ever read, so
+    /// <c>AssureAll(null, null!)</c> answers <see cref="SecurityAssurance.None"/> while
+    /// <c>AssureAll(oneDocument, null!)</c> throws from <see cref="Assure"/>'s own
+    /// <c>ThrowIfNull</c>. Demanding a registry for a call that does no work would reject a
+    /// meaningful one — the same reason <c>ScenarioRunner.AssureUnbuiltDocumentsAlone</c> declines
+    /// to BUILD one on that path — and the shape is unchanged from the per-runner helper this
+    /// replaced, so it is not a regression this change introduced.
+    /// </para>
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>ONE PLACE, BECAUSE BOTH RUN PATHS ASK THIS AND THEY USED TO ANSWER
+    /// DIFFERENTLY.</strong> <c>ParallelSuiteRunner</c> folded whole values here;
+    /// <c>ScenarioRunner.RunSuiteAsync</c> instead unioned each document's <c>Declared</c> into the
+    /// suite's and took only its <see cref="SecurityAssurance.Refusal"/>, so an unbuilt document's
+    /// declaration was satisfied by a SIBLING's probe confirmation of the same target — measured on
+    /// the built CLI as a broken secured file exiting 0 under <c>run</c> and non-zero under
+    /// <c>run --parallel N</c>, a flag flipping the answer (issue #415). Two spellings of one
+    /// security rule is exactly the drift <see cref="SecurityAssurance"/> exists to remove, so there
+    /// is now one, and it lives beside <see cref="Assure"/> rather than inside either runner.
+    /// </para>
+    /// <para>
+    /// <strong>An unbuilt document's declaration is never confirmed, and that is a decision rather
+    /// than a limitation.</strong> Each contributed value's <see cref="SecurityAssurance.Confirmed"/>
+    /// is empty by construction: nothing downstream of such a document ran, and no guard ever proved
+    /// its <c>environment</c> is the one the topology started from — the shared-<c>environment</c>
+    /// divergence guard walks <c>scenarios</c>, and an unbuilt document is absent from that list by
+    /// construction. The fail-closed direction was taken deliberately: its worst case is a suite
+    /// containing a broken secured file exiting non-zero, against the alternative's green CI on an
+    /// <c>mtls</c> assertion nothing exercised.
+    /// </para>
+    /// <para>
+    /// ONE assurance PER DOCUMENT, so a document's declaration is never paired with a DIFFERENT
+    /// document's refusal — the same reason the parallel path's slot fold keeps whole assurances.
+    /// </para>
+    /// <para>
+    /// Called from FOUR sites: each runner's gather, and each runner's empty-<c>scenarios</c> arm,
+    /// which returns before its gather and used to discard its documents (Copilot, PR #416). The CLI
+    /// can reach neither empty arm with unbuilt documents — it builds them inside its own
+    /// <c>parsed.Count &gt; 0</c> block, and issue #278's all-parse-failure rule owns the
+    /// no-scenario case and exits 4 ahead of both runners — so those two are about what the runners
+    /// ANSWER a non-CLI caller, not about an exit code. Nothing here decides one, so #278's question
+    /// still has exactly one answer in one place.
+    /// </para>
+    /// </remarks>
+    internal static SecurityAssurance AssureAll(
+        IReadOnlyList<UnbuiltDocument>? documents, StepKindRegistry registry) =>
+        documents is not { Count: > 0 }
+            ? SecurityAssurance.None
+            : documents.Aggregate(
+                SecurityAssurance.None,
+                (accumulated, document) => SecurityAssurance.Worse(
+                    accumulated, document.Assure(registry)));
 }
