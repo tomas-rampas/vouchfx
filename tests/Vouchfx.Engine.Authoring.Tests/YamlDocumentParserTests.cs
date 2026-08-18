@@ -1237,4 +1237,527 @@ public sealed class YamlDocumentParserTests
         var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
         Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    // -------------------------------------------------------------------------
+    // Managed-dependency configuration surface — dependency 'env:' mapping
+    // (dependency-env spec, REQ-001 / EDGE-001 / EDGE-002).
+    //
+    // These tests drive YamlDocumentParser DIRECTLY rather than through
+    // DocumentValidator, deliberately: $defs/dependency is 'additionalProperties: false'
+    // until the schema itself gains 'env' (REQ-002, a separate change), so a
+    // schema-mediated route would refuse the document before the parser ever saw it.
+    // The parser is the layer under test here.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_DependencyEnv_Absent_IsNull()
+    {
+        // Arrange — a dependency with no 'env:' block at all: the shape every suite
+        // written before this field has, whose behaviour must be unchanged.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  version: "16"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["orders-db"];
+        Assert.Null(dep.Env);
+        // …and nothing new appeared in the untyped bucket either.
+        Assert.Null(dep.Extra);
+    }
+
+    /// <summary>
+    /// The load-bearing half of REQ-001. A dependency's <c>env:</c> must land in the typed
+    /// <see cref="DependencySpec.Env"/> field AND must NOT also fall through into
+    /// <see cref="DependencySpec.Extra"/>: leaking there is silent (no consumer reads an
+    /// <c>env</c> key out of <c>Extra</c>) and it perturbs the environment hash, so the
+    /// feature would look like it worked while applying nothing.
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyEnv_IsBoundToTypedField_AndNotLeakedIntoExtra()
+    {
+        // Arrange — the motivating cases from #421.
+        const string yaml = """
+            environment:
+              dependencies:
+                mongo:
+                  type: mongodb
+                  env:
+                    MONGODB_ENABLE_AUTHENTICATION: "true"
+                    MONGODB_ROOT_USER: root
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["mongo"];
+        Assert.NotNull(dep.Env);
+        Assert.Equal(2, dep.Env!.Count);
+        Assert.Equal("true", dep.Env["MONGODB_ENABLE_AUTHENTICATION"]);
+        Assert.Equal("root", dep.Env["MONGODB_ROOT_USER"]);
+        // The half that matters: 'env' is a typed field now, not an extra one.
+        Assert.Null(dep.Extra);
+    }
+
+    [Fact]
+    public void Parse_DependencyEnv_AlongsideTypeVersionAndImage_AllFourAreBoundToTypedFields()
+    {
+        // Arrange — every typed dependency field declared at once.
+        const string yaml = """
+            environment:
+              dependencies:
+                sql:
+                  type: sqlserver
+                  version: "2022-latest"
+                  image: nexus.example.com/mirror/mssql
+                  env:
+                    SQLSERVER_EDITION: Developer
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["sql"];
+        Assert.Equal("sqlserver", dep.Type);
+        Assert.Equal("2022-latest", dep.Version);
+        Assert.Equal("nexus.example.com/mirror/mssql", dep.Image);
+        Assert.NotNull(dep.Env);
+        Assert.Equal("Developer", dep.Env!["SQLSERVER_EDITION"]);
+        Assert.Null(dep.Extra);
+    }
+
+    /// <summary>
+    /// Excluding <c>env</c> from the <c>Extra</c> bucket must remove exactly that one key —
+    /// a genuinely provider-specific field declared alongside it still reaches the resource
+    /// contributors through <see cref="DependencySpec.Extra"/>, unchanged.
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyEnv_UnrelatedExtraKey_StillLandsInExtra()
+    {
+        // Arrange
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  schemaRegistry: true
+                  env:
+                    KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var dep = doc.Environment!.Dependencies!["events"];
+        Assert.NotNull(dep.Env);
+        Assert.Equal("zookeeper:2181", dep.Env!["KAFKA_ZOOKEEPER_CONNECT"]);
+
+        Assert.NotNull(dep.Extra);
+        var extraKeys = dep.Extra!.Children.Keys
+            .OfType<YamlDotNet.RepresentationModel.YamlScalarNode>()
+            .Select(k => k.Value)
+            .ToList();
+        Assert.Contains("schemaRegistry", extraKeys);
+        Assert.DoesNotContain("env", extraKeys);
+    }
+
+    /// <summary>
+    /// EDGE-001, first half — value shapes mirror the service rules exactly: a bare
+    /// numeric/boolean scalar is retained as its RAW text ("8080"/"true"), which is exactly
+    /// the literal text a container's environment variable needs. No numeric/boolean
+    /// coercion is applied anywhere in this pipeline (the YAML-scalar-coercion gotcha this
+    /// parser is elsewhere careful about).
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyEnv_BareScalarCoercion_PreservesRawStringForm()
+    {
+        // Arrange
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  env:
+                    PORT: 8080
+                    DEBUG: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        var env = doc.Environment!.Dependencies!["cache"].Env;
+        Assert.NotNull(env);
+        Assert.Equal("8080", env!["PORT"]);
+        Assert.Equal("true", env["DEBUG"]);
+    }
+
+    /// <summary>
+    /// EDGE-001, second half — an explicitly-null value ('FOO: ~'), and WHERE its rejection
+    /// lives. MEASURED against the pinned YamlDotNet 16.3.0 representation model: a '~'
+    /// scalar reads back as the LITERAL one-character text "~", for the service path and the
+    /// dependency path alike — this parser rejects neither, it retains both verbatim, exactly
+    /// as it retains every other raw scalar. The rejection EDGE-001 requires is the JSON
+    /// Schema's ('env' values are typed 'string | integer | number | boolean', which admits no
+    /// null), and $defs/dependency gains that shape in the schema change that follows this
+    /// one; mirroring the service rules here therefore means mirroring this retention, not
+    /// inventing a parser-level refusal the service path does not have. Asserted as a PAIR so
+    /// that if either path ever starts folding '~' to null, the two go red together rather
+    /// than diverging silently.
+    /// </summary>
+    [Fact]
+    public void Parse_Env_ExplicitNullValue_IsRetainedAsLiteralTilde_ForServiceAndDependencyAlike()
+    {
+        const string serviceYaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: ~
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+        const string dependencyYaml = """
+            environment:
+              dependencies:
+                api:
+                  type: postgres
+                  env:
+                    FOO: ~
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        var serviceEnv = YamlDocumentParser.Parse(serviceYaml).Environment!.Services!["api"].Env;
+        var dependencyEnv = YamlDocumentParser.Parse(dependencyYaml).Environment!.Dependencies!["api"].Env;
+
+        Assert.NotNull(serviceEnv);
+        Assert.NotNull(dependencyEnv);
+        Assert.Equal("~", serviceEnv!["FOO"]);
+        Assert.Equal("~", dependencyEnv!["FOO"]);
+    }
+
+    /// <summary>
+    /// EDGE-002 — an empty <c>env: {}</c> is accepted, applies nothing, and is
+    /// DISTINGUISHABLE from a dependency that declared no <c>env:</c> at all (the second
+    /// direction is asserted by <see cref="Parse_DependencyEnv_Absent_IsNull"/> and again
+    /// here, side by side, so the pair cannot silently collapse to one representation).
+    /// </summary>
+    [Fact]
+    public void Parse_DependencyEnv_EmptyMap_IsAcceptedAndDistinguishableFromAbsent()
+    {
+        // Arrange — two dependencies differing ONLY in whether 'env:' was written.
+        const string yaml = """
+            environment:
+              dependencies:
+                declared-empty:
+                  type: postgres
+                  env: {}
+                absent:
+                  type: postgres
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — accepted, applies nothing, and not the same value as absent.
+        var declaredEmpty = doc.Environment!.Dependencies!["declared-empty"];
+        var absent = doc.Environment.Dependencies["absent"];
+
+        Assert.NotNull(declaredEmpty.Env);
+        Assert.Empty(declaredEmpty.Env!);
+        Assert.Null(absent.Env);
+        // Neither spelling leaks into the untyped bucket.
+        Assert.Null(declaredEmpty.Extra);
+        Assert.Null(absent.Extra);
+    }
+
+    /// <summary>
+    /// EDGE-002's other half, and the ONLY test that pins the service side of the
+    /// asymmetry. <see cref="Parse_ServiceEnv_Absent_IsNull"/> covers an ABSENT service
+    /// <c>env:</c>, not an empty one, so before this test nothing anywhere fed
+    /// <c>env: {}</c> to a service and <c>ParseServiceMap</c>'s empty-to-<see langword="null"/>
+    /// collapse could be deleted with every suite still green.
+    /// </summary>
+    [Fact]
+    public void Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency()
+    {
+        // The deliberate asymmetry (dependency-env EDGE-002): ServiceSpec.Env is serialised
+        // into the environment hash (ScenarioRunner.ComputeEnvironmentHash, which is the same
+        // canonical form the suite's shared-topology check compares), so 'env: {}' on a service
+        // must stay indistinguishable from absent or every existing suite that wrote it
+        // changes hash. A dependency has no such history, so it distinguishes the two. Both
+        // halves asserted here, from ONE document, so a refactor that "tidies" either one —
+        // collapsing the dependency's empty map, or promoting the service's null — goes red.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env: {}
+              dependencies:
+                db:
+                  type: postgres
+                  env: {}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert — same spelling, two representations, on purpose.
+        var services = doc.Environment!.Services!;
+        var dependencies = doc.Environment.Dependencies!;
+
+        Assert.Null(services["api"].Env);
+        Assert.NotNull(dependencies["db"].Env);
+        Assert.Empty(dependencies["db"].Env!);
+    }
+
+    // -------------------------------------------------------------------------
+    // Widened env-map diagnostics — a dependency fault must read "Dependency 'x' …"
+    // where the identical service fault reads "Service 'x' …", and must differ in
+    // NOTHING else (dependency-env spec, "Out of scope": widening ParseEnvMap's
+    // signature leaves the service diagnostics byte-identical apart from the noun).
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_DependencyEnv_NonMappingNode_ThrowsYamlParseException()
+    {
+        // Arrange — 'env:' is a scalar, not a mapping.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  env: "not-a-mapping"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("Dependency 'orders-db'", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Service", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mapping", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The exact position, not merely a positive one: the fault must be attributed to the
+        // offending 'env' scalar itself (line 5, at its opening quote) and not to the parent
+        // dependency mapping two lines up — the regression an 'ex.Line > 0' assertion cannot
+        // see, since YamlDotNet's Mark is 1-based and no throw site here can produce 0.
+        Assert.Equal(5, ex.Line);
+        Assert.Equal(12, ex.Column);
+    }
+
+    [Fact]
+    public void Parse_DependencyEnv_NonScalarValue_ThrowsYamlParseException()
+    {
+        // Arrange — an env entry whose value is a nested mapping, not a scalar string.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  env:
+                    FOO:
+                      nested: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("Dependency 'orders-db'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FOO", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The nested mapping's own position (line 7, at 'nested'), not the 'FOO:' key's line
+        // above it and not the enclosing 'env:' — see the position note on
+        // Parse_DependencyEnv_NonMappingNode_ThrowsYamlParseException.
+        Assert.Equal(7, ex.Line);
+        Assert.Equal(11, ex.Column);
+    }
+
+    [Fact]
+    public void Parse_DependencyEnv_NonScalarKey_ThrowsYamlParseException()
+    {
+        // Arrange — an env mapping key that is itself a nested sequence, not a scalar name.
+        const string yaml = """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  env:
+                    ? [a, b]
+                    : "value"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("Dependency 'orders-db'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The offending KEY node's own position (line 6, at the '[' opening the flow
+        // sequence), not the enclosing 'env:' mapping's — see the position note on
+        // Parse_DependencyEnv_NonMappingNode_ThrowsYamlParseException.
+        Assert.Equal(6, ex.Line);
+        Assert.Equal(11, ex.Column);
+    }
+
+    /// <summary>
+    /// The binding constraint on widening the env-map reader: ONE implementation, two
+    /// subject nouns. Two documents identical in shape — same owner name, same offending
+    /// node at the same line and column — must produce diagnostics differing in the subject
+    /// noun and in NOTHING else. Asserted by textual substitution rather than by two
+    /// hand-written expected strings, so the pair cannot drift apart one word at a time, and
+    /// applied to ALL THREE of the reader's throw sites (non-mapping <c>env:</c>, non-scalar
+    /// key, non-scalar value) rather than only the first.
+    /// </summary>
+    /// <remarks>
+    /// WHAT THIS TEST DOES NOT MEASURE, stated plainly because the spec's out-of-scope fence
+    /// is worded more strongly than any test can be: the fence is that the SERVICE diagnostics
+    /// are byte-identical to their PRE-WIDENING form. That is a fact about the diff — all three
+    /// throw sites changed the subject noun and nothing else — and it is verifiable only by
+    /// reading the diff, because a test can only see the tree it runs against. What this test
+    /// pins is the FORWARD-GOING parity of the two nouns: reword both messages in lockstep and
+    /// it still passes. It is the right invariant to automate (one implementation, two nouns,
+    /// no per-noun drift); it is not a baseline lock.
+    /// </remarks>
+    [Fact]
+    public void Parse_Env_ServiceAndDependencyDiagnostics_DifferOnlyBySubjectNoun()
+    {
+        // Non-mapping 'env:' — deliberately shape-identical: owner 'api', 'env:' on the same
+        // line at the same column in both, offending value written identically. The third
+        // argument names the throw site each pair is meant to reach, so a pair that silently
+        // stopped exercising its own site (and started duplicating another) goes red rather
+        // than passing three times over one diagnostic.
+        AssertDiffersOnlyBySubjectNoun(
+            "'env' at line 5 must be a mapping",
+            """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env: "not-a-mapping"
+            steps:
+              - id: noop
+                type: script.csharp
+            """,
+            """
+            environment:
+              dependencies:
+                api:
+                  type: postgres
+                  env: "not-a-mapping"
+            steps:
+              - id: noop
+                type: script.csharp
+            """);
+
+        // Non-scalar env KEY.
+        AssertDiffersOnlyBySubjectNoun(
+            "'env' key at line 6 must be a scalar",
+            """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    ? [a, b]
+                    : "value"
+            steps:
+              - id: noop
+                type: script.csharp
+            """,
+            """
+            environment:
+              dependencies:
+                api:
+                  type: postgres
+                  env:
+                    ? [a, b]
+                    : "value"
+            steps:
+              - id: noop
+                type: script.csharp
+            """);
+
+        // Non-scalar env VALUE.
+        AssertDiffersOnlyBySubjectNoun(
+            "env entry 'FOO' at line 7 must be a scalar",
+            """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO:
+                      nested: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """,
+            """
+            environment:
+              dependencies:
+                api:
+                  type: postgres
+                  env:
+                    FOO:
+                      nested: true
+            steps:
+              - id: noop
+                type: script.csharp
+            """);
+
+        static void AssertDiffersOnlyBySubjectNoun(
+            string expectedSiteFragment, string serviceYaml, string dependencyYaml)
+        {
+            var serviceEx = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(serviceYaml));
+            var dependencyEx = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(dependencyYaml));
+
+            Assert.Contains(expectedSiteFragment, serviceEx.Message, StringComparison.Ordinal);
+            Assert.StartsWith("Service 'api'", serviceEx.Message, StringComparison.Ordinal);
+            Assert.Equal(
+                serviceEx.Message.Replace("Service 'api'", "Dependency 'api'", StringComparison.Ordinal),
+                dependencyEx.Message);
+            Assert.Equal(serviceEx.Line, dependencyEx.Line);
+            Assert.Equal(serviceEx.Column, dependencyEx.Column);
+        }
+    }
 }
