@@ -1032,6 +1032,118 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.Equal(ExitCodes.Success, ExitFor(Verdict.Pass, folded));
     }
 
+    /// <summary>
+    /// <strong>REQ-004 at the record tier: the RETIRED union shape is the one that exits 0, and the
+    /// shape both run paths now ship raises.</strong> Issue #415's exit 0 was not an arithmetic slip
+    /// in a fold — it was a DIFFERENT VALUE reaching <c>ExitCodes.FromVerdict</c>: one
+    /// <see cref="SecurityAssurance.Declared"/> union across the suite AND the unbuilt document,
+    /// carrying the suite's own confirmations, with only the document's
+    /// <see cref="SecurityAssurance.Refusal"/> kept. That value's declaration is satisfied by a
+    /// SIBLING's confirmation, so <see cref="SecurityAssurance.Unconfirmed"/> answers false and a
+    /// broken secured file exits 0. Both shapes are constructed here as values, and the row goes red
+    /// if the union ever comes back.
+    /// <para>
+    /// <strong>Why this is NOT written as "the sequential shape and the parallel shape agree".</strong>
+    /// It cannot be, at this tier, and the earlier drafting of this row that claimed it was
+    /// tautological. <see cref="SecurityAssurance.Worse"/> SELECTS one of its two arguments — every
+    /// return path is a bare <c>left</c> or <c>right</c>, never a <c>with</c> — so whenever the
+    /// unbuilt document is the only raiser the fold returns THAT DOCUMENT'S OWN OBJECT, whatever the
+    /// arity of the fold and whatever the slots contained. A hand-built "parallel shape" and a
+    /// hand-built "sequential shape" are then reference-identical, and any assertion comparing them
+    /// compares an object with itself. What survives such a comparison is
+    /// <see cref="Worse_SecuredUnbuiltDocumentBesideASuiteThatConfirmedTheSameTarget_StillRaises"/>,
+    /// which already runs it in both argument orders. The two paths now reach the same
+    /// <c>UnbuiltDocument.AssureAll</c> + <c>Worse</c> composition, which is exactly what made the
+    /// agreement stop being falsifiable here.
+    /// </para>
+    /// <para>
+    /// <strong>What this pins, and what it does not.</strong> It pins the value shape, not either
+    /// runner: both values are built by hand, and nothing in this file executes <c>RunSuiteAsync</c>
+    /// or <c>RunParallelAsync</c>. The end-to-end agreement — a topology up, a probe that CONFIRMED,
+    /// and the same non-zero exit from <c>run</c> and from <c>run --parallel N</c> — is measured by
+    /// <c>Vouchfx.Engine.Runtime.Tests.KafkaSecurityConfirmationDrillDockerTests
+    /// .SecuredUnbuiltSiblingBesideAConfirmedProbe_ExitsNonZeroOnBothRunPaths</c>, which needs a
+    /// container.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Worse_TheRetiredUnionShape_ExitsZeroWhereTheFoldedShapeRaises()
+    {
+        // The RETIRED sequential shape, constructed explicitly: ONE `Declared` union across the
+        // suite AND the document — the two declarations are byte-identical, so the union holds one
+        // entry — the suite's own confirmations, and only the document's refusal kept. This is issue
+        // #415's exit 0, reproduced as a value.
+        var retiredUnion = new SecurityAssurance(
+            Declared: s_oneDeclaredIdentity,
+            Confirmed: s_oneDeclaredIdentity,
+            Refusal: SecurityAbortKind.AuthoringFault);
+
+        Assert.False(retiredUnion.Unconfirmed);
+        Assert.Equal(ExitCodes.Success, ExitFor(Verdict.Inconclusive, retiredUnion));
+
+        // A scenario whose own probe confirmed the very declaration it made: nothing here raises
+        // alone.
+        var confirmedScenario = new SecurityAssurance(
+            Declared: s_oneDeclaredIdentity,
+            Confirmed: s_oneDeclaredIdentity,
+            Refusal: null);
+
+        // The unbuildable secured sibling: it declares the SAME target, and its `Confirmed` is empty
+        // by construction because nothing downstream of it ran.
+        var unbuilt = Secured(SecurityAbortKind.AuthoringFault);
+
+        // The shape both run paths ship: WHOLE values folded, so the declaration and the refusal
+        // stay paired and the sibling's confirmation cannot reach the document's declaration.
+        var folded = SecurityAssurance.Worse(confirmedScenario, unbuilt);
+
+        Assert.False(confirmedScenario.Unconfirmed);
+        Assert.True(folded.Unconfirmed);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, folded.Refusal);
+        Assert.Equal(ExitCodes.Inconclusive, ExitFor(Verdict.Inconclusive, folded));
+    }
+
+    /// <summary>
+    /// <strong>EDGE-005: two scenarios declaring the same target name.</strong> The
+    /// shared-`environment` divergence guard forces every scenario's environment byte-identical, so
+    /// the two declarations produce ONE identity and <see cref="SecurityAssurance.Declaring"/>'s
+    /// deduplication collapses them to a single entry — the suite behaves exactly as it does with
+    /// one scenario, which is why this edge changes nothing.
+    /// <para>
+    /// The second half is what makes the first half a statement about DISTINCT declarations rather
+    /// than about names: two declarations sharing a name and differing in what they assert are two
+    /// entries, not one. A deduplication keyed on the name would collapse them and REQ-002's whole
+    /// mechanism would be inert — so both directions are asserted in one row, because they are one
+    /// property.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Declaring_TwoScenariosDeclaringOneTargetName_KeepsOneEntryPerDistinctDeclaration()
+    {
+        var declaration = s_oneDeclaredTarget[0];
+
+        // Byte-identical, which is what the divergence guard forces across a sequential suite's
+        // scenarios: one entry, and the identity is the one either scenario alone would produce.
+        var bothScenarios = SecurityAssurance.None
+            .Declaring(new[] { declaration, declaration });
+
+        Assert.Single(bothScenarios.Declared);
+        Assert.Equal(SecuredTargets.IdentityOf(declaration), bothScenarios.Declared[0]);
+
+        // The same NAME asserting something else is a second declaration, not a duplicate.
+        var differentAssertion = new SecuredTarget(
+            declaration.Name,
+            SecuredTargets.ServiceKind,
+            new SecuritySpec("tls", "8443", null, null, null, null));
+
+        var twoDeclarations = SecurityAssurance.None
+            .Declaring(new[] { declaration, differentAssertion });
+
+        Assert.Equal(2, twoDeclarations.Declared.Count);
+        Assert.Equal(
+            declaration.Name,
+            Assert.Single(twoDeclarations.Declared.Select(d => d.Name).Distinct()));
+    }
+
     // ── Threaded through the run command's own decision ───────────────────────────────────
 
     /// <summary>
